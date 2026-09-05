@@ -232,20 +232,7 @@ private struct VoiceCaptureTargetDeck: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            DuskColors.paper.overlaying(DuskColors.line, opacity: 0.12),
-                            DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.32)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(height: 15)
-                .padding(.horizontal, 5)
-                .shadow(color: Color.black.opacity(0.5), radius: 4, y: 2)
+            VoiceCrownSpineCanvas()
 
             HStack(spacing: 0) {
                 ForEach(choices, id: \.self) { choice in
@@ -256,19 +243,17 @@ private struct VoiceCaptureTargetDeck: View {
 
             GeometryReader { proxy in
                 let segment = proxy.size.width / CGFloat(choices.count)
-                Capsule()
-                    .fill(selectionColor)
+                VoiceCrownSelectionSeam(color: selectionColor)
                     .frame(width: max(24, segment - 16), height: 3)
-                    .shadow(color: selectionColor.opacity(0.55), radius: 6)
                     .offset(
                         x: CGFloat(selectedVisualIndex) * segment + 8,
                         y: proxy.size.height - 4
                     )
             }
             .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
         .frame(width: width, height: VoiceCaptureLayout.crownHeight(dynamicTypeSize))
-        .shadow(color: Color.black.opacity(0.42), radius: 10, y: 8)
         .animation(
             reduceMotion ? nil : .spring(duration: DesignV2.Motion.feedback, bounce: 0),
             value: selected
@@ -420,17 +405,16 @@ enum VoiceCaptureLayout {
         expanded: Bool,
         layoutDirection: LayoutDirection
     ) -> UnevenRoundedRectangle {
-        guard expanded else {
-            return UnevenRoundedRectangle(
-                topLeadingRadius: 14,
-                bottomLeadingRadius: 14,
-                bottomTrailingRadius: 14,
-                topTrailingRadius: 14,
-                style: .continuous
-            )
-        }
-        let leading: CGFloat = 17
-        let trailing: CGFloat = 10
+        podShape(expansion: expanded ? 1 : 0, layoutDirection: layoutDirection)
+    }
+
+    static func podShape(
+        expansion: CGFloat,
+        layoutDirection: LayoutDirection
+    ) -> UnevenRoundedRectangle {
+        let amount = min(max(expansion, 0), 1)
+        let leading = 14 + 3 * amount
+        let trailing = 14 - 4 * amount
         return UnevenRoundedRectangle(
             topLeadingRadius: layoutDirection == .leftToRight ? leading : trailing,
             bottomLeadingRadius: layoutDirection == .leftToRight ? leading : trailing,
@@ -438,6 +422,41 @@ enum VoiceCaptureLayout {
             topTrailingRadius: layoutDirection == .leftToRight ? trailing : leading,
             style: .continuous
         )
+    }
+
+    static func targetShape(
+        choice: VoiceCaptureTarget,
+        selected: CGFloat,
+        layoutDirection: LayoutDirection
+    ) -> UnevenRoundedRectangle {
+        let outer = 14 + 5 * min(max(selected, 0), 1)
+        let inner: CGFloat = 8
+        switch choice {
+        case .auto:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: layoutDirection == .leftToRight ? outer : 11,
+                bottomLeadingRadius: layoutDirection == .leftToRight ? 16 : inner,
+                bottomTrailingRadius: layoutDirection == .leftToRight ? inner : 16,
+                topTrailingRadius: layoutDirection == .leftToRight ? 11 : outer,
+                style: .continuous
+            )
+        case .cancel:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: 14,
+                bottomLeadingRadius: inner,
+                bottomTrailingRadius: inner,
+                topTrailingRadius: 14,
+                style: .continuous
+            )
+        case .send:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: layoutDirection == .leftToRight ? 11 : outer,
+                bottomLeadingRadius: layoutDirection == .leftToRight ? inner : 16,
+                bottomTrailingRadius: layoutDirection == .leftToRight ? 16 : inner,
+                topTrailingRadius: layoutDirection == .leftToRight ? outer : 11,
+                style: .continuous
+            )
+        }
     }
 }
 
@@ -483,74 +502,20 @@ private struct VoicePodSurfaceModifier: ViewModifier {
             )
     }
 
-    private var baseColor: Color {
-        if !isEnabled {
-            return DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.48)
-        }
-        if presentation.isAuto {
-            return DuskColors.paper.overlaying(DuskColors.sage, opacity: 0.48)
-        }
-        if presentation.isHolding || presentation.state == .transitioning {
-            return DuskColors.paper.overlaying(DuskColors.accentSoft, opacity: 0.3)
-        }
-        return DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.09)
-    }
-
     private var foregroundColor: Color {
         if !isEnabled { return DuskColors.ink4 }
         return presentation.isAuto ? DuskColors.bgSunk : DuskColors.ink
     }
 
-    @ViewBuilder
     private func podFace(pressed: Bool) -> some View {
-        ZStack {
-            if !pressed {
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: Color.black.opacity(isEnabled ? 0.78 : 0.42),
-                    geometry: VoiceCaptureLayout.podShadow
-                )
-                if presentation.isExpanded, isEnabled {
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: (presentation.isAuto ? DuskColors.sage : DuskColors.accent).opacity(0.5),
-                        geometry: VoiceCaptureLayout.podGlow
-                    )
-                }
-            }
-            designSlateFace(
-                role: presentation.isAuto ? .action : .secondary,
-                muted: !isEnabled,
-                hovered: false,
-                baseOverride: pressed
-                    ? baseColor.overlaying(DuskColors.bgSunk, opacity: 0.18)
-                    : baseColor
-            )
-            .clipShape(shape)
-            shape.fill(
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        (presentation.isAuto ? DuskColors.sage : DuskColors.accent).opacity(
-                            presentation.isExpanded ? 0.1 : 0.035
-                        )
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            shape.stroke(
-                contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
-                lineWidth: DesignMetrics.hairline
-            )
-            ComposerMaterialContactEdge(shape: shape, color: DuskColors.bgSunk.opacity(0.94), y: pressed ? 1 : 2)
-            if !pressed {
-                DesignTopEdgeLight(shape: shape, color: DuskColors.ink.opacity(0.17))
-            }
-            if isFocused {
-                ComposerMaterialFocusRing(shape: shape)
-            }
-        }
+        VoicePodCanvas(
+            presentation: presentation,
+            enabled: isEnabled,
+            pressed: pressed,
+            focused: isFocused,
+            increasedContrast: contrast == .increased,
+            layoutDirection: layoutDirection
+        )
     }
 }
 
@@ -560,62 +525,29 @@ private struct VoiceTargetButtonStyle: ButtonStyle {
 
     @Environment(\.isFocused) private var isFocused
     @ComposerReduceMotion private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.layoutDirection) private var layoutDirection
 
     private var shape: UnevenRoundedRectangle {
-        let outer: CGFloat = selected ? 19 : 14
-        let inner: CGFloat = 8
-        switch choice {
-        case .auto:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: layoutDirection == .leftToRight ? outer : 11,
-                bottomLeadingRadius: layoutDirection == .leftToRight ? 16 : inner,
-                bottomTrailingRadius: layoutDirection == .leftToRight ? inner : 16,
-                topTrailingRadius: layoutDirection == .leftToRight ? 11 : outer,
-                style: .continuous
-            )
-        case .cancel:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: 14,
-                bottomLeadingRadius: inner,
-                bottomTrailingRadius: inner,
-                topTrailingRadius: 14,
-                style: .continuous
-            )
-        case .send:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: layoutDirection == .leftToRight ? 11 : outer,
-                bottomLeadingRadius: layoutDirection == .leftToRight ? inner : 16,
-                bottomTrailingRadius: layoutDirection == .leftToRight ? 16 : inner,
-                topTrailingRadius: layoutDirection == .leftToRight ? outer : 11,
-                style: .continuous
-            )
-        }
+        VoiceCaptureLayout.targetShape(
+            choice: choice,
+            selected: selected ? 1 : 0,
+            layoutDirection: layoutDirection
+        )
     }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(selected ? selectedForeground : DuskColors.ink2)
             .background {
-                ZStack {
-                    designSlateFace(
-                        role: choice == .cancel && selected
-                            ? .destructive
-                            : selected ? .action : .secondary,
-                        muted: false,
-                        hovered: false,
-                        baseOverride: (selected ? selectedColor : restingColor).overlaying(
-                            DuskColors.bgSunk,
-                            opacity: configuration.isPressed ? 0.18 : 0
-                        )
-                    )
-                    .clipShape(shape)
-                    shape.stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
-                    DesignTopEdgeLight(shape: shape, color: DuskColors.ink.opacity(selected ? 0.2 : 0.12))
-                    if isFocused {
-                        ComposerMaterialFocusRing(shape: shape)
-                    }
-                }
+                VoiceTargetFacetCanvas(
+                    choice: choice,
+                    selected: selected,
+                    pressed: configuration.isPressed,
+                    focused: isFocused,
+                    increasedContrast: contrast == .increased,
+                    layoutDirection: layoutDirection
+                )
             }
             .contentShape(shape)
             .offset(y: selected && !configuration.isPressed ? -5 : configuration.isPressed && !reduceMotion ? 1 : 0)
@@ -624,6 +556,502 @@ private struct VoiceTargetButtonStyle: ButtonStyle {
                 reduceMotion ? nil : .easeOut(duration: DesignV2.Motion.feedback),
                 value: configuration.isPressed
             )
+    }
+
+    private var selectedForeground: Color {
+        choice == .cancel ? DuskColors.ink : DuskColors.bgSunk
+    }
+}
+
+private enum VoiceCanvasDrawing {
+    static func shadow<S: InsettableShape>(
+        shape: S,
+        color: Color,
+        geometry: DesignDropShadowGeometry,
+        in context: inout GraphicsContext,
+        faceRect: CGRect,
+        copies: Int = 1
+    ) {
+        var source = shape.inset(by: geometry.sourceInset).path(in: faceRect)
+        source = source.applying(CGAffineTransform(
+            translationX: geometry.x,
+            y: geometry.y
+        ))
+
+        for _ in 0..<copies {
+            context.drawLayer { layer in
+                if geometry.radius > 0 {
+                    layer.addFilter(.blur(radius: geometry.radius * 0.8))
+                }
+                layer.fill(source, with: .color(color))
+            }
+        }
+    }
+
+    static func slateFace(
+        path: Path,
+        base: Color,
+        muted: Bool = false,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.fill(path, with: .linearGradient(
+            Gradient(colors: [
+                base.overlaying(
+                    muted ? DuskColors.ink4 : DuskColors.ink,
+                    opacity: muted
+                        ? DesignMaterialAdapter.slateMutedBaseLight
+                        : DesignMaterialAdapter.slateBaseLight
+                ),
+                base,
+            ]),
+            startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
+            endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
+        ))
+
+        let center = base.overlaying(
+            DuskColors.bgSunk,
+            opacity: muted
+                ? DesignMaterialAdapter.slateMutedCenterSunk
+                : DesignMaterialAdapter.slateCenterSunk
+        )
+        let stops: [Gradient.Stop]
+        if muted {
+            stops = [
+                .init(color: center, location: 0),
+                .init(color: center.opacity(0), location: DesignMaterialAdapter.slateMutedFadeStop),
+            ]
+        } else {
+            let ring = base.overlaying(
+                DuskColors.bgSunk,
+                opacity: DesignMaterialAdapter.slateRingSunk
+            )
+            stops = [
+                .init(color: center, location: 0),
+                .init(color: ring, location: DesignMaterialAdapter.slateCenterStop),
+                .init(color: ring.opacity(0), location: DesignMaterialAdapter.slateFadeStop),
+            ]
+        }
+        ellipticalRadial(
+            clippingTo: path,
+            center: CGPoint(
+                x: DesignMaterialAdapter.slateRadialCenterX,
+                y: DesignMaterialAdapter.slateRadialCenterY
+            ),
+            radiusScale: DesignMaterialAdapter.slateRadialScale,
+            stops: stops,
+            in: &context,
+            faceRect: faceRect
+        )
+    }
+
+    static func facetFace(
+        path: Path,
+        base: Color,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.fill(path, with: .color(base))
+        ellipticalRadial(
+            clippingTo: path,
+            center: CGPoint(x: 0.5, y: 0.58),
+            radiusScale: CGSize(width: 0.9, height: 1.18),
+            stops: [
+                .init(
+                    color: base.overlaying(DuskColors.bgSunk, opacity: 0.26),
+                    location: 0
+                ),
+                .init(color: base, location: 1),
+            ],
+            in: &context,
+            faceRect: faceRect
+        )
+    }
+
+    static func holdFace(
+        path: Path,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.fill(path, with: .linearGradient(
+            Gradient(colors: [
+                DuskColors.paper.overlaying(DuskColors.accentSoft, opacity: 0.12),
+                DuskColors.paper.overlaying(DuskColors.accent, opacity: 0.12),
+            ]),
+            startPoint: CGPoint(x: faceRect.minX, y: faceRect.minY + faceRect.height * 0.36),
+            endPoint: CGPoint(x: faceRect.maxX, y: faceRect.minY + faceRect.height * 0.64)
+        ))
+
+        let center = DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.32)
+        ellipticalRadial(
+            clippingTo: path,
+            center: CGPoint(x: 0.46, y: 0.54),
+            radiusScale: CGSize(width: 0.70, height: 1.20),
+            stops: [
+                .init(color: center, location: 0),
+                .init(color: center.opacity(0), location: 0.72),
+            ],
+            in: &context,
+            faceRect: faceRect
+        )
+    }
+
+    static func topEdge<S: InsettableShape>(
+        shape: S,
+        color: Color,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        let inner = shape.inset(by: DesignMetrics.hairline).path(in: faceRect)
+        let translated = inner.applying(CGAffineTransform(
+            translationX: 0,
+            y: DesignMetrics.hairline
+        ))
+        var difference = inner
+        difference.addPath(translated)
+
+        var highlight = context
+        highlight.clip(to: inner)
+        highlight.fill(difference, with: .color(color), style: FillStyle(eoFill: true))
+    }
+
+    static func pressedOcclusion(
+        path: Path,
+        amount: CGFloat,
+        in context: inout GraphicsContext
+    ) {
+        guard amount > 0 else { return }
+        var inset = context
+        inset.addFilter(.shadow(
+            color: DuskColors.bgSunk.opacity(0.42 * Double(amount)),
+            radius: 3,
+            x: 0,
+            y: 2,
+            blendMode: .sourceAtop,
+            options: [.invertsAlpha, .shadowAbove, .shadowOnly]
+        ))
+        inset.fill(path, with: .color(.white))
+    }
+
+    static func ellipticalRadial(
+        clippingTo path: Path,
+        center: CGPoint,
+        radiusScale: CGSize,
+        stops: [Gradient.Stop],
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        let radius = CGSize(
+            width: faceRect.width * radiusScale.width,
+            height: faceRect.height * radiusScale.height
+        )
+        guard radius.width > 0, radius.height > 0 else { return }
+
+        var radial = context
+        radial.clip(to: path)
+        radial.translateBy(
+            x: faceRect.minX + faceRect.width * center.x,
+            y: faceRect.minY + faceRect.height * center.y
+        )
+        radial.scaleBy(x: radius.width, y: radius.height)
+        radial.fill(
+            Path(CGRect(x: -1, y: -1, width: 2, height: 2)),
+            with: .radialGradient(
+                Gradient(stops: stops),
+                center: .zero,
+                startRadius: 0,
+                endRadius: 1
+            )
+        )
+    }
+
+    static func border<S: InsettableShape>(
+        shape: S,
+        color: Color,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.stroke(
+            shape.inset(by: DesignMetrics.hairline / 2).path(in: faceRect),
+            with: .color(color),
+            lineWidth: DesignMetrics.hairline
+        )
+    }
+
+    static func focusRing<S: InsettableShape>(
+        shape: S,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.stroke(
+            shape.inset(by: -3).path(in: faceRect),
+            with: .color(DuskColors.accent),
+            lineWidth: DesignMetrics.focusRing
+        )
+    }
+}
+
+private struct VoicePodCanvas: View, Animatable {
+    let presentation: VoiceCapturePresentationState
+    let enabled: Bool
+    let focused: Bool
+    let increasedContrast: Bool
+    let layoutDirection: LayoutDirection
+
+    private var expansionAmount: CGFloat
+    private var holdingAmount: CGFloat
+    private var autoAmount: CGFloat
+    private var pressAmount: CGFloat
+
+    init(
+        presentation: VoiceCapturePresentationState,
+        enabled: Bool,
+        pressed: Bool,
+        focused: Bool,
+        increasedContrast: Bool,
+        layoutDirection: LayoutDirection
+    ) {
+        self.presentation = presentation
+        self.enabled = enabled
+        self.focused = focused
+        self.increasedContrast = increasedContrast
+        self.layoutDirection = layoutDirection
+        expansionAmount = presentation.isExpanded ? 1 : 0
+        holdingAmount = presentation.isHolding ? 1 : 0
+        autoAmount = presentation.isAuto ? 1 : 0
+        pressAmount = pressed ? 1 : 0
+    }
+
+    var animatableData: AnimatablePair<
+        AnimatablePair<CGFloat, CGFloat>,
+        AnimatablePair<CGFloat, CGFloat>
+    > {
+        get {
+            AnimatablePair(
+                AnimatablePair(expansionAmount, holdingAmount),
+                AnimatablePair(autoAmount, pressAmount)
+            )
+        }
+        set {
+            expansionAmount = newValue.first.first
+            holdingAmount = newValue.first.second
+            autoAmount = newValue.second.first
+            pressAmount = newValue.second.second
+        }
+    }
+
+    private var isEnabled: Bool { enabled && !presentation.isDisabled }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow = VoiceCaptureLayout.podGlow.sourceInset
+                + VoiceCaptureLayout.podGlow.radius
+                + max(abs(VoiceCaptureLayout.podGlow.x), abs(VoiceCaptureLayout.podGlow.y))
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+            let shape = VoiceCaptureLayout.podShape(
+                expansion: expansionAmount,
+                layoutDirection: layoutDirection
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                let facePath = shape.path(in: faceRect)
+                let castOpacity = (isEnabled ? 0.78 : 0.42) * Double(1 - pressAmount)
+                VoiceCanvasDrawing.shadow(
+                    shape: shape,
+                    color: Color.black.opacity(castOpacity),
+                    geometry: VoiceCaptureLayout.podShadow,
+                    in: &context,
+                    faceRect: faceRect
+                )
+                if isEnabled, expansionAmount > 0 {
+                    let glow = DuskColors.accent.mix(
+                        with: DuskColors.sage,
+                        by: Double(autoAmount),
+                        in: .perceptual
+                    )
+                    VoiceCanvasDrawing.shadow(
+                        shape: shape,
+                        color: glow.opacity(0.5 * Double(expansionAmount)),
+                        geometry: VoiceCaptureLayout.podGlow,
+                        in: &context,
+                        faceRect: faceRect,
+                        copies: 3
+                    )
+                }
+                VoiceCanvasDrawing.shadow(
+                    shape: shape,
+                    color: DuskColors.bgSunk.opacity(0.94),
+                    geometry: DesignDropShadowGeometry(
+                        radius: 0,
+                        y: 2 - pressAmount,
+                        sourceInset: 1
+                    ),
+                    in: &context,
+                    faceRect: faceRect
+                )
+
+                let idleBase = DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.09)
+                let autoBase = DuskColors.paper.overlaying(DuskColors.sage, opacity: 0.48)
+                let enabledBase = idleBase.mix(
+                    with: autoBase,
+                    by: Double(autoAmount),
+                    in: .perceptual
+                )
+                let disabledBase = DuskColors.bgElev.overlaying(
+                    DuskColors.ink4,
+                    opacity: DesignMaterialAdapter.slateDisabledBaseInkMix
+                )
+                VoiceCanvasDrawing.slateFace(
+                    path: facePath,
+                    base: (isEnabled ? enabledBase : disabledBase).overlaying(
+                        DuskColors.bgSunk,
+                        opacity: 0.18 * Double(pressAmount)
+                    ),
+                    muted: !isEnabled,
+                    in: &context,
+                    faceRect: faceRect
+                )
+                if isEnabled, holdingAmount > 0 {
+                    var holdContext = context
+                    holdContext.opacity = Double(holdingAmount)
+                    VoiceCanvasDrawing.holdFace(
+                        path: facePath,
+                        in: &holdContext,
+                        faceRect: faceRect
+                    )
+                }
+
+                VoiceCanvasDrawing.pressedOcclusion(
+                    path: facePath,
+                    amount: pressAmount,
+                    in: &context
+                )
+                VoiceCanvasDrawing.border(
+                    shape: shape,
+                    color: increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft,
+                    in: &context,
+                    faceRect: faceRect
+                )
+                VoiceCanvasDrawing.topEdge(
+                    shape: shape,
+                    color: DuskColors.ink.opacity(0.17 * Double(1 - pressAmount)),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                if focused {
+                    VoiceCanvasDrawing.focusRing(shape: shape, in: &context, faceRect: faceRect)
+                }
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct VoiceCrownSpineCanvas: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow: CGFloat = 24
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+            let deckShape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+            let spineRect = CGRect(
+                x: faceRect.minX + 5,
+                y: faceRect.maxY - 15,
+                width: max(0, faceRect.width - 10),
+                height: 15
+            )
+            let spineShape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                VoiceCanvasDrawing.shadow(
+                    shape: deckShape,
+                    color: Color.black.opacity(0.42),
+                    geometry: DesignDropShadowGeometry(radius: 10, y: 8, sourceInset: 0),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                VoiceCanvasDrawing.shadow(
+                    shape: spineShape,
+                    color: Color.black.opacity(0.5),
+                    geometry: DesignDropShadowGeometry(radius: 4, y: 2, sourceInset: 0),
+                    in: &context,
+                    faceRect: spineRect
+                )
+
+                let spinePath = spineShape.path(in: spineRect)
+                context.fill(spinePath, with: .linearGradient(
+                    Gradient(colors: [
+                        DuskColors.paper.overlaying(DuskColors.line, opacity: 0.12),
+                        DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.32),
+                    ]),
+                    startPoint: CGPoint(x: spineRect.midX, y: spineRect.minY),
+                    endPoint: CGPoint(x: spineRect.midX, y: spineRect.maxY)
+                ))
+                var occlusion = context
+                occlusion.clip(to: spinePath)
+                occlusion.fill(spinePath, with: .linearGradient(
+                    Gradient(colors: [Color.black.opacity(0.18), .clear]),
+                    startPoint: CGPoint(x: spineRect.midX, y: spineRect.minY),
+                    endPoint: CGPoint(x: spineRect.midX, y: spineRect.minY + 6)
+                ))
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct VoiceTargetFacetCanvas: View, Animatable {
+    let choice: VoiceCaptureTarget
+    let focused: Bool
+    let increasedContrast: Bool
+    let layoutDirection: LayoutDirection
+
+    private var selectionAmount: CGFloat
+    private var pressAmount: CGFloat
+
+    init(
+        choice: VoiceCaptureTarget,
+        selected: Bool,
+        pressed: Bool,
+        focused: Bool,
+        increasedContrast: Bool,
+        layoutDirection: LayoutDirection
+    ) {
+        self.choice = choice
+        self.focused = focused
+        self.increasedContrast = increasedContrast
+        self.layoutDirection = layoutDirection
+        selectionAmount = selected ? 1 : 0
+        pressAmount = pressed ? 1 : 0
+    }
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(selectionAmount, pressAmount) }
+        set {
+            selectionAmount = newValue.first
+            pressAmount = newValue.second
+        }
     }
 
     private var restingColor: Color {
@@ -640,8 +1068,131 @@ private struct VoiceTargetButtonStyle: ButtonStyle {
         }
     }
 
-    private var selectedForeground: Color {
-        choice == .cancel ? DuskColors.ink : DuskColors.bgSunk
+    private var semanticColor: Color {
+        switch choice {
+        case .auto: DuskColors.sage
+        case .cancel: DuskColors.stop
+        case .send: DuskColors.accent
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow: CGFloat = 28
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+            let shape = VoiceCaptureLayout.targetShape(
+                choice: choice,
+                selected: selectionAmount,
+                layoutDirection: layoutDirection
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                let facePath = shape.path(in: faceRect)
+                let shadowAmount = selectionAmount * (1 - pressAmount)
+                VoiceCanvasDrawing.shadow(
+                    shape: shape,
+                    color: Color.black.opacity(0.52 * Double(shadowAmount)),
+                    geometry: DesignDropShadowGeometry(radius: 9, y: 8, sourceInset: 0),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                VoiceCanvasDrawing.shadow(
+                    shape: shape,
+                    color: semanticColor.opacity(
+                        (choice == .auto ? 0.38 : 0.34) * Double(shadowAmount)
+                    ),
+                    geometry: DesignDropShadowGeometry(radius: 9, y: 8, sourceInset: 0),
+                    in: &context,
+                    faceRect: faceRect,
+                    copies: 2
+                )
+
+                let base = restingColor.mix(
+                    with: selectedColor,
+                    by: Double(selectionAmount),
+                    in: .perceptual
+                )
+                VoiceCanvasDrawing.facetFace(
+                    path: facePath,
+                    base: base.overlaying(
+                        DuskColors.bgSunk,
+                        opacity: 0.18 * Double(pressAmount)
+                    ),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                VoiceCanvasDrawing.pressedOcclusion(
+                    path: facePath,
+                    amount: pressAmount,
+                    in: &context
+                )
+                VoiceCanvasDrawing.border(
+                    shape: shape,
+                    color: increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft,
+                    in: &context,
+                    faceRect: faceRect
+                )
+                VoiceCanvasDrawing.topEdge(
+                    shape: shape,
+                    color: DuskColors.ink.opacity(
+                        Double((0.12 + 0.08 * selectionAmount) * (1 - pressAmount))
+                    ),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                if focused {
+                    VoiceCanvasDrawing.focusRing(shape: shape, in: &context, faceRect: faceRect)
+                }
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct VoiceCrownSelectionSeam: View {
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow: CGFloat = 8
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+            let shape = Capsule(style: .continuous)
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                VoiceCanvasDrawing.shadow(
+                    shape: shape,
+                    color: color.opacity(0.55),
+                    geometry: DesignDropShadowGeometry(radius: 6, y: 0, sourceInset: 0),
+                    in: &context,
+                    faceRect: faceRect,
+                    copies: 2
+                )
+                context.fill(shape.path(in: faceRect), with: .color(color))
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -655,9 +1206,15 @@ private struct VoiceAutoOrbit<S: InsettableShape>: View {
             let phase = reduceMotion
                 ? 0.0
                 : (sin(timeline.date.timeIntervalSinceReferenceDate * 4.05) + 1) / 2
-            shape
-                .stroke(DuskColors.sage.opacity(0.48 + phase * 0.24), lineWidth: 1)
-                .scaleEffect(reduceMotion ? 1 : 1 + phase * 0.055)
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, size in
+                let rect = CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
+                context.stroke(
+                    shape.path(in: rect),
+                    with: .color(DuskColors.sage.opacity(0.48 + phase * 0.24)),
+                    lineWidth: 1
+                )
+            }
+            .scaleEffect(reduceMotion ? 1 : 1 + phase * 0.055)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

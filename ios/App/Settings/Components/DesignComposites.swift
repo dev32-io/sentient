@@ -86,13 +86,6 @@ struct DesignCard<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Space.lg)
                 .padding(.vertical, Space.md)
-                .background(
-                    LinearGradient(
-                        colors: [DuskColors.bgElev, DuskColors.bgElev.overlaying(DuskColors.paper, opacity: 0.60)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
                 .overlay(alignment: .bottom) { DesignDivider() }
         } else {
             VStack(alignment: .leading, spacing: Space.xs) {
@@ -182,7 +175,6 @@ struct DesignSettingsEditor<Content: View, Actions: View>: View {
     let state: DesignSettingsEditorState?
     @ViewBuilder let content: () -> Content
     @ViewBuilder let actions: () -> Actions
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(
@@ -251,24 +243,10 @@ struct DesignSettingsEditor<Content: View, Actions: View>: View {
                 .padding(.horizontal, DesignSettingsEditorMetrics.statusHorizontalPadding)
                 .padding(.vertical, DesignSettingsEditorMetrics.statusVerticalPadding)
                 .background {
-                    let shape = Capsule()
-                    ZStack {
-                        DesignSpreadShadow(
-                            shape: shape,
-                            color: state.tint.opacity(state == .saved ? 0.32 : 0.22),
-                            geometry: DesignDropShadowGeometry(radius: 7, y: 0, sourceInset: 8)
-                        )
-                        shape.fill(
-                            state == .saved
-                                ? DuskColors.sageSoft.overlaying(DuskColors.paper, opacity: 0.22)
-                                : DuskColors.paper
-                        )
-                    }
-                }
-                .overlay {
-                    Capsule().stroke(
-                        contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
-                        lineWidth: DesignMetrics.hairline
+                    DesignCompositeRaisedCanvasBackground(
+                        shape: .capsule,
+                        role: .quiet,
+                        state: state == .saved ? .disabled : .rest
                     )
                 }
                 .fixedSize()
@@ -470,17 +448,17 @@ struct DesignResultsList: View {
     }
 
     private func resultIcon(_ item: DesignResultsListItem) -> some View {
-        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-        return Text(item.leading)
+        Text(item.leading)
             .font(Typo.display(TypeScale.lg))
             .foregroundStyle(item.tone == .sage ? DuskColors.sage : DuskColors.accent)
             .frame(width: 38, height: 38)
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
             .background {
-                designSlateFace(role: .quiet, muted: true, hovered: false)
-            }
-            .clipShape(shape)
-            .overlay {
-                shape.strokeBorder(DuskColors.line, lineWidth: DesignMetrics.hairline)
+                DesignCompositeRaisedCanvasBackground(
+                    shape: .continuousRoundedRectangle(cornerRadius: Radii.sm),
+                    role: .quiet,
+                    state: .disabled
+                )
             }
             .accessibilityHidden(true)
     }
@@ -549,78 +527,38 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
-        let raised = hovered && isEnabled
+        let raised = hovered && isEnabled && !pressed
         let shape = RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
-        let face = raised
-            ? DuskColors.paper.overlaying(
-                DuskColors.bgSunk,
-                opacity: DesignMaterialAdapter.mediaCardHoverSunkMix
-            )
-            : DuskColors.paper.overlaying(
-                DuskColors.bgElev,
-                opacity: DesignMaterialAdapter.mediaCardElevatedMix
-            )
-        let contactMix = pressed || raised
-            ? DesignMaterialAdapter.mediaCardHoverContactMix
-            : DesignMaterialAdapter.plateRestContactMix
+
         configuration.label
+            .clipShape(shape)
             .background {
-                shape.fill(
-                    face.shadow(
-                        .inner(
-                            color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightOpacity),
-                            radius: 0.5,
-                            y: 1
-                        )
-                    )
+                DesignCanvasSurfaceKernel(
+                    shape: .continuousRoundedRectangle(cornerRadius: Radii.lg),
+                    tier: raised ? .float : .plate,
+                    increasedContrast: contrast == .increased
                 )
             }
-            .clipShape(shape)
             .overlay {
                 shape.strokeBorder(
                     focused
                         ? DuskColors.accent
                         : contrast == .increased
                             ? DuskColors.ink3
-                            : hovered && !quietHoverBorder ? DuskColors.line : DuskColors.lineSoft,
+                            : hovered && !quietHoverBorder ? DuskColors.line : .clear,
                     lineWidth: DesignMetrics.hairline
                 )
-            }
-            .background {
-                ZStack {
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: .black.opacity(
-                            pressed
-                                ? 0.88
-                                : raised
-                                    ? DesignMaterialAdapter.mediaCardHoverBlack
-                                    : DesignMaterialAdapter.mediaCardRestBlack
-                        ),
-                        geometry: pressed
-                            ? DesignMaterialShadowGeometry.slatePressed
-                            : raised
-                                ? DesignMaterialShadowGeometry.mediaCardHover
-                                : DesignMaterialShadowGeometry.plate
-                    )
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: DuskColors.bgSunk.overlaying(
-                            DuskColors.line,
-                            opacity: contactMix
-                        ),
-                        geometry: DesignDropShadowGeometry(
-                            radius: 0,
-                            y: pressed ? 1 : 2,
-                            sourceInset: 1
-                        )
-                    )
-                }
             }
             .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
             .opacity(isEnabled ? 1 : 0.58)
             // Touch-down is immediate; only pointer hover gets a transition.
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: raised)
+            .animation(
+                DesignV2.Motion.animation(
+                    duration: DesignV2.Motion.state,
+                    reduceMotion: reduceMotion
+                ),
+                value: raised
+            )
     }
 }
 
@@ -663,7 +601,15 @@ struct DesignDominantVisualCard<Visual: View>: View {
                         .frame(width: DesignMetrics.dominantAvatarSize, height: DesignMetrics.dominantAvatarSize)
                 }
                 .frame(width: DesignMetrics.dominantVisualSize, height: DesignMetrics.dominantVisualSize)
-                .designWell(cornerRadius: Radii.xl, showsBorder: false, showsInsetHighlights: false)
+                .clipShape(RoundedRectangle(cornerRadius: Radii.xl, style: .continuous))
+                .background {
+                    DesignCompositeWellCanvasBackground(
+                        shape: .continuousRoundedRectangle(cornerRadius: Radii.xl),
+                        isEnabled: true,
+                        isFocused: false,
+                        profile: .standard
+                    )
+                }
 
                 VStack(spacing: DesignMetrics.dominantLabelGap) {
                     Text(title)
@@ -884,7 +830,15 @@ struct DesignPinKeypad: View {
         } else if entered > index {
             Circle().fill(DuskColors.accent)
         } else {
-            DesignWellFace(shape: Circle(), focused: false, showsInsetHighlights: true)
+            Color.clear
+                .background {
+                    DesignCompositeWellCanvasBackground(
+                        shape: .circle,
+                        isEnabled: true,
+                        isFocused: false,
+                        profile: .standard
+                    )
+                }
         }
     }
 
@@ -985,7 +939,11 @@ struct DesignSettingsSelectRow<Value: Hashable>: View {
                     }
                 }
             } label: {
-                menuLabel
+                DesignMenuTriggerLabel(
+                    currentLabel: currentLabel,
+                    isEnabled: true,
+                    width: .fixed(DesignSettingsGroupMetrics.selectWidth)
+                )
             }
             .accessibilityLabel(title)
             .accessibilityValue(currentLabel)
@@ -994,26 +952,10 @@ struct DesignSettingsSelectRow<Value: Hashable>: View {
         }
     }
 
-    private var menuLabel: some View {
-        HStack(spacing: Space.sm) {
-            Text(currentLabel)
-                .font(Typo.ui(DesignMetrics.controlLabelSize))
-                .foregroundStyle(DuskColors.ink)
-                .lineLimit(1)
-            Spacer(minLength: Space.sm)
-            Image(systemName: "chevron.up.chevron.down")
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink2)
-        }
-        .padding(.horizontal, Space.md)
-        .frame(width: DesignSettingsGroupMetrics.selectWidth)
-        .frame(minHeight: DesignMetrics.minimumTarget)
-        .designWell()
-    }
-
     private var currentLabel: String {
         options.first(where: { $0.value == selection })?.label ?? "Select…"
     }
+
 }
 
 struct DesignSettingsSliderRow: View {
@@ -1028,13 +970,15 @@ struct DesignSettingsSliderRow: View {
     var body: some View {
         DesignSettingsRow(title: title, detail: detail) {
             HStack(spacing: Space.md) {
-                Slider(value: $value, in: range, step: step)
-                    .tint(DuskColors.accent)
-                    .frame(minHeight: DesignMetrics.minimumTarget)
-                    .accessibilityLabel(title)
-                    .accessibilityValue(format(value))
-                    .accessibilityHint(detail ?? "")
-                    .accessibilityIdentifier(accessibilityId ?? "")
+                DesignSliderControlBody(
+                    value: $value,
+                    range: range,
+                    step: step,
+                    accessibilityLabel: title,
+                    accessibilityValue: format(value),
+                    accessibilityHint: detail ?? "",
+                    accessibilityId: accessibilityId ?? ""
+                )
                 Text(format(value))
                     .font(Typo.mono(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink2)
@@ -1272,9 +1216,13 @@ struct DesignDisclosureGroup<Header: View, Content: View>: View {
         // The open details well is a background surface, not an interactive
         // layer, so the native header keeps the only disclosure target.
         .background {
-            Color.clear
-                .designWell(cornerRadius: Radii.md, showsBorder: false)
-                .opacity(isExpanded ? 1 : 0)
+            DesignCompositeWellCanvasBackground(
+                shape: .continuousRoundedRectangle(cornerRadius: Radii.md),
+                isEnabled: true,
+                isFocused: false,
+                profile: .standard
+            )
+            .opacity(isExpanded ? 1 : 0)
         }
         .padding(.top, isExpanded ? Space.xs : 0)
         .padding(.bottom, isExpanded ? DesignDisclosureMetrics.expandedBottomMargin : 0)
@@ -1359,6 +1307,121 @@ struct DesignSelectableCard<Content: View>: View {
     }
 }
 
+/// Background-only raised material for decorative composite marks. Native
+/// buttons continue to own interaction state; status and identity marks remain
+/// accessibility-hidden and carry no actions of their own.
+private struct DesignCompositeRaisedCanvasBackground: View {
+    let shape: DesignCanvasShape
+    let role: DesignButtonRole
+    let state: DesignCanvasControlState
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        DesignCanvasKernel(
+            shape: shape,
+            role: role,
+            state: state,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        )
+        .animation(
+            DesignCanvasKernel.transitionAnimation(
+                for: .material,
+                reduceMotion: reduceMotion
+            ),
+            value: state
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Stable projection from native composite state into the decorative well.
+/// The renderer receives only interaction booleans and the reviewed semantic
+/// profile; text, validation messages, and accessibility content remain owned
+/// by the native composite.
+struct DesignCompositeWellCanvasProjection: Equatable {
+    let state: DesignCanvasWellState
+    let increasedContrast: Bool
+    let reduceMotion: Bool
+
+    static func make(
+        isEnabled: Bool,
+        isFocused: Bool,
+        profile: DesignCanvasWellProfile,
+        increasedContrast: Bool,
+        reduceMotion: Bool
+    ) -> DesignCompositeWellCanvasProjection {
+        DesignCompositeWellCanvasProjection(
+            state: DesignCanvasWellState(
+                isFocused: isFocused,
+                isDisabled: !isEnabled,
+                profile: profile
+            ),
+            increasedContrast: increasedContrast,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
+/// Background-only adapter shared by the Wave 2B composite receivers. Native
+/// TextField/TextEditor/Button views remain outside this renderer and retain
+/// responder, selection, keyboard, hit-testing, and accessibility ownership.
+private struct DesignCompositeWellCanvasBackground: View {
+    var shape: DesignCanvasShape = .roundedRectangle(cornerRadius: Radii.sm)
+    let isEnabled: Bool
+    let isFocused: Bool
+    let profile: DesignCanvasWellProfile
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var projection: DesignCompositeWellCanvasProjection {
+        DesignCompositeWellCanvasProjection.make(
+            isEnabled: isEnabled,
+            isFocused: isFocused,
+            profile: profile,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        )
+    }
+
+    var body: some View {
+        DesignCanvasWellKernel(
+            shape: shape,
+            state: projection.state,
+            increasedContrast: projection.increasedContrast,
+            reduceMotion: projection.reduceMotion
+        )
+        .animation(
+            DesignCanvasWellKernel.transitionAnimation(
+                for: .focus,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.isFocused
+        )
+        .animation(
+            DesignCanvasWellKernel.transitionAnimation(
+                for: .material,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.profile
+        )
+        .animation(
+            DesignCanvasWellKernel.transitionAnimation(
+                for: .material,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.isDisabled
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+
 enum ValidatedFieldStatus: Equatable {
     case valid(String)
     case error(String)
@@ -1389,8 +1452,6 @@ private enum ValidatedFieldMetrics {
     static let labelGap: CGFloat = 7
     static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
     static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal) + 18 + DesignMetrics.hairline
-    static let focusCastRadius: CGFloat = 18
-    static let focusCastSourceInset: CGFloat = 14
     static let editorVerticalInset: CGFloat = 3
 }
 
@@ -1416,7 +1477,6 @@ struct ValidatedField: View {
     var submitLabel: SubmitLabel? = nil
     var onSubmit: (() -> Void)? = nil
     var onChange: ((String) -> Void)? = nil
-    @Environment(\.colorSchemeContrast) private var contrast
     @FocusState private var internalFocused: Bool
 
     init(
@@ -1476,6 +1536,10 @@ struct ValidatedField: View {
         focused?.wrappedValue ?? internalFocused
     }
 
+    private var canvasProfile: DesignCanvasWellProfile {
+        resolvedError == nil ? .standard : .validatedError
+    }
+
     private var fieldAccessibilityValue: String {
         if !isEnabled { return "Disabled" }
         if let resolvedError { return "Error: \(resolvedError)" }
@@ -1512,6 +1576,9 @@ struct ValidatedField: View {
                     .accessibilityIdentifier(accessibilityId.map { "\($0)-count" } ?? "")
             }
         }
+        .onChange(of: isFocused) { _, focused in
+            if focused, !isEnabled { setFocus(false) }
+        }
     }
 
     private var label: some View {
@@ -1545,9 +1612,16 @@ struct ValidatedField: View {
             .padding(.horizontal, Space.md + DesignMetrics.hairline)
             .frame(minHeight: ValidatedFieldMetrics.visualHeight)
             .lineLimit(1)
-            .designWell(focused: false, error: false)
-            .background { stateBackground }
-            .overlay { stateOverlay }
+            // Keep native glyphs inside the authored face while the later
+            // background remains free to draw its transparent focus overflow.
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
+            .background {
+                DesignCompositeWellCanvasBackground(
+                    isEnabled: isEnabled,
+                    isFocused: isFocused,
+                    profile: canvasProfile
+                )
+            }
             .frame(minHeight: DesignMetrics.minimumTarget)
             .contentShape(Rectangle())
             .disabled(!isEnabled)
@@ -1577,18 +1651,14 @@ struct ValidatedField: View {
                 focusableMultiline
             }
             .frame(height: DesignMetrics.multilineEditorMinHeight)
-            .designWell(
-                focused: false,
-                error: false,
-                showsBorder: false
-            )
-            .background { stateBackground }
-            .overlay {
-                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                    .strokeBorder(multilineBorderColor, lineWidth: DesignMetrics.hairline)
-                    .allowsHitTesting(false)
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
+            .background {
+                DesignCompositeWellCanvasBackground(
+                    isEnabled: isEnabled,
+                    isFocused: isFocused,
+                    profile: canvasProfile
+                )
             }
-            .overlay { focusOverlay }
         }
     }
 
@@ -1616,85 +1686,11 @@ struct ValidatedField: View {
             .accessibilityIdentifier(accessibilityId ?? "")
     }
 
-    private var multilineBorderColor: Color {
-        if resolvedError != nil {
-            return DuskColors.stop.overlaying(DuskColors.line, opacity: 0.30)
-        }
-        if isFocused {
-            return DuskColors.accent.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.wellFocusMix
-            )
-        }
-        return contrast == .increased ? DuskColors.ink3 : DuskColors.line
-    }
-
-    private var stateBorderColor: Color {
-        resolvedError == nil
-            ? DuskColors.line
-            : DuskColors.stop.overlaying(DuskColors.line, opacity: 0.30)
-    }
-
-    @ViewBuilder
-    private var stateBackground: some View {
-        if resolvedError != nil {
-            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                .stroke(DuskColors.stop.opacity(0.14), lineWidth: DesignMetrics.focusRing)
-                .padding(-(DesignMetrics.focusRing / 2))
-        }
-        focusBackground
-    }
-
-    @ViewBuilder
-    private var stateOverlay: some View {
-        if resolvedError != nil {
-            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                .stroke(stateBorderColor, lineWidth: DesignMetrics.hairline)
-                .allowsHitTesting(false)
-        }
-        focusOverlay
-    }
-
-    @ViewBuilder
-    private var focusBackground: some View {
-        if isFocused {
-            let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-            ZStack {
-                shape.stroke(
-                    DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
-                    lineWidth: DesignMetrics.focusRing * 2
-                )
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
-                    geometry: DesignDropShadowGeometry(
-                        radius: ValidatedFieldMetrics.focusCastRadius,
-                        y: DesignMaterialAdapter.wellFocusCastY,
-                        sourceInset: ValidatedFieldMetrics.focusCastSourceInset
-                    )
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var focusOverlay: some View {
-        if isFocused {
-            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                .stroke(
-                    DuskColors.accent.overlaying(
-                        DuskColors.line,
-                        opacity: DesignMaterialAdapter.wellFocusMix
-                    ),
-                    lineWidth: DesignMetrics.hairline
-                )
-            RoundedRectangle(
-                cornerRadius: Radii.sm + DesignMetrics.focusRing,
-                style: .continuous
-            )
-            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
-            .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
-            .allowsHitTesting(false)
+    private func setFocus(_ value: Bool) {
+        if let focused {
+            focused.wrappedValue = value
+        } else {
+            internalFocused = value
         }
     }
 
@@ -1702,10 +1698,15 @@ struct ValidatedField: View {
         Binding(
             get: { text },
             set: { newValue in
-                let capped = maxLength.map { String(newValue.prefix($0)) } ?? newValue
-                text = capped
+                guard isEnabled else { return }
+                text = Self.cappedText(newValue, maxLength: maxLength)
             }
         )
+    }
+
+    static func cappedText(_ text: String, maxLength: Int?) -> String {
+        guard let maxLength, text.count > maxLength else { return text }
+        return String(text.prefix(maxLength))
     }
 }
 
@@ -1759,12 +1760,11 @@ private enum DesignSearchFieldMetrics {
     static let labelGap: CGFloat = 7
     static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
     // The browser's 40px minimum grows to its inherited line box plus vertical
-    // padding. SwiftUI's centered hairline supplies the second CSS border edge.
+    // padding. Keep this 42.25pt painted face distinct from its 44pt semantic
+    // target, including when the real 44pt clear Button is present.
     static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal)
         + 18
         + DesignMetrics.hairline
-    static let focusCastRadius: CGFloat = 18
-    static let focusCastSourceInset: CGFloat = 14
 }
 
 struct DesignSearchField: View {
@@ -1779,6 +1779,7 @@ struct DesignSearchField: View {
     var showsTitle = true
     var showsSearchIcon = false
     var focused: FocusState<Bool>.Binding? = nil
+    @Environment(\.isEnabled) private var isEnabled
     @FocusState private var internalFocused: Bool
 
     init(
@@ -1821,9 +1822,11 @@ struct DesignSearchField: View {
             }
             fieldSurface
         }
+        .onChange(of: isEnabled) { _, enabled in
+            if !enabled { setFocus(false) }
+        }
     }
 
-    @ViewBuilder
     private var fieldSurface: some View {
         HStack(spacing: Space.sm) {
             if showsSearchIcon {
@@ -1833,66 +1836,43 @@ struct DesignSearchField: View {
                     .accessibilityHidden(true)
             }
             focusableInput
-            if let onClear, !query.isEmpty {
-                DesignCompactIconButton(
-                    systemName: "xmark.circle.fill",
-                    label: "Clear search",
-                    accessibilityId: accessibilityId.map { "\($0)-clear" },
-                    action: onClear
-                )
-                .foregroundStyle(DuskColors.ink3)
-            }
         }
+        // Reserve the same HStack spacing and clear target width without
+        // allowing that 44pt target to determine the receiver's face height.
+        .padding(.trailing, showsClearButton ? DesignMetrics.minimumTarget + Space.sm : 0)
         .padding(.leading, leadingPadding)
         .padding(.trailing, trailingPadding)
         .frame(minHeight: DesignSearchFieldMetrics.visualHeight)
-        .designWell(focused: false)
-        .background { focusBackground }
-        .overlay { focusOverlay }
+        .background {
+            DesignCompositeWellCanvasBackground(
+                isEnabled: isEnabled,
+                isFocused: isFocused,
+                profile: .standard
+            )
+        }
+        .overlay(alignment: .trailing) {
+            if let onClear, showsClearButton {
+                clearButton(action: onClear)
+                    .padding(.trailing, trailingPadding)
+            }
+        }
         .frame(minHeight: DesignMetrics.minimumTarget)
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
-    private var focusBackground: some View {
-        if isFocused {
-            let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-            ZStack {
-                shape.stroke(
-                    DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
-                    lineWidth: DesignMetrics.focusRing * 2
-                )
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
-                    geometry: DesignDropShadowGeometry(
-                        radius: DesignSearchFieldMetrics.focusCastRadius,
-                        y: DesignMaterialAdapter.wellFocusCastY,
-                        sourceInset: DesignSearchFieldMetrics.focusCastSourceInset
-                    )
-                )
-            }
-        }
+    private var showsClearButton: Bool {
+        onClear != nil && !query.isEmpty
     }
 
     @ViewBuilder
-    private var focusOverlay: some View {
-        if isFocused {
-            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                .stroke(
-                    DuskColors.accent.overlaying(
-                        DuskColors.line,
-                        opacity: DesignMaterialAdapter.wellFocusMix
-                    ),
-                    lineWidth: DesignMetrics.hairline
-                )
-            RoundedRectangle(
-                cornerRadius: Radii.sm + DesignMetrics.focusRing,
-                style: .continuous
-            )
-            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
-            .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
-        }
+    private func clearButton(action: @escaping () -> Void) -> some View {
+        DesignCompactIconButton(
+            systemName: "xmark.circle.fill",
+            label: "Clear search",
+            accessibilityId: accessibilityId.map { "\($0)-clear" },
+            action: action
+        )
+        .foregroundStyle(DuskColors.ink3)
     }
 
     @ViewBuilder
@@ -1901,6 +1881,14 @@ struct DesignSearchField: View {
             input.focused(focused)
         } else {
             input.focused($internalFocused)
+        }
+    }
+
+    private func setFocus(_ value: Bool) {
+        if let focused {
+            focused.wrappedValue = value
+        } else {
+            internalFocused = value
         }
     }
 
@@ -1913,6 +1901,7 @@ struct DesignSearchField: View {
         .font(textFont)
         .foregroundStyle(DuskColors.ink)
         .textFieldStyle(.plain)
+        .frame(maxWidth: .infinity)
         .submitLabel(.search)
         .accessibilityLabel(title)
         .accessibilityValue(query.isEmpty ? "Empty" : query)
@@ -1923,7 +1912,6 @@ struct DesignSearchField: View {
 private enum DesignFilterBarMetrics {
     static let minimumSearchWidth: CGFloat = 220
     static let menuWidth: CGFloat = 170
-    static let menuVisualHeight: CGFloat = 42
 }
 
 struct DesignFilterMenu<Value: Hashable>: View {
@@ -1946,24 +1934,11 @@ struct DesignFilterMenu<Value: Hashable>: View {
                 }
             }
         } label: {
-            HStack(spacing: Space.md) {
-                Text(currentLabel)
-                    .font(Typo.ui(DesignMetrics.controlLabelSize))
-                    .foregroundStyle(DuskColors.ink)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down")
-                    .font(Typo.ui(TypeScale.sm, .medium))
-                    .foregroundStyle(DuskColors.ink2)
-            }
-            .padding(.horizontal, Space.md)
-            .frame(
-                minWidth: DesignFilterBarMetrics.menuWidth,
-                maxWidth: .infinity,
-                minHeight: DesignFilterBarMetrics.menuVisualHeight
+            DesignMenuTriggerLabel(
+                currentLabel: currentLabel,
+                isEnabled: true,
+                width: .flexible(minimum: DesignFilterBarMetrics.menuWidth)
             )
-            .designWell()
-            .frame(minHeight: DesignMetrics.minimumTarget)
         }
         .accessibilityLabel(title)
         .accessibilityValue(currentLabel)
@@ -1973,6 +1948,7 @@ struct DesignFilterMenu<Value: Hashable>: View {
     private var currentLabel: String {
         options.first(where: { $0.value == selection })?.label ?? "Not selected"
     }
+
 }
 
 struct SearchFilterRow<PrimaryFilter: View, Filters: View>: View {
@@ -2076,7 +2052,12 @@ private struct AsyncEmptyMark: View {
             .foregroundStyle(DuskColors.ink3)
             .frame(width: AsyncNoticeMetrics.emptyMarkSize, height: AsyncNoticeMetrics.emptyMarkSize)
             .background {
-                DesignWellFace(shape: Circle(), focused: false, showsInsetHighlights: true)
+                DesignCompositeWellCanvasBackground(
+                    shape: .circle,
+                    isEnabled: true,
+                    isFocused: false,
+                    profile: .standard
+                )
             }
             .accessibilityHidden(true)
     }
@@ -2139,11 +2120,8 @@ private enum DesignNoticeMetrics {
     static let contentGap: CGFloat = 13
     static let compactActionGap: CGFloat = 13
     static let iconSize: CGFloat = 38
-    static let iconRadialRadius: CGFloat = 19
     static let noticeAuraCenter: CGFloat = 58
     static let noticeAuraRadius: CGFloat = 150
-    static let iconCastOpacity: Double = 0.90
-    static let iconContactMix: Double = 0.12
     // The source title inherits 1.55 line height at 14px; its detail sets a
     // slightly tighter 1.45 line height at the supporting 12.5px size.
     static let titleLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
@@ -2161,9 +2139,6 @@ private struct DesignNoticeRecipe {
     let aura: Double
     let leading: Double
     let tail: Double
-    let face: Double
-    let edge: Double
-    let cast: Double
 }
 
 /// Native equivalent of the reviewed responsive notice grid. A custom Layout
@@ -2347,69 +2322,21 @@ private struct DesignNoticeLayout: Layout {
 private struct DesignNoticeIcon: View {
     let kind: DesignNoticeKind
     let recipe: DesignNoticeRecipe
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-        ZStack {
-            shape.fill(
-                LinearGradient(
-                    colors: [
-                        DuskColors.paper.overlaying(recipe.color, opacity: recipe.face),
-                        DuskColors.paper.overlaying(recipe.color, opacity: 0.08),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            shape.fill(
-                RadialGradient(
-                    colors: [
-                        DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.34),
-                        .clear,
-                    ],
-                    center: UnitPoint(x: 0.5, y: 0.58),
-                    startRadius: 0,
-                    endRadius: DesignNoticeMetrics.iconRadialRadius
-                )
-            )
-            glyph
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(recipe.color.overlaying(DuskColors.ink, opacity: 0.12))
-                .accessibilityHidden(true)
-        }
-        .frame(width: DesignNoticeMetrics.iconSize, height: DesignNoticeMetrics.iconSize)
-        .clipShape(shape)
-        .overlay {
-            shape.strokeBorder(
-                contrast == .increased
-                    ? DuskColors.ink3
-                    : recipe.color.overlaying(DuskColors.line, opacity: 1 - recipe.edge),
-                lineWidth: DesignMetrics.hairline
-            )
-        }
-        .background {
-            ZStack {
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: recipe.color.opacity(recipe.cast),
-                    geometry: DesignMaterialShadowGeometry.slateGlow
-                )
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: .black.opacity(DesignNoticeMetrics.iconCastOpacity),
-                    geometry: DesignMaterialShadowGeometry.slateRest
-                )
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: DuskColors.bgSunk.overlaying(
-                        DuskColors.line,
-                        opacity: DesignNoticeMetrics.iconContactMix
-                    ),
-                    geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+        glyph
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(recipe.color.overlaying(DuskColors.ink, opacity: 0.12))
+            .frame(width: DesignNoticeMetrics.iconSize, height: DesignNoticeMetrics.iconSize)
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
+            .background {
+                DesignCompositeRaisedCanvasBackground(
+                    shape: .continuousRoundedRectangle(cornerRadius: Radii.sm),
+                    role: kind == .error ? .destructive : .quiet,
+                    state: kind == .error ? .rest : .disabled
                 )
             }
-        }
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -2443,17 +2370,17 @@ struct AsyncNotice: View {
     private var recipe: DesignNoticeRecipe {
         switch kind {
         case .info:
-            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.12, leading: 0.10, tail: 0.03, face: 0.16, edge: 0.42, cast: 0.42)
+            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.12, leading: 0.10, tail: 0.03)
         case .warning:
-            DesignNoticeRecipe(color: DuskColors.amber, aura: 0.24, leading: 0.22, tail: 0.08, face: 0.30, edge: 0.60, cast: 0.68)
+            DesignNoticeRecipe(color: DuskColors.amber, aura: 0.24, leading: 0.22, tail: 0.08)
         case .error:
-            DesignNoticeRecipe(color: DuskColors.stop, aura: 0.21, leading: 0.19, tail: 0.07, face: 0.27, edge: 0.56, cast: 0.62)
+            DesignNoticeRecipe(color: DuskColors.stop, aura: 0.21, leading: 0.19, tail: 0.07)
         case .loading:
-            DesignNoticeRecipe(color: DuskColors.accent, aura: 0.08, leading: 0.06, tail: 0.02, face: 0.12, edge: 0.36, cast: 0.40)
+            DesignNoticeRecipe(color: DuskColors.accent, aura: 0.08, leading: 0.06, tail: 0.02)
         case .empty:
-            DesignNoticeRecipe(color: DuskColors.ink3, aura: 0, leading: 0, tail: 0, face: 0.08, edge: 0.30, cast: 0.20)
+            DesignNoticeRecipe(color: DuskColors.ink3, aura: 0, leading: 0, tail: 0)
         case .success:
-            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.10, leading: 0.08, tail: 0.02, face: 0.12, edge: 0.36, cast: 0.38)
+            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.10, leading: 0.08, tail: 0.02)
         }
     }
 

@@ -174,9 +174,17 @@ struct FloatingViewBar: View {
         .background(.ultraThinMaterial, in: Capsule())
         .background(DuskColors.paper.opacity(CalendarSurfaceLayout.floatingPaperOpacity), in: Capsule())
         .overlay(Capsule().stroke(DuskColors.line))
-        .shadow(color: DuskColors.bg.opacity(CalendarSurfaceLayout.floatingShadowOpacity),
-                radius: CalendarSurfaceLayout.floatingShadowRadius,
-                y: CalendarSurfaceLayout.floatingShadowY)
+        .background {
+            CalendarCanvasOuterShadow(
+                shape: Capsule(),
+                color: DuskColors.bg.opacity(CalendarSurfaceLayout.floatingShadowOpacity),
+                geometry: DesignDropShadowGeometry(
+                    radius: CalendarSurfaceLayout.floatingShadowRadius,
+                    y: CalendarSurfaceLayout.floatingShadowY,
+                    sourceInset: 0
+                )
+            )
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Calendar view")
         .accessibilityIdentifier("calendar-floating-view-bar-46")
@@ -205,5 +213,50 @@ extension CalendarView {
         case .month: "Month"
         case .year: "Year"
         }
+    }
+}
+
+/// Calendar's translucent capsule and top-only sheet cannot use the shared
+/// opaque rounded-rectangle float without changing their reviewed contours.
+/// This decorative Canvas preserves each surface's existing shadow geometry
+/// while leaving its native material, clipping, input, and accessibility owner intact.
+struct CalendarCanvasOuterShadow<S: InsettableShape>: View {
+    let shape: S
+    let color: Color
+    let geometry: DesignDropShadowGeometry
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow = DesignCanvasGeometry.shadowExtent(geometry)
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                var shadow = context
+                shadow.addFilter(.shadow(
+                    color: color,
+                    radius: geometry.radius,
+                    x: geometry.x,
+                    y: geometry.y,
+                    blendMode: .normal,
+                    options: [.shadowOnly]
+                ))
+                shadow.fill(
+                    shape.inset(by: geometry.sourceInset).path(in: faceRect),
+                    with: .color(.white)
+                )
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

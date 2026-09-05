@@ -15,6 +15,93 @@ private enum DesignFieldMetrics {
     static let focusCastSourceInset: CGFloat = 14
 }
 
+/// Projects only authority-approved, non-error native field states into the
+/// decorative Canvas well. Error-present states deliberately return no
+/// projection: generic field error/focus precedence has no reviewed authority,
+/// so each wrapper keeps its complete legacy rendering branch instead of
+/// mixing legacy and Canvas chrome in one state.
+struct DesignTextFieldCanvasProjection: Equatable {
+    let state: DesignCanvasWellState
+    let increasedContrast: Bool
+    let reduceMotion: Bool
+
+    static func make(
+        isEnabled: Bool,
+        isFocused: Bool,
+        hasError: Bool,
+        increasedContrast: Bool,
+        reduceMotion: Bool
+    ) -> DesignTextFieldCanvasProjection? {
+        guard !hasError else { return nil }
+        return DesignTextFieldCanvasProjection(
+            state: DesignCanvasWellState(
+                isFocused: isFocused,
+                isDisabled: !isEnabled
+            ),
+            increasedContrast: increasedContrast,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
+/// Background-only adapter. Native TextField, SecureField, and TextEditor
+/// views continue to own content, focus, keyboard, selection, hit testing, and
+/// accessibility; this view paints only the measured face behind them.
+private struct DesignTextFieldCanvasBackground: View {
+    let isEnabled: Bool
+    let isFocused: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder
+    var body: some View {
+        if let projection = DesignTextFieldCanvasProjection.make(
+            isEnabled: isEnabled,
+            isFocused: isFocused,
+            hasError: false,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        ) {
+            DesignCanvasWellKernel(
+                shape: .roundedRectangle(cornerRadius: Radii.sm),
+                state: projection.state,
+                increasedContrast: projection.increasedContrast,
+                reduceMotion: projection.reduceMotion
+            )
+            .animation(
+                DesignCanvasWellKernel.transitionAnimation(
+                    for: .focus,
+                    reduceMotion: projection.reduceMotion
+                ),
+                value: projection.state.isFocused
+            )
+            .animation(
+                DesignCanvasWellKernel.transitionAnimation(
+                    for: .material,
+                    reduceMotion: projection.reduceMotion
+                ),
+                value: projection.state.isDisabled
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+/// Canvas error well mounted behind a stable native editor. Error transitions
+/// therefore change only decorative state, never responder or selection identity.
+private struct DesignTextFieldErrorCanvasBackground: View {
+    let focused: Bool
+
+    var body: some View {
+        Color.clear
+            .designWell(focused: focused, error: true)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 struct DesignField: View {
     let title: String
     var prompt: String = ""
@@ -145,55 +232,18 @@ struct DesignField: View {
     private var surfacedInput: some View {
         baseInput
             .lineLimit(lineLimit)
-            // Keep the shared well face and rest construction. Its focused
-            // cast uses a native blur without CSS's negative spread, so the
-            // field supplies that one focused layer through the shared
-            // spread-shadow renderer below.
-            .designWell(focused: false, error: error != nil)
+            // Keep native content clipped to the authored face without
+            // clipping Canvas focus overflow mounted by the later background.
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
             .background {
-                if isFocused {
-                    ZStack {
-                        // The focused well has the source's positive three-pixel
-                        // spread behind the native outline. A six-point stroke
-                        // supplies that outside ring while the well face covers
-                        // its inward half.
-                        RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                            .stroke(
-                                DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
-                                lineWidth: DesignMetrics.focusRing * 2
-                            )
-                        DesignSpreadShadow(
-                            shape: RoundedRectangle(cornerRadius: Radii.sm, style: .continuous),
-                            color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
-                            geometry: DesignDropShadowGeometry(
-                                radius: DesignFieldMetrics.focusCastRadius,
-                                y: DesignMaterialAdapter.wellFocusCastY,
-                                sourceInset: DesignFieldMetrics.focusCastSourceInset
-                            )
-                        )
-                    }
-                }
-            }
-            .overlay {
-                if isFocused {
-                    RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                        .stroke(
-                            DuskColors.accent.overlaying(
-                                DuskColors.line,
-                                opacity: DesignMaterialAdapter.wellFocusMix
-                            ),
-                            lineWidth: DesignMetrics.hairline
-                        )
-                }
-                // The web field's keyboard-focus outline is a 2px ember
-                // stroke with a 3px outside offset; native focus supplies the
-                // same cue without changing the control's hit target.
-                RoundedRectangle(cornerRadius: Radii.sm + DesignMetrics.focusRing, style: .continuous)
-                    .stroke(
-                        isFocused ? DuskColors.accent : .clear,
-                        lineWidth: DesignMetrics.focusBorder
+                if error != nil {
+                    DesignTextFieldErrorCanvasBackground(focused: isFocused)
+                } else {
+                    DesignTextFieldCanvasBackground(
+                        isEnabled: isEnabled,
+                        isFocused: isFocused
                     )
-                    .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+                }
             }
             .frame(minHeight: semanticHeight)
             .contentShape(Rectangle())
@@ -234,6 +284,7 @@ struct DesignSecureField: View {
     var accessibilityId: String? = nil
     var isEnabled = true
     @State private var revealed = false
+    @State private var restoreFocusAfterReveal = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -241,32 +292,83 @@ struct DesignSecureField: View {
             Text(title)
                 .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                 .foregroundStyle(DuskColors.ink)
-            HStack(spacing: Space.sm) {
-                Group {
-                    if revealed { TextField(prompt, text: $text) }
-                    else { SecureField(prompt, text: $text) }
-                }
-                .font(Typo.ui(TypeScale.base))
-                .textFieldStyle(.plain)
-                .focused($focused)
-                .disabled(!isEnabled)
-                .accessibilityLabel(title)
-                .accessibilityValue(Self.accessibilityValue(text: text, isEnabled: isEnabled, error: error, revealed: revealed))
-                .accessibilityHint(!isEnabled ? "Disabled" : (revealed ? "Value is visible" : "Value is hidden"))
-                .accessibilityIdentifier(accessibilityId ?? "")
-                DesignIconButton(
-                    systemName: revealed ? "eye.slash" : "eye",
-                    label: revealed ? "Hide value" : "Show value",
-                    state: isEnabled ? .normal : .disabled,
-                    action: { revealed.toggle() }
-                )
-            }
-            .padding(.leading, Space.md)
-            .designWell(focused: focused, error: error != nil)
+            surfacedContent
             if let error {
                 designFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
             }
         }
+    }
+
+    private var nativeContent: some View {
+        HStack(spacing: Space.sm) {
+            Group {
+                if revealed { TextField(prompt, text: $text) }
+                else { SecureField(prompt, text: $text) }
+            }
+            .font(Typo.ui(TypeScale.base))
+            .textFieldStyle(.plain)
+            .focused($focused)
+            .disabled(!isEnabled)
+            .accessibilityLabel(title)
+            .accessibilityValue(fieldAccessibilityValue)
+            .accessibilityHint(!isEnabled ? "Disabled" : (revealed ? "Value is visible" : "Value is hidden"))
+            .accessibilityIdentifier(accessibilityId ?? "")
+            DesignIconButton(
+                systemName: revealed ? "eye.slash" : "eye",
+                label: revealed ? "Hide value" : "Show value",
+                state: isEnabled ? .normal : .disabled,
+                accessibilityId: accessibilityId.map { "\($0)-reveal" },
+                action: toggleReveal
+            )
+        }
+        .padding(.leading, Space.md)
+        // This is the clip formerly supplied by the legacy well modifier.
+        // It is stable across reveal and error transitions.
+        .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
+        .task(id: revealed) {
+            guard restoreFocusAfterReveal else { return }
+            await Task.yield()
+            guard isEnabled else {
+                restoreFocusAfterReveal = false
+                return
+            }
+            focused = true
+            restoreFocusAfterReveal = false
+        }
+    }
+
+    private var surfacedContent: some View {
+        nativeContent
+            .background {
+                if error != nil {
+                    // Authority-gated compatibility exception: retain the
+                    // complete legacy error/focus chrome with no Canvas layer.
+                    DesignTextFieldErrorCanvasBackground(focused: focused)
+                } else {
+                    DesignTextFieldCanvasBackground(
+                        isEnabled: isEnabled,
+                        isFocused: focused
+                    )
+                }
+            }
+    }
+
+    private func toggleReveal() {
+        let shouldRestoreFocus = focused && isEnabled
+        if shouldRestoreFocus {
+            restoreFocusAfterReveal = true
+            focused = false
+        }
+        revealed.toggle()
+    }
+
+    private var fieldAccessibilityValue: String {
+        Self.accessibilityValue(
+            text: text,
+            isEnabled: isEnabled,
+            error: error,
+            revealed: revealed
+        )
     }
 
     /// Keeps hidden credentials content-free to assistive technologies. A raw
@@ -297,24 +399,59 @@ struct DesignMaskedField: View {
             Text(title)
                 .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                 .foregroundStyle(DuskColors.ink)
-            SecureField(prompt, text: $text)
-                .font(Typo.ui(TypeScale.base))
-                .textFieldStyle(.plain)
-                .keyboardType(keyboard)
-                .padding(.horizontal, Space.md)
-                .frame(minHeight: DesignMetrics.minimumTarget)
-                .designWell(focused: focused, error: error != nil)
-                .focused($focused)
-                .disabled(!isEnabled)
-                .accessibilityLabel(title)
-                .accessibilityValue(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? (text.isEmpty ? "Empty" : "Value entered"))
-                .accessibilityHint(!isEnabled ? "Disabled" : (error.map { "Error: \($0)" } ?? "Value is hidden"))
-                .accessibilityIdentifier(accessibilityId ?? "")
+            focusableField
             if let error {
                 designFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
             }
         }
         .task { if autoFocus { focused = true } }
+    }
+
+    private var nativeField: some View {
+        SecureField(prompt, text: $text)
+            .font(Typo.ui(TypeScale.base))
+            .textFieldStyle(.plain)
+            .keyboardType(keyboard)
+            .padding(.horizontal, Space.md)
+            .frame(minHeight: DesignMetrics.minimumTarget)
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
+    }
+
+    private var surfacedField: some View {
+        nativeField
+            .background {
+                if error != nil {
+                    // Authority-gated compatibility exception: retain the
+                    // complete legacy error/focus chrome with no Canvas layer.
+                    DesignTextFieldErrorCanvasBackground(focused: focused)
+                } else {
+                    DesignTextFieldCanvasBackground(
+                        isEnabled: isEnabled,
+                        isFocused: focused
+                    )
+                }
+            }
+    }
+
+    private var focusableField: some View {
+        surfacedField
+            .focused($focused)
+            .disabled(!isEnabled)
+            .accessibilityLabel(title)
+            .accessibilityValue(Self.accessibilityValue(
+                text: text,
+                isEnabled: isEnabled,
+                error: error
+            ))
+            .accessibilityHint(!isEnabled ? "Disabled" : (error.map { "Error: \($0)" } ?? "Value is hidden"))
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    /// Write-only fields never expose entered content through accessibility.
+    static func accessibilityValue(text: String, isEnabled: Bool, error: String?) -> String {
+        guard isEnabled else { return "Disabled" }
+        if let error { return "Error: \(error)" }
+        return text.isEmpty ? "Empty" : "Value entered"
     }
 }
 
@@ -338,7 +475,6 @@ struct DesignMultilineEditor: View {
     /// Callers may own focus when a flow needs to move focus explicitly;
     /// otherwise the editor keeps its own native FocusState.
     var focused: FocusState<Bool>.Binding? = nil
-    @Environment(\.colorSchemeContrast) private var contrast
     /// Text areas use the UI face by default; mono remains available to the
     /// compatibility editor used for system-style text.
     var usesMonospacedText = false
@@ -372,17 +508,6 @@ struct DesignMultilineEditor: View {
 
     private var editorFont: Font {
         usesMonospacedText ? Typo.mono(TypeScale.sm) : Typo.ui(TypeScale.base)
-    }
-
-    private var wellBorderColor: Color {
-        if error != nil { return DuskColors.stop }
-        if isFocused {
-            return DuskColors.accent.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.wellFocusMix
-            )
-        }
-        return contrast == .increased ? DuskColors.ink3 : DuskColors.line
     }
 
     private var editor: some View {
@@ -423,62 +548,7 @@ struct DesignMultilineEditor: View {
                         alignment: .topLeading
                     )
             }
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty, let placeholder {
-                    Text(placeholder)
-                        .font(editorFont)
-                        .foregroundStyle(DuskColors.ink4)
-                        .padding(.horizontal, DesignMetrics.editorPlaceholderInsetH)
-                        .padding(.vertical, DesignMetrics.editorPlaceholderInsetV)
-                        .allowsHitTesting(false)
-                }
-                focusableEditor
-            }
-            // TextEditor has a larger intrinsic height than the foundation
-            // field. Give the well its authored visual height and let the
-            // native editor scroll when its content needs more room.
-            .frame(height: DesignMetrics.multilineEditorMinHeight)
-            // Keep the shared face, inset, and contact layers, but replace
-            // its generic focus blur with the source's negative-spread cast.
-            .designWell(
-                focused: false,
-                error: error != nil,
-                showsBorder: false
-            )
-            .background {
-                if isFocused {
-                    DesignSpreadShadow(
-                        shape: RoundedRectangle(cornerRadius: Radii.sm, style: .continuous),
-                        color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
-                        geometry: DesignDropShadowGeometry(
-                            radius: 18,
-                            y: DesignMaterialAdapter.wellFocusCastY,
-                            sourceInset: 14
-                        )
-                    )
-                }
-            }
-            .overlay {
-                if isFocused {
-                    RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                        .stroke(DuskColors.accent.opacity(0.18), lineWidth: 6)
-                        .padding(-3)
-                }
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
-                    .strokeBorder(wellBorderColor, lineWidth: DesignMetrics.hairline)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: Radii.sm + DesignMetrics.focusRing, style: .continuous)
-                    .stroke(
-                        isFocused ? DuskColors.accent : .clear,
-                        lineWidth: DesignMetrics.focusBorder
-                    )
-                    .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
-                    .allowsHitTesting(false)
-            }
+            surfacedEditor
             if let maxLength {
                 Text("\(text.count) / \(maxLength)")
                     .font(Typo.mono(TypeScale.xs))
@@ -491,18 +561,63 @@ struct DesignMultilineEditor: View {
                 designFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
             }
         }
+        .onChange(of: isFocused) { _, focused in
+            if focused, !isEnabled { setFocus(false) }
+        }
+    }
+
+    private var nativeEditorContent: some View {
+        ZStack(alignment: .topLeading) {
+            if text.isEmpty, let placeholder {
+                Text(placeholder)
+                    .font(editorFont)
+                    .foregroundStyle(DuskColors.ink4)
+                    .padding(.horizontal, DesignMetrics.editorPlaceholderInsetH)
+                    .padding(.vertical, DesignMetrics.editorPlaceholderInsetV)
+                    .allowsHitTesting(false)
+            }
+            focusableEditor
+        }
+        // TextEditor has a larger intrinsic height than the foundation field.
+        // Keep its authored face height and native scrolling behavior.
+        .frame(height: DesignMetrics.multilineEditorMinHeight)
+    }
+
+    private var surfacedEditor: some View {
+        nativeEditorContent
+            .clipShape(RoundedRectangle(cornerRadius: Radii.sm, style: .continuous))
+            .background {
+                if error != nil {
+                    DesignTextFieldErrorCanvasBackground(focused: isFocused)
+                } else {
+                    DesignTextFieldCanvasBackground(
+                        isEnabled: isEnabled,
+                        isFocused: isFocused
+                    )
+                }
+            }
+    }
+
+    private func setFocus(_ value: Bool) {
+        if let focused {
+            focused.wrappedValue = value
+        } else {
+            internalFocused = value
+        }
     }
 
     private var cappedBinding: Binding<String> {
         Binding(
             get: { text },
             set: { newValue in
-                guard let maxLength, newValue.count > maxLength else {
-                    text = newValue
-                    return
-                }
-                text = String(newValue.prefix(maxLength))
+                guard isEnabled else { return }
+                text = Self.cappedText(newValue, maxLength: maxLength)
             }
         )
+    }
+
+    static func cappedText(_ text: String, maxLength: Int?) -> String {
+        guard let maxLength, text.count > maxLength else { return text }
+        return String(text.prefix(maxLength))
     }
 }

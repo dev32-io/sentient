@@ -99,16 +99,7 @@ struct ConnectionBanner: View {
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
-        .background {
-            // Warm warn-tint pill: a translucent warn fill over the bg pill,
-            // approximating webui color-mix(in oklab, warn 18%, bg).
-            ZStack {
-                Capsule().fill(DuskColors.bg)
-                Capsule().fill(DuskColors.warn.opacity(BannerStyle.warnTint))
-            }
-        }
-        .overlay(Capsule().stroke(DuskColors.line, lineWidth: 1))
-        .shadow(color: .black.opacity(BannerStyle.shadowOpacity), radius: BannerStyle.shadowRadius, y: 6)
+        .background { ConnectionBannerSurface(kind: .error) }
         // NOT .combine: the reconnect Button must stay independently addressable
         // (connection-reconnect) for taps + tests; .contain keeps the container
         // identified while preserving child elements.
@@ -129,19 +120,45 @@ struct ConnectionBanner: View {
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
-        .background(DuskColors.bgElev, in: Capsule())
-        .overlay(Capsule().stroke(DuskColors.line, lineWidth: 1))
-        .shadow(color: .black.opacity(BannerStyle.shadowOpacity), radius: BannerStyle.shadowRadius, y: 6)
+        .background { ConnectionBannerSurface(kind: .info) }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("connection-reconnecting")
     }
 }
 
-private enum BannerStyle {
-    /// Warn-color tint over the bg pill (webui uses color-mix warn 18%).
-    static let warnTint: Double = 0.18
-    static let shadowOpacity: Double = 0.35
-    static let shadowRadius: CGFloat = 18
+private struct ConnectionBannerSurface: View {
+    let kind: DesignNoticeKind
+
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var tint: Color {
+        kind == .error ? DuskColors.stop : DuskColors.sage
+    }
+
+    private var tintStrength: (leading: Double, trailing: Double) {
+        kind == .error ? (0.19, 0.07) : (0.10, 0.03)
+    }
+
+    var body: some View {
+        DesignCanvasSurfaceKernel(
+            shape: .capsule,
+            tier: .float,
+            increasedContrast: contrast == .increased
+        )
+        .overlay {
+            LinearGradient(
+                colors: [
+                    tint.opacity(tintStrength.leading),
+                    tint.opacity(tintStrength.trailing)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .clipShape(Capsule())
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
 }
 
 // ── Host modifier ───────────────────────────────────────────────────────────

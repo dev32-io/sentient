@@ -351,13 +351,6 @@ struct QAFoundationCatalog: View {
 
     private var controlsSection: some View {
         catalogSection(.controls) {
-            QACatalogSpecimen(
-                "One-pass icon renderer comparison",
-                contract: "Canvas · Core Graphics"
-            ) {
-                QAIconRendererComparison()
-            }
-
             QACatalogSpecimen("Action buttons", contract: "DesignActionButton") {
                 VStack(spacing: Space.sm) {
                     HStack(spacing: Space.sm) {

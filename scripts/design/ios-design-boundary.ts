@@ -54,6 +54,7 @@ const transitionalPaths = new Set(IOS_DESIGN_TRANSITIONAL_ALLOWLIST.map((entry) 
 /** Exact files that are allowed to contain the native design implementation. */
 export const IOS_DESIGN_FOUNDATION_PATHS = new Set([
   "ios/App/Theme/Colors.swift",
+  "ios/App/Theme/DesignCanvasKernel.swift",
   "ios/App/Theme/DesignMaterials.swift",
   "ios/App/Theme/DesignSurfaces.swift",
   "ios/App/Theme/DesignV2.swift",

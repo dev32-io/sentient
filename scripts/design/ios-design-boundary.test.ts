@@ -25,6 +25,7 @@ describe("iOS design boundary", () => {
       "ios/App/Settings/Components/DesignTextFields.swift",
       "ios/App/Settings/Components/UpdateFooter.swift",
       "ios/App/Theme/Colors.swift",
+      "ios/App/Theme/DesignCanvasKernel.swift",
       "ios/App/Theme/DesignMaterials.swift",
       "ios/App/Theme/DesignSurfaces.swift",
       "ios/App/Theme/DesignV2.swift",
@@ -38,6 +39,13 @@ describe("iOS design boundary", () => {
         source: "TextField(\"Name\", text: $name)",
       },
     ]).join("\n")).toContain("raw visual control");
+
+    expect(findPageBoundaryViolations([
+      {
+        path: "ios/App/Theme/DesignCanvasKernelPreview.swift",
+        source: "let cornerRadius: CGFloat = 7",
+      },
+    ]).join("\n")).toContain("page-local visual constant");
   });
 
   test("rejects duplicate canonical primitive declarations", () => {

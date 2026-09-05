@@ -106,12 +106,7 @@ struct ComposerTaskStrip: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(ComposerTaskShelfGeometry.detailPadding)
         .background {
-            RoundedRectangle(cornerRadius: ComposerTaskShelfGeometry.detailRadius, style: .continuous)
-                .fill(DuskColors.accentSoft.opacity(0.38))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ComposerTaskShelfGeometry.detailRadius, style: .continuous)
-                        .stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
-                }
+            TaskDetailCanvas()
         }
         .accessibilityElement(children: .combine)
     }
@@ -138,6 +133,7 @@ enum ComposerTaskShelfGeometry {
     static let detailRadius: CGFloat = 10
     static let detailTitleTypeSize: CGFloat = max(TypeScale.sm, 12.5)
     static let shelfRadius: CGFloat = 14
+    static let joinedFaceExtension: CGFloat = 10
     static let pulseDiameter: CGFloat = 8
 
     static let shelfShadow = DesignDropShadowGeometry(
@@ -159,27 +155,10 @@ private struct TaskShelfFace: View {
     }
 
     var body: some View {
-        ZStack {
-            DesignSpreadShadow(
-                shape: shape,
-                color: Color.black.opacity(0.82),
-                geometry: ComposerTaskShelfGeometry.shelfShadow
-            )
-            shape.fill(DuskColors.bgSunk.overlaying(DuskColors.paper, opacity: 0.14))
-            shape.fill(
-                LinearGradient(
-                    colors: [DuskColors.ink.opacity(0.035), Color.clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            shape.stroke(
-                contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
-                lineWidth: DesignMetrics.hairline
-            )
-            DesignTopEdgeLight(shape: shape, color: DuskColors.ink.opacity(0.1))
-        }
-        .accessibilityHidden(true)
+        TaskShelfCanvas(
+            shape: shape,
+            increasedContrast: contrast == .increased
+        )
     }
 }
 
@@ -188,6 +167,7 @@ private struct TaskPillButtonStyle: ButtonStyle {
 
     @Environment(\.isFocused) private var isFocused
     @ComposerReduceMotion private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var shape: RoundedRectangle {
@@ -202,29 +182,13 @@ private struct TaskPillButtonStyle: ButtonStyle {
                 horizontalSizeClass == .regular ? 12 : 10
             )
             .background {
-                ZStack {
-                    if isExpanded || configuration.isPressed {
-                        designSlateFace(
-                            role: .secondary,
-                            muted: false,
-                            hovered: false,
-                            baseOverride: isExpanded
-                                ? DuskColors.paper.overlaying(DuskColors.accentSoft, opacity: 0.26)
-                                : DuskColors.paper.overlaying(
-                                    DuskColors.bgSunk,
-                                    opacity: configuration.isPressed ? 0.18 : 0
-                                )
-                        )
-                        .clipShape(shape)
-                    }
-                    shape.stroke(
-                        isExpanded ? DuskColors.accent.opacity(0.38) : Color.clear,
-                        lineWidth: DesignMetrics.hairline
-                    )
-                    if isFocused {
-                        ComposerMaterialFocusRing(shape: shape)
-                    }
-                }
+                TaskPillCanvas(
+                    shape: shape,
+                    expanded: isExpanded,
+                    pressed: configuration.isPressed,
+                    focused: isFocused,
+                    increasedContrast: contrast == .increased
+                )
             }
             .contentShape(shape)
             .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
@@ -232,6 +196,361 @@ private struct TaskPillButtonStyle: ButtonStyle {
                 reduceMotion ? nil : .easeOut(duration: DesignV2.Motion.feedback),
                 value: configuration.isPressed
             )
+    }
+}
+
+private enum TaskShelfCanvasDrawing {
+    static func shadow<S: InsettableShape>(
+        shape: S,
+        color: Color,
+        geometry: DesignDropShadowGeometry,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        var source = shape.inset(by: geometry.sourceInset).path(in: faceRect)
+        source = source.applying(CGAffineTransform(
+            translationX: geometry.x,
+            y: geometry.y
+        ))
+        context.drawLayer { layer in
+            if geometry.radius > 0 {
+                layer.addFilter(.blur(radius: geometry.radius * 0.8))
+            }
+            layer.fill(source, with: .color(color))
+        }
+    }
+
+    static func topEdge<S: InsettableShape>(
+        shape: S,
+        color: Color,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        let inner = shape.inset(by: DesignMetrics.hairline).path(in: faceRect)
+        let translated = inner.applying(CGAffineTransform(
+            translationX: 0,
+            y: DesignMetrics.hairline
+        ))
+        var difference = inner
+        difference.addPath(translated)
+        var highlight = context
+        highlight.clip(to: inner)
+        highlight.fill(difference, with: .color(color), style: FillStyle(eoFill: true))
+    }
+
+    static func slateFace(
+        path: Path,
+        base: Color,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.fill(path, with: .linearGradient(
+            Gradient(colors: [
+                base.overlaying(DuskColors.ink, opacity: DesignMaterialAdapter.slateBaseLight),
+                base,
+            ]),
+            startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
+            endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
+        ))
+        var radial = context
+        radial.clip(to: path)
+        radial.translateBy(
+            x: faceRect.minX + faceRect.width * DesignMaterialAdapter.slateRadialCenterX,
+            y: faceRect.minY + faceRect.height * DesignMaterialAdapter.slateRadialCenterY
+        )
+        radial.scaleBy(
+            x: faceRect.width * DesignMaterialAdapter.slateRadialScale.width,
+            y: faceRect.height * DesignMaterialAdapter.slateRadialScale.height
+        )
+        let center = base.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.slateCenterSunk)
+        let ring = base.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.slateRingSunk)
+        radial.fill(
+            Path(CGRect(x: -1, y: -1, width: 2, height: 2)),
+            with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: center, location: 0),
+                    .init(color: ring, location: DesignMaterialAdapter.slateCenterStop),
+                    .init(color: ring.opacity(0), location: DesignMaterialAdapter.slateFadeStop),
+                ]),
+                center: .zero,
+                startRadius: 0,
+                endRadius: 1
+            )
+        )
+    }
+
+    static func border<S: InsettableShape>(
+        shape: S,
+        color: Color,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.stroke(
+            shape.inset(by: DesignMetrics.hairline / 2).path(in: faceRect),
+            with: .color(color),
+            lineWidth: DesignMetrics.hairline
+        )
+    }
+
+    static func focusRing<S: InsettableShape>(
+        shape: S,
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        context.stroke(
+            shape.inset(by: -3).path(in: faceRect),
+            with: .color(DuskColors.accent),
+            lineWidth: DesignMetrics.focusRing
+        )
+    }
+}
+
+private struct TaskShelfCanvas: View {
+    let shape: UnevenRoundedRectangle
+    let increasedContrast: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow = ComposerTaskShelfGeometry.shelfShadow.sourceInset
+                + ComposerTaskShelfGeometry.shelfShadow.radius
+                + abs(ComposerTaskShelfGeometry.shelfShadow.y)
+            let joinedRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height + ComposerTaskShelfGeometry.joinedFaceExtension
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                TaskShelfCanvasDrawing.shadow(
+                    shape: shape,
+                    color: Color.black.opacity(0.82),
+                    geometry: ComposerTaskShelfGeometry.shelfShadow,
+                    in: &context,
+                    faceRect: joinedRect
+                )
+                let facePath = shape.path(in: joinedRect)
+                context.fill(
+                    facePath,
+                    with: .color(DuskColors.bgSunk.overlaying(DuskColors.paper, opacity: 0.14))
+                )
+                context.fill(facePath, with: .linearGradient(
+                    Gradient(colors: [DuskColors.ink.opacity(0.035), .clear]),
+                    startPoint: CGPoint(x: joinedRect.midX, y: joinedRect.minY),
+                    endPoint: CGPoint(x: joinedRect.midX, y: joinedRect.maxY)
+                ))
+                TaskShelfCanvasDrawing.border(
+                    shape: shape,
+                    color: increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft,
+                    in: &context,
+                    faceRect: joinedRect
+                )
+                TaskShelfCanvasDrawing.topEdge(
+                    shape: shape,
+                    color: DuskColors.ink.opacity(0.1),
+                    in: &context,
+                    faceRect: joinedRect
+                )
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height
+                    + overflow * 2
+                    + ComposerTaskShelfGeometry.joinedFaceExtension
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct TaskPillCanvas: View, Animatable {
+    let shape: RoundedRectangle
+    let focused: Bool
+    let increasedContrast: Bool
+
+    private var expansionAmount: CGFloat
+    private var pressAmount: CGFloat
+
+    init(
+        shape: RoundedRectangle,
+        expanded: Bool,
+        pressed: Bool,
+        focused: Bool,
+        increasedContrast: Bool
+    ) {
+        self.shape = shape
+        self.focused = focused
+        self.increasedContrast = increasedContrast
+        expansionAmount = expanded ? 1 : 0
+        pressAmount = pressed ? 1 : 0
+    }
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(expansionAmount, pressAmount) }
+        set {
+            expansionAmount = newValue.first
+            pressAmount = newValue.second
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow: CGFloat = 18
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                let facePath = shape.path(in: faceRect)
+                let shadowAmount = expansionAmount * (1 - pressAmount)
+                TaskShelfCanvasDrawing.shadow(
+                    shape: shape,
+                    color: Color.black.opacity(0.9 * Double(shadowAmount)),
+                    geometry: DesignDropShadowGeometry(radius: 10, y: 6, sourceInset: 9),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                TaskShelfCanvasDrawing.shadow(
+                    shape: shape,
+                    color: DuskColors.bgSunk
+                        .overlaying(DuskColors.line, opacity: 0.24)
+                        .opacity(Double(expansionAmount)),
+                    geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 0),
+                    in: &context,
+                    faceRect: faceRect
+                )
+
+                if expansionAmount > 0 {
+                    var expandedContext = context
+                    expandedContext.opacity = Double(expansionAmount)
+                    let base = DuskColors.paper
+                        .overlaying(DuskColors.bgSunk, opacity: 0.21)
+                        .overlaying(
+                            DuskColors.bgSunk,
+                            opacity: 0.18 * Double(pressAmount)
+                        )
+                    expandedContext.fill(facePath, with: .linearGradient(
+                        Gradient(colors: [
+                            base.overlaying(DuskColors.ink, opacity: 0.035),
+                            base,
+                        ]),
+                        startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
+                        endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
+                    ))
+                    TaskShelfCanvasDrawing.border(
+                        shape: shape,
+                        color: increasedContrast
+                            ? DuskColors.ink3
+                            : DuskColors.line.overlaying(DuskColors.bgSunk, opacity: 0.12),
+                        in: &expandedContext,
+                        faceRect: faceRect
+                    )
+                    TaskShelfCanvasDrawing.topEdge(
+                        shape: shape,
+                        color: DuskColors.ink.opacity(0.08 * Double(1 - pressAmount)),
+                        in: &expandedContext,
+                        faceRect: faceRect
+                    )
+                }
+
+                let collapsedPress = pressAmount * (1 - expansionAmount)
+                if collapsedPress > 0 {
+                    var pressedContext = context
+                    pressedContext.opacity = Double(collapsedPress)
+                    TaskShelfCanvasDrawing.slateFace(
+                        path: facePath,
+                        base: DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.18),
+                        in: &pressedContext,
+                        faceRect: faceRect
+                    )
+                }
+
+                if focused {
+                    TaskShelfCanvasDrawing.focusRing(
+                        shape: shape,
+                        in: &context,
+                        faceRect: faceRect
+                    )
+                }
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct TaskDetailCanvas: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: ComposerTaskShelfGeometry.detailRadius,
+            style: .continuous
+        )
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let shadow = DesignMaterialShadowGeometry.plate
+            let overflow = shadow.sourceInset + shadow.radius + abs(shadow.y)
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                TaskShelfCanvasDrawing.shadow(
+                    shape: shape,
+                    color: Color.black.opacity(0.9),
+                    geometry: shadow,
+                    in: &context,
+                    faceRect: faceRect
+                )
+                TaskShelfCanvasDrawing.shadow(
+                    shape: shape,
+                    color: DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.22),
+                    geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1),
+                    in: &context,
+                    faceRect: faceRect
+                )
+                let facePath = shape.path(in: faceRect)
+                context.fill(
+                    facePath,
+                    with: .color(DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.28))
+                )
+                TaskShelfCanvasDrawing.border(
+                    shape: shape,
+                    color: contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
+                    in: &context,
+                    faceRect: faceRect
+                )
+                TaskShelfCanvasDrawing.topEdge(
+                    shape: shape,
+                    color: DuskColors.ink.opacity(0.05),
+                    in: &context,
+                    faceRect: faceRect
+                )
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

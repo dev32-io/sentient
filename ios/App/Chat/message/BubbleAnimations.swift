@@ -16,11 +16,12 @@ struct PulseDots: View {
         HStack(spacing: BubbleLayout.pulseGap) {
             ForEach(0..<3, id: \.self) { i in
                 Circle()
-                    .fill(DuskColors.accent.opacity(0.4))
+                    .fill(DuskColors.accent)
                     .frame(width: BubbleLayout.pulseDot, height: BubbleLayout.pulseDot)
-                    .scaleEffect(reduceMotion || pulsing ? 1.0 : 0.6)
+                    .opacity(reduceMotion || pulsing ? 1 : 0.34)
+                    .offset(y: reduceMotion || !pulsing ? 0 : -2)
                     .animation(
-                        reduceMotion ? nil : .easeInOut(duration: Motion.wave)
+                        reduceMotion ? nil : .easeInOut(duration: BubbleLayout.pulseDuration)
                             .repeatForever()
                             .delay(Double(i) * BubbleLayout.pulseStagger),
                         value: pulsing

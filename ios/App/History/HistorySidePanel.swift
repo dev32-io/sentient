@@ -14,11 +14,6 @@
 import SwiftUI
 import MobileData
 
-/// Dark-terra text used on the terra-50/accent background surfaces (avatar
-/// initial + FAB icon). Sourced from HistoryAccountHeader.swift where the
-/// constant is declared at module scope; aliased here to stay DRY.
-private let fabIconColor = terraOnAccentText
-
 private let fabSize: CGFloat = 52
 private let fabCorner: CGFloat = 16
 
@@ -105,20 +100,20 @@ struct HistorySidePanel: View {
     // ── Search pill ──────────────────────────────────────────────────────────
 
     private var searchField: some View {
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(DuskColors.ink3)
-            TextField("Search past chats", text: $model.query)
-                .designText(HistorySurfaceLayout.searchTextRole)
-                .foregroundStyle(DuskColors.ink)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .accessibilityIdentifier("history-search")
-        }
-        .padding(.horizontal, Space.lg)
-        .frame(minHeight: HistorySurfaceLayout.searchMinimumHeight)
-        .background(DuskColors.bgElev, in: Capsule())
-        .overlay(Capsule().stroke(DuskColors.lineSoft, lineWidth: 1))
+        DesignSearchField(
+            prompt: "Search past chats",
+            query: $model.query,
+            accessibilityId: "history-search",
+            onClear: model.query.isEmpty ? nil : { model.query = "" },
+            textFont: Typo.ui(HistorySurfaceLayout.searchTextRole.baseSize),
+            leadingPadding: Space.lg,
+            trailingPadding: Space.lg,
+            title: "Search past chats",
+            showsTitle: false,
+            showsSearchIcon: true
+        )
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
     }
@@ -187,17 +182,50 @@ struct HistorySidePanel: View {
         Button(action: onNewChat) {
             Image(systemName: "plus")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(fabIconColor)
+                .foregroundStyle(DuskColors.ink)
                 .frame(width: fabSize, height: fabSize)
-                .background(
-                    DuskColors.accent,
-                    in: RoundedRectangle(cornerRadius: fabCorner)
-                )
-                .shadow(color: .black.opacity(0.4), radius: 10, y: 6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HistoryFABButtonStyle())
         .padding(Space.lg)
+        .accessibilityLabel("New chat")
         .accessibilityIdentifier("history-new-chat")
+    }
+}
+
+/// The History FAB keeps its established 52pt face and 16pt corner while the
+/// shared Canvas kernel supplies the raised material and native press response.
+private struct HistoryFABButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var focused
+
+    func makeBody(configuration: Configuration) -> some View {
+        let projection = DesignRaisedButtonKernelProjection.make(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            isFocused: focused,
+            isHovered: false,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        )
+
+        configuration.label
+            .background {
+                DesignCanvasKernel(
+                    shape: .roundedRectangle(cornerRadius: fabCorner),
+                    role: .action,
+                    state: projection.state,
+                    increasedContrast: projection.increasedContrast,
+                    reduceMotion: projection.reduceMotion
+                )
+            }
+            .offset(y: projection.yOffset)
+            .animation(
+                DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                value: projection.state.isPressed
+            )
+            .contentShape(Rectangle())
     }
 }
 
@@ -207,20 +235,17 @@ struct HistorySidePanel: View {
 struct HistorySearchNoMatchState: View {
     var body: some View {
         HStack(alignment: .center, spacing: HistoryNoMatchLayout.contentGap) {
-            ZStack(alignment: .leading) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: HistoryNoMatchLayout.iconSize, weight: .regular))
-                    .foregroundStyle(DuskColors.ink3)
-                    .frame(width: HistoryNoMatchLayout.markSize, height: HistoryNoMatchLayout.markSize)
-                    .background {
-                        DesignWellFace(
-                            shape: Circle(),
-                            focused: false,
-                            showsInsetHighlights: true
-                        )
-                    }
-                    .clipShape(Circle())
-            }
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: HistoryNoMatchLayout.iconSize, weight: .regular))
+                .foregroundStyle(DuskColors.ink3)
+                .frame(width: HistoryNoMatchLayout.markSize, height: HistoryNoMatchLayout.markSize)
+                .background {
+                    DesignCanvasWellKernel(
+                        shape: .circle,
+                        state: .rest
+                    )
+                }
+                .clipShape(Circle())
             .frame(width: HistoryNoMatchLayout.markSlotSize, height: HistoryNoMatchLayout.markSlotSize)
             .accessibilityHidden(true)
 

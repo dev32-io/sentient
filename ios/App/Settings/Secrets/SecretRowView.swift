@@ -144,10 +144,10 @@ struct SecretKeyRow: View {
         }
         .padding(DesignMetrics.inlineEditorFormPadding)
         .background {
-            DesignWellFace(
-                shape: Rectangle(),
-                focused: false,
-                showsInsetHighlights: true
+            DesignCanvasWellKernel(
+                shape: .roundedRectangle(cornerRadius: .zero),
+                state: .rest,
+                showsBorder: false
             )
         }
         .privacySensitive()

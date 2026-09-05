@@ -74,9 +74,20 @@ struct CalendarSheet<Content: View, Footer: View>: View {
                         .stroke(DuskColors.lineSoft, lineWidth: CalendarOverlaySemantics.sheetBorderWidth)
                         .allowsHitTesting(false)
                 }
-                .shadow(color: DuskColors.bg.opacity(CalendarOverlaySemantics.sheetShadowOpacity),
-                        radius: CalendarOverlaySemantics.sheetShadowRadius,
-                        y: CalendarOverlaySemantics.sheetShadowY)
+                .background {
+                    CalendarCanvasOuterShadow(
+                        shape: UnevenRoundedRectangle(
+                            topLeadingRadius: CalendarOverlaySemantics.topRadius,
+                            topTrailingRadius: CalendarOverlaySemantics.topRadius
+                        ),
+                        color: DuskColors.bg.opacity(CalendarOverlaySemantics.sheetShadowOpacity),
+                        geometry: DesignDropShadowGeometry(
+                            radius: CalendarOverlaySemantics.sheetShadowRadius,
+                            y: CalendarOverlaySemantics.sheetShadowY,
+                            sourceInset: 0
+                        )
+                    )
+                }
                 .offset(y: dismissOnScrim ? max(CalendarOverlaySemantics.restingOffset, dragOffset) : CalendarOverlaySemantics.restingOffset)
                 .gesture(dismissOnScrim ? dismissGesture : nil)
                 .accessibilityElement(children: .contain)

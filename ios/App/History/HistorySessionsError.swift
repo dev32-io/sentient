@@ -31,16 +31,13 @@ struct SessionsErrorEmpty: View {
                 .font(Typo.ui(TypeScale.sm))
                 .foregroundStyle(DuskColors.ink3)
                 .multilineTextAlignment(.center)
-            Button(action: onRetry) {
-                Text(Self.retryCta)
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.bg)
-                    .padding(.horizontal, Space.md)
-                    .padding(.vertical, Space.xs)
-                    .background(DuskColors.ink, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sessions-error-retry")
+            DesignActionButton(
+                title: Self.retryCta,
+                role: .secondary,
+                accessibilityId: "sessions-error-retry",
+                fillsWidth: false,
+                action: onRetry
+            )
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Space.xxl)
@@ -87,16 +84,13 @@ struct SessionsStaleBanner: View {
         .padding(.horizontal, Space.md)
         .padding(.vertical, Space.sm)
         .frame(minHeight: StaleStyle.minimumHeight)
-        .background(staleBackground)
-        .designPlate()
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(staleTopBorder)
-                .frame(height: DesignMetrics.hairline)
-                .padding(.top, DesignMetrics.hairline)
-                .clipShape(RoundedRectangle(cornerRadius: Radii.md, style: .continuous))
-                .allowsHitTesting(false)
+        .background {
+            SessionsStaleMaterialCanvas(
+                face: staleBackground,
+                topBorder: staleTopBorder
+            )
         }
+        .designPlate()
         .animation(
             DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
             value: checking
@@ -115,6 +109,33 @@ struct SessionsStaleBanner: View {
         checking
             ? DuskColors.lineSoft.overlaying(DuskColors.accent, opacity: StaleStyle.checkingBorderMix)
             : DuskColors.lineSoft.overlaying(DuskColors.amber, opacity: StaleStyle.restBorderMix)
+    }
+}
+
+/// The stale state has a reviewed, History-specific tint layered inside the
+/// shared plate. One Canvas owns that face and directional top rule so the
+/// product state does not rebuild the plate from stacked SwiftUI decorations.
+private struct SessionsStaleMaterialCanvas: View {
+    let face: Color
+    let topBorder: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let rect = CGRect(origin: .zero, size: size)
+            let shape = RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
+            context.fill(shape.path(in: rect), with: .color(face))
+            context.fill(
+                Path(CGRect(
+                    x: 0,
+                    y: DesignMetrics.hairline,
+                    width: size.width,
+                    height: DesignMetrics.hairline
+                )),
+                with: .color(topBorder)
+            )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

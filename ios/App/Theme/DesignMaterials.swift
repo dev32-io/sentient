@@ -110,6 +110,114 @@ enum DesignMaterialAdapter {
     static let wellFocusCastY: CGFloat = 8
     static let wellFocusCastBlur: CGFloat = 4
 
+    // Canonical Canvas well recipe. These values intentionally coexist with
+    // the legacy SwiftUI well adaptations above until later migration waves
+    // move reviewed consumers individually.
+    static let wellCSSMiddleStop: CGFloat = 0.56
+    static let wellCSSTopBlack = 0.05
+    static let wellCSSBottomElevated = 0.10
+    static let wellCSSInsetOpacity = 0.72
+    static let wellCSSInsetFocusOpacity = 0.76
+    static let wellCSSInsetBlur: CGFloat = 6
+    static let wellCSSInsetSpread: CGFloat = -2
+    static let wellCSSInsetY: CGFloat = 3
+    static let wellCSSBottomReflection = 0.07
+    static let wellCSSBottomReflectionFocused = 0.08
+    static let wellCSSBottomReflectionY: CGFloat = -1
+    static let wellCSSFocusLineMix = 0.44
+    static let wellCSSContactOpacity = 0.45
+    static let wellCSSContactY: CGFloat = 1
+    static let wellCSSHaloSpread: CGFloat = 3
+    static let wellCSSFocusHaloOpacity = 0.18
+    static let wellCSSFocusCastOpacity = 0.48
+    static let wellCSSFocusCastBlur: CGFloat = 18
+    static let wellCSSFocusCastY: CGFloat = 8
+    static let wellCSSFocusCastSpread: CGFloat = -14
+    static let wellCSSFocusOutlineWidth: CGFloat = 2
+    static let wellCSSFocusOutlineOffset: CGFloat = 3
+    static let wellValidatedErrorLineMix = 0.30
+    static let wellValidatedErrorHaloOpacity = 0.14
+
+    // Selection/range Canvas profiles. These are implementation projections
+    // of the reviewed foundation CSS, not button-role aliases: their compact
+    // faces and receivers differ materially from the canonical 40pt key.
+    static let smallControlMaximumOverflow: CGFloat = 48
+    static let smallControlMinimumSourcePixels: CGFloat = 1
+    static let smallControlSelectionTravelDuration = 0.22
+    static let smallControlTravelCurveX1 = 0.20
+    static let smallControlTravelCurveY1 = 0.80
+    static let smallControlTravelCurveX2 = 0.20
+    static let smallControlTravelCurveY2 = 1.00
+
+    // 34pt raised chip and selected receiver.
+    static let chipVisualHeight: CGFloat = 34
+    static let chipCastOpacity = 0.90
+    static let chipCastBlur: CGFloat = 12
+    static let chipCastY: CGFloat = 7
+    static let chipCastInset: CGFloat = 10
+    static let chipContactY: CGFloat = 1
+    static let chipSelectedGlowOpacity = 0.58
+    static let chipSelectedGlowBlur: CGFloat = 16
+    static let chipSelectedGlowY: CGFloat = 8
+    static let chipSelectedGlowInset: CGFloat = 14
+    static let chipSelectedPressedInsetOpacity = 0.78
+    static let chipSelectedPressedInsetBlur: CGFloat = 7
+    static let chipSelectedPressedInsetY: CGFloat = 4
+    static let chipSelectedPressedInsetSpread: CGFloat = -2
+
+    // Generic selected compact receiver. Unlike the capsule-only selected-chip
+    // profile, this preserves the existing radius-sm rounded-rectangle style.
+    static let selectedCompactRestCastOpacity = 0.40
+    static let selectedCompactRestCastBlur: CGFloat = 16
+    static let selectedCompactRestCastY: CGFloat = 8
+    static let selectedCompactRestCastInset: CGFloat = 14
+    static let selectedCompactContactOpacity = 0.88
+    static let selectedCompactContactY: CGFloat = 1
+    static let selectedCompactContactInset: CGFloat = 1
+
+    // 30pt segment selection slate.
+    static let segmentSelectionHeight: CGFloat = 30
+    static let segmentSelectionBorderAccentMix = 0.22
+
+    // 44x28 toggle track and 18pt knob.
+    static let toggleKnobInset: CGFloat = 4
+    static let toggleTrackBorderAccentMix = 0.52
+    static let toggleTrackOnTopAccentSoftMix = 0.80
+    static let toggleTrackGlowOpacity = 0.58
+    static let toggleTrackGlowBlur: CGFloat = 16
+    static let toggleTrackGlowY: CGFloat = 8
+    static let toggleTrackGlowInset: CGFloat = 14
+    static let toggleKnobOffBorderLineMix = 0.80
+
+    // 22pt binary checkbox receiver/checked slate. Mixed-state visuals remain
+    // unavailable until a product value owner is admitted.
+    static let checkboxCheckedBorderAccentMix = 0.48
+    static let checkboxCheckedLinearInkMix = 0.06
+    static let checkboxCheckedRadialSunkMix = 0.22
+    static let compactCircularRadialCenterX: CGFloat = 0.50
+    static let compactCircularRadialCenterY: CGFloat = 0.55
+    static let checkboxCheckedRadialFadeStop: CGFloat = 0.72
+    static let checkboxCastOpacity = 0.90
+    static let checkboxCastBlur: CGFloat = 12
+    static let checkboxCastY: CGFloat = 7
+    static let checkboxCastInset: CGFloat = 10
+    static let checkboxGlowOpacity = 0.50
+    static let checkboxGlowBlur: CGFloat = 15
+    static let checkboxGlowY: CGFloat = 9
+    static let checkboxGlowInset: CGFloat = 12
+
+    // 8pt slider track and 26pt graphite thumb.
+    static let sliderProgressAccentMix = 0.58
+    static let sliderThumbLinearInkMix = 0.05
+    static let sliderThumbRadialSunkMix = 0.22
+    static let sliderThumbRadialFadeStop: CGFloat = 0.72
+    static let sliderThumbGlowOpacity = 0.44
+    static let sliderThumbGlowBlur: CGFloat = 16
+    static let sliderThumbGlowY: CGFloat = 10
+    static let sliderThumbGlowInset: CGFloat = 13
+    static let sliderDisabledSaturation = 0.30
+    static let sliderDisabledOpacity = 0.58
+
     // plate-shadow / float-shadow. CSS negative spread is represented as an
     // inset shadow source shape rather than by changing blur until it looks
     // approximately right.
@@ -166,6 +274,16 @@ enum DesignMaterialAdapter {
     static let slateSecondaryGlow = slateDefaultGlow
     static let slateDestructiveGlow = 0.72
     static let slateQuietGlow = slateDefaultGlow
+    static let slateHoverGlowOpacity = 0.48
+    static let slateDestructiveHoverGlowOpacity = 0.78
+    static let slateSecondaryContactMix = 0.12
+    static let slateActionContactMix = 0.22
+    static let slateDestructiveContactMix = 0.38
+    static let slateInteractiveContactMix = 0.10
+    static let slateDestructiveHoverContactMix = 0.46
+    static let slatePressedInsetOpacity = 0.42
+    static let slatePressedInsetBlur: CGFloat = 3
+    static let slatePressedInsetY: CGFloat = 2
     static let slateDisabledBorder = 0.74
     static let slateDestructiveBorder = 0.76
     static let slateActionBorder = 0.64

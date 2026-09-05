@@ -711,34 +711,6 @@ enum ComposerGeometry {
     }
 }
 
-/// Composer-owned contact edge and focus ring. These keep the reviewed local
-/// geometry without routing the controls back through generic button styles.
-struct ComposerMaterialContactEdge<S: InsettableShape>: View {
-    let shape: S
-    let color: Color
-    let y: CGFloat
-
-    var body: some View {
-        DesignSpreadShadow(
-            shape: shape,
-            color: color,
-            geometry: DesignDropShadowGeometry(radius: 0, y: y, sourceInset: 1)
-        )
-        .accessibilityHidden(true)
-    }
-}
-
-struct ComposerMaterialFocusRing<S: InsettableShape>: View {
-    let shape: S
-
-    var body: some View {
-        shape
-            .inset(by: -3)
-            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusRing)
-            .accessibilityHidden(true)
-    }
-}
-
 private struct ComposerFaceBackground: View {
     let cornerRadius: CGFloat
     let isFocused: Bool
@@ -747,64 +719,280 @@ private struct ComposerFaceBackground: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var emphasized: Bool { isFocused || isVoiceActive }
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-    }
 
     var body: some View {
-        ZStack {
-            DesignSpreadShadow(
-                shape: shape,
-                color: DuskColors.bgSunk.opacity(0.82),
-                geometry: ComposerGeometry.frameShadow
+        GeometryReader { proxy in
+            let overflow = ComposerCanvasDrawing.overflow(for: [
+                ComposerGeometry.frameShadow,
+                ComposerGeometry.faceShadow,
+                ComposerGeometry.faceAccentShadow,
+            ])
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
             )
-            DesignSpreadShadow(
-                shape: shape,
-                color: Color.black.opacity(emphasized ? 0.97 : 0.9),
-                geometry: ComposerGeometry.faceShadow
-            )
-            DesignSpreadShadow(
-                shape: shape,
-                color: DuskColors.accent.opacity(emphasized ? 0.48 : 0.2),
-                geometry: ComposerGeometry.faceAccentShadow
+            let facePath = ComposerCanvasDrawing.roundedPath(
+                in: faceRect,
+                cornerRadius: cornerRadius
             )
 
-            designSlateFace(
-                role: .secondary,
-                muted: false,
-                hovered: false,
-                baseOverride: DuskColors.paper
-            )
-            .clipShape(shape)
-            shape.fill(
-                LinearGradient(
-                    colors: [
-                        DuskColors.paper.opacity(0.12),
-                        Color.clear,
-                        DuskColors.ink.opacity(0.025)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                ComposerCanvasDrawing.drawShadow(
+                    in: &context,
+                    faceRect: faceRect,
+                    cornerRadius: cornerRadius,
+                    color: DuskColors.bgSunk.opacity(0.82),
+                    geometry: ComposerGeometry.frameShadow
                 )
-            )
-            shape.fill(
-                RadialGradient(
-                    colors: [DuskColors.accent.opacity(0.09), Color.clear],
-                    center: .bottomTrailing,
-                    startRadius: 0,
-                    endRadius: 170
+                ComposerCanvasDrawing.drawShadow(
+                    in: &context,
+                    faceRect: faceRect,
+                    cornerRadius: cornerRadius,
+                    color: Color.black.opacity(emphasized ? 0.97 : 0.9),
+                    geometry: ComposerGeometry.faceShadow
                 )
+                ComposerCanvasDrawing.drawShadow(
+                    in: &context,
+                    faceRect: faceRect,
+                    cornerRadius: cornerRadius,
+                    color: DuskColors.accent.opacity(emphasized ? 0.48 : 0.2),
+                    geometry: ComposerGeometry.faceAccentShadow,
+                    copies: 3
+                )
+                ComposerCanvasDrawing.drawContact(
+                    in: &context,
+                    faceRect: faceRect,
+                    cornerRadius: cornerRadius,
+                    color: DuskColors.bgSunk.opacity(0.95),
+                    y: 2
+                )
+
+                ComposerCanvasDrawing.fillLinear(
+                    facePath,
+                    in: &context,
+                    rect: faceRect,
+                    cssDegrees: 118,
+                    stops: [
+                        .init(color: DuskColors.paper.overlaying(DuskColors.ink4, opacity: 0.06), location: 0),
+                        .init(color: DuskColors.paper, location: 0.48),
+                        .init(color: DuskColors.paper.overlaying(DuskColors.accentSoft, opacity: 0.04), location: 1),
+                    ]
+                )
+                ComposerCanvasDrawing.fillEllipticalRadial(
+                    facePath,
+                    in: &context,
+                    center: CGPoint(
+                        x: faceRect.minX + faceRect.width * 0.84,
+                        y: faceRect.minY + faceRect.height * 0.08
+                    ),
+                    radii: CGSize(
+                        width: max(faceRect.width, faceRect.height) * 0.34,
+                        height: max(faceRect.width, faceRect.height) * 0.34
+                    ),
+                    stops: [
+                        .init(color: DuskColors.accent.opacity(0.05), location: 0),
+                        .init(color: DuskColors.accent.opacity(0), location: 1),
+                    ]
+                )
+                ComposerCanvasDrawing.fillEllipticalRadial(
+                    facePath,
+                    in: &context,
+                    center: CGPoint(x: faceRect.midX, y: faceRect.minY + faceRect.height * 0.52),
+                    radii: CGSize(width: faceRect.width * 0.72, height: faceRect.height * 1.15),
+                    stops: [
+                        .init(color: DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.26), location: 0),
+                        .init(color: DuskColors.paper.opacity(0), location: 0.70),
+                    ]
+                )
+                ComposerCanvasDrawing.fillLinear(
+                    facePath,
+                    in: &context,
+                    rect: faceRect,
+                    cssDegrees: 108,
+                    stops: [
+                        .init(color: DuskColors.ink.opacity(0), location: 0.40),
+                        .init(color: DuskColors.ink.opacity(0.015), location: 0.49),
+                        .init(color: DuskColors.ink.opacity(0), location: 0.58),
+                    ]
+                )
+                ComposerCanvasDrawing.fillEllipticalRadial(
+                    facePath,
+                    in: &context,
+                    center: CGPoint(
+                        x: faceRect.minX + faceRect.width * 0.82,
+                        y: faceRect.minY + faceRect.height * 1.12
+                    ),
+                    radii: CGSize(width: faceRect.width * 0.44, height: faceRect.height * 0.56),
+                    stops: [
+                        .init(color: DuskColors.accent.opacity(0.05), location: 0),
+                        .init(color: DuskColors.accent.opacity(0), location: 0.72),
+                    ]
+                )
+
+                context.stroke(
+                    ComposerCanvasDrawing.roundedPath(
+                        in: faceRect,
+                        cornerRadius: cornerRadius,
+                        inset: DesignMetrics.hairline / 2
+                    ),
+                    with: .color(
+                        emphasized
+                            ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.46)
+                            : (contrast == .increased ? DuskColors.ink3 : DuskColors.line)
+                    ),
+                    lineWidth: DesignMetrics.hairline
+                )
+                ComposerCanvasDrawing.drawTopLight(
+                    in: &context,
+                    faceRect: faceRect,
+                    cornerRadius: cornerRadius,
+                    color: DuskColors.ink.opacity(0.16)
+                )
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
             )
-            shape.stroke(
-                emphasized
-                    ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.46)
-                    : (contrast == .increased ? DuskColors.ink3 : DuskColors.line),
-                lineWidth: DesignMetrics.hairline
-            )
-            ComposerMaterialContactEdge(shape: shape, color: DuskColors.bgSunk.opacity(0.95), y: 2)
-            DesignTopEdgeLight(shape: shape, color: DuskColors.ink.opacity(0.16))
+            .offset(x: -overflow, y: -overflow)
         }
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+private enum ComposerCanvasDrawing {
+    static func overflow(for geometries: [DesignDropShadowGeometry]) -> CGFloat {
+        geometries.map {
+            $0.sourceInset + $0.radius + max(abs($0.x), abs($0.y))
+        }.max() ?? 0
+    }
+
+    static func roundedPath(
+        in rect: CGRect,
+        cornerRadius: CGFloat,
+        inset: CGFloat = 0
+    ) -> Path {
+        RoundedRectangle(
+            cornerRadius: max(0, cornerRadius - inset),
+            style: .continuous
+        )
+        .path(in: rect.insetBy(dx: inset, dy: inset))
+    }
+
+    static func drawShadow(
+        in context: inout GraphicsContext,
+        faceRect: CGRect,
+        cornerRadius: CGFloat,
+        color: Color,
+        geometry: DesignDropShadowGeometry,
+        copies: Int = 1
+    ) {
+        var source = Path()
+        source.addPath(
+            roundedPath(
+                in: faceRect,
+                cornerRadius: cornerRadius,
+                inset: geometry.sourceInset
+            ),
+            transform: CGAffineTransform(translationX: geometry.x, y: geometry.y)
+        )
+        for _ in 0..<copies {
+            context.drawLayer { layer in
+                if geometry.radius > 0 {
+                    layer.addFilter(.blur(radius: geometry.radius * 0.8))
+                }
+                layer.fill(source, with: .color(color))
+            }
+        }
+    }
+
+    static func drawContact(
+        in context: inout GraphicsContext,
+        faceRect: CGRect,
+        cornerRadius: CGFloat,
+        color: Color,
+        y: CGFloat
+    ) {
+        let geometry = DesignDropShadowGeometry(radius: 0, y: y, sourceInset: 1)
+        drawShadow(
+            in: &context,
+            faceRect: faceRect,
+            cornerRadius: cornerRadius,
+            color: color,
+            geometry: geometry
+        )
+    }
+
+    static func fillLinear(
+        _ path: Path,
+        in context: inout GraphicsContext,
+        rect: CGRect,
+        cssDegrees: CGFloat,
+        stops: [Gradient.Stop]
+    ) {
+        let radians = cssDegrees * .pi / 180
+        let direction = CGVector(dx: sin(radians), dy: -cos(radians))
+        let extent = (abs(direction.dx) * rect.width + abs(direction.dy) * rect.height) / 2
+        context.fill(path, with: .linearGradient(
+            Gradient(stops: stops),
+            startPoint: CGPoint(
+                x: rect.midX - direction.dx * extent,
+                y: rect.midY - direction.dy * extent
+            ),
+            endPoint: CGPoint(
+                x: rect.midX + direction.dx * extent,
+                y: rect.midY + direction.dy * extent
+            )
+        ))
+    }
+
+    static func fillEllipticalRadial(
+        _ clipPath: Path,
+        in context: inout GraphicsContext,
+        center: CGPoint,
+        radii: CGSize,
+        stops: [Gradient.Stop]
+    ) {
+        guard radii.width > 0, radii.height > 0 else { return }
+        var radial = context
+        radial.clip(to: clipPath)
+        radial.translateBy(x: center.x, y: center.y)
+        radial.scaleBy(x: radii.width, y: radii.height)
+        radial.fill(
+            Path(CGRect(x: -1, y: -1, width: 2, height: 2)),
+            with: .radialGradient(
+                Gradient(stops: stops),
+                center: .zero,
+                startRadius: 0,
+                endRadius: 1
+            )
+        )
+    }
+
+    static func drawTopLight(
+        in context: inout GraphicsContext,
+        faceRect: CGRect,
+        cornerRadius: CGFloat,
+        color: Color
+    ) {
+        let inner = roundedPath(
+            in: faceRect,
+            cornerRadius: cornerRadius,
+            inset: DesignMetrics.hairline
+        )
+        var translated = Path()
+        translated.addPath(
+            inner,
+            transform: CGAffineTransform(translationX: 0, y: DesignMetrics.hairline)
+        )
+        var difference = inner
+        difference.addPath(translated)
+
+        var highlight = context
+        highlight.clip(to: inner)
+        highlight.fill(difference, with: .color(color), style: FillStyle(eoFill: true))
     }
 }
 
@@ -878,49 +1066,156 @@ private struct ComposerControlButtonStyle: ButtonStyle {
         }
     }
 
-    @ViewBuilder
     private func controlFace(pressed: Bool) -> some View {
-        ZStack {
-            if !pressed {
-                DesignSpreadShadow(
-                    shape: shape,
-                    color: Color.black.opacity(isEnabled ? 0.72 : 0.42),
-                    geometry: ComposerGeometry.controlShadow
+        ComposerControlCanvas(
+            tone: tone,
+            baseColor: pressed
+                ? baseColor.overlaying(DuskColors.bgSunk, opacity: 0.18)
+                : baseColor,
+            isEnabled: isEnabled,
+            isPressed: pressed,
+            isFocused: isFocused,
+            increasedContrast: contrast == .increased
+        )
+    }
+}
+
+private struct ComposerControlCanvas: View {
+    let tone: ComposerControlTone
+    let baseColor: Color
+    let isEnabled: Bool
+    let isPressed: Bool
+    let isFocused: Bool
+    let increasedContrast: Bool
+
+    private let cornerRadius: CGFloat = 10
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflow = ComposerCanvasDrawing.overflow(for: [
+                ComposerGeometry.controlShadow,
+                ComposerGeometry.controlGlow,
+                DesignMaterialShadowGeometry.slatePressed,
+            ])
+            let faceRect = CGRect(
+                x: overflow,
+                y: overflow,
+                width: proxy.size.width,
+                height: proxy.size.height
+            )
+            let facePath = ComposerCanvasDrawing.roundedPath(
+                in: faceRect,
+                cornerRadius: cornerRadius
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                if isPressed {
+                    ComposerCanvasDrawing.drawShadow(
+                        in: &context,
+                        faceRect: faceRect,
+                        cornerRadius: cornerRadius,
+                        color: Color.black.opacity(0.88),
+                        geometry: DesignMaterialShadowGeometry.slatePressed
+                    )
+                } else {
+                    ComposerCanvasDrawing.drawShadow(
+                        in: &context,
+                        faceRect: faceRect,
+                        cornerRadius: cornerRadius,
+                        color: Color.black.opacity(isEnabled ? 0.72 : 0.42),
+                        geometry: ComposerGeometry.controlShadow
+                    )
+                    if tone != .quiet, isEnabled {
+                        ComposerCanvasDrawing.drawShadow(
+                            in: &context,
+                            faceRect: faceRect,
+                            cornerRadius: cornerRadius,
+                            color: tone == .stop
+                                ? DuskColors.stop.opacity(0.58)
+                                : DuskColors.accent.opacity(0.62),
+                            geometry: ComposerGeometry.controlGlow,
+                            copies: 3
+                        )
+                    }
+                }
+                ComposerCanvasDrawing.drawContact(
+                    in: &context,
+                    faceRect: faceRect,
+                    cornerRadius: cornerRadius,
+                    color: DuskColors.bgSunk.opacity(0.92),
+                    y: isPressed ? 1 : 2
                 )
-                if tone != .quiet, isEnabled {
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: semanticGlow,
-                        geometry: ComposerGeometry.controlGlow
+
+                context.fill(facePath, with: .color(baseColor))
+                ComposerCanvasDrawing.fillEllipticalRadial(
+                    facePath,
+                    in: &context,
+                    center: CGPoint(x: faceRect.midX, y: faceRect.minY + faceRect.height * 0.52),
+                    radii: CGSize(width: faceRect.width * 0.82, height: faceRect.height * 1.05),
+                    stops: [
+                        .init(
+                            color: baseColor.overlaying(
+                                DuskColors.bgSunk,
+                                opacity: isEnabled ? 0.22 : 0.16
+                            ),
+                            location: 0
+                        ),
+                        .init(
+                            color: baseColor.overlaying(DuskColors.bgSunk, opacity: 0.10),
+                            location: 0.50
+                        ),
+                        .init(color: baseColor, location: 1),
+                    ]
+                )
+                context.stroke(
+                    ComposerCanvasDrawing.roundedPath(
+                        in: faceRect,
+                        cornerRadius: cornerRadius,
+                        inset: DesignMetrics.hairline / 2
+                    ),
+                    with: .color(increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft),
+                    lineWidth: DesignMetrics.hairline
+                )
+
+                if isPressed {
+                    var inset = context
+                    inset.addFilter(.shadow(
+                        color: DuskColors.bgSunk.opacity(0.42),
+                        radius: 3,
+                        x: 0,
+                        y: 2,
+                        blendMode: .sourceAtop,
+                        options: [.invertsAlpha, .shadowAbove, .shadowOnly]
+                    ))
+                    inset.fill(facePath, with: .color(.white))
+                } else {
+                    ComposerCanvasDrawing.drawTopLight(
+                        in: &context,
+                        faceRect: faceRect,
+                        cornerRadius: cornerRadius,
+                        color: DuskColors.ink.opacity(0.17)
+                    )
+                }
+
+                if isFocused {
+                    context.stroke(
+                        ComposerCanvasDrawing.roundedPath(
+                            in: faceRect,
+                            cornerRadius: cornerRadius,
+                            inset: -3
+                        ),
+                        with: .color(DuskColors.accent),
+                        lineWidth: DesignMetrics.focusRing
                     )
                 }
             }
-            designSlateFace(
-                role: tone == .stop
-                    ? .destructive
-                    : tone == .send || tone == .toggleOn ? .action : .secondary,
-                muted: !isEnabled,
-                hovered: false,
-                baseOverride: pressed
-                    ? baseColor.overlaying(DuskColors.bgSunk, opacity: 0.18)
-                    : baseColor
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
             )
-            .clipShape(shape)
-            shape.stroke(
-                contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
-                lineWidth: DesignMetrics.hairline
-            )
-            ComposerMaterialContactEdge(shape: shape, color: DuskColors.bgSunk.opacity(0.92), y: pressed ? 1 : 2)
-            if !pressed {
-                DesignTopEdgeLight(shape: shape, color: DuskColors.ink.opacity(0.17))
-            }
-            if isFocused {
-                ComposerMaterialFocusRing(shape: shape)
-            }
+            .offset(x: -overflow, y: -overflow)
         }
-    }
-
-    private var semanticGlow: Color {
-        tone == .stop ? DuskColors.stop.opacity(0.58) : DuskColors.accent.opacity(0.62)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

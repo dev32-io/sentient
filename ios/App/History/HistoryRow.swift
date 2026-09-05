@@ -26,7 +26,6 @@ struct HistoryRow: View {
 
     private var active: Bool { row.isActive || isSelected }
     private var titleColor: Color { active ? DuskColors.accent : DuskColors.ink }
-    private var rowFill: Color { active ? DuskColors.accent50 : .clear }
 
     // Relative time only. The message-count suffix was dropped: the gateway
     // session list does not populate a count (always 0 → a misleading "no
@@ -52,7 +51,9 @@ struct HistoryRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Space.md)
             .padding(.vertical, Space.md)
-            .background(rowFill, in: RoundedRectangle(cornerRadius: Radii.md))
+            .background {
+                if active { HistorySelectedRowCanvas() }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -62,5 +63,22 @@ struct HistoryRow: View {
             Button("Rename", action: onAskRename)
             Button("Delete", role: .destructive, action: onAskDelete)
         }
+    }
+}
+
+/// Session selection is product-owned rather than a generic selectable-card
+/// treatment. Canvas preserves the established accent-tinted history receiver
+/// without introducing another stacked face or changing the native row target.
+private struct HistorySelectedRowCanvas: View {
+    var body: some View {
+        Canvas { context, size in
+            let shape = RoundedRectangle(cornerRadius: Radii.md)
+            context.fill(
+                shape.path(in: CGRect(origin: .zero, size: size)),
+                with: .color(DuskColors.accent50)
+            )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

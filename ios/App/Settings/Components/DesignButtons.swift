@@ -1,5 +1,153 @@
 import SwiftUI
 
+/// Stable native-control projection into the decorative Canvas kernel. Keeping
+/// these flags independent lets focus compose with pointer and press feedback;
+/// disabled only suppresses material movement, not an explicit focus signal.
+struct DesignRaisedButtonKernelProjection: Equatable {
+    let state: DesignCanvasControlState
+    let increasedContrast: Bool
+    let reduceMotion: Bool
+    let yOffset: CGFloat
+
+    static func make(
+        isEnabled: Bool,
+        isPressed: Bool,
+        isFocused: Bool,
+        isHovered: Bool,
+        increasedContrast: Bool,
+        reduceMotion: Bool
+    ) -> DesignRaisedButtonKernelProjection {
+        let pressed = isPressed && isEnabled
+        let hovered = isHovered && isEnabled
+        return DesignRaisedButtonKernelProjection(
+            state: DesignCanvasControlState(
+                isHovered: hovered,
+                isPressed: pressed,
+                isFocused: isFocused,
+                isDisabled: !isEnabled
+            ),
+            increasedContrast: increasedContrast,
+            reduceMotion: reduceMotion,
+            yOffset: pressed ? DesignMetrics.pressedDepth : hovered ? -1 : 0
+        )
+    }
+}
+
+struct DesignRaisedButtonGeometry: Equatable {
+    let faceHeight: CGFloat
+    let semanticHeight: CGFloat
+
+    static func make(minimumHeight: CGFloat, visualHeight: CGFloat?) -> DesignRaisedButtonGeometry {
+        DesignRaisedButtonGeometry(
+            faceHeight: min(visualHeight ?? minimumHeight, minimumHeight),
+            semanticHeight: max(minimumHeight, DesignMetrics.minimumTarget)
+        )
+    }
+}
+
+/// Selected compact controls use a receiving surface rather than a raised-key
+/// role. Motion remains on the native label while this projection supplies the
+/// decorative kernel with independent press, focus, hover, and disabled flags.
+struct DesignSelectedCompactKernelProjection: Equatable {
+    let state: DesignCanvasControlState
+    let increasedContrast: Bool
+    let reduceMotion: Bool
+    let yOffset: CGFloat
+    let scale: CGFloat
+
+    static func make(
+        isEnabled: Bool,
+        isPressed: Bool,
+        isFocused: Bool,
+        isHovered: Bool,
+        increasedContrast: Bool,
+        reduceMotion: Bool,
+        pressedScale: CGFloat
+    ) -> DesignSelectedCompactKernelProjection {
+        let pressed = isPressed && isEnabled
+        return DesignSelectedCompactKernelProjection(
+            state: DesignCanvasControlState(
+                isHovered: isHovered && isEnabled,
+                isPressed: pressed,
+                isFocused: isFocused,
+                isDisabled: !isEnabled
+            ),
+            increasedContrast: increasedContrast,
+            reduceMotion: reduceMotion,
+            yOffset: pressed ? DesignMetrics.pressedDepth * 2 : DesignMetrics.pressedDepth,
+            scale: pressed && !reduceMotion ? pressedScale : 1
+        )
+    }
+}
+
+/// Background-only adapter. The owning SwiftUI `Button` retains actions,
+/// focus, hit testing, Dynamic Type, layout direction, and accessibility.
+private struct DesignRaisedButtonCanvasBackground: View {
+    let shape: DesignCanvasShape
+    let role: DesignButtonRole
+    let projection: DesignRaisedButtonKernelProjection
+
+    var body: some View {
+        DesignCanvasKernel(
+            shape: shape,
+            role: role,
+            state: projection.state,
+            increasedContrast: projection.increasedContrast,
+            reduceMotion: projection.reduceMotion
+        )
+        .animation(
+            DesignCanvasKernel.transitionAnimation(for: .hover, reduceMotion: projection.reduceMotion),
+            value: projection.state.isHovered
+        )
+        .animation(
+            DesignCanvasKernel.transitionAnimation(for: .focus, reduceMotion: projection.reduceMotion),
+            value: projection.state.isFocused
+        )
+        .animation(
+            DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: projection.reduceMotion),
+            value: projection.state.isPressed
+        )
+        .animation(
+            DesignCanvasKernel.transitionAnimation(for: .material, reduceMotion: projection.reduceMotion),
+            value: projection.state.isDisabled
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// One decorative Canvas backs the selected rounded-rectangle branch. It has
+/// no content, gesture, responder, value, or accessibility ownership.
+private struct DesignSelectedCompactCanvasBackground: View {
+    let projection: DesignSelectedCompactKernelProjection
+
+    var body: some View {
+        DesignCanvasSmallControlKernel(
+            profile: .selectedCompact,
+            state: projection.state,
+            increasedContrast: projection.increasedContrast,
+            reduceMotion: projection.reduceMotion,
+            appliesRecipeOpacity: false
+        )
+        .animation(
+            DesignCanvasSmallControlKernel.transitionAnimation(
+                for: .feedback,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.isFocused
+        )
+        .animation(
+            DesignCanvasSmallControlKernel.transitionAnimation(
+                for: .material,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.isDisabled
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct DesignButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -12,191 +160,49 @@ struct DesignButtonStyle: ButtonStyle {
     var visualHeight: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed && isEnabled
-        let raised = hovered && isEnabled
-        let shape = RoundedRectangle(cornerRadius: DesignMetrics.actionButtonCornerRadius, style: .circular)
-        let faceHeight = min(visualHeight ?? minimumHeight, minimumHeight)
-        let semanticHeight = max(minimumHeight, DesignMetrics.minimumTarget)
+        let geometry = DesignRaisedButtonGeometry.make(
+            minimumHeight: minimumHeight,
+            visualHeight: visualHeight
+        )
+        let projection = DesignRaisedButtonKernelProjection.make(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            isFocused: focused,
+            isHovered: hovered,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        )
+        let cornerRadius = DesignMetrics.actionButtonCornerRadius
+        let clipShape = RoundedRectangle(cornerRadius: cornerRadius, style: .circular)
+        let canvasShape = DesignCanvasShape.roundedRectangle(cornerRadius: cornerRadius)
+
         configuration.label
             // `.snt-surface button { font: inherit; }` is more specific than
             // the presentation rule in the approved stylesheet, so the
             // rendered recipe uses the inherited 15pt regular UI face.
             .font(Typo.ui(TypeScale.base))
-            .foregroundStyle(foreground)
-            .frame(minHeight: faceHeight)
+            .foregroundStyle(isEnabled ? DuskColors.ink : DuskColors.ink4)
+            .frame(minHeight: geometry.faceHeight)
             .padding(.horizontal, horizontalPadding)
-            .background { designSlateFace(role: role, muted: !isEnabled, hovered: raised) }
-            .clipShape(shape)
-            .overlay {
-                // CSS borders paint inside the border box; use the native
-                // inset form so the 44pt key does not grow by the centered
-                // stroke width.
-                shape.strokeBorder(border(raised: raised), lineWidth: DesignMetrics.hairline)
-            }
-            .overlay {
-                if let topLight = topLight(pressed: pressed, raised: raised) {
-                    DesignTopEdgeLight(shape: shape, color: topLight)
-                }
-            }
-            .overlay {
-                shape
-                    .stroke(
-                        focused ? DuskColors.accent : .clear,
-                        lineWidth: contrast == .increased ? 3 : DesignMetrics.focusBorder
-                    )
-                    .padding(DesignMetrics.focusBorderInset)
-            }
+            .clipShape(clipShape)
             .background {
-                ZStack {
-                    // CSS lists the black cast before the ember cast, so the
-                    // cast is composited over the glow where their envelopes
-                    // overlap while the glow remains visible at its edge.
-                    if glowOpacity(pressed: pressed) > 0 {
-                        DesignSpreadShadow(
-                            shape: shape,
-                            color: glow.opacity(glowOpacity(pressed: pressed)),
-                            geometry: glowGeometry(raised: raised)
-                        )
-                    }
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
-                        geometry: castGeometry(pressed: pressed, raised: raised)
-                    )
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: contact(pressed: pressed, hovered: raised),
-                        geometry: DesignDropShadowGeometry(
-                            radius: 0,
-                            y: !isEnabled
-                                ? DesignMaterialAdapter.slateDisabledContactY
-                                : pressed
-                                    ? 1
-                                    : DesignMaterialAdapter.slateContactY,
-                            sourceInset: 1
-                        )
-                    )
-                }
+                DesignRaisedButtonCanvasBackground(
+                    shape: canvasShape,
+                    role: role,
+                    projection: projection
+                )
             }
-            .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
-            // `isPressed` is intentionally discrete. Animating the material
-            // shadow makes touch-down feel late, especially on a keypad.
+            .offset(y: projection.yOffset)
             .animation(
-                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
-                value: raised
+                DesignCanvasKernel.transitionAnimation(for: .hover, reduceMotion: reduceMotion),
+                value: projection.state.isHovered
             )
-            .frame(minHeight: semanticHeight)
+            .animation(
+                DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                value: projection.state.isPressed
+            )
+            .frame(minHeight: geometry.semanticHeight)
             .contentShape(Rectangle())
-    }
-
-    private func castBlack(pressed: Bool, raised: Bool) -> Double {
-        if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
-        if pressed { return DesignMaterialAdapter.slatePressedBlack }
-        if raised { return DesignMaterialAdapter.slateHoverBlack }
-        return role == .action ? DesignMaterialAdapter.slateActionRestBlack : DesignMaterialAdapter.slateRestBlack
-    }
-
-    private func castGeometry(pressed: Bool, raised: Bool) -> DesignDropShadowGeometry {
-        if !isEnabled { return DesignMaterialShadowGeometry.slateDisabled }
-        if pressed { return DesignMaterialShadowGeometry.slatePressed }
-        return raised ? DesignMaterialShadowGeometry.slateHover : DesignMaterialShadowGeometry.slateRest
-    }
-
-    private func glowOpacity(pressed: Bool) -> Double {
-        guard isEnabled, !pressed else { return 0 }
-        return switch role {
-        case .action: DesignMaterialAdapter.slateActionGlow
-        case .secondary: DesignMaterialAdapter.slateSecondaryGlow
-        case .destructive: DesignMaterialAdapter.slateDestructiveGlow
-        case .quiet: DesignMaterialAdapter.slateQuietGlow
-        }
-    }
-
-    private func glowGeometry(raised: Bool) -> DesignDropShadowGeometry {
-        if raised {
-            return role == .destructive
-                ? DesignMaterialShadowGeometry.slateDestructiveHoverGlow
-                : DesignMaterialShadowGeometry.slateHoverGlow
-        }
-        switch role {
-        case .action: return DesignMaterialShadowGeometry.slateActionGlow
-        case .destructive: return DesignMaterialShadowGeometry.slateDestructiveGlow
-        case .secondary, .quiet: return DesignMaterialShadowGeometry.slateGlow
-        }
-    }
-
-    private func topLight(pressed: Bool, raised: Bool) -> Color? {
-        guard !pressed else { return nil }
-        if !isEnabled { return DuskColors.ink.opacity(DesignMaterialAdapter.slateDisabledTopLight) }
-        if raised {
-            return role == .destructive
-                ? .white.opacity(DesignMaterialAdapter.slateDestructiveHoverTopLight)
-                : DuskColors.ink.opacity(DesignMaterialAdapter.slateHoverTopLight)
-        }
-        switch role {
-        case .action: return .white.opacity(DesignMaterialAdapter.slateActionTopLight)
-        case .destructive: return .white.opacity(DesignMaterialAdapter.slateDestructiveTopLight)
-        case .secondary, .quiet: return DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightRest)
-        }
-    }
-
-    private var foreground: Color {
-        if !isEnabled { return DuskColors.ink4 }
-        switch role {
-        case .action: return DuskColors.ink
-        case .secondary, .destructive, .quiet: return DuskColors.ink
-        }
-    }
-
-    private func border(raised: Bool) -> Color {
-        if !isEnabled {
-            return DuskColors.lineSoft.overlaying(
-                DuskColors.bg,
-                opacity: 1 - DesignMaterialAdapter.slateDisabledBorder
-            )
-        }
-        if raised { return .clear }
-        if contrast == .increased { return DuskColors.ink3 }
-        return switch role {
-        case .action:
-            DuskColors.accent.overlaying(
-                DuskColors.bgSunk,
-                opacity: 1 - DesignMaterialAdapter.slateActionBorder
-            )
-        case .secondary: DuskColors.line
-        case .quiet:
-            DuskColors.lineSoft.overlaying(
-                DuskColors.bg,
-                opacity: DesignMaterialAdapter.slateQuietBorderBackgroundMix
-            )
-        case .destructive:
-            DuskColors.stop.overlaying(
-                DuskColors.line,
-                opacity: 1 - DesignMaterialAdapter.slateDestructiveBorder
-            )
-        }
-    }
-
-    private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
-
-    private func contact(pressed: Bool, hovered: Bool) -> Color {
-        if !isEnabled {
-            return DuskColors.bgSunk.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.slateDisabledContactMix
-            )
-        }
-        if pressed { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
-        if hovered {
-            return role == .destructive
-                ? DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.46)
-                : DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10)
-        }
-        switch role {
-        case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
-        case .secondary, .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
-        case .destructive: return DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.38)
-        }
     }
 }
 
@@ -346,13 +352,21 @@ struct DesignCompactButton<Label: View>: View {
                 .frame(minWidth: minimumWidth, minHeight: minimumHeight)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale, role: role, selected: effectiveState.isSelected, hovered: hovered))
+        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale, role: role, selected: state.isSelected, hovered: hovered))
         .onHover { hovered = $0 }
         .disabled(!effectiveState.isInteractive)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(effectiveState.accessibilityValue)
         .accessibilityIdentifier(accessibilityId ?? "")
-        .accessibilityAddTraits(effectiveState.isSelected ? .isSelected : [])
+        .accessibilityAddTraits(state.isSelected ? .isSelected : [])
+        // The caller's label remains the visual face. This outer native frame
+        // only normalizes the semantic target and is a no-op for existing
+        // Calendar controls that already meet the minimum.
+        .frame(
+            minWidth: max(minimumWidth ?? 0, DesignMetrics.minimumTarget),
+            minHeight: max(minimumHeight, DesignMetrics.minimumTarget)
+        )
+        .contentShape(Rectangle())
     }
 }
 
@@ -375,7 +389,7 @@ struct DesignCompactIconButton: View {
 
     @ViewBuilder
     var body: some View {
-        if effectiveState.isSelected {
+        if state.isSelected {
             selectedButton
         } else {
             // The unselected compact face follows the same native button
@@ -466,12 +480,17 @@ struct DesignSelectableButton<Label: View>: View {
                 .frame(minWidth: minimumWidth, minHeight: minimumHeight)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale, selected: effectiveState.isSelected))
+        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale, selected: state.isSelected))
         .disabled(!effectiveState.isInteractive)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(selectionValue)
         .accessibilityIdentifier(accessibilityId ?? "")
-        .accessibilityAddTraits(effectiveState.isSelected ? .isSelected : [])
+        .accessibilityAddTraits(state.isSelected ? .isSelected : [])
+        .frame(
+            minWidth: max(minimumWidth ?? 0, DesignMetrics.minimumTarget),
+            minHeight: max(minimumHeight, DesignMetrics.minimumTarget)
+        )
+        .contentShape(Rectangle())
     }
 }
 
@@ -485,196 +504,90 @@ struct DesignCompactButtonStyle: ButtonStyle {
     var selected = false
     var hovered = false
 
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed && isEnabled
-        let raised = hovered && isEnabled
-        let shape = RoundedRectangle(
-            cornerRadius: selected ? Radii.sm : DesignMetrics.actionButtonCornerRadius,
-            style: .continuous
+        if selected {
+            // Selected compact controls are explicit rounded-rectangle
+            // receivers; the capsule-only selectedChip profile is not reused.
+            selectedBody(configuration: configuration)
+        } else {
+            raisedBody(configuration: configuration)
+        }
+    }
+
+    private func raisedBody(configuration: Configuration) -> some View {
+        let projection = DesignRaisedButtonKernelProjection.make(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            isFocused: focused,
+            isHovered: hovered,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
         )
-        configuration.label
+        let cornerRadius = DesignMetrics.actionButtonCornerRadius
+        let clipShape = RoundedRectangle(cornerRadius: cornerRadius, style: .circular)
+
+        return configuration.label
+            .clipShape(clipShape)
             .background {
-                if selected {
-                    DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
-                } else {
-                    designSlateFace(role: role, muted: !isEnabled, hovered: raised)
-                }
-            }
-            .clipShape(shape)
-            .overlay {
-                shape.strokeBorder(
-                    selected ? Color.clear : border(raised: raised),
-                    lineWidth: DesignMetrics.hairline
+                DesignRaisedButtonCanvasBackground(
+                    shape: .roundedRectangle(cornerRadius: cornerRadius),
+                    role: role,
+                    projection: projection
                 )
             }
-            .overlay {
-                if !selected, let topLight = topLight(pressed: pressed, raised: raised) {
-                    DesignTopEdgeLight(shape: shape, color: topLight)
-                }
-            }
-            .overlay {
-                if focused {
-                    shape.stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
-                        .padding(DesignMetrics.focusBorderInset)
-                }
-            }
-            .background {
-                ZStack {
-                    if selected {
-                        DesignSpreadShadow(
-                            shape: shape,
-                            color: pressed
-                                ? .black.opacity(DesignMaterialAdapter.slatePressedBlack)
-                                : DuskColors.accent.opacity(0.40),
-                            geometry: pressed
-                                ? DesignMaterialShadowGeometry.slatePressed
-                                : DesignDropShadowGeometry(radius: 16, y: 8, sourceInset: 14)
-                        )
-                    } else {
-                        // See the standalone action style above: the CSS
-                        // black cast is above the ember cast in the list.
-                        if glowOpacity(pressed: pressed) > 0 {
-                            DesignSpreadShadow(
-                                shape: shape,
-                                color: glow.opacity(glowOpacity(pressed: pressed)),
-                                geometry: glowGeometry(raised: raised)
-                            )
-                        }
-                        DesignSpreadShadow(
-                            shape: shape,
-                            color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
-                            geometry: castGeometry(pressed: pressed, raised: raised)
-                        )
-                    }
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: selected
-                            ? DuskColors.bgSunk.opacity(0.88)
-                            : contact(pressed: pressed, hovered: raised),
-                        geometry: DesignDropShadowGeometry(
-                            radius: 0,
-                            y: selected
-                                ? 1
-                                : !isEnabled
-                                    ? DesignMaterialAdapter.slateDisabledContactY
-                                    : pressed
-                                        ? 1
-                                        : DesignMaterialAdapter.slateContactY,
-                            sourceInset: 1
-                        )
-                    )
-                }
-            }
-            .scaleEffect(pressed && !reduceMotion ? pressedScale : 1)
-            .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0))
-            .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+            .scaleEffect(projection.state.isPressed && !reduceMotion ? pressedScale : 1)
+            .offset(y: projection.yOffset)
             .animation(
-                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
-                value: raised
+                DesignCanvasKernel.transitionAnimation(for: .hover, reduceMotion: reduceMotion),
+                value: projection.state.isHovered
             )
-            // Keep press feedback discrete; an interpolated shadow delays the
-            // visual response of compact touch controls.
-    }
-
-    private func castBlack(pressed: Bool, raised: Bool) -> Double {
-        if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
-        if pressed { return DesignMaterialAdapter.slatePressedBlack }
-        if raised { return DesignMaterialAdapter.slateHoverBlack }
-        return role == .action ? DesignMaterialAdapter.slateActionRestBlack : DesignMaterialAdapter.slateRestBlack
-    }
-
-    private func castGeometry(pressed: Bool, raised: Bool) -> DesignDropShadowGeometry {
-        if !isEnabled { return DesignMaterialShadowGeometry.slateDisabled }
-        if pressed { return DesignMaterialShadowGeometry.slatePressed }
-        return raised ? DesignMaterialShadowGeometry.slateHover : DesignMaterialShadowGeometry.slateRest
-    }
-
-    private func glowOpacity(pressed: Bool) -> Double {
-        guard isEnabled, !pressed else { return 0 }
-        return switch role {
-        case .action: DesignMaterialAdapter.slateActionGlow
-        case .secondary: DesignMaterialAdapter.slateSecondaryGlow
-        case .destructive: DesignMaterialAdapter.slateDestructiveGlow
-        case .quiet: DesignMaterialAdapter.slateQuietGlow
-        }
-    }
-
-    private func glowGeometry(raised: Bool) -> DesignDropShadowGeometry {
-        if raised {
-            return role == .destructive
-                ? DesignMaterialShadowGeometry.slateDestructiveHoverGlow
-                : DesignMaterialShadowGeometry.slateHoverGlow
-        }
-        switch role {
-        case .action: return DesignMaterialShadowGeometry.slateActionGlow
-        case .destructive: return DesignMaterialShadowGeometry.slateDestructiveGlow
-        case .secondary, .quiet: return DesignMaterialShadowGeometry.slateGlow
-        }
-    }
-
-    private func topLight(pressed: Bool, raised: Bool) -> Color? {
-        guard !pressed else { return nil }
-        if !isEnabled { return DuskColors.ink.opacity(DesignMaterialAdapter.slateDisabledTopLight) }
-        if raised {
-            return role == .destructive
-                ? .white.opacity(DesignMaterialAdapter.slateDestructiveHoverTopLight)
-                : DuskColors.ink.opacity(DesignMaterialAdapter.slateHoverTopLight)
-        }
-        switch role {
-        case .action: return .white.opacity(DesignMaterialAdapter.slateActionTopLight)
-        case .destructive: return .white.opacity(DesignMaterialAdapter.slateDestructiveTopLight)
-        case .secondary, .quiet: return DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightRest)
-        }
-    }
-
-    private func border(raised: Bool) -> Color {
-        if !isEnabled {
-            return DuskColors.lineSoft.overlaying(
-                DuskColors.bg,
-                opacity: 1 - DesignMaterialAdapter.slateDisabledBorder
+            .animation(
+                DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                value: projection.state.isPressed
             )
-        }
-        if raised { return .clear }
-        if contrast == .increased { return DuskColors.ink3 }
-        return switch role {
-        case .action:
-            DuskColors.accent.overlaying(
-                DuskColors.bgSunk,
-                opacity: 1 - DesignMaterialAdapter.slateActionBorder
-            )
-        case .secondary: DuskColors.line
-        case .quiet:
-            DuskColors.lineSoft.overlaying(
-                DuskColors.bg,
-                opacity: DesignMaterialAdapter.slateQuietBorderBackgroundMix
-            )
-        case .destructive:
-            DuskColors.stop.overlaying(
-                DuskColors.line,
-                opacity: 1 - DesignMaterialAdapter.slateDestructiveBorder
-            )
-        }
     }
 
-    private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
+    private func selectedBody(configuration: Configuration) -> some View {
+        let projection = DesignSelectedCompactKernelProjection.make(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            isFocused: focused,
+            isHovered: hovered,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion,
+            pressedScale: pressedScale
+        )
+        let clipShape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
 
-    private func contact(pressed: Bool, hovered: Bool) -> Color {
-        if !isEnabled {
-            return DuskColors.bgSunk.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.slateDisabledContactMix
+        return configuration.label
+            .clipShape(clipShape)
+            .background {
+                DesignSelectedCompactCanvasBackground(projection: projection)
+            }
+            .scaleEffect(projection.scale)
+            .offset(y: projection.yOffset)
+            // Disabled selected material is one whole-control composition:
+            // label and Canvas attenuate together while the direct kernel
+            // keeps its recipe-owned opacity for standalone raster contracts.
+            .compositingGroup()
+            .opacity(
+                projection.state.isDisabled
+                    ? DesignMaterialAdapter.selectDisabledOpacity
+                    : 1
             )
-        }
-        if pressed { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
-        if hovered {
-            return role == .destructive
-                ? DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.46)
-                : DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10)
-        }
-        switch role {
-        case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
-        case .secondary, .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
-        case .destructive: return DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.38)
-        }
+            .animation(
+                DesignCanvasSmallControlKernel.transitionAnimation(
+                    for: .material,
+                    reduceMotion: reduceMotion
+                ),
+                value: projection.state.isDisabled
+            )
+            .transaction { transaction in
+                if reduceMotion {
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            }
     }
 }

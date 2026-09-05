@@ -2247,40 +2247,12 @@ private struct DisclosureFixtureBodySurface<Content: View>: View {
                 alignment: .leading
             )
             .background {
-                designSlateFace(
-                    role: .secondary,
-                    muted: false,
-                    hovered: false,
-                    baseOverride: DuskColors.paper
+                DesignCanvasSurfaceKernel(
+                    shape: .roundedRectangle(cornerRadius: Radii.sm),
+                    tier: .plate
                 )
             }
             .clipShape(shape)
-            .overlay {
-                shape.stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
-            }
-            .overlay {
-                DesignTopEdgeLight(
-                    shape: shape,
-                    color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightOpacity)
-                )
-            }
-            .background {
-                ZStack {
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
-                        geometry: DesignMaterialShadowGeometry.slateRest
-                    )
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: DuskColors.bgSunk.overlaying(
-                            DuskColors.line,
-                            opacity: DesignMaterialAdapter.plateRestContactMix
-                        ),
-                        geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
-                    )
-                }
-            }
     }
 }
 

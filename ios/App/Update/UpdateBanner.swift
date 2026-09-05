@@ -20,9 +20,12 @@ struct UpdateBanner: View {
                     .foregroundStyle(DuskColors.ink3)
             }
             Spacer(minLength: Space.sm)
-            Button("Update", action: onUpdate)
-                .buttonStyle(DesignButtonStyle(role: .action))
-                .accessibilityIdentifier("update-banner-action")
+            DesignActionButton(
+                title: "Update",
+                accessibilityId: "update-banner-action",
+                fillsWidth: false,
+                action: onUpdate
+            )
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)

@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 private struct DesignStateAccessibilityModifier: ViewModifier {
     let state: DesignControlState
@@ -177,136 +176,142 @@ struct DesignStepper: View {
 }
 
 private enum DesignSliderMetrics {
-    // These values mirror the range input's source-authored CSS states and
-    // geometry. They stay local because they do not change another control's
-    // material recipe.
     static let labelRowGap: CGFloat = 7
-    static let disabledOpacity = 0.58
-    static let disabledSaturation = 0.3
-    static let focusTrackRingWidth: CGFloat = 3
-    // The CSS track uses a 3px/6px/-2px inner shadow. A direct SwiftUI inner
-    // shadow over-darkens an 8pt capsule, so retain its directional falloff as
-    // a shape-clipped native gradient instead of changing the track geometry.
-    static let trackTopShadowOpacity = 0.44
-    static let trackTopShadowMiddleOpacity = 0.03
-    static let trackTopShadowMiddleStop: CGFloat = 0.45
-    static let trackTopShadowLowerOpacity = 0.04
-    static let trackTopShadowLowerStop: CGFloat = 0.55
-    static let trackTopShadowBottomOpacity = 0.03
-    static let trackBottomHighlight = 0.07
-    static let thumbRadialFadeStop: CGFloat = 0.72
+    // A nonzero mask keeps SwiftUI's platform Slider mounted and semantic;
+    // this sub-pixel alpha rounds to transparent in an 8-bit output channel.
+    static let nativeChromeMaskOpacity = 0.000_001
 }
 
-private func designSliderColor(_ color: Color, isEnabled: Bool) -> Color {
-    guard !isEnabled else { return color }
+/// Projects caller-owned value, direction, focus, and availability into the
+/// decorative range profile. The native Slider remains the only value owner.
+struct DesignSliderCanvasProjection: Equatable {
+    let normalizedProgress: CGFloat
+    let layoutDirection: LayoutDirection
+    let state: DesignCanvasControlState
+    let increasedContrast: Bool
+    let reduceMotion: Bool
 
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    var alpha: CGFloat = 0
-    guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
-        return color
+    static func make(
+        value: Double,
+        range: ClosedRange<Double>,
+        layoutDirection: LayoutDirection,
+        isFocused: Bool,
+        isEnabled: Bool,
+        increasedContrast: Bool,
+        reduceMotion: Bool
+    ) -> DesignSliderCanvasProjection {
+        DesignSliderCanvasProjection(
+            normalizedProgress: DesignCanvasProgressGeometry.normalized(
+                value: value,
+                lowerBound: range.lowerBound,
+                upperBound: range.upperBound
+            ),
+            layoutDirection: layoutDirection,
+            state: DesignCanvasControlState(
+                isFocused: isFocused && isEnabled,
+                isDisabled: !isEnabled
+            ),
+            increasedContrast: increasedContrast,
+            reduceMotion: reduceMotion
+        )
     }
 
-    // CSS `saturate()` uses this luminance matrix. Applying it to the local
-    // recipe colors keeps the disabled result independent of the destination
-    // behind SwiftUI's transparent compositing group.
-    let saturation = DesignSliderMetrics.disabledSaturation
-    let luminance = red * 0.213 + green * 0.715 + blue * 0.072
-    return Color(
-        .sRGB,
-        red: luminance + (red - luminance) * saturation,
-        green: luminance + (green - luminance) * saturation,
-        blue: luminance + (blue - luminance) * saturation,
-        opacity: alpha
-    )
+    var profile: DesignCanvasSmallControlProfile {
+        .slider(
+            normalizedProgress: normalizedProgress,
+            layoutDirection: layoutDirection
+        )
+    }
 }
 
-private struct DesignSliderThumb: View {
-    let focused: Bool
-    let isEnabled: Bool
-
-    private var radialEndRadius: CGFloat {
-        // CSS radial gradients default to the farthest corner when no size is
-        // supplied. The center is 50% / 55% of the 26pt thumb box.
-        let size = DesignMetrics.sliderThumbSize
-        let centerX = size * 0.5
-        let centerY = size * 0.55
-        return (centerX * centerX + centerY * centerY).squareRoot()
-    }
+/// Decorative-only adapter around the reviewed small-control slider profile.
+/// It never receives a gesture, focus binding, accessibility value, or action.
+private struct DesignSliderCanvasBackground: View {
+    let projection: DesignSliderCanvasProjection
 
     var body: some View {
-        Circle()
-            .fill(
-                LinearGradient(
-                    colors: [
-                        designSliderColor(
-                            DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.05),
-                            isEnabled: isEnabled
-                        ),
-                        designSliderColor(DuskColors.paper, isEnabled: isEnabled),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        DesignCanvasSmallControlKernel(
+            profile: projection.profile,
+            state: projection.state,
+            increasedContrast: projection.increasedContrast,
+            reduceMotion: projection.reduceMotion
+        )
+        .animation(
+            DesignCanvasSmallControlKernel.transitionAnimation(
+                for: .feedback,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.isFocused
+        )
+        .animation(
+            DesignCanvasSmallControlKernel.transitionAnimation(
+                for: .material,
+                reduceMotion: projection.reduceMotion
+            ),
+            value: projection.state.isDisabled
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Shared slider interaction body. This is the only place the transparent
+/// native Slider and decorative Canvas track/thumb are composed. Callers keep
+/// ownership of their surrounding label, detail, and formatted-output layout.
+struct DesignSliderControlBody: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let accessibilityLabel: String
+    let accessibilityValue: String
+    var accessibilityHint = ""
+    let accessibilityId: String
+    var isEnabled = true
+
+    @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.layoutDirection) private var layoutDirection
+
+    var body: some View {
+        // Keep the native Slider as the sole hit-testing, focus, keyboard,
+        // adjustment, and accessibility owner. Only its chrome is transparent.
+        Slider(value: $value, in: range, step: step) { Text(accessibilityLabel) }
+            .labelsHidden()
+            .tint(.clear)
+            // A nonzero mask keeps the native control mounted while rounding
+            // its platform chrome to transparent in an 8-bit output channel.
+            .mask {
+                Color.black.opacity(DesignSliderMetrics.nativeChromeMaskOpacity)
+            }
+            .focused($focused)
+            .disabled(!isEnabled)
+            .frame(
+                minWidth: DesignMetrics.sliderMinimumTrackWidth,
+                maxWidth: .infinity,
+                minHeight: DesignMetrics.minimumTarget
             )
-            .overlay {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            stops: [
-                                .init(
-                                    color: designSliderColor(
-                                        DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.22),
-                                        isEnabled: isEnabled
-                                    ),
-                                    location: 0
-                                ),
-                                .init(color: .clear, location: DesignSliderMetrics.thumbRadialFadeStop),
-                            ],
-                            center: UnitPoint(x: 0.5, y: 0.55),
-                            startRadius: 0,
-                            endRadius: radialEndRadius
-                        )
-                    )
-            }
-            .clipShape(Circle())
-            .overlay {
-                Circle().stroke(
-                    designSliderColor(DuskColors.line, isEnabled: isEnabled),
-                    lineWidth: DesignMetrics.hairline
-                )
-            }
-            .overlay {
-                if focused {
-                    Circle()
-                        .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
-                        .padding(DesignMetrics.focusBorderInset)
-                }
-            }
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityValue(accessibilityValue)
+            .accessibilityHint(accessibilityHint)
+            .accessibilityIdentifier(accessibilityId)
+            // The Canvas receives the Slider's exact proposal and can neither
+            // expand layout nor become a hit/accessibility owner.
             .background {
-                ZStack {
-                    DesignSpreadShadow(
-                        shape: Circle(),
-                        color: designSliderColor(
-                            DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12),
-                            isEnabled: isEnabled
-                        ),
-                        geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
-                    )
-                    DesignSpreadShadow(
-                        shape: Circle(),
-                        color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
-                        geometry: DesignMaterialShadowGeometry.slateRest
-                    )
-                    DesignSpreadShadow(
-                        shape: Circle(),
-                        color: designSliderColor(DuskColors.accent, isEnabled: isEnabled).opacity(0.44),
-                        geometry: DesignDropShadowGeometry(radius: 16, y: 10, sourceInset: 13)
-                    )
-                }
+                DesignSliderCanvasBackground(projection: canvasProjection)
             }
-            .frame(width: DesignMetrics.sliderThumbSize, height: DesignMetrics.sliderThumbSize)
+    }
+
+    private var canvasProjection: DesignSliderCanvasProjection {
+        DesignSliderCanvasProjection.make(
+            value: value,
+            range: range,
+            layoutDirection: layoutDirection,
+            isFocused: focused,
+            isEnabled: isEnabled,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        )
     }
 }
 
@@ -318,8 +323,6 @@ struct DesignSlider: View {
     var format: ((Double) -> String)? = nil
     var accessibilityId: String? = nil
     var isEnabled = true
-    @FocusState private var focused: Bool
-    @Environment(\.layoutDirection) private var layoutDirection
 
     init(
         title: String,
@@ -361,58 +364,21 @@ struct DesignSlider: View {
                     alignment: .leading
                 )
             HStack(spacing: Space.md) {
-                ZStack {
-                    GeometryReader { proxy in
-                        let width = proxy.size.width
-                        let thumbTravel = max(width - DesignMetrics.sliderThumbSize, 0)
-                        let thumbLeading = min(max(thumbProgress * thumbTravel, 0), thumbTravel)
-                        ZStack(alignment: .leading) {
-                            sliderTrack
-                                .frame(maxWidth: .infinity)
-                                .frame(height: DesignMetrics.sliderTrackHeight)
-                            HStack(spacing: 0) {
-                                Color.clear
-                                    .frame(width: thumbLeading)
-                                DesignSliderThumb(focused: focused, isEnabled: isEnabled)
-                                Spacer(minLength: 0)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
-                        // The decorative geometry is laid out in a physical
-                        // left-to-right space; the semantic Slider remains in
-                        // the caller's layout direction below.
-                        .environment(\.layoutDirection, .leftToRight)
-                    }
-                    .frame(height: DesignMetrics.minimumTarget)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-                    // Match CSS opacity compositing for the complete range so
-                    // its track cannot show through the disabled thumb.
-                    .compositingGroup()
-                    .opacity(isEnabled ? 1 : DesignSliderMetrics.disabledOpacity)
-                    // Keep the native Slider as the sole interaction and
-                    // accessibility owner; only its platform chrome is hidden
-                    // so the source-authored track and thumb can be rendered.
-                    Slider(value: $value, in: range, step: step) { Text(title) }
-                        .labelsHidden()
-                        .tint(.clear)
-                        .opacity(0)
-                        .focused($focused)
-                        .disabled(!isEnabled)
-                        .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
-                        .accessibilityLabel(title)
-                        // Native disabled semantics announce availability;
-                        // retain the explicit current value in every state.
-                        .accessibilityValue(format?(value) ?? String(value))
-                        .accessibilityIdentifier(accessibilityId ?? "")
-                }
-                .frame(minWidth: DesignMetrics.sliderMinimumTrackWidth, maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
-                if let format {
-                    Text(format(value))
+                DesignSliderControlBody(
+                    value: $value,
+                    range: range,
+                    step: step,
+                    accessibilityLabel: title,
+                    accessibilityValue: formattedValue,
+                    accessibilityId: accessibilityId ?? "",
+                    isEnabled: isEnabled
+                )
+                if format != nil {
+                    Text(formattedValue)
                         .font(Typo.mono(TypeScale.sm))
                         .foregroundStyle(DuskColors.ink2)
                         .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
+                        .accessibilityHidden(true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -420,82 +386,8 @@ struct DesignSlider: View {
         .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget, alignment: .leading)
     }
 
-    private var sliderTrack: some View {
-        let progressColor = designSliderColor(
-            DuskColors.accentSoft.overlaying(DuskColors.accent, opacity: 0.58),
-            isEnabled: isEnabled
-        )
-        let trackColor = designSliderColor(DuskColors.bgSunk, isEnabled: isEnabled)
-        let isRightToLeft = layoutDirection == .rightToLeft
-        let gradient = LinearGradient(
-            stops: [
-                .init(color: progressColor, location: 0),
-                .init(color: progressColor, location: normalizedValue),
-                .init(color: trackColor, location: normalizedValue),
-                .init(color: trackColor, location: 1),
-            ],
-            startPoint: isRightToLeft ? .trailing : .leading,
-            endPoint: isRightToLeft ? .leading : .trailing
-        )
-
-        return Capsule()
-            .fill(gradient)
-            .background {
-                if focused {
-                    Capsule()
-                        .stroke(
-                            DuskColors.accent.opacity(0.18),
-                            lineWidth: DesignSliderMetrics.focusTrackRingWidth * 2
-                        )
-                }
-            }
-            .overlay {
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .black.opacity(DesignSliderMetrics.trackTopShadowOpacity), location: 0),
-                                .init(
-                                    color: .black.opacity(DesignSliderMetrics.trackTopShadowMiddleOpacity),
-                                    location: DesignSliderMetrics.trackTopShadowMiddleStop
-                                ),
-                                .init(
-                                    color: .black.opacity(DesignSliderMetrics.trackTopShadowLowerOpacity),
-                                    location: DesignSliderMetrics.trackTopShadowLowerStop
-                                ),
-                                .init(
-                                    color: .black.opacity(DesignSliderMetrics.trackTopShadowBottomOpacity),
-                                    location: 1
-                                ),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
-            .overlay(alignment: .bottom) {
-                Capsule()
-                    .fill(
-                        designSliderColor(DuskColors.ink, isEnabled: isEnabled)
-                            .opacity(DesignSliderMetrics.trackBottomHighlight)
-                    )
-                    .frame(height: DesignMetrics.hairline)
-            }
-            .shadow(
-                color: designSliderColor(DuskColors.line, isEnabled: isEnabled)
-                    .opacity(DesignMaterialAdapter.wellLineOpacity),
-                radius: 0,
-                y: DesignMaterialAdapter.wellLineY
-            )
-    }
-
-    private var normalizedValue: CGFloat {
-        guard range.upperBound > range.lowerBound else { return 0 }
-        return CGFloat(min(max((value - range.lowerBound) / (range.upperBound - range.lowerBound), 0), 1))
-    }
-
-    private var thumbProgress: CGFloat {
-        layoutDirection == .rightToLeft ? 1 - normalizedValue : normalizedValue
+    private var formattedValue: String {
+        format?(value) ?? String(value)
     }
 }
 
