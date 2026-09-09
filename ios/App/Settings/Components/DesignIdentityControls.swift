@@ -51,8 +51,6 @@ private enum UserAvatarMaterial {
     // The handoff captures every locked avatar inside a 24pt transparent field.
     // Keeping that field stable preserves the 28/44/56pt native face bounds.
     static let canvasOverflow: CGFloat = 24
-    static let canvasBlurScale: CGFloat = 0.8
-    static let chromaticShadowCopies = 3
 
     static let restContact = DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
     static let restCast = DesignDropShadowGeometry(radius: 13, y: 9, sourceInset: 8)
@@ -62,9 +60,9 @@ private enum UserAvatarMaterial {
     // paper-then-accent annular treatment outside the unchanged face bounds.
     static let selectedPaperBandWidth: CGFloat = 2
     static let selectedAccentBandWidth: CGFloat = 2
-    static let selectedContact = DesignDropShadowGeometry(radius: 0, y: 1, sourceInset: 1)
-    static let selectedCast = DesignDropShadowGeometry(radius: 10, y: 5, sourceInset: 8)
-    static let selectedGlow = DesignDropShadowGeometry(radius: 18, y: 1, sourceInset: 6)
+    static let selectedContact = DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+    static let selectedCast = DesignDropShadowGeometry(radius: 12, y: 8, sourceInset: 8)
+    static let selectedGlow = DesignDropShadowGeometry(radius: 17, y: 0, sourceInset: 5)
 
     static let disabledContact = DesignDropShadowGeometry(radius: 0, y: 1, sourceInset: 1)
     static let disabledCast = DesignDropShadowGeometry(radius: 9, y: 5, sourceInset: 8)
@@ -73,8 +71,8 @@ private enum UserAvatarMaterial {
     static let selectedContactAccentMix = 0.013
     static let disabledContactLineMix = 0.28
     static let disabledBaseInkMix = 0.03
-    static let restGlowOpacity = 0.18
-    static let selectedGlowOpacity = 0.26
+    static let restGlowOpacity = 0.40
+    static let selectedGlowOpacity = 1.0
     static let selectedFaceTintMix = 0.08
     static let selectedShoulderTintMix = 0.16
     static let selectedInnerOcclusionOpacity = 0.18
@@ -84,7 +82,6 @@ private struct UserAvatarShadowRecipe {
     let color: Color
     let opacity: Double
     let geometry: DesignDropShadowGeometry
-    var copies = 1
 }
 
 /// Decorative-only identity material. One local Canvas owns the face, casts,
@@ -149,8 +146,7 @@ private struct UserAvatarCanvasBackground: View {
                         : UserAvatarMaterial.restGlowOpacity,
                     geometry: selected
                         ? UserAvatarMaterial.selectedGlow
-                        : UserAvatarMaterial.restEmberCast,
-                    copies: UserAvatarMaterial.chromaticShadowCopies
+                        : UserAvatarMaterial.restEmberCast
                 ),
                 in: &context,
                 faceRect: faceRect
@@ -280,21 +276,18 @@ private struct UserAvatarCanvasBackground: View {
         _ facePath: Path,
         in context: inout GraphicsContext
     ) {
-        var seatedFace = context
-        seatedFace.clip(to: facePath)
-        seatedFace.addFilter(.shadow(
+        DesignCanvasEffects.insetShadow(
+            in: &context,
+            facePath: facePath,
+            sourcePath: facePath,
             color: Color.black.opacity(
                 disabled
                     ? UserAvatarMaterial.selectedInnerOcclusionOpacity * 0.55
                     : UserAvatarMaterial.selectedInnerOcclusionOpacity
             ),
-            radius: 3,
-            x: 0,
-            y: 2,
-            blendMode: .sourceAtop,
-            options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-        ))
-        seatedFace.fill(facePath, with: .color(.white))
+            blur: 3,
+            y: 2
+        )
     }
 
     private func drawShadow(
@@ -302,22 +295,18 @@ private struct UserAvatarCanvasBackground: View {
         in context: inout GraphicsContext,
         faceRect: CGRect
     ) {
-        let maximumInset = max(0, min(faceRect.width, faceRect.height) / 2 - 0.5)
-        let sourceInset = min(max(0, recipe.geometry.sourceInset), maximumInset)
-        let sourceRect = faceRect
-            .insetBy(dx: sourceInset, dy: sourceInset)
-            .offsetBy(dx: recipe.geometry.x, dy: recipe.geometry.y)
-        let source = Path(ellipseIn: sourceRect)
-        let blurRadius = recipe.geometry.radius * UserAvatarMaterial.canvasBlurScale
-
-        for _ in 0..<recipe.copies {
-            context.drawLayer { layer in
-                if blurRadius > 0 {
-                    layer.addFilter(.blur(radius: blurRadius))
-                }
-                layer.fill(source, with: .color(recipe.color.opacity(recipe.opacity)))
-            }
-        }
+        let sourceInset = recipe.geometry.sourceInset
+        guard faceRect.width - 2 * sourceInset > 0,
+              faceRect.height - 2 * sourceInset > 0 else { return }
+        let source = Path(ellipseIn: faceRect.insetBy(dx: sourceInset, dy: sourceInset))
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: recipe.color.opacity(recipe.opacity),
+            blur: recipe.geometry.radius,
+            x: recipe.geometry.x,
+            y: recipe.geometry.y
+        )
     }
 
     private func pixelAligned(_ value: CGFloat) -> CGFloat {

@@ -370,7 +370,7 @@ enum VoiceCaptureLayout {
         radius: 20, y: 13, sourceInset: 13
     )
     static let podGlow = DesignDropShadowGeometry(
-        radius: 22, x: 3, y: 14, sourceInset: 14
+        radius: 22, y: 13, sourceInset: 12
     )
 
     static func idleSize(horizontalSizeClass: UserInterfaceSizeClass?) -> CGFloat {
@@ -570,22 +570,19 @@ private enum VoiceCanvasDrawing {
         geometry: DesignDropShadowGeometry,
         in context: inout GraphicsContext,
         faceRect: CGRect,
-        copies: Int = 1
+        blur: CGFloat? = nil
     ) {
-        var source = shape.inset(by: geometry.sourceInset).path(in: faceRect)
-        source = source.applying(CGAffineTransform(
-            translationX: geometry.x,
+        guard faceRect.width - 2 * geometry.sourceInset > 0,
+              faceRect.height - 2 * geometry.sourceInset > 0 else { return }
+        let source = shape.inset(by: geometry.sourceInset).path(in: faceRect)
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: color,
+            blur: blur ?? geometry.radius,
+            x: geometry.x,
             y: geometry.y
-        ))
-
-        for _ in 0..<copies {
-            context.drawLayer { layer in
-                if geometry.radius > 0 {
-                    layer.addFilter(.blur(radius: geometry.radius * 0.8))
-                }
-                layer.fill(source, with: .color(color))
-            }
-        }
+        )
     }
 
     static func slateFace(
@@ -721,16 +718,14 @@ private enum VoiceCanvasDrawing {
         in context: inout GraphicsContext
     ) {
         guard amount > 0 else { return }
-        var inset = context
-        inset.addFilter(.shadow(
+        DesignCanvasEffects.insetShadow(
+            in: &context,
+            facePath: path,
+            sourcePath: path,
             color: DuskColors.bgSunk.opacity(0.42 * Double(amount)),
-            radius: 3,
-            x: 0,
-            y: 2,
-            blendMode: .sourceAtop,
-            options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-        ))
-        inset.fill(path, with: .color(.white))
+            blur: 3,
+            y: 2
+        )
     }
 
     static func ellipticalRadial(
@@ -876,11 +871,14 @@ private struct VoicePodCanvas: View, Animatable {
                     )
                     VoiceCanvasDrawing.shadow(
                         shape: shape,
-                        color: glow.opacity(0.5 * Double(expansionAmount)),
-                        geometry: VoiceCaptureLayout.podGlow,
+                        color: glow.opacity((0.68 - 0.10 * Double(autoAmount)) * Double(expansionAmount)),
+                        geometry: DesignDropShadowGeometry(
+                            radius: VoiceCaptureLayout.podGlow.radius - 4 * autoAmount,
+                            y: VoiceCaptureLayout.podGlow.y - 2 * autoAmount,
+                            sourceInset: VoiceCaptureLayout.podGlow.sourceInset - autoAmount
+                        ),
                         in: &context,
-                        faceRect: faceRect,
-                        copies: 3
+                        faceRect: faceRect
                     )
                 }
                 VoiceCanvasDrawing.shadow(
@@ -961,7 +959,7 @@ private struct VoicePodCanvas: View, Animatable {
 private struct VoiceCrownSpineCanvas: View {
     var body: some View {
         GeometryReader { proxy in
-            let overflow: CGFloat = 24
+            let overflow = DesignCanvasEffects.overflow(blur: 20, y: 8)
             let faceRect = CGRect(
                 x: overflow,
                 y: overflow,
@@ -978,12 +976,16 @@ private struct VoiceCrownSpineCanvas: View {
             let spineShape = RoundedRectangle(cornerRadius: 8, style: .continuous)
 
             Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+                let deckDropShadow = DesignDropShadowGeometry(radius: 10, y: 8, sourceInset: 0)
                 VoiceCanvasDrawing.shadow(
                     shape: deckShape,
                     color: Color.black.opacity(0.42),
-                    geometry: DesignDropShadowGeometry(radius: 10, y: 8, sourceInset: 0),
+                    geometry: deckDropShadow,
                     in: &context,
-                    faceRect: faceRect
+                    faceRect: faceRect,
+                    // CSS filter drop-shadow authors sigma directly; the
+                    // shared box-shadow helper accepts CSS blur instead.
+                    blur: deckDropShadow.radius * 2
                 )
                 VoiceCanvasDrawing.shadow(
                     shape: spineShape,
@@ -1078,7 +1080,7 @@ private struct VoiceTargetFacetCanvas: View, Animatable {
 
     var body: some View {
         GeometryReader { proxy in
-            let overflow: CGFloat = 28
+            let overflow = DesignCanvasEffects.overflow(blur: 18, y: 8)
             let faceRect = CGRect(
                 x: overflow,
                 y: overflow,
@@ -1094,22 +1096,26 @@ private struct VoiceTargetFacetCanvas: View, Animatable {
             Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
                 let facePath = shape.path(in: faceRect)
                 let shadowAmount = selectionAmount * (1 - pressAmount)
+                let facetDropShadow = DesignDropShadowGeometry(radius: 9, y: 8, sourceInset: 0)
                 VoiceCanvasDrawing.shadow(
                     shape: shape,
                     color: Color.black.opacity(0.52 * Double(shadowAmount)),
-                    geometry: DesignDropShadowGeometry(radius: 9, y: 8, sourceInset: 0),
+                    geometry: facetDropShadow,
                     in: &context,
-                    faceRect: faceRect
+                    faceRect: faceRect,
+                    // The approved facet uses filter drop-shadow, whose blur
+                    // argument is already sigma rather than CSS box blur.
+                    blur: facetDropShadow.radius * 2
                 )
                 VoiceCanvasDrawing.shadow(
                     shape: shape,
                     color: semanticColor.opacity(
                         (choice == .auto ? 0.38 : 0.34) * Double(shadowAmount)
                     ),
-                    geometry: DesignDropShadowGeometry(radius: 9, y: 8, sourceInset: 0),
+                    geometry: facetDropShadow,
                     in: &context,
                     faceRect: faceRect,
-                    copies: 2
+                    blur: facetDropShadow.radius * 2
                 )
 
                 let base = restingColor.mix(
@@ -1180,8 +1186,7 @@ private struct VoiceCrownSelectionSeam: View {
                     color: color.opacity(0.55),
                     geometry: DesignDropShadowGeometry(radius: 6, y: 0, sourceInset: 0),
                     in: &context,
-                    faceRect: faceRect,
-                    copies: 2
+                    faceRect: faceRect
                 )
                 context.fill(shape.path(in: faceRect), with: .color(color))
             }

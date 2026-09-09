@@ -93,20 +93,33 @@ private struct MembersBody: View {
     }
 
     private var roster: some View {
-        DesignPane(title: "Household", detail: "\(users.count) active · \(slotsFree) slot\(slotsFree == 1 ? "" : "s") free") {
-            ForEach(users, id: \.userId) { user in
-                MemberRow(
-                    user: user,
-                    isSelf: user.userId == meId,
-                    isMutating: mutatingUserId == user.userId,
-                    onToggle: { pendingToggle = user },
-                    onDelete: { pendingDelete = user }
-                )
-                DesignDivider()
+        VStack(alignment: .leading, spacing: Space.lg) {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Text("Your household")
+                    .designText(.title)
+                    .foregroundStyle(DuskColors.ink)
+                Text("\(users.count) member\(users.count == 1 ? "" : "s") · \(slotsFree) slot\(slotsFree == 1 ? "" : "s") available")
+                    .designText(.body)
+                    .foregroundStyle(DuskColors.ink2)
+                Text("Administrators manage members and household settings.")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            DesignPane(title: "Roster") {
+                ForEach(Array(users.enumerated()), id: \.element.userId) { index, user in
+                    MemberRow(
+                        user: user,
+                        isSelf: user.userId == meId,
+                        isMutating: mutatingUserId == user.userId,
+                        onToggle: { pendingToggle = user },
+                        onDelete: { pendingDelete = user }
+                    )
+                    if index < users.count - 1 { DesignDivider() }
+                }
             }
             DesignActionButton(
                 title: canAdd ? "Add member" : "Household is full",
-                role: .quiet,
+                role: .secondary,
                 state: canAdd ? .normal : .disabled,
                 accessibilityId: "settings-members-add",
                 action: onAdd
@@ -140,11 +153,18 @@ private struct MemberRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.md) {
+        HStack(alignment: .top, spacing: Space.md) {
             ElevatedUserAvatar(name: user.displayName)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Space.xs) {
-                Text(user.displayName).designText(.label).foregroundStyle(DuskColors.ink)
-                Text(roleDescription).designText(.caption).foregroundStyle(DuskColors.ink3)
+                Text(user.displayName).designText(.body).foregroundStyle(DuskColors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(roleDescription).designText(.supporting).foregroundStyle(DuskColors.ink2)
+                if isSelf {
+                    Label("You", systemImage: "person.crop.circle")
+                        .designText(.label)
+                        .foregroundStyle(DuskColors.ink2)
+                }
             }
             Spacer(minLength: Space.sm)
             if isMutating {
@@ -170,7 +190,7 @@ private struct MemberRow: View {
     }
 
     private var roleDescription: String {
-        "\(user.isAdmin ? "Admin" : "Member")\(isSelf ? " · you" : "")"
+        user.isAdmin ? "Administrator" : "Member"
     }
 }
 

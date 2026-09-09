@@ -10,11 +10,6 @@
 import SwiftUI
 import MobileData
 
-private let viewOptions: [SegmentOption] = [
-    SegmentOption(id: "edit", label: "Edit"),
-    SegmentOption(id: "preview", label: "Preview"),
-]
-
 struct SystemPromptScreen: View {
     let settings: SettingsComponent
     let onBack: () -> Void
@@ -23,6 +18,7 @@ struct SystemPromptScreen: View {
     @State private var viewMode = "edit"
     @State private var showDiscard = false
     @State private var showRestore = false
+    @State private var showAdvanced = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
         self.settings = settings
@@ -31,7 +27,11 @@ struct SystemPromptScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
+        SettingsPageScaffold(
+            title: "System Prompt", screenId: "settings-system-prompt-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-system-prompt-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
@@ -40,7 +40,7 @@ struct SystemPromptScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                soulCard
+                instructionWorkspace
             }
         }
         .designApplyBarDock(
@@ -51,17 +51,6 @@ struct SystemPromptScreen: View {
             onDiscard: attemptBack,
             onApply: { Task { await vm.save() } }
         )
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that shares the apply bar's discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-system-prompt-back", action: attemptBack)
-                }
-            }
-        }
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -86,26 +75,23 @@ struct SystemPromptScreen: View {
         }
     }
 
-    private var soulCard: some View {
-        DesignSettingsEditor(
-            title: "System instructions",
-            detail: "Markdown supported. The assistant restarts after saving.",
-            state: vm.isDirty ? .unsaved : .saved
-        ) {
+    private var instructionWorkspace: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    DesignSegmentedPicker(
-                        title: "System prompt view",
-                        options: viewOptions.map { (value: $0.id, label: $0.label) },
-                        selection: $viewMode,
-                        accessibilityId: "settings-system-prompt-view"
-                    )
+                Text("Base instructions for the assistant. Markdown supported; Apply saves this draft and applies configuration.")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                    Text(viewMode == "edit" ? "Editing instructions" : "Preview")
+                        .designText(.label)
+                        .foregroundStyle(DuskColors.ink2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     DesignActionButton(
-                        title: "Restore default",
-                        role: .destructive,
-                        state: vm.isRestoring ? .disabled : .normal,
-                        accessibilityId: "settings-system-prompt-restore",
-                        action: { showRestore = true }
+                        title: viewMode == "edit" ? "Preview" : "Edit",
+                        role: .quiet,
+                        accessibilityId: "settings-system-prompt-view",
+                        fillsWidth: false,
+                        action: { viewMode = viewMode == "edit" ? "preview" : "edit" }
                     )
                 }
                 if viewMode == "edit" {
@@ -116,12 +102,42 @@ struct SystemPromptScreen: View {
                     )
                 } else {
                     Text(vm.draft.isEmpty ? "Nothing to preview." : vm.draft)
-                        .designText(.supporting)
-                        .foregroundStyle(vm.draft.isEmpty ? DuskColors.ink4 : DuskColors.ink)
+                        .designText(.body)
+                        .foregroundStyle(vm.draft.isEmpty ? DuskColors.ink2 : DuskColors.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("settings-system-prompt-preview")
                 }
+            }
+            .padding(Space.md)
+            .designPlate()
+
+            DesignDisclosureGroup(isExpanded: showAdvanced) {
+                DesignDisclosureButton(
+                    isExpanded: showAdvanced,
+                    accessibilityLabel: "Advanced actions",
+                    accessibilityId: "settings-system-prompt-advanced",
+                    action: { showAdvanced.toggle() }
+                ) {
+                    Text("Advanced actions")
+                        .designText(.label)
+                        .foregroundStyle(DuskColors.ink2)
+                }
+            } content: {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("Restore the default instructions into this draft. Nothing changes until you apply.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                    DesignActionButton(
+                        title: "Restore default",
+                        role: .destructive,
+                        state: vm.isRestoring ? .disabled : .normal,
+                        accessibilityId: "settings-system-prompt-restore",
+                        fillsWidth: false,
+                        action: { showRestore = true }
+                    )
+                }
+                .padding(Space.sm)
             }
         }
     }
@@ -129,22 +145,4 @@ struct SystemPromptScreen: View {
     private func attemptBack() {
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
-}
-
-#Preview("edit") {
-    NavigationStack {
-        SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
-            DesignSettingsEditor(
-                title: "System instructions",
-                detail: "Markdown supported. The assistant restarts after saving.",
-                state: .saved
-            ) {
-                DesignMultilineEditor(
-                    text: .constant("You are Sentient, a warm and capable family assistant…"),
-                    accessibilityId: "settings-system-prompt-editor"
-                )
-            }
-        }
-    }
-    .preferredColorScheme(.dark)
 }

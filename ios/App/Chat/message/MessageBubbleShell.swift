@@ -368,18 +368,13 @@ private struct BubbleCanvasChrome: View {
         in context: inout GraphicsContext,
         faceRect: CGRect
     ) {
-        var source = Path()
-        source.addPath(
-            path(in: faceRect, inset: sourceInset),
-            transform: CGAffineTransform(translationX: 0, y: y)
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: path(in: faceRect, inset: sourceInset),
+            color: color.opacity(opacity),
+            blur: blur,
+            y: y
         )
-        context.drawLayer { layer in
-            if blur > 0 {
-                // Canvas Gaussian blur is visually wider than CSS box-shadow.
-                layer.addFilter(.blur(radius: blur * 0.8))
-            }
-            layer.fill(source, with: .color(color.opacity(opacity)))
-        }
     }
 
     private func drawRoleRadial(

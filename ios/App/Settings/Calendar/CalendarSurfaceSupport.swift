@@ -17,9 +17,16 @@ enum CalendarSurfaceLayout {
     static let weekdayHeaderHeight: CGFloat = 34
     static let monthDaySize: CGFloat = 25
     static let monthCellHeight: CGFloat = 53
-    static let yearMonthHeight: CGFloat = 104
-    static let yearEmptyDayOpacity = 0.12
-    static let outsideMonthOpacity = 0.70
+    static let miniMonthWidth: CGFloat = 150
+    static let miniDayHeight: CGFloat = 22
+    static let spatialAnimation = Animation.easeInOut(duration: Motion.normal)
+    // Detail appears after the grid has opened; reversal uses the same phase.
+    static let indicatorRevealStart: CGFloat = 0.5
+    // calendar.css: quiet Year face, Month cell face, and inset selection.
+    static let yearFaceOpacity = 0.66
+    static let monthCellFaceOpacity = 0.36
+    static let monthSelectionOpacity = 0.22
+    static let monthSelectionLineOpacity = 0.24
     static let monthGridLineWidth: CGFloat = 0.5
     static let indicatorSize: CGFloat = 5
     static let indicatorRowHeight: CGFloat = 8
@@ -51,7 +58,11 @@ enum CalendarSurfaceText {
         return formatter
     }()
 
-    static func date(_ value: String) -> Date? { isoFormatter.date(from: value) }
+    static func date(_ value: String) -> Date? {
+        // Foundation's era-based formatter cannot label astronomical year 0.
+        guard let year = Int(value.prefix(4)), year > 0 else { return nil }
+        return isoFormatter.date(from: value)
+    }
 
     static func fullDate(_ value: String, locale: CalendarLocale) -> String {
         guard let date = date(value) else { return value }
@@ -77,10 +88,23 @@ enum CalendarSurfaceText {
         return date.formatted(style)
     }
 
-    static func subtitle(for state: CalendarUiState) -> String {
-        if state.view == .year { return "YEAR AT A GLANCE" }
-        guard let date = date(state.selectedDate) else { return state.selectedDate.uppercased() }
-        return date.formatted(.dateTime.locale(Locale(identifier: state.locale.languageTag)).weekday(.wide).day()).uppercased()
+    static func adjacentHeading(
+        view: CalendarView, anchorDate: String,
+        projection: CalendarExperienceProjection?, locale: CalendarLocale
+    ) -> String {
+        let language = Locale(identifier: locale.languageTag)
+        if view == .week, let anchor = CalendarViewportDate(date: anchorDate) {
+            let days = CalendarCivilDay.dates(for: .init(view: .week, anchor: anchor), locale: locale)
+            if let first = days.first, let last = days.last,
+               let start = date(first.string), let end = date(last.string) {
+                let style = Date.FormatStyle.dateTime.locale(language).month(.abbreviated).day()
+                return "\(start.formatted(style))–\(end.formatted(style))"
+            }
+        }
+        guard view == .day, let day = date(projection?.day?.date ?? anchorDate) else {
+            return fullDate(anchorDate, locale: locale)
+        }
+        return day.formatted(.dateTime.locale(language).month(.wide).day())
     }
 
     static func agendaHeading(_ date: String, locale: CalendarLocale) -> (date: String, weekday: String) {
@@ -125,7 +149,6 @@ enum CalendarSurfaceText {
     static func stateAnnouncement(_ state: CalendarUiState) -> String? {
         if state.content == .unavailableOffline { return "Calendar unavailable offline" }
         if state.content == .error { return state.error?.userMessage ?? "Calendar unavailable" }
-        if state.isRefreshing { return "Refreshing calendar" }
         if state.isOffline { return "Showing saved calendar data" }
         if state.content == .empty { return "No events match these filters" }
         return nil
@@ -151,6 +174,11 @@ enum CalendarSurfaceMapping {
 
     static func agenda(for state: CalendarUiState) -> [CalendarAgendaSlice] {
         state.agenda.map { .init(date: $0.date, events: $0.events, accessibilityLabel: $0.accessibilityLabel) }
+    }
+
+    static func agenda(for projection: CalendarExperienceProjection) -> [CalendarAgendaSlice] {
+        let sections = projection.day?.agenda ?? projection.week?.agenda ?? []
+        return sections.map { .init(date: $0.date, events: $0.events, accessibilityLabel: $0.accessibilityLabel) }
     }
 
     static func freshnessIdentifier(for state: CalendarUiState) -> String {

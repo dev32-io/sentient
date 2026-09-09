@@ -126,10 +126,6 @@ struct CalendarWeekdayPicker: View {
                         Text(String(day.name.prefix(1)))
                             .font(Typo.mono(TypeScale.xs))
                             .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
-                            .background(
-                                selection.contains(day) ? DuskColors.accent50 : DuskColors.bgElev,
-                                in: RoundedRectangle(cornerRadius: Radii.sm)
-                            )
                     }
                 }
             }

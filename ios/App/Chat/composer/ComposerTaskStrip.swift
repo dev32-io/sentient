@@ -207,17 +207,17 @@ private enum TaskShelfCanvasDrawing {
         in context: inout GraphicsContext,
         faceRect: CGRect
     ) {
-        var source = shape.inset(by: geometry.sourceInset).path(in: faceRect)
-        source = source.applying(CGAffineTransform(
-            translationX: geometry.x,
+        guard faceRect.width - 2 * geometry.sourceInset > 0,
+              faceRect.height - 2 * geometry.sourceInset > 0 else { return }
+        let source = shape.inset(by: geometry.sourceInset).path(in: faceRect)
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: color,
+            blur: geometry.radius,
+            x: geometry.x,
             y: geometry.y
-        ))
-        context.drawLayer { layer in
-            if geometry.radius > 0 {
-                layer.addFilter(.blur(radius: geometry.radius * 0.8))
-            }
-            layer.fill(source, with: .color(color))
-        }
+        )
     }
 
     static func topEdge<S: InsettableShape>(

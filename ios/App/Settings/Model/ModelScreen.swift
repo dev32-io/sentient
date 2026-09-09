@@ -20,8 +20,6 @@ private let providerLabels: [String: String] = [
     "custom": "Custom",
 ]
 
-private let contextPerK = 1000
-
 struct ModelScreen: View {
     let settings: SettingsComponent
     let onBack: () -> Void
@@ -36,11 +34,20 @@ struct ModelScreen: View {
     }
 
     private var providerSegments: [SegmentOption] {
-        vm.providerOptions.map { SegmentOption(id: $0, label: providerLabels[$0] ?? $0) }
+        // The catalog need not contain the saved provider. Keep its raw value browsable.
+        var providers = vm.providerOptions
+        if !vm.draftProvider.isEmpty && !providers.contains(vm.draftProvider) {
+            providers.append(vm.draftProvider)
+        }
+        return providers.map { SegmentOption(id: $0, label: providerLabels[$0] ?? $0) }
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Model", screenId: "settings-model-screen") {
+        SettingsPageScaffold(
+            title: "Model", screenId: "settings-model-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-model-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
@@ -49,8 +56,11 @@ struct ModelScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                browseControls
-                modelList
+                selectedModel
+                VStack(alignment: .leading, spacing: Space.md) {
+                    browseControls
+                    modelList
+                }
             }
         }
         .designApplyBarDock(
@@ -61,17 +71,6 @@ struct ModelScreen: View {
             onDiscard: attemptBack,
             onApply: { Task { await vm.save() } }
         )
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that shares the apply bar's discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-model-back", action: attemptBack)
-                }
-            }
-        }
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -90,32 +89,69 @@ struct ModelScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var browseControls: some View {
-        if providerSegments.count > 1 {
-            DesignSegmentedPicker(
-                title: "Model provider",
-                options: providerSegments.map { (value: $0.id, label: $0.label) },
-                selection: Binding(get: { vm.browseProvider }, set: { vm.browseProvider = $0 }),
-                accessibilityId: "settings-model-provider"
-            )
+    private var selectedModel: some View {
+        let entry = vm.models.first { $0.id == vm.draftModelId && $0.provider == vm.draftProvider }
+        return DesignCard(bodyStyle: .padded) {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Label(vm.isDirty ? "Selected model · Unsaved" : "Selected model", systemImage: "checkmark.circle")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                    .accessibilityAddTraits(.isHeader)
+                Text(providerLabels[vm.draftProvider] ?? vm.draftProvider)
+                    .designText(.label)
+                    .foregroundStyle(DuskColors.ink2)
+                Text(vm.draftModelId)
+                    .designText(.large)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DuskColors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let entry {
+                    ModelMetadata(entry: entry)
+                } else {
+                    Text("Not listed in the current catalog. Your selection is preserved.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                }
+            }
         }
-        DesignSearchField(
-            prompt: "Search models…",
-            query: Binding(get: { vm.query }, set: { vm.query = $0 }),
-            accessibilityId: "settings-model-search"
-        )
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
+    }
+
+    private var browseControls: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Browse models")
+                .designText(.label)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
+            if providerSegments.count > 1 {
+                DesignSegmentedPicker(
+                    title: "Model provider",
+                    options: providerSegments.map { (value: $0.id, label: $0.label) },
+                    selection: Binding(get: { vm.browseProvider }, set: { vm.browseProvider = $0 }),
+                    accessibilityId: "settings-model-provider"
+                )
+            }
+            DesignSearchField(
+                prompt: "Search model IDs…",
+                query: Binding(get: { vm.query }, set: { vm.query = $0 }),
+                accessibilityId: "settings-model-search"
+            )
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            Text("\(vm.filtered.count) results · \(providerLabels[vm.browseProvider] ?? vm.browseProvider)")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder
     private var modelList: some View {
         let list = vm.filtered
         if list.isEmpty {
-            Text("No models match.")
+            Text("No models match. Try another model ID or provider.")
                 .designText(.supporting)
-                .foregroundStyle(DuskColors.ink3)
+                .foregroundStyle(DuskColors.ink2)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, Space.lg)
         } else {
@@ -152,9 +188,11 @@ private struct ModelCard: View {
             VStack(alignment: .leading, spacing: Space.xs) {
                 HStack {
                     Text(entry.id)
-                        .font(Typo.mono(TypeScale.sm))
+                        .designText(.label)
+                        .fontWeight(.medium)
                         .foregroundStyle(DuskColors.ink)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     Spacer(minLength: Space.sm)
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
@@ -162,32 +200,34 @@ private struct ModelCard: View {
                             .accessibilityHidden(true)
                     }
                 }
-                ViewThatFits(in: .horizontal) {
-                    capabilitySummary
-                    VStack(alignment: .leading, spacing: Space.xs) { capabilityItems }
-                }
+                ModelMetadata(entry: entry)
             }
         }
     }
+}
 
-    private var capabilitySummary: some View {
-        HStack(spacing: Space.sm) { capabilityItems }
+/// Catalog values only: zero is the SDK default and Ollama's unlisted context value.
+private struct ModelMetadata: View {
+    let entry: ModelEntry
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.md) { items }
+            VStack(alignment: .leading, spacing: Space.xs) { items }
+        }
+        .designText(.supporting)
+        .foregroundStyle(DuskColors.ink2)
     }
 
     @ViewBuilder
-    private var capabilityItems: some View {
-        Text("\(entry.contextLength / Int32(contextPerK))k context")
-            .designText(.caption)
-            .foregroundStyle(DuskColors.ink3)
-        if entry.supportsTools { capabilityLabel("Tools", systemImage: "wrench.and.screwdriver") }
-        if entry.supportsVision { capabilityLabel("Vision", systemImage: "eye") }
-    }
-
-    private func capabilityLabel(_ label: String, systemImage: String) -> some View {
-        Label(label, systemImage: systemImage)
-            .designText(.supporting)
-            .fontWeight(.medium)
-            .foregroundStyle(DuskColors.ink2)
+    private var items: some View {
+        if entry.contextLength > 0 {
+            Text("\(Int(entry.contextLength).formatted()) tokens context")
+        } else {
+            Text("Context unavailable")
+        }
+        if entry.supportsTools { Label("Tools", systemImage: "wrench.and.screwdriver") }
+        if entry.supportsVision { Label("Vision", systemImage: "eye") }
     }
 }
 
@@ -203,9 +243,9 @@ private struct ModelCard: View {
                 selection: .constant("openrouter"),
                 accessibilityId: "settings-model-provider"
             )
-            Text("No models match.")
+            Text("No models match. Try another model ID or provider.")
                 .designText(.supporting)
-                .foregroundStyle(DuskColors.ink3)
+                .foregroundStyle(DuskColors.ink2)
         }
     }
     .preferredColorScheme(.dark)

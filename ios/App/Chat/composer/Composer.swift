@@ -639,13 +639,13 @@ enum ComposerGeometry {
         radius: 32, y: 18, sourceInset: 20
     )
     static let faceAccentShadow = DesignDropShadowGeometry(
-        radius: 32, x: 4, y: 19, sourceInset: 22
+        radius: 32, x: 4, y: 19, sourceInset: 25
     )
     static let controlShadow = DesignDropShadowGeometry(
         radius: 14, y: 9, sourceInset: 10
     )
     static let controlGlow = DesignDropShadowGeometry(
-        radius: 18, x: 2, y: 10, sourceInset: 12
+        radius: 18, y: 12, sourceInset: 12
     )
 
     static func taskShelfInset(
@@ -722,11 +722,16 @@ private struct ComposerFaceBackground: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let overflow = ComposerCanvasDrawing.overflow(for: [
-                ComposerGeometry.frameShadow,
-                ComposerGeometry.faceShadow,
-                ComposerGeometry.faceAccentShadow,
-            ])
+            let overflow = max(
+                ComposerCanvasDrawing.overflow(for: [
+                    ComposerGeometry.faceShadow,
+                    ComposerGeometry.faceAccentShadow,
+                ]),
+                DesignCanvasEffects.overflow(
+                    blur: ComposerGeometry.frameShadow.radius * 2,
+                    y: ComposerGeometry.frameShadow.y
+                )
+            )
             let faceRect = CGRect(
                 x: overflow,
                 y: overflow,
@@ -744,22 +749,29 @@ private struct ComposerFaceBackground: View {
                     faceRect: faceRect,
                     cornerRadius: cornerRadius,
                     color: DuskColors.bgSunk.opacity(0.82),
-                    geometry: ComposerGeometry.frameShadow
+                    geometry: ComposerGeometry.frameShadow,
+                    // CSS filter drop-shadow authors sigma directly; the
+                    // shared box-shadow helper accepts CSS blur instead.
+                    blur: ComposerGeometry.frameShadow.radius * 2
                 )
                 ComposerCanvasDrawing.drawShadow(
                     in: &context,
                     faceRect: faceRect,
                     cornerRadius: cornerRadius,
-                    color: Color.black.opacity(emphasized ? 0.97 : 0.9),
+                    color: Color.black.opacity(0.97),
                     geometry: ComposerGeometry.faceShadow
                 )
                 ComposerCanvasDrawing.drawShadow(
                     in: &context,
                     faceRect: faceRect,
                     cornerRadius: cornerRadius,
-                    color: DuskColors.accent.opacity(emphasized ? 0.48 : 0.2),
-                    geometry: ComposerGeometry.faceAccentShadow,
-                    copies: 3
+                    color: DuskColors.accent.opacity(emphasized ? 0.64 : 0.48),
+                    geometry: DesignDropShadowGeometry(
+                        radius: ComposerGeometry.faceAccentShadow.radius,
+                        x: ComposerGeometry.faceAccentShadow.x,
+                        y: ComposerGeometry.faceAccentShadow.y,
+                        sourceInset: emphasized ? 20 : ComposerGeometry.faceAccentShadow.sourceInset
+                    )
                 )
                 ComposerCanvasDrawing.drawContact(
                     in: &context,
@@ -874,7 +886,10 @@ private enum ComposerCanvasDrawing {
         cornerRadius: CGFloat,
         inset: CGFloat = 0
     ) -> Path {
-        RoundedRectangle(
+        guard rect.width - 2 * inset > 0, rect.height - 2 * inset > 0 else {
+            return Path()
+        }
+        return RoundedRectangle(
             cornerRadius: max(0, cornerRadius - inset),
             style: .continuous
         )
@@ -887,25 +902,21 @@ private enum ComposerCanvasDrawing {
         cornerRadius: CGFloat,
         color: Color,
         geometry: DesignDropShadowGeometry,
-        copies: Int = 1
+        blur: CGFloat? = nil
     ) {
-        var source = Path()
-        source.addPath(
-            roundedPath(
-                in: faceRect,
-                cornerRadius: cornerRadius,
-                inset: geometry.sourceInset
-            ),
-            transform: CGAffineTransform(translationX: geometry.x, y: geometry.y)
+        let source = roundedPath(
+            in: faceRect,
+            cornerRadius: cornerRadius,
+            inset: geometry.sourceInset
         )
-        for _ in 0..<copies {
-            context.drawLayer { layer in
-                if geometry.radius > 0 {
-                    layer.addFilter(.blur(radius: geometry.radius * 0.8))
-                }
-                layer.fill(source, with: .color(color))
-            }
-        }
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: color,
+            blur: blur ?? geometry.radius,
+            x: geometry.x,
+            y: geometry.y
+        )
     }
 
     static func drawContact(
@@ -1131,10 +1142,9 @@ private struct ComposerControlCanvas: View {
                             faceRect: faceRect,
                             cornerRadius: cornerRadius,
                             color: tone == .stop
-                                ? DuskColors.stop.opacity(0.58)
-                                : DuskColors.accent.opacity(0.62),
-                            geometry: ComposerGeometry.controlGlow,
-                            copies: 3
+                                ? DuskColors.stop.opacity(0.62)
+                                : DuskColors.accent.opacity(0.66),
+                            geometry: ComposerGeometry.controlGlow
                         )
                     }
                 }
@@ -1178,16 +1188,14 @@ private struct ComposerControlCanvas: View {
                 )
 
                 if isPressed {
-                    var inset = context
-                    inset.addFilter(.shadow(
+                    DesignCanvasEffects.insetShadow(
+                        in: &context,
+                        facePath: facePath,
+                        sourcePath: facePath,
                         color: DuskColors.bgSunk.opacity(0.42),
-                        radius: 3,
-                        x: 0,
-                        y: 2,
-                        blendMode: .sourceAtop,
-                        options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-                    ))
-                    inset.fill(facePath, with: .color(.white))
+                        blur: 3,
+                        y: 2
+                    )
                 } else {
                     ComposerCanvasDrawing.drawTopLight(
                         in: &context,

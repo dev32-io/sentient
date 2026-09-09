@@ -4,19 +4,17 @@
 //
 // Lane 1: a button (settings-send-logs). Tap → reveals the session list.
 // Lane 2: newest-first sessions, each human-labelled ("Today 9:43 PM"), crashed
-//   ones flagged 🔴, "This session" (the newest) default-selected. Tapping a row's
+//   ones labelled "Crash recorded", "This session" (the newest) default-selected. Tapping a row's
 //   send button MORPHS it in place into a progress bar (bound to progress: Double?),
 //   then a result line ("Sent ✓ — ref XXXX" / "Retry").
 //
 // Reads the VM's published state; dispatches selection + upload as closures. The
-// owning SettingsSheet builds + owns the SendLogsViewModel.
+// owning DiagnosticsScreen builds + owns the SendLogsViewModel.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
-private let diagnosticsLabel = "Diagnostics"
 private let sendLogsLabel = "Send diagnostic log"
-private let crashFlag = "🔴 "
 private let labelSent = "Sent ✓"
 private let sentRefPrefix = "Sent ✓ — ref "
 private let labelRetry = "Retry"
@@ -34,15 +32,10 @@ struct SettingsDiagnostics: View {
     @State private var selectedPath: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text(diagnosticsLabel)
-                .designText(.label)
-                .fontWeight(.semibold)
-                .foregroundStyle(DuskColors.ink3)
-
-            sendLogsButton
-
-            if expanded {
+        DesignPane {
+            DesignDisclosureGroup(isExpanded: expanded) {
+                sendLogsButton
+            } content: {
                 switch model.loadPhase {
                 case .loading:
                     DesignProgress(title: "Loading diagnostic sessions")
@@ -66,15 +59,24 @@ struct SettingsDiagnostics: View {
     }
 
     private var sendLogsButton: some View {
-        DesignActionButton(
-            title: sendLogsLabel,
-            role: .quiet,
+        DesignDisclosureButton(
+            isExpanded: expanded,
+            accessibilityLabel: sendLogsLabel,
             accessibilityId: "settings-send-logs",
             action: {
                 expanded.toggle()
                 if expanded && selectedPath == nil { selectedPath = model.sessions.first?.path }
             }
-        )
+        ) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(sendLogsLabel)
+                    .designText(.body)
+                    .foregroundStyle(DuskColors.ink)
+                Text(expanded ? "Select a session, then send." : "Choose a session to share")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
     }
 
     private var sessionRows: some View {
@@ -94,6 +96,7 @@ struct SettingsDiagnostics: View {
                     onSelect: { selectedPath = session.path },
                     onUpload: { model.upload(path: session.path) }
                 )
+                if index < model.sessions.count - 1 { DesignDivider() }
             }
         }
     }
@@ -120,25 +123,42 @@ private struct SessionUploadRow: View {
     let onUpload: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.sm) {
-            Text((info.crashed ? crashFlag : "") + label)
-                .designText(.caption)
-                .fontWeight(selected ? .semibold : .regular)
-                .foregroundStyle(selected ? DuskColors.accent : DuskColors.ink)
+        VStack(alignment: .leading, spacing: Space.sm) {
+            sessionLabel
+            uploadControl
                 .frame(maxWidth: .infinity, alignment: .leading)
-            UploadControl(
-                selected: selected,
-                isUploading: isUploading,
-                progress: progress,
-                outcome: outcome,
-                onSelect: onSelect,
-                onUpload: onUpload
-            )
         }
-        .padding(.vertical, Space.xs)
+        .padding(.vertical, Space.md)
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("settings-log-session-\(info.sessionStartMs)")
+    }
+
+    private var sessionLabel: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(label)
+                .designText(.body)
+                .fontWeight(selected ? .semibold : .regular)
+                .foregroundStyle(DuskColors.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if info.crashed {
+                Label("Crash recorded", systemImage: "exclamationmark.triangle")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var uploadControl: some View {
+        UploadControl(
+            selected: selected,
+            isUploading: isUploading,
+            progress: progress,
+            outcome: outcome,
+            onSelect: onSelect,
+            onUpload: onUpload
+        )
     }
 }
 
@@ -154,8 +174,7 @@ private struct UploadControl: View {
     var body: some View {
         switch (isUploading, progress, outcome) {
         case let (true, p?, _):
-            DesignProgress(value: p, accessibilityId: "settings-log-progress")
-                .frame(width: DesignMetrics.progressWidth)
+            DesignProgress(title: "Sending", value: p, accessibilityId: "settings-log-progress")
         case let (_, _, .sent(ref)):
             Text(ref.isEmpty ? labelSent : "\(sentRefPrefix)\(ref)")
                 .designText(.caption)

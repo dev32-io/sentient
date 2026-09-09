@@ -11,7 +11,7 @@ struct CalendarAgendaView: View {
     let onEvent: (CalendarProjectedEvent) -> Void
 
     var body: some View {
-        LazyVStack(spacing: Space.sm) {
+        LazyVStack(spacing: Space.lg) {
             if sections.isEmpty {
                 CalendarEmptyState(message: emptyMessage)
             } else {
@@ -22,9 +22,9 @@ struct CalendarAgendaView: View {
                             Text(heading.date)
                                 .font(Typo.display(TypeScale.xl, .medium))
                                 .foregroundStyle(DuskColors.ink)
-                            Text(heading.weekday.uppercased())
-                                .font(Typo.mono(TypeScale.xs))
-                                .foregroundStyle(DuskColors.ink3)
+                            Text(heading.weekday)
+                                .font(Typo.ui(TypeScale.sm))
+                                .foregroundStyle(DuskColors.ink2)
                             Spacer()
                         }
                         .padding(.horizontal, CalendarSurfaceLayout.agendaDateInset)
@@ -48,33 +48,19 @@ struct CalendarAgendaRow: View {
     let event: CalendarProjectedEvent
     let openerFocus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding
     let action: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: Space.md) {
-                Text(CalendarSurfaceText.eventTime(event))
-                    .font(Typo.mono(TypeScale.xs))
-                    .foregroundStyle(DuskColors.ink3)
-                    .frame(width: CalendarSurfaceLayout.agendaTimeWidth, alignment: .leading)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(event.title)
-                        .font(Typo.ui(TypeScale.base, .medium))
-                        .foregroundStyle(DuskColors.ink)
-                        .lineLimit(2)
-                    Text(metadata)
-                        .font(Typo.ui(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                        .lineLimit(1)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    accessibilityLayout
+                } else {
+                    standardLayout
                 }
-                Spacer(minLength: Space.xs)
-                Text(scopeInitial)
-                    .font(Typo.display(TypeScale.sm, .medium))
-                    .foregroundStyle(DuskColors.ink2)
-                    .frame(width: CalendarSurfaceLayout.scopeBadgeSize, height: CalendarSurfaceLayout.scopeBadgeSize)
-                    .overlay(Circle().stroke(DuskColors.lineSoft))
-                    .accessibilityHidden(true)
             }
             .padding(.horizontal, Space.md)
+            .padding(.vertical, Space.sm)
             .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.agendaRowHeight, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -87,13 +73,81 @@ struct CalendarAgendaRow: View {
         .accessibilityIdentifier(calendarEventIdentifier(event.actionIdentity.stableKey))
     }
 
+    private var standardLayout: some View {
+        HStack(spacing: Space.md) {
+            eventTime
+                .frame(minWidth: CalendarSurfaceLayout.agendaTimeWidth, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+            importanceMarker
+            eventCopy
+            Spacer(minLength: Space.xs)
+            scopeBadge
+        }
+    }
+
+    private var accessibilityLayout: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(alignment: .center, spacing: Space.sm) {
+                eventTime
+                Spacer(minLength: Space.sm)
+                scopeBadge
+            }
+            HStack(alignment: .top, spacing: Space.sm) {
+                importanceMarker
+                eventCopy
+            }
+        }
+    }
+
+    private var eventTime: some View {
+        Text(CalendarSurfaceText.eventTime(event))
+            .font(Typo.mono(TypeScale.sm))
+            .foregroundStyle(DuskColors.ink2)
+            .multilineTextAlignment(.leading)
+    }
+
+    private var eventCopy: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(event.title)
+                .font(Typo.ui(TypeScale.base, .semibold))
+                .foregroundStyle(DuskColors.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(metadata)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var importanceMarker: some View {
+        Capsule()
+            .fill(importanceColor)
+            .frame(width: 4, height: dynamicTypeSize.isAccessibilitySize ? 48 : 34)
+            .accessibilityHidden(true)
+    }
+
+    private var scopeBadge: some View {
+        Image(systemName: event.scope == .private ? "lock" : "house")
+            .font(Typo.ui(TypeScale.base, .medium))
+            .foregroundStyle(DuskColors.ink2)
+            .frame(width: CalendarSurfaceLayout.scopeBadgeSize, height: CalendarSurfaceLayout.scopeBadgeSize)
+            .designPlate()
+            .accessibilityHidden(true)
+    }
+
+    private var importanceColor: Color {
+        switch event.importance {
+        case .normal: DuskColors.sage
+        case .important: DuskColors.amber
+        case .pinned: DuskColors.accent
+        }
+    }
+
     private var metadata: String {
         let values = ([event.group].compactMap { $0 } + event.tags)
         return values.isEmpty ? CalendarFilterMapping.scopeLabel(event.scope) : values.joined(separator: " · ")
-    }
-
-    private var scopeInitial: String {
-        String(CalendarFilterMapping.scopeLabel(event.scope).prefix(1))
     }
 }
 
@@ -120,10 +174,12 @@ struct CalendarEmptyState: View {
                 .accessibilityHidden(true)
             Text(message)
                 .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink3)
+                .foregroundStyle(DuskColors.ink2)
                 .multilineTextAlignment(.center)
         }
+        .padding(Space.lg)
         .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.emptyStateHeight)
+        .designPlate()
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("calendar-empty")
     }

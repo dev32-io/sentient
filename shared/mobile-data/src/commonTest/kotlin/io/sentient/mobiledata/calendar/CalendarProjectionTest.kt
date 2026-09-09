@@ -155,6 +155,55 @@ class CalendarProjectionTest {
     }
 
     @Test
+    fun year_buckets_preserve_cross_boundary_end_exclusive_dst_and_event_order() {
+        val spanning = occurrence(
+            id = "spanning",
+            title = "Spanning",
+            start = "2023-12-31",
+            end = "2024-01-03",
+        )
+        val projection = projectCalendarOccurrences(
+            occurrences = listOf(
+                spanning,
+                spanning.copy(title = "Newest spanning", revision = 2),
+                occurrence(
+                    id = "dst",
+                    title = "DST overnight",
+                    start = "2024-03-10T06:30:00Z",
+                    end = "2024-03-11T04:00:00Z",
+                ),
+                occurrence(id = "timed", title = "Timed", start = "2024-01-01T08:00:00Z"),
+                occurrence(
+                    id = "outside",
+                    title = "Outside",
+                    start = "2025-01-01",
+                    group = "Outside facet",
+                ),
+            ),
+            state = CalendarExperienceState(
+                anchorDate = "2024-06-18",
+                view = CalendarView.YEAR,
+                locale = CalendarLocale(timeZoneId = "America/New_York"),
+            ),
+        )
+
+        val year = assertNotNull(projection.year)
+        val january = year.months.single { it.month == 1 }
+        assertEquals(listOf("spanning", "timed"), january.days.first().events.map { it.eventId })
+        assertEquals(listOf("spanning"), january.days[1].events.map { it.eventId })
+        assertTrue(january.days[2].events.isEmpty())
+        assertEquals("Newest spanning", january.days.first().events.first().title)
+
+        val march = year.months.single { it.month == 3 }
+        assertEquals(listOf("dst"), march.days.single { it.date == "2024-03-10" }.events.map { it.eventId })
+        assertTrue(march.days.single { it.date == "2024-03-11" }.events.isEmpty())
+        assertEquals(4, projection.filteredOccurrences.size)
+        assertEquals(listOf("Outside facet"), projection.facets.groups)
+        assertTrue(projection.visibleEvents.none { it.eventId == "outside" })
+        assertEquals(projection.visibleEvents.map { it.actionIdentity }.distinct(), projection.visibleEvents.map { it.actionIdentity })
+    }
+
+    @Test
     fun dense_day_exposes_three_indicators_and_overflow_without_losing_actions() {
         val events = (1..5).map { number ->
             occurrence(

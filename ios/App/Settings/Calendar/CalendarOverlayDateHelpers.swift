@@ -65,8 +65,11 @@ enum CalendarOverlayDateCodec {
 
     static func timeZone(for draft: CalendarMutationDraft) -> TimeZone {
         if let id = draft.inputTimeZoneId, let zone = TimeZone(identifier: id) { return zone }
-        if let zone = numericOffsetTimeZone(in: draft.start) { return zone }
-        return .current
+        return timeZone(for: draft.start)
+    }
+
+    static func timeZone(for wireValue: String) -> TimeZone {
+        numericOffsetTimeZone(in: wireValue) ?? .current
     }
 
     private static func numericOffsetTimeZone(in value: String) -> TimeZone? {
@@ -77,8 +80,80 @@ enum CalendarOverlayDateCodec {
         return TimeZone(secondsFromGMT: (hours * 60 + sign * minutes) * 60)
     }
 
-    static func displayRange(start: String, end: String?) -> String {
-        if let end, !end.isEmpty { return "\(start) – \(end)" }
-        return start
+    static func displayRange(
+        start: String,
+        end: String?,
+        locale: Locale = .current
+    ) -> String {
+        let allDay = isAllDay(start)
+        let timeZone = numericOffsetTimeZone(in: start) ?? .current
+        guard let startDate = date(from: start, allDay: allDay, timeZone: timeZone) else {
+            if let end, !end.isEmpty { return "\(start) – \(end)" }
+            return start
+        }
+
+        let startDay = displayDate(startDate, locale: locale, timeZone: timeZone)
+        guard !allDay else {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            guard let end, !end.isEmpty,
+                  let exclusiveEnd = date(from: end, allDay: true, timeZone: timeZone),
+                  let endDate = calendar.date(byAdding: .day, value: -1, to: exclusiveEnd),
+                  endDate > startDate else {
+                return "All day · \(startDay)"
+            }
+            return "All day · \(startDay) – \(displayDate(endDate, locale: locale, timeZone: timeZone))"
+        }
+
+        let startTime = displayTime(startDate, locale: locale, timeZone: timeZone)
+        guard let end, !end.isEmpty,
+              let endDate = date(from: end, allDay: false, timeZone: timeZone) else {
+            return "\(startDay) · \(startTime)"
+        }
+        let endTimeZone = numericOffsetTimeZone(in: end) ?? timeZone
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        if calendar.isDate(startDate, inSameDayAs: endDate) {
+            return "\(startDay) · \(startTime) – \(displayTime(endDate, locale: locale, timeZone: endTimeZone))"
+        }
+        return "\(startDay) · \(startTime) – \(displayDate(endDate, locale: locale, timeZone: endTimeZone)) · \(displayTime(endDate, locale: locale, timeZone: endTimeZone))"
+    }
+
+    static func displayTimeZone(for wireValue: String, locale: Locale = .current) -> String? {
+        guard !isAllDay(wireValue),
+              let value = date(from: wireValue, allDay: false, timeZone: .current) else { return nil }
+        let timeZone = numericOffsetTimeZone(in: wireValue) ?? .current
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "zzz"
+        return formatter.string(from: value)
+    }
+
+    static func displayRecurrenceUntil(
+        _ wireValue: String,
+        locale: Locale = .current,
+        fallbackTimeZone: TimeZone = .current
+    ) -> String {
+        let allDay = isAllDay(wireValue)
+        let timeZone = numericOffsetTimeZone(in: wireValue) ?? fallbackTimeZone
+        guard let value = date(from: wireValue, allDay: allDay, timeZone: timeZone) else { return wireValue }
+        let day = displayDate(value, locale: locale, timeZone: timeZone)
+        guard !allDay else { return day }
+        return "\(day) at \(displayTime(value, locale: locale, timeZone: timeZone))"
+    }
+
+    private static func isAllDay(_ wireValue: String) -> Bool {
+        wireValue.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+    }
+
+    private static func displayDate(_ date: Date, locale: Locale, timeZone: TimeZone) -> String {
+        let style = Date.FormatStyle(locale: locale, timeZone: timeZone)
+            .weekday(.wide).month(.wide).day().year()
+        return date.formatted(style)
+    }
+
+    private static func displayTime(_ date: Date, locale: Locale, timeZone: TimeZone) -> String {
+        date.formatted(Date.FormatStyle(locale: locale, timeZone: timeZone).hour().minute())
     }
 }

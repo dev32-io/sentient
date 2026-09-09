@@ -25,8 +25,9 @@ enum SentientIdentityState: CaseIterable, Equatable {
     }
 }
 
-/// Small testable boundary around the Rive state machine. Applying state is
-/// synchronous and last-write-wins; the choreography remains entirely in Rive.
+/// Small testable boundary around the Rive state machine. Once synchronized
+/// with the view environment, state updates are synchronous and last-write-wins;
+/// the choreography remains entirely in Rive.
 @MainActor
 protocol SentientIdentityDriving: AnyObject {
     func setReducedMotion(_ reduced: Bool)
@@ -36,6 +37,7 @@ protocol SentientIdentityDriving: AnyObject {
 @MainActor
 final class SentientIdentityStateController {
     private let driver: SentientIdentityDriving
+    private var hasSynchronized = false
     private(set) var state: SentientIdentityState
     private(set) var reducedMotion: Bool
 
@@ -47,19 +49,36 @@ final class SentientIdentityStateController {
         self.state = state
         self.reducedMotion = reducedMotion
         self.driver = driver
-        driver.setReducedMotion(reducedMotion)
-        driver.transition(to: state)
+    }
+
+    /// Applies the latest view inputs together so Reduced Motion always reaches
+    /// Rive before the first state trigger. Repeated appearances are no-ops
+    /// unless an input changed while the view was absent.
+    func synchronize(state latest: SentientIdentityState, reducedMotion reduced: Bool) {
+        let stateChanged = state != latest
+        let reducedMotionChanged = reducedMotion != reduced
+        state = latest
+        reducedMotion = reduced
+
+        guard !hasSynchronized || stateChanged || reducedMotionChanged else { return }
+        if !hasSynchronized || reducedMotionChanged {
+            driver.setReducedMotion(reduced)
+        }
+        driver.transition(to: latest)
+        hasSynchronized = true
     }
 
     func request(_ latest: SentientIdentityState) {
         guard state != latest else { return }
         state = latest
+        guard hasSynchronized else { return }
         driver.transition(to: latest)
     }
 
     func setReducedMotion(_ reduced: Bool) {
         guard reducedMotion != reduced else { return }
         reducedMotion = reduced
+        guard hasSynchronized else { return }
         driver.setReducedMotion(reduced)
         // The authored machine has separate reduced-motion variants. Re-apply
         // the latest state after changing the input so a live identity leaves
@@ -187,7 +206,12 @@ struct RiveSentientIdentity: View {
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.statusLabel)
-        .onAppear { model.controller.setReducedMotion(effectiveReducedMotion) }
+        .onAppear {
+            model.controller.synchronize(
+                state: state,
+                reducedMotion: effectiveReducedMotion
+            )
+        }
         .onChange(of: state) { _, latest in model.controller.request(latest) }
         .onChange(of: reducedMotion) { _, reduced in
             guard reducedMotionOverride == nil else { return }

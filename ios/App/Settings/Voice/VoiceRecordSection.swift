@@ -13,7 +13,7 @@ struct VoiceRecordSection: View {
     let onOpenSettings: () -> Void
 
     var body: some View {
-        DesignPane(title: "Voice sample") {
+        DesignPane(title: state == .review ? "Review your sample" : "Record a sample") {
             switch state {
             case .idle: idle
             case .recording: recording
@@ -34,7 +34,7 @@ struct VoiceRecordSection: View {
     private var recording: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Label(String(format: "%.1f seconds", elapsedSeconds), systemImage: "record.circle.fill")
-                .font(Typo.mono(TypeScale.base))
+                .designText(.body)
                 .foregroundStyle(DuskColors.stop)
                 .accessibilityLabel("Recording, \(Int(elapsedSeconds)) seconds")
             DesignActionButton(
@@ -79,7 +79,7 @@ struct VoiceRecordSection: View {
     }
 
     private func hint(_ text: String) -> some View {
-        Text(text).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink3)
+        Text(text).designText(.caption).foregroundStyle(DuskColors.ink2)
     }
 }
 

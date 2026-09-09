@@ -42,6 +42,7 @@ final class IdentityStartupTests: XCTestCase {
 
         let driver = RecordingIdentityDriver()
         let controller = SentientIdentityStateController(state: .idle, driver: driver)
+        controller.synchronize(state: .idle, reducedMotion: false)
         controller.request(.thinking)
         controller.request(.responding)
         controller.setReducedMotion(true)
@@ -55,14 +56,37 @@ final class IdentityStartupTests: XCTestCase {
         let driver = RecordingIdentityDriver()
         let controller = SentientIdentityStateController(
             state: .thinking,
-            reducedMotion: true,
+            reducedMotion: false,
             driver: driver
         )
+
+        XCTAssertTrue(driver.reducedMotion.isEmpty)
+        XCTAssertTrue(driver.transitions.isEmpty)
+
+        controller.synchronize(state: .thinking, reducedMotion: true)
 
         XCTAssertEqual(controller.state, .thinking)
         XCTAssertTrue(controller.reducedMotion)
         XCTAssertEqual(driver.reducedMotion, [true])
         XCTAssertEqual(driver.transitions, [.thinking])
+    }
+
+    func testAppearanceReconcilesLatestInputsOnlyOnce() {
+        let driver = RecordingIdentityDriver()
+        let controller = SentientIdentityStateController(state: .idle, driver: driver)
+
+        controller.request(.thinking)
+        controller.setReducedMotion(true)
+        XCTAssertTrue(driver.reducedMotion.isEmpty)
+        XCTAssertTrue(driver.transitions.isEmpty)
+
+        controller.synchronize(state: .responding, reducedMotion: true)
+        controller.synchronize(state: .responding, reducedMotion: true)
+
+        XCTAssertEqual(controller.state, .responding)
+        XCTAssertTrue(controller.reducedMotion)
+        XCTAssertEqual(driver.reducedMotion, [true])
+        XCTAssertEqual(driver.transitions, [.responding])
     }
 
     func testCaptureDoesNotDriveIdentityAndAssistantActivityDoes() {

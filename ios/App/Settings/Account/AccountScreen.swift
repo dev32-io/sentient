@@ -12,6 +12,7 @@ struct AccountScreen: View {
         @Bindable var bindable = vm
         AccountBody(
             name: $bindable.draftName,
+            savedName: vm.savedName,
             loadState: vm.loadState,
             isDirty: vm.isDirty,
             nameSave: vm.nameSave,
@@ -30,6 +31,7 @@ struct AccountScreen: View {
 
 private struct AccountBody: View {
     @Binding var name: String
+    let savedName: String
     let loadState: AccountViewModel.LoadState
     let isDirty: Bool
     let nameSave: AccountViewModel.SaveState
@@ -46,7 +48,20 @@ private struct AccountBody: View {
         SettingsPageScaffold(title: "Account", screenId: "settings-account-screen") {
             loadNotice
             if loadState == .ready {
-                DesignPane(title: "Identity", detail: "How Sentient knows it's you.") {
+                HStack(alignment: .top, spacing: Space.md) {
+                    ElevatedUserAvatar(name: savedName)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(savedName)
+                            .designText(.title)
+                            .foregroundStyle(DuskColors.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Your household account")
+                            .designText(.supporting)
+                            .foregroundStyle(DuskColors.ink2)
+                    }
+                }
+                DesignPane(title: "Profile", detail: "The name shown for your account.") {
                     DesignField(
                         title: "Display name",
                         prompt: "Your name",
@@ -54,25 +69,16 @@ private struct AccountBody: View {
                         error: saveError,
                         accessibilityId: "settings-account-name"
                     )
+                    .disabled(nameSave == .saving)
                     saveFeedback
-                    DesignSettingsRow(
-                        title: "Voice print",
-                        detail: "Voice recognition isn't available yet."
-                    ) {
-                        Label("Coming soon", systemImage: "clock")
-                            .designText(.supporting)
-                            .foregroundStyle(DuskColors.ink3)
-                    }
                 }
 
-                DesignPane(title: "Security", detail: "Used for sensitive household actions.") {
-                    DesignSettingsRow(title: "PIN", detail: "Four digits") {
-                        DesignTextButton(
-                            title: "Change PIN",
-                            accessibilityId: "settings-account-changepin",
-                            action: onOpenPin
-                        )
-                    }
+                DesignPane(title: "Security", detail: "Your four-digit PIN protects sensitive household actions.") {
+                    DesignTextButton(
+                        title: "Change PIN",
+                        accessibilityId: "settings-account-changepin",
+                        action: onOpenPin
+                    )
                 }
             }
         }
@@ -100,7 +106,7 @@ private struct AccountBody: View {
 
     @ViewBuilder private var saveFeedback: some View {
         switch nameSave {
-        case .saved:
+        case .saved where !isDirty:
             AsyncNotice(kind: .success, title: "Display name saved")
         case .failed:
             DesignActionButton(
@@ -109,7 +115,7 @@ private struct AccountBody: View {
                 accessibilityId: "settings-account-save",
                 action: { Task { await onSaveName() } }
             )
-        case .idle, .saving:
+        case .idle, .saving, .saved:
             DesignActionButton(
                 title: "Save display name",
                 state: nameSave == .saving ? .loading : isDirty ? .normal : .disabled,
@@ -123,7 +129,7 @@ private struct AccountBody: View {
 #Preview("Ready — large text") {
     NavigationStack {
         AccountBody(
-            name: .constant("Kevin"), loadState: .ready, isDirty: true, nameSave: .idle,
+            name: .constant("Kevin"), savedName: "Kevin", loadState: .ready, isDirty: true, nameSave: .idle,
             pinError: nil, pinSaving: false, pinSheetOpen: .constant(false),
             onLoad: {}, onSaveName: {}, onOpenPin: {}, onClosePin: {}, onChangePin: { _, _ in true }
         )
@@ -134,7 +140,7 @@ private struct AccountBody: View {
 #Preview("Load failed") {
     NavigationStack {
         AccountBody(
-            name: .constant(""), loadState: .failed("Check your connection."), isDirty: false, nameSave: .idle,
+            name: .constant(""), savedName: "", loadState: .failed("Check your connection."), isDirty: false, nameSave: .idle,
             pinError: nil, pinSaving: false, pinSheetOpen: .constant(false),
             onLoad: {}, onSaveName: {}, onOpenPin: {}, onClosePin: {}, onChangePin: { _, _ in false }
         )

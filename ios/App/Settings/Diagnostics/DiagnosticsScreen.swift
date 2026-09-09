@@ -13,8 +13,8 @@ import SwiftUI
 import MobileData
 
 private let diagnosticsSummary =
-    "Send sanitized timing, version, session, and error details to help diagnose an issue. "
-    + "Messages, prompts, transcripts, audio, secrets, tokens, PINs, and credentials are never included."
+    "Diagnostic logs contain app and device details, session identifiers, and operational events. "
+    + "Choose a session before sending its log to your configured gateway."
 
 struct DiagnosticsScreen: View {
     /// Page-agent seam for a custom back; the system back button handles it today.
@@ -25,10 +25,18 @@ struct DiagnosticsScreen: View {
 
     var body: some View {
         SettingsPageScaffold(title: "Diagnostics", screenId: "settings-diagnostics") {
-            Text(diagnosticsSummary)
-                .designText(.caption)
-                .foregroundStyle(DuskColors.ink3)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Label("Before you share", systemImage: "hand.raised")
+                    .designText(.label)
+                    .foregroundStyle(DuskColors.ink)
+                Text(diagnosticsSummary)
+                    .designText(.body)
+                    .foregroundStyle(DuskColors.ink2)
+                Text("Crash-marked sessions may also be uploaded automatically when the app next launches.")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             SettingsDiagnostics(
                 model: sendLogs,

@@ -112,13 +112,146 @@ struct CalendarOverlayTests {
         #expect(mapped.title == "Updated")
     }
 
-    @Test func nativeDateHelpersPreserveAllDayValuesAndDisplayRanges() throws {
+    @Test func nativeDateHelpersPreserveWireValuesAndPresentReadableRanges() throws {
         let zone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let locale = Locale(identifier: "en_US")
         let date = try #require(CalendarOverlayDateCodec.date(from: "2026-04-18", allDay: true, timeZone: zone))
 
         #expect(CalendarOverlayDateCodec.wireValue(from: date, allDay: true, timeZone: zone) == "2026-04-18")
-        #expect(CalendarOverlayDateCodec.displayRange(start: "2026-04-18", end: nil) == "2026-04-18")
-        #expect(CalendarOverlayDateCodec.displayRange(start: "10:00", end: "11:30") == "10:00 – 11:30")
+        let allDay = CalendarOverlayDateCodec.displayRange(start: "2026-04-18", end: nil, locale: locale)
+        #expect(allDay.contains("Saturday"))
+        #expect(allDay.contains("April 18, 2026"))
+        #expect(!allDay.contains("2026-04-18"))
+
+        let timed = CalendarOverlayDateCodec.displayRange(
+            start: "2026-08-17T10:00:00-07:00",
+            end: "2026-08-17T10:30:00-07:00",
+            locale: locale
+        )
+        #expect(timed.contains("Monday"))
+        #expect(timed.contains("10:00"))
+        #expect(timed.contains("10:30"))
+        #expect(!timed.contains("T10:00"))
+    }
+
+    @Test func allDayRangesDisplayExclusiveEndsAsInclusiveLocalDates() {
+        let locale = Locale(identifier: "en_US")
+        for (start, end, lastDay) in [
+            ("2026-04-18", "2026-04-19", "2026-04-18"),
+            ("2026-04-18", "2026-04-21", "2026-04-20"),
+            ("2026-03-07", "2026-03-10", "2026-03-09"),
+            ("2026-10-31", "2026-11-03", "2026-11-02"),
+            ("2028-02-28", "2028-03-01", "2028-02-29"),
+            ("2026-12-31", "2027-01-02", "2027-01-01")
+        ] {
+            let first = CalendarOverlayDateCodec.displayRange(start: start, end: nil, locale: locale)
+            let last = CalendarOverlayDateCodec.displayRange(start: lastDay, end: nil, locale: locale)
+            let expected = start == lastDay ? first : first + " – " + last.replacingOccurrences(of: "All day · ", with: "")
+            #expect(CalendarOverlayDateCodec.displayRange(start: start, end: end, locale: locale) == expected)
+        }
+    }
+
+    @Test func missingOrNonForwardAllDayEndsRemainSingleDay() {
+        let locale = Locale(identifier: "en_US")
+        let expected = CalendarOverlayDateCodec.displayRange(start: "2026-04-18", end: nil, locale: locale)
+        for end in ["", "invalid", "2026-04-18", "2026-04-17"] {
+            #expect(CalendarOverlayDateCodec.displayRange(start: "2026-04-18", end: end, locale: locale) == expected)
+        }
+    }
+
+    @Test func sharedCloseKeepsContentCoveredUntilNativeDismissalCompletes() {
+        var presentation = CalendarOverlayPresentation()
+        presentation.sharedDidOpen()
+        presentation.didPresent()
+        let transition1 = presentation.requestClose(sharedOpen: true)
+        #expect(transition1)
+        let transition2 = presentation.requestClose(sharedOpen: true)
+        #expect(!transition2)
+        let transition3 = presentation.finishClose(sharedOpen: true)
+        #expect(!transition3)
+        // Shared close requests native dismissal, not focus/navigation yet.
+        #expect(presentation.isCovered(sharedOpen: false))
+        let transition4 = presentation.finishClose(sharedOpen: false)
+        #expect(!transition4)
+        presentation.didDismiss()
+        #expect(!presentation.isCovered(sharedOpen: false))
+        let transition5 = presentation.finishClose(sharedOpen: false)
+        #expect(transition5)
+        let transition6 = presentation.finishClose(sharedOpen: false)
+        #expect(!transition6)
+        let transition7 = presentation.requestClose(sharedOpen: false)
+        #expect(!transition7)
+        // A new presentation can issue exactly one new close intent.
+        presentation.sharedDidOpen()
+        let transition8 = presentation.requestClose(sharedOpen: true)
+        #expect(transition8)
+    }
+
+    @Test func interactiveDismissalStillWaitsForAuthoritativeSharedClose() {
+        var presentation = CalendarOverlayPresentation()
+        presentation.didPresent()
+        let transition9 = presentation.requestClose(sharedOpen: true)
+        #expect(transition9)
+        presentation.didDismiss()
+        #expect(presentation.isCovered(sharedOpen: true))
+        let transition10 = presentation.finishClose(sharedOpen: true)
+        #expect(!transition10)
+        let transition11 = presentation.requestClose(sharedOpen: true)
+        #expect(!transition11)
+        let transition12 = presentation.finishClose(sharedOpen: false)
+        #expect(transition12)
+    }
+
+    @Test func closeWithoutNativePresentationNeedsNoSyntheticDismissal() {
+        var presentation = CalendarOverlayPresentation()
+        let transition13 = presentation.finishClose(sharedOpen: false)
+        #expect(!transition13)
+        presentation.sharedDidOpen()
+        let transition14 = presentation.finishClose(sharedOpen: false)
+        #expect(transition14)
+        let transition15 = presentation.finishClose(sharedOpen: false)
+        #expect(!transition15)
+        // Even when SwiftUI coalesces the open/close observations, a requested
+        // navigation close completes without waiting for a nonexistent sheet.
+        let transition16 = presentation.requestClose(sharedOpen: true)
+        #expect(transition16)
+        let transition17 = presentation.finishClose(sharedOpen: false)
+        #expect(transition17)
+    }
+
+    @Test func stateReplacementDoesNotCompleteAnOpenNativePresentation() {
+        var presentation = CalendarOverlayPresentation()
+        presentation.didPresent()
+        // Preview/editor/outcome replacement keeps the same Boolean sheet open.
+        let transition18 = presentation.finishClose(sharedOpen: true)
+        #expect(!transition18)
+        #expect(!presentation.closeRequested)
+        // Explicit outcome acknowledgement/shared closure needs no Cancel.
+        let transition19 = presentation.finishClose(sharedOpen: false)
+        #expect(!transition19)
+        presentation.didDismiss()
+        let transition20 = presentation.finishClose(sharedOpen: false)
+        #expect(transition20)
+        #expect(!presentation.closeRequested)
+    }
+
+    @Test func recurrenceUntilUsesReadableSourceZoneDateWithoutChangingWireValue() throws {
+        let locale = Locale(identifier: "en_US")
+        let zone = try #require(TimeZone(secondsFromGMT: -7 * 60 * 60))
+        let recurrence = StructuredRecurrence(
+            frequency: .weekly, interval: 1, weekdays: [.monday], count: nil,
+            until: "2026-08-31T10:15:30-07:00"
+        )
+
+        let summary = CalendarOverlaySemantics.recurrenceSummary(
+            recurrence,
+            locale: locale,
+            timeZone: zone
+        )
+        #expect(summary?.contains("Monday, August 31, 2026") == true)
+        #expect(summary?.contains("10:15") == true)
+        #expect(summary?.contains("2026-08-31T10:15:30-07:00") == false)
+        #expect(recurrence.until == "2026-08-31T10:15:30-07:00")
     }
 
     @Test func recurrenceUntilRoundTripsTimedValuesWithoutRewritingUnrelatedEdits() throws {
@@ -178,7 +311,6 @@ struct CalendarOverlayTests {
     @Test func referenceGeometryAndFocusOriginsStayPinned() {
         #expect(CalendarOverlaySemantics.maximumHeightFraction == 0.84)
         #expect(CalendarOverlaySemantics.topRadius == 26)
-        #expect(CalendarOverlaySemantics.handleSize == CGSize(width: 42, height: 4))
         #expect(CalendarOverlaySemantics.actionHeight == 48)
         #expect(CalendarOverlayOrigin.addControl != .event("event-7/occurrence-7"))
     }

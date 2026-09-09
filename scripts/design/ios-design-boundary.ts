@@ -21,7 +21,14 @@ export interface IosDesignTransitionalEntry {
  */
 export const IOS_DESIGN_EXCLUDED_PATHS = new Set<string>([
   "ios/App/Settings/Calendar/CalendarAgendaView.swift",
+  "ios/App/Settings/Calendar/CalendarAdjacentPage.swift",
+  "ios/App/Settings/Calendar/CalendarAdjacentViewport.swift",
   "ios/App/Settings/Calendar/CalendarCanvasViews.swift",
+  // Calendar-owned composition, native reuse/layout, and consolidated decorative Canvas.
+  "ios/App/Settings/Calendar/CalendarMonthComposition.swift",
+  "ios/App/Settings/Calendar/CalendarNativeMonthRendering.swift",
+  "ios/App/Settings/Calendar/CalendarNativeViewport.swift",
+  "ios/App/Settings/Calendar/CalendarNativeViewportLayout.swift",
   "ios/App/Settings/Calendar/CalendarFiltersView.swift",
   "ios/App/Settings/Calendar/CalendarOverlayModels.swift",
   "ios/App/Settings/Calendar/CalendarOverlayPreviews.swift",
@@ -29,6 +36,8 @@ export const IOS_DESIGN_EXCLUDED_PATHS = new Set<string>([
   "ios/App/Settings/Calendar/CalendarScaffold.swift",
   "ios/App/Settings/Calendar/CalendarScreen.swift",
   "ios/App/Settings/Calendar/CalendarSurfacePreviews.swift",
+  // Calendar's native mode Menu reuses DesignMenuTriggerLabel for all chrome.
+  "ios/App/Settings/Calendar/CalendarSurfaceChrome.swift",
   "ios/App/Settings/Calendar/CalendarSurfaceSupport.swift",
   "ios/App/Settings/Calendar/CalendarViewModel.swift",
   "ios/App/QAVisualReviewCatalog.swift",
@@ -61,6 +70,7 @@ export const IOS_DESIGN_FOUNDATION_PATHS = new Set([
   "ios/App/Theme/Tokens.swift",
   "ios/App/Theme/Typo.swift",
   "ios/App/Settings/Components/DesignButtons.swift",
+  "ios/App/Settings/Components/DesignBadgedIconButton.swift",
   "ios/App/Settings/Components/DesignComposites.swift",
   "ios/App/Settings/Components/DesignControls.swift",
   "ios/App/Settings/Components/DesignIdentityControls.swift",
@@ -77,6 +87,7 @@ const CANONICAL_PRIMITIVES = [
   "DesignButtonStyle",
   "DesignActionButton",
   "DesignIconButton",
+  "DesignBadgedIconButton",
   "DesignField",
   "DesignSecureField",
   "DesignMaskedField",

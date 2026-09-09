@@ -30,7 +30,11 @@ struct AudioScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
+        SettingsPageScaffold(
+            title: "Audio", screenId: "settings-audio-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-audio-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
@@ -50,17 +54,6 @@ struct AudioScreen: View {
             onDiscard: attemptBack,
             onApply: { Task { await vm.save() } }
         )
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that shares the apply bar's discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-audio-back", action: attemptBack)
-                }
-            }
-        }
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -79,27 +72,10 @@ struct AudioScreen: View {
     }
 
     private var outputCard: some View {
-        DesignCard(title: "Output", detail: "Takes effect on the next reply.", bodyStyle: .settingsGroup) {
-            DesignToggleRow(
-                title: "Speak responses",
-                detail: "When off, replies are silent — text still streams to chat.",
-                isOn: Binding(get: { vm.ttsEnabled }, set: { vm.ttsEnabled = $0 }),
-                accessibilityId: "settings-audio-tts"
-            )
-            VStack(alignment: .leading, spacing: Space.sm) {
-                Text("Reply channel")
-                    .designText(.label)
-                    .fontWeight(.medium)
-                    .foregroundStyle(DuskColors.ink)
-                DesignSegmentedPicker(
-                    title: "Reply channel",
-                    options: audioChannelOptions.map { (value: $0.id, label: $0.label) },
-                    selection: Binding(get: { vm.channel }, set: { vm.channel = $0 }),
-                    accessibilityId: "settings-audio-channel"
-                )
-            }
-            .padding(.vertical, Space.sm)
-        }
+        AudioPreferenceBlock(
+            ttsEnabled: Binding(get: { vm.ttsEnabled }, set: { vm.ttsEnabled = $0 }),
+            channel: Binding(get: { vm.channel }, set: { vm.channel = $0 })
+        )
     }
 
     private func attemptBack() {
@@ -107,25 +83,53 @@ struct AudioScreen: View {
     }
 }
 
-#Preview("ready") {
-    NavigationStack {
-        SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
-            DesignCard(title: "Output", detail: "Takes effect on the next reply.", bodyStyle: .settingsGroup) {
+/// Speaking is the primary decision; the channel remains an independent preference.
+private struct AudioPreferenceBlock: View {
+    @Binding var ttsEnabled: Bool
+    @Binding var channel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Text("Response behavior")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+                .accessibilityAddTraits(.isHeader)
+            DesignCard(bodyStyle: .padded) {
                 DesignToggleRow(
                     title: "Speak responses",
                     detail: "When off, replies are silent — text still streams to chat.",
-                    isOn: .constant(true), accessibilityId: "settings-audio-tts"
+                    isOn: $ttsEnabled,
+                    accessibilityId: "settings-audio-tts"
                 )
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Reply channel").designText(.label).fontWeight(.medium).foregroundStyle(DuskColors.ink)
+                    Text("Reply channel")
+                        .designText(.label)
+                        .fontWeight(.medium)
+                        .foregroundStyle(DuskColors.ink)
+                    Text("Voice allows spoken replies when Speak responses is on. Text only keeps replies silent.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
                     DesignSegmentedPicker(
                         title: "Reply channel",
                         options: audioChannelOptions.map { (value: $0.id, label: $0.label) },
-                        selection: .constant("voice"), accessibilityId: "settings-audio-channel"
+                        selection: $channel,
+                        accessibilityId: "settings-audio-channel"
                     )
                 }
-                .padding(.vertical, Space.sm)
+                .padding(Space.md)
+                .designWell()
             }
+            Text("Changes take effect on the next reply.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+        }
+    }
+}
+
+#Preview("ready") {
+    NavigationStack {
+        SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
+            AudioPreferenceBlock(ttsEnabled: .constant(true), channel: .constant("voice"))
         }
     }
     .preferredColorScheme(.dark)

@@ -29,7 +29,8 @@ struct ToolPermissionRow: View {
     var body: some View {
         DesignSelect(
             title: capabilityName(row.name),
-            detail: row.description.isEmpty ? nil : row.description,
+            detail: [row.description, row.settable ? "" : "Read-only · \(row.permission.displayLabel). Not editable here."]
+                .filter { !$0.isEmpty }.joined(separator: " "),
             options: ToolPermission.selectOptions.map { (value: $0.id, label: $0.label) },
             selection: Binding(
                 get: { row.permission.wireValue },

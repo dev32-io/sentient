@@ -8,7 +8,7 @@ struct BackendSetupView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        DesignPageChrome(title: "Sentient backend", accessibilityId: "backend-setup") {
+        DesignPageChrome(title: "Sentient backend", accessibilityId: "backend-setup", showsBack: false) {
             AsyncNotice(
                 kind: .warning,
                 title: "Local Network access",

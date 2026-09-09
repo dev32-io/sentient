@@ -23,19 +23,16 @@ private struct CalendarInitializingScreen: View {
     let onBack: () -> Void
 
     var body: some View {
-        VStack {
-            HStack {
-                Button("Back", action: onBack)
-                Spacer()
-                Text("Calendar")
-            }
-            .padding()
-            ProgressView("Opening calendar…")
+        VStack(spacing: 0) {
+            DesignPageHeader(title: "Calendar", backAccessibilityId: "calendar-back", onBack: onBack)
+            DesignProgress(title: "Opening calendar…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .accessibilityIdentifier("calendar-initializing")
         .background(DuskColors.bg)
+        .duskTheme()
         .toolbar(.hidden, for: .navigationBar)
+        .nativeInteractiveBackNavigation()
     }
 }
 
@@ -49,6 +46,7 @@ struct CalendarScreen: View {
         Group {
             if let experience {
                 CalendarExperienceScreen(experience: experience, onBack: onBack)
+                    .id(ObjectIdentifier(experience))
             } else {
                 CalendarUnavailableScreen(onBack: onBack)
             }
@@ -66,6 +64,7 @@ private struct CalendarExperienceScreen: View {
         case previous
         case next
         case date(String)
+        case weekDate(CalendarViewportDate, String)
         case month(Int32, Int32)
         case view(CalendarView)
     }
@@ -74,6 +73,8 @@ private struct CalendarExperienceScreen: View {
     @State private var vm: CalendarViewModel
     @State private var opener: CalendarOverlayOrigin = .addControl
     @State private var pendingNavigation: PendingNavigation?
+    @State private var todayRevision = 0
+    @State private var overlayPresentation = CalendarOverlayPresentation()
     @AccessibilityFocusState private var openerFocus: CalendarOverlayOrigin?
 
     init(experience: CalendarExperience, onBack: @escaping () -> Void) {
@@ -87,18 +88,25 @@ private struct CalendarExperienceScreen: View {
                 CalendarOverlayContainer(
                     state: state,
                     origin: opener,
-                    actions: overlayActions
+                    actions: overlayActions,
+                    presentation: $overlayPresentation,
+                    onClosed: completePendingNavigation
                 ) {
                     CalendarScaffold(
                         state: state,
-                        actions: surfaceActions(state),
-                        openerFocus: $openerFocus
+                        actions: surfaceActions,
+                        openerFocus: $openerFocus,
+                        viewportData: vm.viewportData,
+                        browseCursor: vm.browsedMonth,
+                        adjacentData: vm.adjacentData,
+                        dateCursor: vm.browsedDate,
+                        todayRevision: todayRevision
                     )
                 }
-                .onChange(of: CalendarOverlaySemantics.isOpen(state)) { wasOpen, isOpen in
-                    guard wasOpen, !isOpen, let pendingNavigation else { return }
-                    self.pendingNavigation = nil
-                    perform(pendingNavigation)
+                .onChange(of: pendingNavigation) { _, _ in
+                    // If open/close was coalesced before presentation, there is
+                    // no native sheet (and therefore no onDismiss) to await.
+                    completePendingNavigation()
                 }
             } else {
                 CalendarRouteLoading(onBack: onBack)
@@ -113,6 +121,12 @@ private struct CalendarExperienceScreen: View {
                 .accessibilityIdentifier("settings-calendar-screen")
                 .allowsHitTesting(false)
         }
+        // A native pop must never bypass the shared overlay/close ordering.
+        // Presented UIKit sheets are additionally guarded by the navigation adapter.
+        .nativeInteractiveBackNavigation(
+            isEnabled: pendingNavigation == nil && !overlayPresentation.nativePresented &&
+                vm.state.map { CalendarScreenMapping.navigationDisposition(for: $0) == .perform } != false
+        )
         .task {
             forwardDeviceProjectionContext()
         }
@@ -131,6 +145,7 @@ private struct CalendarExperienceScreen: View {
                 forwardDeviceProjectionContext()
             }
         }
+        .onAppear { vm.resume() }
         .onDisappear { vm.dispose() }
     }
 
@@ -141,33 +156,45 @@ private struct CalendarExperienceScreen: View {
         vm.setLocale(CalendarDeviceProjectionContext.current())
     }
 
-    private func surfaceActions(_ state: CalendarUiState) -> CalendarSurfaceActions {
+    private var surfaceActions: CalendarSurfaceActions {
         CalendarSurfaceActions(
-            onBack: { requestNavigation(.back, state: state) },
+            onBack: { requestNavigation(.back) },
             onAdd: {
                 opener = .addControl
                 vm.add()
             },
-            onToday: { requestNavigation(.today, state: state) },
-            onPrevious: { requestNavigation(.previous, state: state) },
-            onNext: { requestNavigation(.next, state: state) },
-            onSelectDate: { requestNavigation(.date($0), state: state) },
-            onSelectMonth: { requestNavigation(.month($0, $1), state: state) },
-            onSelectView: { requestNavigation(.view($0), state: state) },
+            onToday: { requestNavigation(.today) },
+            onPrevious: { requestNavigation(.previous) },
+            onNext: { requestNavigation(.next) },
+            onSelectDate: { requestNavigation(.date($0)) },
+            onSelectMonth: { requestNavigation(.month($0, $1)) },
+            onSelectView: { requestNavigation(.view($0)) },
             onFiltersChanged: vm.setFilters,
             onSearch: vm.search,
             onEvent: { event in
-                guard let occurrence = CalendarScreenMapping.occurrence(for: event, in: state) else { return }
+                guard let occurrence = vm.currentOccurrence(for: event.actionIdentity) else { return }
                 opener = .event(event.actionIdentity.stableKey)
                 vm.openPreview(occurrence)
             },
-            onRetry: vm.refresh
+            onRetry: vm.refresh,
+            onRequestPeriods: vm.requestViewport,
+            onBrowsePeriod: vm.browse,
+            onRequestAdjacentPeriods: vm.requestAdjacentViewport,
+            onBrowseDate: vm.browse,
+            onSelectDateFromBrowse: { requestNavigation(.weekDate($0, $1)) }
         )
     }
 
     private var overlayActions: CalendarOverlayActions {
         CalendarOverlayActions(
-            edit: { vm.edit($0) },
+            edit: { occurrence in
+                let identity = CalendarEventActionIdentity(
+                    eventId: occurrence.eventId, occurrenceId: occurrence.occurrenceId,
+                    originalStart: occurrence.originalStart, scope: occurrence.scope
+                )
+                guard let current = vm.currentOccurrence(for: identity) else { return }
+                vm.edit(current)
+            },
             updateDraft: vm.updateDraft,
             chooseScope: vm.chooseMutationScope,
             save: { vm.save($0) },
@@ -175,36 +202,55 @@ private struct CalendarExperienceScreen: View {
             confirmDelete: vm.confirmDelete,
             rereadConflict: vm.rereadConflict,
             reviewConflict: vm.reviewConflict,
-            close: vm.close,
+            close: requestOverlayClose,
             acknowledgeOutcome: vm.acknowledgeOutcome,
-            restoreFocus: { origin in
-                Task { @MainActor in
-                    await Task.yield()
-                    openerFocus = origin
-                }
-            }
+            restoreFocus: { origin in openerFocus = origin }
         )
     }
 
-    /// Shared mutation state always closes before a calendar/navigation intent is
-    /// forwarded. This keeps covered controls inert and preserves exact ordering.
-    private func requestNavigation(_ navigation: PendingNavigation, state: CalendarUiState) {
+    private func requestOverlayClose() {
+        guard let state = vm.state,
+              overlayPresentation.requestClose(sharedOpen: CalendarOverlaySemantics.isOpen(state)) else { return }
+        vm.close()
+    }
+
+    private func completePendingNavigation() {
+        guard let state = vm.state,
+              !overlayPresentation.isCovered(sharedOpen: CalendarOverlaySemantics.isOpen(state)),
+              let pendingNavigation else { return }
+        _ = overlayPresentation.finishClose(sharedOpen: false)
+        self.pendingNavigation = nil
+        perform(pendingNavigation)
+    }
+
+    /// Both shared closure and native dismissal must finish before navigation.
+    private func requestNavigation(_ navigation: PendingNavigation) {
+        guard pendingNavigation == nil, let state = vm.state else { return }
         switch CalendarScreenMapping.navigationDisposition(for: state) {
         case .dismissOverlayFirst:
             pendingNavigation = navigation
-            vm.close()
+            requestOverlayClose()
         case .perform:
-            perform(navigation)
+            if overlayPresentation.nativePresented {
+                pendingNavigation = navigation
+            } else {
+                perform(navigation)
+            }
         }
     }
 
     private func perform(_ navigation: PendingNavigation) {
         switch navigation {
         case .back: onBack()
-        case .today: vm.today()
+        case .today:
+            vm.today()
+            // Explicit presentation command, issued only after native/shared
+            // overlay closure. Shared Today may leave every date unchanged.
+            todayRevision += 1
         case .previous: vm.previous()
         case .next: vm.next()
         case .date(let date): vm.selectDate(date)
+        case .weekDate(let cursor, let date): vm.selectDate(from: cursor, date: date)
         case .month(let year, let month): vm.selectMonth(year: year, month: month)
         case .view(let view): vm.selectView(view)
         }
@@ -255,11 +301,21 @@ enum CalendarScreenMapping {
     }
 
     static func occurrence(for event: CalendarProjectedEvent, in state: CalendarUiState) -> EffectiveOccurrence? {
-        state.occurrences.first {
-            $0.eventId == event.eventId &&
-                $0.occurrenceId == event.occurrenceId &&
-                $0.originalStart == event.originalStart &&
-                $0.scope == event.scope
+        occurrence(for: event.actionIdentity, in: state)
+    }
+
+    static func occurrence(for identity: CalendarEventActionIdentity, in state: CalendarUiState) -> EffectiveOccurrence? {
+        guard state.visibleEvents.contains(where: {
+            $0.actionIdentity.eventId == identity.eventId &&
+                $0.actionIdentity.occurrenceId == identity.occurrenceId &&
+                $0.actionIdentity.originalStart == identity.originalStart &&
+                $0.actionIdentity.scope == identity.scope
+        }) else { return nil }
+        return state.occurrences.first {
+            $0.eventId == identity.eventId &&
+                $0.occurrenceId == identity.occurrenceId &&
+                $0.originalStart == identity.originalStart &&
+                $0.scope == identity.scope
         }
     }
 }
@@ -303,6 +359,7 @@ private struct CalendarUnavailableScreen: View {
         .background(DuskColors.bg)
         .accessibilityIdentifier("settings-calendar-screen")
         .duskTheme()
+        .nativeInteractiveBackNavigation()
     }
 }
 

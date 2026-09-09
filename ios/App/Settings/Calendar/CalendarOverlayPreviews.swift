@@ -91,7 +91,7 @@ private extension View {
 
 #Preview("Event preview · 390×844") {
     CalendarPreviewSheet(
-        occurrence: CalendarOverlayPreviewFixture.occurrence,
+        occurrence: CalendarOverlayPreviewFixture.occurrence, locale: .current,
         canEdit: true, isOffline: false, onEdit: {}, onClose: {}
     ).calendarPreviewCanvas(width: 390, height: 844)
 }
@@ -191,7 +191,7 @@ private extension View {
 
 #Preview("Large Dynamic Type · 430×932") {
     CalendarPreviewSheet(
-        occurrence: CalendarOverlayPreviewFixture.occurrence,
+        occurrence: CalendarOverlayPreviewFixture.occurrence, locale: .current,
         canEdit: true, isOffline: false, onEdit: {}, onClose: {}
     )
     .calendarPreviewCanvas(width: 430, height: 932)

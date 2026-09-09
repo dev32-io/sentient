@@ -142,7 +142,6 @@ enum DesignMaterialAdapter {
     // of the reviewed foundation CSS, not button-role aliases: their compact
     // faces and receivers differ materially from the canonical 40pt key.
     static let smallControlMaximumOverflow: CGFloat = 48
-    static let smallControlMinimumSourcePixels: CGFloat = 1
     static let smallControlSelectionTravelDuration = 0.22
     static let smallControlTravelCurveX1 = 0.20
     static let smallControlTravelCurveY1 = 0.80

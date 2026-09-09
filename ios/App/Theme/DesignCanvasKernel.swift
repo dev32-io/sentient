@@ -1,6 +1,59 @@
 import CoreGraphics
 import SwiftUI
 
+/// CSS box-shadow blur is a Gaussian with sigma = blur / 2 (CSS Backgrounds
+/// §6.1.2). Paint each authored layer once: opacity is not an energy multiplier.
+/// The exterior-mask construction keeps inset occlusion inside the face without
+/// relying on a shadow filter's source-atop behavior on an unseeded layer.
+enum DesignCanvasEffects {
+    static func blurSigma(_ cssBlur: CGFloat) -> CGFloat { max(0, cssBlur) / 2 }
+
+    static func overflow(blur: CGFloat, x: CGFloat = 0, y: CGFloat = 0) -> CGFloat {
+        ceil(3 * blurSigma(blur) + max(abs(x), abs(y))) + 1
+    }
+
+    static func outerShadow(
+        in context: inout GraphicsContext,
+        sourcePath: Path,
+        color: Color,
+        blur: CGFloat,
+        x: CGFloat = 0,
+        y: CGFloat = 0
+    ) {
+        guard !sourcePath.isEmpty else { return }
+        let source = sourcePath.applying(CGAffineTransform(translationX: x, y: y))
+        context.drawLayer { layer in
+            if blur > 0 { layer.addFilter(.blur(radius: blurSigma(blur))) }
+            layer.fill(source, with: .color(color))
+        }
+    }
+
+    static func insetShadow(
+        in context: inout GraphicsContext,
+        facePath: Path,
+        sourcePath: Path,
+        color: Color,
+        blur: CGFloat,
+        x: CGFloat = 0,
+        y: CGFloat = 0
+    ) {
+        let sigma = blurSigma(blur)
+        let translated = sourcePath.applying(CGAffineTransform(translationX: x, y: y))
+        let extent = 3 * sigma + max(abs(x), abs(y)) + 1
+        var exterior = Path(facePath.boundingRect.union(translated.boundingRect).insetBy(dx: -extent, dy: -extent))
+        exterior.addPath(translated)
+        var clipped = context
+        clipped.clip(to: facePath)
+        clipped.drawLayer { layer in
+            layer.clipToLayer { mask in
+                if sigma > 0 { mask.addFilter(.blur(radius: sigma)) }
+                mask.fill(exterior, with: .color(.white), style: FillStyle(eoFill: true))
+            }
+            layer.fill(facePath, with: .color(color))
+        }
+    }
+}
+
 /// The one contour vocabulary used by every Canvas pass.
 enum DesignCanvasShape: Equatable {
     case roundedRectangle(cornerRadius: CGFloat)
@@ -9,8 +62,10 @@ enum DesignCanvasShape: Equatable {
     case circle
 
     func path(in rect: CGRect, inset: CGFloat = 0) -> Path {
+        // CGRect standardizes over-inset dimensions; reject the collapsed
+        // CSS source before that can turn it into a reflected nonempty shape.
+        guard rect.width - 2 * inset > 0, rect.height - 2 * inset > 0 else { return Path() }
         let insetRect = rect.insetBy(dx: inset, dy: inset)
-        guard insetRect.width > 0, insetRect.height > 0 else { return Path() }
 
         switch self {
         case .roundedRectangle(let cornerRadius):
@@ -52,9 +107,9 @@ enum DesignCanvasPass: String, CaseIterable {
     case contact
     case linearFace
     case radialConcavity
-    case insideBorder
     case directionalTopLight
     case pressedInnerOcclusion
+    case insideBorder
     case focusRing
 
     static let ordered = allCases
@@ -218,20 +273,22 @@ enum DesignCanvasTransition: CaseIterable {
     case hover
     case focus
     case press
+    case pressRelease
     case material
 
     func duration(reduceMotion: Bool) -> Double? {
         guard !reduceMotion else { return nil }
         return switch self {
         case .hover, .focus: DesignV2.Motion.feedback
-        case .press: nil
+        case .press: 0.07
+        case .pressRelease: 0.09
         case .material: DesignV2.Motion.state
         }
     }
 
     func animation(reduceMotion: Bool) -> Animation? {
         guard let duration = duration(reduceMotion: reduceMotion) else { return nil }
-        return DesignV2.Motion.animation(duration: duration, reduceMotion: false)
+        return .timingCurve(0.25, 0.1, 0.25, 1, duration: duration)
     }
 }
 
@@ -504,7 +561,8 @@ struct DesignCanvasMaterialRecipe {
         state: DesignCanvasControlState,
         increasedContrast: Bool = false,
         reduceMotion: Bool = false,
-        animationValues suppliedValues: DesignCanvasAnimationValues? = nil
+        animationValues suppliedValues: DesignCanvasAnimationValues? = nil,
+        baseColor: Color? = nil
     ) -> DesignCanvasMaterialRecipe {
         let values = suppliedValues ?? DesignCanvasAnimationValues(state: state)
         // Disabled material is seated and static. Focus remains independent so
@@ -514,7 +572,7 @@ struct DesignCanvasMaterialRecipe {
         let focus = values.focus
         let glowColor = role == .destructive ? DuskColors.stop : DuskColors.accent
 
-        let base: Color = if state.isDisabled {
+        let resolvedBase: Color = if state.isDisabled {
             DuskColors.bgElev.overlaying(
                 DuskColors.ink4,
                 opacity: DesignMaterialAdapter.slateDisabledBaseInkMix
@@ -537,6 +595,8 @@ struct DesignCanvasMaterialRecipe {
                 )
             }
         }
+
+        let base = state.isDisabled ? resolvedBase : (baseColor ?? resolvedBase)
 
         let restLinearTop = state.isDisabled
             ? base.overlaying(DuskColors.ink4, opacity: DesignMaterialAdapter.slateMutedBaseLight)
@@ -783,15 +843,19 @@ enum DesignCanvasGeometry {
     }
 
     static func overflow(for recipe: DesignCanvasMaterialRecipe, displayScale: CGFloat) -> CGFloat {
-        let maximumShadowExtent = max(
-            recipe.glow.map { shadowExtent($0.geometry) } ?? 0,
-            shadowExtent(recipe.cast.geometry),
-            shadowExtent(recipe.contact.geometry)
-        )
-        let focusExtent = recipe.focusOpacity == 0
-            ? 0
-            : abs(DesignMetrics.focusBorderInset) + recipe.focusLineWidth / 2
-        return ceil(max(maximumShadowExtent, focusExtent) * displayScale) / displayScale
+        let geometries: [DesignDropShadowGeometry] = [
+            DesignMaterialShadowGeometry.slateRest,
+            DesignMaterialShadowGeometry.slateHover,
+            DesignMaterialShadowGeometry.slatePressed,
+            DesignMaterialShadowGeometry.slateDisabled,
+            DesignMaterialShadowGeometry.slateActionGlow,
+            DesignMaterialShadowGeometry.slateGlow,
+            DesignMaterialShadowGeometry.slateDestructiveGlow,
+            DesignMaterialShadowGeometry.slateHoverGlow,
+            DesignMaterialShadowGeometry.slateDestructiveHoverGlow,
+        ]
+        let maximum = geometries.map(shadowExtent).max() ?? 0
+        return ceil(maximum * max(displayScale, 1)) / max(displayScale, 1)
     }
 
     static func overflow(for recipe: DesignCanvasSurfaceRecipe, displayScale: CGFloat) -> CGFloat {
@@ -967,12 +1031,12 @@ struct DesignCanvasSurfaceKernel: View {
                 y: recipe.geometry.y
             )
         )
-        context.drawLayer { layer in
-            if recipe.geometry.radius > 0 {
-                layer.addFilter(.blur(radius: recipe.geometry.radius * 0.8))
-            }
-            layer.fill(source, with: .color(recipe.color.opacity(recipe.opacity)))
-        }
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: recipe.color.opacity(recipe.opacity),
+            blur: recipe.geometry.radius
+        )
     }
 }
 
@@ -987,6 +1051,8 @@ struct DesignCanvasKernel: View, Animatable {
     var increasedContrast = false
     var reduceMotion = false
 
+    let baseColor: Color?
+
     private var hoverAmount: CGFloat
     private var pressAmount: CGFloat
     private var focusAmount: CGFloat
@@ -998,13 +1064,15 @@ struct DesignCanvasKernel: View, Animatable {
         role: DesignButtonRole,
         state: DesignCanvasControlState,
         increasedContrast: Bool = false,
-        reduceMotion: Bool = false
+        reduceMotion: Bool = false,
+        baseColor: Color? = nil
     ) {
         self.shape = shape
         self.role = role
         self.state = state
         self.increasedContrast = increasedContrast
         self.reduceMotion = reduceMotion
+        self.baseColor = baseColor
         let values = DesignCanvasAnimationValues(state: state)
         hoverAmount = values.hover
         pressAmount = values.press
@@ -1038,7 +1106,8 @@ struct DesignCanvasKernel: View, Animatable {
                 state: state,
                 increasedContrast: increasedContrast,
                 reduceMotion: reduceMotion,
-                animationValues: animationValues
+                animationValues: animationValues,
+                baseColor: baseColor
             )
             let overflow = DesignCanvasGeometry.overflow(for: recipe, displayScale: displayScale)
             let fieldSize = CGSize(
@@ -1076,16 +1145,7 @@ struct DesignCanvasKernel: View, Animatable {
         switch pass {
         case .glow:
             if let glow = recipe.glow {
-                // Low-alpha chromatic blur loses substantially more energy in
-                // Canvas than the neutral cast. Integrate three identical
-                // source samples inside this one pass; keep the supplied
-                // opacity on each sample so animated recipes remain continuous.
-                drawShadow(
-                    glow,
-                    in: &context,
-                    faceRect: faceRect,
-                    copies: 3
-                )
+                drawShadow(glow, in: &context, faceRect: faceRect)
             }
         case .cast:
             drawShadow(recipe.cast, in: &context, faceRect: faceRect)
@@ -1113,16 +1173,14 @@ struct DesignCanvasKernel: View, Animatable {
             )
         case .pressedInnerOcclusion:
             if recipe.pressedInnerOcclusionOpacity > 0 {
-                var inset = context
-                inset.addFilter(.shadow(
+                DesignCanvasEffects.insetShadow(
+                    in: &context,
+                    facePath: facePath,
+                    sourcePath: facePath,
                     color: recipe.pressedInnerOcclusion.opacity(recipe.pressedInnerOcclusionOpacity),
-                    radius: DesignMaterialAdapter.slatePressedInsetBlur,
-                    x: 0,
-                    y: DesignMaterialAdapter.slatePressedInsetY,
-                    blendMode: .sourceAtop,
-                    options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-                ))
-                inset.fill(facePath, with: .color(.white))
+                    blur: DesignMaterialAdapter.slatePressedInsetBlur,
+                    y: DesignMaterialAdapter.slatePressedInsetY
+                )
             }
         case .focusRing:
             if recipe.focusOpacity > 0 {
@@ -1138,43 +1196,17 @@ struct DesignCanvasKernel: View, Animatable {
     private func drawShadow(
         _ recipe: DesignCanvasShadowRecipe,
         in context: inout GraphicsContext,
-        faceRect: CGRect,
-        copies: Int = 1
+        faceRect: CGRect
     ) {
-        var source = Path()
-        source.addPath(
-            shape.path(in: faceRect, inset: recipe.geometry.sourceInset),
-            transform: CGAffineTransform(
-                translationX: recipe.geometry.x,
-                y: recipe.geometry.y
-            )
+        let source = shape.path(in: faceRect, inset: recipe.geometry.sourceInset)
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: recipe.color.opacity(recipe.opacity),
+            blur: recipe.geometry.radius,
+            x: recipe.geometry.x,
+            y: recipe.geometry.y
         )
-        // Canvas blur uses a Gaussian radius wider than the CSS shadow blur
-        // represented by the recipe. Normalize only at this adapter boundary;
-        // the role/state geometry and its interpolation remain unchanged.
-        let canvasBlurRadius = recipe.geometry.radius * 0.8
-        for _ in 0..<copies {
-            context.drawLayer { layer in
-                if canvasBlurRadius > 0 {
-                    // Every blurred outer shadow shares the approved 24pt
-                    // lower field. Fade its final ten points so hover casts as
-                    // well as chromatic glows reach that boundary without a
-                    // clipped edge. Zero-radius contacts remain exact fills.
-                    layer.clipToLayer { mask in
-                        mask.fill(
-                            Path(faceRect.insetBy(dx: -1_000, dy: -1_000)),
-                            with: .linearGradient(
-                                Gradient(colors: [.white, .clear]),
-                                startPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY + 14),
-                                endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY + 24)
-                            )
-                        )
-                    }
-                    layer.addFilter(.blur(radius: canvasBlurRadius))
-                }
-                layer.fill(source, with: .color(recipe.color.opacity(recipe.opacity)))
-            }
-        }
     }
 
     private func drawRadial(
@@ -1432,14 +1464,12 @@ struct DesignCanvasWellKernel: View, Animatable {
                 y: recipe.geometry.y
             )
         )
-        context.drawLayer { layer in
-            if recipe.geometry.radius > 0 {
-                // Match the established raised-kernel CSS-to-Canvas blur
-                // normalization without changing that renderer's code path.
-                layer.addFilter(.blur(radius: recipe.geometry.radius * 0.8))
-            }
-            layer.fill(source, with: .color(recipe.color.opacity(recipe.opacity)))
-        }
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: recipe.color.opacity(recipe.opacity),
+            blur: recipe.geometry.radius
+        )
     }
 
     private func drawHalo(
@@ -1473,26 +1503,15 @@ struct DesignCanvasWellKernel: View, Animatable {
         // A CSS spread of -2 grows this inverted-alpha source by two points.
         // Reversing that sign produces a visibly deeper seeded inner ring.
         let sourcePath = geometry.sourcePath(shape: shape, in: faceRect)
-        context.drawLayer { maskedResult in
-            maskedResult.fill(facePath, with: .color(.white))
-            var filteredResult = maskedResult
-            filteredResult.blendMode = .sourceIn
-            // Rasterize and filter the complete outset source first. Clipping
-            // this inner layer would erase the -2pt source ring before it can
-            // cast the upper occlusion back into the face. Source-in then
-            // masks only the completed filter result to the seeded face mask.
-            filteredResult.drawLayer { offscreenSource in
-                offscreenSource.addFilter(.shadow(
-                    color: color.opacity(opacity),
-                    radius: geometry.radius * 0.8,
-                    x: geometry.x,
-                    y: geometry.y,
-                    blendMode: .normal,
-                    options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-                ))
-                offscreenSource.fill(sourcePath, with: .color(.white))
-            }
-        }
+        DesignCanvasEffects.insetShadow(
+            in: &context,
+            facePath: facePath,
+            sourcePath: sourcePath,
+            color: color.opacity(opacity),
+            blur: geometry.radius,
+            x: geometry.x,
+            y: geometry.y
+        )
     }
 
     private func drawLowerInnerReflection(
@@ -1540,7 +1559,7 @@ enum DesignCanvasSmallControlTransition: CaseIterable {
         case .feedback:
             DesignV2.Motion.feedback
         case .press:
-            nil
+            0.07
         case .material:
             DesignV2.Motion.state
         case .selectionTravel:
@@ -1564,7 +1583,7 @@ enum DesignCanvasSmallControlTransition: CaseIterable {
         case .feedback, .material:
             return DesignV2.Motion.animation(duration: duration, reduceMotion: false)
         case .press:
-            return nil
+            return .timingCurve(0.25, 0.1, 0.25, 1, duration: duration)
         }
     }
 }
@@ -1837,34 +1856,6 @@ struct DesignCanvasCompactRadialGeometry: Equatable {
 
 /// Scale-aware source geometry preserves at least one device pixel in compact
 /// 18/22/26pt faces.
-enum DesignCanvasCompactSourceGeometry {
-    static func clampedInset(
-        requestedInset: CGFloat,
-        faceRect: CGRect,
-        displayScale: CGFloat
-    ) -> CGFloat {
-        guard requestedInset > 0 else { return requestedInset }
-        let scale = max(displayScale, 1)
-        let minimumDiameter = DesignMaterialAdapter.smallControlMinimumSourcePixels / scale
-        let maximumInset = max(0, (min(faceRect.width, faceRect.height) - minimumDiameter) / 2)
-        return min(requestedInset, maximumInset)
-    }
-
-    static func sourcePath(
-        shape: DesignCanvasShape,
-        faceRect: CGRect,
-        requestedInset: CGFloat,
-        displayScale: CGFloat
-    ) -> Path {
-        let inset = clampedInset(
-            requestedInset: requestedInset,
-            faceRect: faceRect,
-            displayScale: displayScale
-        )
-        return shape.path(in: faceRect, inset: inset)
-    }
-}
-
 struct DesignCanvasCompactSlateRecipe {
     let profile: DesignCanvasCompactSlateProfile
     let state: DesignCanvasControlState
@@ -2623,13 +2614,24 @@ struct DesignCanvasSmallControlRecipe {
 /// Decorative-only selection/range renderer. Every profile is painted by one
 /// synchronous non-linear Canvas and carries no content, gesture, focus owner,
 /// accessibility semantics, timeline, or value mutation.
-struct DesignCanvasSmallControlKernel: View {
+struct DesignCanvasSmallControlKernel: View, Animatable {
     let profile: DesignCanvasSmallControlProfile
     let state: DesignCanvasControlState
     var increasedContrast = false
     var reduceMotion = false
     let appliesRecipeOpacity: Bool
 
+
+    private var pressAmount: CGFloat
+    private var selectionAmount: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(pressAmount, selectionAmount) }
+        set {
+            pressAmount = newValue.first
+            selectionAmount = newValue.second
+        }
+    }
 
     @Environment(\.displayScale) private var displayScale
 
@@ -2645,6 +2647,12 @@ struct DesignCanvasSmallControlKernel: View {
         self.increasedContrast = increasedContrast
         self.reduceMotion = reduceMotion
         self.appliesRecipeOpacity = appliesRecipeOpacity
+        pressAmount = state.isPressed && !state.isDisabled ? 1 : 0
+        switch profile {
+        case .checkbox(let checked): selectionAmount = checked ? 1 : 0
+        case .selectedChip: selectionAmount = 1
+        default: selectionAmount = 0
+        }
     }
 
 
@@ -2678,7 +2686,7 @@ struct DesignCanvasSmallControlKernel: View {
 
             Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
                 var context = context
-                drawProfile(recipe, in: &context, faceRect: faceRect)
+                drawInterpolatedProfile(in: &context, faceRect: faceRect)
             }
             // Disabled Slider treatment applies after every track, progress,
             // thumb, and shadow pass has composed into the single Canvas.
@@ -2694,6 +2702,43 @@ struct DesignCanvasSmallControlKernel: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// Blend complete decorative endpoints in one isolated Canvas layer.
+    /// Native control state changes immediately; its face/shadow and selection
+    /// change continuously without fading through the underlying canvas.
+    private func drawInterpolatedProfile(in context: inout GraphicsContext, faceRect: CGRect) {
+        let selection = selectionAmount.clamped
+        let press = state.isDisabled ? 0 : pressAmount.clamped
+        let profiles: [(DesignCanvasSmallControlProfile, CGFloat)]
+        switch profile {
+        case .checkbox:
+            profiles = [(.checkbox(isChecked: false), 1 - selection), (.checkbox(isChecked: true), selection)]
+        case .raisedChip, .selectedChip:
+            profiles = [(.raisedChip, 1 - selection), (.selectedChip, selection)]
+        default:
+            profiles = [(profile, 1)]
+        }
+        context.drawLayer { composite in
+            for (profile, selectionWeight) in profiles where selectionWeight > 0 {
+                for (pressed, pressWeight) in [(false, 1 - press), (true, press)] where pressWeight > 0 {
+                    var endpointState = state
+                    endpointState.isPressed = pressed
+                    let endpoint = DesignCanvasSmallControlRecipe.make(
+                        profile: profile,
+                        state: endpointState,
+                        increasedContrast: increasedContrast,
+                        reduceMotion: reduceMotion
+                    )
+                    var weighted = composite
+                    weighted.opacity = Double(selectionWeight * pressWeight)
+                    weighted.blendMode = .plusLighter
+                    weighted.drawLayer { layer in
+                        drawProfile(endpoint, in: &layer, faceRect: faceRect)
+                    }
+                }
+            }
+        }
     }
 
     private func drawProfile(
@@ -2894,18 +2939,14 @@ struct DesignCanvasSmallControlKernel: View {
                 )
             case .pressedInnerOcclusion:
                 guard recipe.pressedInnerOcclusionOpacity > 0 else { continue }
-                var inset = context
-                inset.addFilter(.shadow(
-                    color: recipe.pressedInnerOcclusion.opacity(
-                        recipe.pressedInnerOcclusionOpacity
-                    ),
-                    radius: DesignMaterialAdapter.slatePressedInsetBlur,
-                    x: 0,
-                    y: DesignMaterialAdapter.slatePressedInsetY,
-                    blendMode: .sourceAtop,
-                    options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-                ))
-                inset.fill(facePath, with: .color(.white))
+                DesignCanvasEffects.insetShadow(
+                    in: &context,
+                    facePath: facePath,
+                    sourcePath: facePath,
+                    color: recipe.pressedInnerOcclusion.opacity(recipe.pressedInnerOcclusionOpacity),
+                    blur: DesignMaterialAdapter.slatePressedInsetBlur,
+                    y: DesignMaterialAdapter.slatePressedInsetY
+                )
             case .focusRing:
                 guard recipe.focusOpacity > 0 else { continue }
                 context.stroke(
@@ -3048,23 +3089,18 @@ struct DesignCanvasSmallControlKernel: View {
         guard recipe.opacity > 0 else { return }
         var source = Path()
         source.addPath(
-            DesignCanvasCompactSourceGeometry.sourcePath(
-                shape: shape,
-                faceRect: faceRect,
-                requestedInset: recipe.geometry.sourceInset,
-                displayScale: displayScale
-            ),
+            shape.path(in: faceRect, inset: recipe.geometry.sourceInset),
             transform: CGAffineTransform(
                 translationX: recipe.geometry.x,
                 y: recipe.geometry.y
             )
         )
-        context.drawLayer { layer in
-            if recipe.geometry.radius > 0 {
-                layer.addFilter(.blur(radius: recipe.geometry.radius * 0.8))
-            }
-            layer.fill(source, with: .color(recipe.color.opacity(recipe.opacity)))
-        }
+        DesignCanvasEffects.outerShadow(
+            in: &context,
+            sourcePath: source,
+            color: recipe.color.opacity(recipe.opacity),
+            blur: recipe.geometry.radius
+        )
     }
 
     private func drawCompactRadial(
@@ -3177,22 +3213,15 @@ struct DesignCanvasSmallControlKernel: View {
         guard opacity > 0 else { return }
         let facePath = shape.path(in: faceRect)
         let sourcePath = geometry.sourcePath(shape: shape, in: faceRect)
-        context.drawLayer { maskedResult in
-            maskedResult.fill(facePath, with: .color(.white))
-            var filteredResult = maskedResult
-            filteredResult.blendMode = .sourceIn
-            filteredResult.drawLayer { offscreenSource in
-                offscreenSource.addFilter(.shadow(
-                    color: color.opacity(opacity),
-                    radius: geometry.radius * 0.8,
-                    x: geometry.x,
-                    y: geometry.y,
-                    blendMode: .normal,
-                    options: [.invertsAlpha, .shadowAbove, .shadowOnly]
-                ))
-                offscreenSource.fill(sourcePath, with: .color(.white))
-            }
-        }
+        DesignCanvasEffects.insetShadow(
+            in: &context,
+            facePath: facePath,
+            sourcePath: sourcePath,
+            color: color.opacity(opacity),
+            blur: geometry.radius,
+            x: geometry.x,
+            y: geometry.y
+        )
     }
 
     private func drawLowerInnerReflection(

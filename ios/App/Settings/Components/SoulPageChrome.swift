@@ -59,7 +59,7 @@ struct SoulBackButton: View {
 #Preview {
     VStack(spacing: Space.lg) {
         SoulLoadingRow()
-        SoulApplyingBanner(text: "Applying — assistant restarting…")
+        SoulApplyingBanner(text: "Applying configuration…")
         SoulNoticeBanner(text: soulAlreadyApplyingText)
         SoulInlineError(message: "Couldn't save your changes.")
     }

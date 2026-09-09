@@ -20,6 +20,7 @@ struct VoiceScreen: View {
     let onOpen: (Route) -> Void
     let onBack: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var vm: VoiceViewModel
 
     init(settings: SettingsComponent, onOpen: @escaping (Route) -> Void, onBack: @escaping () -> Void) {
@@ -30,7 +31,10 @@ struct VoiceScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Voice", screenId: "settings-voice") {
+        SettingsPageScaffold(
+            title: "Voice", screenId: "settings-voice",
+            onBack: onBack, backAccessibilityId: "settings-voice-back"
+        ) {
             noticeBanner
             VoiceFilterBarView(
                 query: $vm.query,
@@ -43,7 +47,7 @@ struct VoiceScreen: View {
                 onToggleTag: { vm.toggleTag($0) },
                 onLanguage: { vm.language = $0 }
             )
-            entryButtons
+            libraryHeader
             content
         }
         .task { await vm.load() }
@@ -78,12 +82,12 @@ struct VoiceScreen: View {
     }
 
     private var voiceList: some View {
-        LazyVStack(spacing: Space.sm) {
+        LazyVStack(spacing: 0) {
             ForEach(vm.shownVoices, id: \.voiceId) { pack in
                 VoiceRowView(
                     name: pack.name,
                     lang: pack.language,
-                    source: pack.source == "builtin" ? "Built-in" : "Yours",
+                    source: pack.source == "builtin" ? "Built-in" : pack.source == "user" ? "Yours" : pack.source,
                     description: pack.description_,
                     tags: pack.tags,
                     isPlaying: vm.previewingId == pack.voiceId,
@@ -93,23 +97,69 @@ struct VoiceScreen: View {
                     accessibilityId: "settings-voice-row-\(pack.voiceId)",
                     onSelect: { vm.pick(pack) },
                     onPlay: { vm.togglePreview(pack) },
-                    onDelete: pack.source == "user" ? { vm.pendingDelete = pack } : nil
+                    onDelete: pack.source == "user" ? { vm.pendingDelete = pack } : nil,
+                    grouped: true, selectionTitle: "Use"
                 )
+                if pack.voiceId != vm.shownVoices.last?.voiceId {
+                    Divider().overlay(DuskColors.line).padding(.horizontal, Space.md)
+                }
+            }
+        }
+        .designPlate()
+    }
+
+    @ViewBuilder
+    private var libraryHeader: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: Space.md) {
+                libraryHeading
+                addVoiceMenu
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    libraryHeading
+                    Spacer(minLength: Space.sm)
+                    addVoiceMenu.fixedSize(horizontal: true, vertical: false)
+                }
+                VStack(alignment: .leading, spacing: Space.md) {
+                    libraryHeading
+                    addVoiceMenu
+                }
             }
         }
     }
 
-    private var entryButtons: some View {
-        DesignPane(title: "Create") {
-            DesignActionButton(title: "Add voice", accessibilityId: "settings-voice-add-nav") {
-                onOpen(.settingsVoiceAdd)
-            }
-            if vm.fishBrowseEnabled {
-                DesignActionButton(title: "Clone from Fish", role: .quiet, accessibilityId: "settings-voice-fish-nav") {
-                    onOpen(.settingsVoiceFish)
-                }
+    private var libraryHeading: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Library")
+                .font(DesignTextRole.body.font.weight(.semibold))
+                .foregroundStyle(DuskColors.ink)
+            if vm.phase == .loaded {
+                Text("\(vm.shownVoices.count) of \(vm.allVoices.count) voices")
+                    .font(DesignTextRole.supporting.font)
+                    .foregroundStyle(DuskColors.ink2)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var addVoiceMenu: some View {
+        DesignMenuButton(
+            accessibilityLabel: "Add voice",
+            accessibilityId: "settings-voice-add-menu"
+        ) {
+            Button("Add voice") { onOpen(.settingsVoiceAdd) }
+                .accessibilityIdentifier("settings-voice-add-nav")
+            if vm.fishBrowseEnabled {
+                Button("Clone from Fish") { onOpen(.settingsVoiceFish) }
+                    .accessibilityIdentifier("settings-voice-fish-nav")
+            }
+        } label: {
+            VoiceLibraryMenuLabel(title: "Add voice")
+        }
+        .buttonStyle(DesignButtonStyle(role: .quiet, horizontalPadding: Space.sm))
     }
 
     private var errorState: some View {

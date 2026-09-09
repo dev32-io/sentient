@@ -104,7 +104,7 @@ private struct DesignRaisedButtonCanvasBackground: View {
             value: projection.state.isFocused
         )
         .animation(
-            DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: projection.reduceMotion),
+            DesignCanvasKernel.transitionAnimation(for: projection.state.isPressed ? .press : .material, reduceMotion: projection.reduceMotion),
             value: projection.state.isPressed
         )
         .animation(
@@ -198,7 +198,7 @@ struct DesignButtonStyle: ButtonStyle {
                 value: projection.state.isHovered
             )
             .animation(
-                DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                DesignCanvasKernel.transitionAnimation(for: projection.state.isPressed ? .press : .pressRelease, reduceMotion: reduceMotion),
                 value: projection.state.isPressed
             )
             .frame(minHeight: geometry.semanticHeight)
@@ -543,7 +543,7 @@ struct DesignCompactButtonStyle: ButtonStyle {
                 value: projection.state.isHovered
             )
             .animation(
-                DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                DesignCanvasKernel.transitionAnimation(for: projection.state.isPressed ? .press : .pressRelease, reduceMotion: reduceMotion),
                 value: projection.state.isPressed
             )
     }

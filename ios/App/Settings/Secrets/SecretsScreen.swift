@@ -51,9 +51,6 @@ private struct SecretsBody: View {
 
     var body: some View {
         SettingsPageScaffold(title: "Secrets", screenId: "settings-secrets-screen") {
-            if apply != .hidden {
-                RestartNotice(phase: apply, onApply: onApplyNow, onDismiss: onDismissNotice)
-            }
             if let mutationError {
                 AsyncNotice(kind: .error, title: "Secret change failed", detail: mutationError)
             }
@@ -70,17 +67,25 @@ private struct SecretsBody: View {
                 retry: onRetryLoad
             )
         } else if let status {
+            providerSummary(status)
             DesignCard(
                 title: "Provider keys",
-                detail: "Encrypted at rest. Values are write-only and never displayed.",
+                detail: "Key presence only — not a check that credentials work. Saved values are never displayed.",
                 headerStyle: .quiet,
-                bodyStyle: .padded
+                bodyStyle: .rows
             ) {
                 keyRow(.openrouter, label: "OpenRouter", status: status, hasKey: status.llm.openrouter.hasKey)
                 DesignDivider()
                 keyRow(.ollamaCloud, label: "Ollama Cloud", status: status, hasKey: status.llm.ollamaCloud.hasKey)
-                DesignDivider()
+            }
+            DesignCard(
+                title: "Custom provider",
+                detail: "The Custom key and base URL belong together. Save each value here, then select Custom to save your provider selection.",
+                headerStyle: .quiet,
+                bodyStyle: .rows
+            ) {
                 keyRow(.custom, label: "Custom", status: status, hasKey: status.llm.custom.hasKey)
+                DesignDivider()
                 SecretUrlRow(
                     hasValue: status.llm.custom.hasBaseUrl,
                     isEditing: editing == .customBaseUrl,
@@ -90,10 +95,35 @@ private struct SecretsBody: View {
                     onSave: onSaveBaseUrl
                 )
             }
+            if apply != .hidden {
+                RestartNotice(phase: apply, onApply: onApplyNow, onDismiss: onDismissNotice)
+            }
         } else if isError {
             AsyncNotice(kind: .error, title: "Couldn't load provider keys", detail: "Check your connection and try again.", retry: onRetryLoad)
         } else {
             AsyncNotice(kind: .loading, title: "Loading provider keys")
+        }
+    }
+
+    private func providerSummary(_ status: SecretsStatus) -> some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Selected provider · \(providerLabel(status.llm.active))")
+                .designText(.label)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text("Provider selection is saved when selected; keys are saved with Save. Applying configuration does not test credentials or verify the running connection.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+        }
+    }
+
+    private func providerLabel(_ raw: String) -> String {
+        switch SecretsViewModel.Provider(rawValue: raw) {
+        case .openrouter: "OpenRouter"
+        case .ollamaCloud: "Ollama Cloud"
+        case .custom: "Custom"
+        case nil: raw
         }
     }
 
@@ -125,7 +155,7 @@ private struct RestartNotice: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        DesignCard(headerStyle: .quiet, bodyStyle: .padded) {
+        VStack(alignment: .leading, spacing: Space.md) {
             AsyncNotice(kind: noticeKind, title: title, detail: detail)
             if phase != .applying && phase != .applied {
                 HStack(spacing: Space.sm) {
@@ -156,18 +186,18 @@ private struct RestartNotice: View {
     }
     private var title: String {
         switch phase {
-        case .applying: "Applying changes"
-        case .applied: "Assistant restarted"
+        case .applying: "Applying configuration…"
+        case .applied: "Configuration applied"
         case .alreadyApplying: "Already applying"
-        case .failed: "Couldn't restart assistant"
-        case .notice, .hidden: "Restart assistant to use the change"
+        case .failed: "Couldn't apply configuration"
+        case .notice, .hidden: "Apply saved configuration"
         }
     }
     private var detail: String? {
         switch phase {
         case .alreadyApplying: "Try again when the current apply finishes."
         case .failed(let message): message
-        case .notice: "The saved value remains hidden."
+        case .notice: "Your provider selection and key changes are saved. Applying configuration does not test credentials or verify the running connection; saved credentials remain hidden."
         default: nil
         }
     }

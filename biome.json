@@ -37,7 +37,8 @@
       "ios/**",
       "docs/**",
       "gateway/scripts/**",
-      ".claude/worktrees/**"
+      ".claude/worktrees/**",
+      ".worktree/**"
     ]
   }
 }

@@ -47,6 +47,15 @@ extension ToolPermission {
         }
     }
 
+    var meaning: String {
+        switch self {
+        case .allow: return "No permission prompt."
+        case .ask: return "Ask you before proceeding."
+        case .deny: return "Reject requests; Sentient can explain the restriction."
+        case .off: return "Remove from the model’s available tools."
+        }
+    }
+
     /// Reverse of `wireValue`. Built over `allCases` rather than its own
     /// switch, so a future fifth case needs no change here — only
     /// `wireValue`/`displayLabel` must be taught about it, and the compiler

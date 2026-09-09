@@ -28,12 +28,9 @@ object CalendarProjection {
         val events = filtered.map { projectEvent(it, request.locale, zone) }
             .sortedWith(calendarEventComparator())
         val interval = intervalFor(request.view, request.anchorDate, request.locale)
+        val eventsByDate = buildVisibleDateIndex(events, interval)
 
-        fun eventsFor(date: String): List<CalendarProjectedEvent> = events
-            .asSequence()
-            .filter { it.dateRange.contains(date) }
-            .sortedWith(calendarEventComparator())
-            .toList()
+        fun eventsFor(date: String): List<CalendarProjectedEvent> = eventsByDate[date].orEmpty()
 
         fun cell(date: String, outsideMonth: Boolean): CalendarDateCell =
             dateCell(
@@ -333,6 +330,30 @@ private fun eventDateRange(
         endExclusive
     }
     return CalendarDateInterval(startTimed.date, safeEnd)
+}
+
+private fun buildVisibleDateIndex(
+    events: List<CalendarProjectedEvent>,
+    visibleInterval: CalendarDateInterval,
+): Map<String, List<CalendarProjectedEvent>> {
+    val byDate = mutableMapOf<String, MutableList<CalendarProjectedEvent>>()
+    events.forEach { event ->
+        var date = if (compareCalendarDates(event.dateRange.startDate, visibleInterval.startDate) < 0) {
+            visibleInterval.startDate
+        } else {
+            event.dateRange.startDate
+        }
+        val endExclusive = if (compareCalendarDates(event.dateRange.endExclusive, visibleInterval.endExclusive) > 0) {
+            visibleInterval.endExclusive
+        } else {
+            event.dateRange.endExclusive
+        }
+        while (compareCalendarDates(date, endExclusive) < 0) {
+            byDate.getOrPut(date) { mutableListOf() }.add(event)
+            date = addCalendarDays(date, 1)
+        }
+    }
+    return byDate
 }
 
 private fun dateCell(

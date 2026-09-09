@@ -30,12 +30,6 @@ struct SecretKeyRow: View {
                     .transition(editorTransition)
             }
         }
-        .background(DuskColors.bgElev)
-        .clipShape(RoundedRectangle(cornerRadius: Radii.md, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
-                .stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
-        }
         .animation(
             DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
             value: isEditing
@@ -52,16 +46,9 @@ struct SecretKeyRow: View {
     }
 
     private var readContext: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: Space.md) {
-                contextLabel
-                Spacer(minLength: Space.sm)
-                readActions
-            }
-            VStack(alignment: .leading, spacing: Space.sm) {
-                contextLabel
-                readActions
-            }
+        CenteredFlowLayout(spacing: Space.md, alignment: .leading) {
+            contextLabel
+            readActions
         }
         .padding(Space.md)
         .frame(minHeight: DesignMetrics.inlineEditorReadMinimumHeight)
@@ -74,40 +61,44 @@ struct SecretKeyRow: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(DuskColors.ink)
                 .accessibilityIdentifier("settings-secret-\(idKey)")
-            Text(secretPresenceText(isConfigured: hasKey))
+            Text(hasKey ? "Key stored" : "No key stored")
                 .designText(.caption)
-                .foregroundStyle(hasKey ? DuskColors.ink2 : DuskColors.ink4)
+                .foregroundStyle(DuskColors.ink2)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
-        .accessibilityValue(hasKey ? "Key configured" : "Key not configured")
+        .accessibilityValue(hasKey ? "Key stored; not validated" : "No key stored")
     }
 
     private var readActions: some View {
-        HStack(spacing: Space.sm) {
-            if isActive {
-                Label("Active", systemImage: "checkmark")
-                    .designText(.supporting)
-                    .foregroundStyle(DuskColors.accent)
-                    .accessibilityLabel("Active provider")
-            } else if let onSetActive {
-                DesignTextButton(
-                    title: "Set active",
-                    accessibilityId: "settings-secret-\(idKey)-active",
-                    action: onSetActive
-                )
-            }
-            if !isEditing {
-                DesignActionButton(
-                    title: hasKey ? "Edit" : "Set key",
-                    role: .secondary,
-                    accessibilityId: "settings-secret-\(idKey)-update",
-                    fillsWidth: false,
-                    action: onStartEdit
-                )
-                .focused($editButtonFocused)
-                .accessibilityFocused($editButtonAccessibilityFocused)
-            }
+        CenteredFlowLayout(spacing: Space.sm, alignment: .trailing) {
+            actionControls
+        }
+    }
+
+    @ViewBuilder private var actionControls: some View {
+        if isActive {
+            Label("Selected", systemImage: "checkmark")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.accent)
+                .accessibilityLabel("Selected provider, not runtime status")
+        } else if let onSetActive {
+            DesignTextButton(
+                title: "Select",
+                accessibilityId: "settings-secret-\(idKey)-active",
+                action: onSetActive
+            )
+        }
+        if !isEditing {
+            DesignActionButton(
+                title: hasKey ? "Replace key" : "Set key",
+                role: .secondary,
+                accessibilityId: "settings-secret-\(idKey)-update",
+                fillsWidth: false,
+                action: onStartEdit
+            )
+            .focused($editButtonFocused)
+            .accessibilityFocused($editButtonAccessibilityFocused)
         }
     }
 
@@ -120,26 +111,12 @@ struct SecretKeyRow: View {
                 accessibilityId: "settings-secret-\(idKey)-input",
                 autoFocus: true
             )
-            Text("Secret values are never written to logs or decorative diagnostics.")
+            Text("Write-only: the stored key cannot be viewed. Saving a replacement does not validate it.")
                 .designText(.supporting)
                 .foregroundStyle(DuskColors.ink2)
-            HStack(spacing: Space.sm) {
-                Spacer(minLength: 0)
-                DesignActionButton(
-                    title: "Cancel",
-                    role: .quiet,
-                    accessibilityId: "settings-secret-\(idKey)-cancel",
-                    fillsWidth: false,
-                    action: onCancel
-                )
-                DesignActionButton(
-                    title: "Save key",
-                    loadingTitle: "Saving…",
-                    state: canSave ? .normal : isSaving ? .loading : .disabled,
-                    accessibilityId: "settings-secret-\(idKey)-save",
-                    fillsWidth: false,
-                    action: { onSave(draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                )
+            CenteredFlowLayout(spacing: Space.sm, alignment: .trailing) {
+                cancelButton(fillsWidth: false)
+                saveButton(fillsWidth: false)
             }
         }
         .padding(DesignMetrics.inlineEditorFormPadding)
@@ -151,6 +128,27 @@ struct SecretKeyRow: View {
             )
         }
         .privacySensitive()
+    }
+
+    private func cancelButton(fillsWidth: Bool) -> some View {
+        DesignActionButton(
+            title: "Cancel",
+            role: .quiet,
+            accessibilityId: "settings-secret-\(idKey)-cancel",
+            fillsWidth: fillsWidth,
+            action: onCancel
+        )
+    }
+
+    private func saveButton(fillsWidth: Bool) -> some View {
+        DesignActionButton(
+            title: "Save key",
+            loadingTitle: "Saving…",
+            state: canSave ? .normal : isSaving ? .loading : .disabled,
+            accessibilityId: "settings-secret-\(idKey)-save",
+            fillsWidth: fillsWidth,
+            action: { onSave(draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        )
     }
 
     private var editorTransition: AnyTransition {
@@ -179,18 +177,19 @@ struct SecretUrlRow: View {
         }
         .padding(.vertical, Space.sm)
         .onChange(of: isEditing) { _, editing in if !editing { draft = "" } }
+        .privacySensitive()
         .accessibilityIdentifier("settings-secret-custom-baseurl")
     }
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            DesignField(
+            DesignMaskedField(
                 title: "New base URL",
                 prompt: "https://api.example.com/v1",
                 text: $draft,
-                accessibilityId: "settings-secret-custom-baseurl-input"
+                accessibilityId: "settings-secret-custom-baseurl-input",
+                keyboard: .URL
             )
-            .keyboardType(.URL)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
             HStack(spacing: Space.sm) {
@@ -209,8 +208,8 @@ struct SecretUrlRow: View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text(secretPresenceText(isConfigured: hasValue))
                 .designText(.caption)
-                .foregroundStyle(hasValue ? DuskColors.ink2 : DuskColors.ink4)
-                .accessibilityLabel(hasValue ? "Base URL configured" : "Base URL not configured")
+                .foregroundStyle(DuskColors.ink2)
+                .accessibilityLabel(hasValue ? "Base URL stored; not validated" : "No base URL stored")
             DesignTextButton(
                 title: "Update base URL",
                 accessibilityId: "settings-secret-custom-baseurl-update",

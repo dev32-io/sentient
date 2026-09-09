@@ -16,6 +16,7 @@ describe("iOS design boundary", () => {
 
   test("exempts only the exact split foundation modules", () => {
     expect([...IOS_DESIGN_FOUNDATION_PATHS].sort()).toEqual([
+      "ios/App/Settings/Components/DesignBadgedIconButton.swift",
       "ios/App/Settings/Components/DesignButtons.swift",
       "ios/App/Settings/Components/DesignComposites.swift",
       "ios/App/Settings/Components/DesignControls.swift",

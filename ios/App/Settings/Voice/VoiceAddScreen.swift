@@ -23,6 +23,21 @@ struct VoiceAddScreen: View {
 
     @State private var vm: VoiceAddViewModel
     @State private var importing = false
+    @State private var stage: CreationStage = .sample
+    @State private var tagDraft = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private enum CreationStage: Int {
+        case sample = 1, details, create
+
+        var title: String {
+            switch self {
+            case .sample: "Sample"
+            case .details: "Details"
+            case .create: "Create"
+            }
+        }
+    }
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
         self.settings = settings
@@ -31,8 +46,38 @@ struct VoiceAddScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Add Voice", screenId: "settings-voice-add") {
+        SettingsPageScaffold(
+            title: "Add Voice", screenId: "settings-voice-add",
+            onBack: onBack, backAccessibilityId: "settings-voice-add-back"
+        ) {
             noticeBanner
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("Step \(stage.rawValue) of 3 · \(stage.title)")
+                    .designText(.body)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DuskColors.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Review a sample, add details, then create your voice.")
+                    .designText(.caption)
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            stageContent
+                .animation(
+                    DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+                    value: stage
+                )
+        }
+        .onChange(of: vm.done) { _, done in if done { onBack() } }
+        .onDisappear { vm.teardown() }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
+            vm.handlePicked(result)
+        }
+    }
+
+    @ViewBuilder
+    private var stageContent: some View {
+        switch stage {
+        case .sample:
             DesignSegmentedPicker(
                 title: "Sample source",
                 options: modeOptions,
@@ -41,18 +86,52 @@ struct VoiceAddScreen: View {
             )
             .accessibilityIdentifier("settings-voice-add-mode")
             captureSection
-            if vm.audioData != nil {
-                AsyncNotice(kind: .success, title: "Clip ready")
-                    .accessibilityIdentifier("settings-voice-add-clip-ready")
+            DesignActionButton(
+                title: "Continue to details",
+                state: vm.audioData != nil && !vm.submitting ? .normal : .disabled,
+                accessibilityId: "settings-voice-add-continue-details"
+            ) {
+                if vm.previewingTake { vm.toggleTakePreview() }
+                stage = .details
             }
+        case .details:
+            sampleSummary
             formSection
+            DesignActionButton(
+                title: "Review voice",
+                state: vm.canSubmit ? .normal : .disabled,
+                accessibilityId: "settings-voice-add-continue-review"
+            ) { stage = .create }
+            DesignTextButton(title: "Back to sample", state: vm.submitting ? .disabled : .normal) {
+                stage = .sample
+            }
+        case .create:
+            sampleSummary
+            DesignPane(title: vm.name, detail: vm.language.isEmpty ? "No language" : VoiceLanguages.label(for: vm.language)) {
+                if !vm.description.isEmpty {
+                    Text(vm.description).designText(.body).foregroundStyle(DuskColors.ink2)
+                }
+                if !vm.tags.isEmpty {
+                    Text(vm.tags.joined(separator: " · "))
+                        .designText(.caption).foregroundStyle(DuskColors.ink2)
+                }
+                Text("Create adds this sample and its details to your voice library.")
+                    .designText(.body).foregroundStyle(DuskColors.ink2)
+            }
             submitButton
+            DesignTextButton(title: "Edit details", state: vm.submitting ? .disabled : .normal) {
+                stage = .details
+            }
         }
-        .onChange(of: vm.done) { _, done in if done { onBack() } }
-        .onDisappear { vm.teardown() }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
-            vm.handlePicked(result)
-        }
+    }
+
+    private var sampleSummary: some View {
+        AsyncNotice(
+            kind: .success,
+            title: "Sample ready",
+            detail: vm.uploadedName ?? String(format: "Recording · %.1f seconds", vm.elapsedSeconds)
+        )
+        .accessibilityIdentifier("settings-voice-add-clip-ready")
     }
 
     @ViewBuilder
@@ -76,7 +155,7 @@ struct VoiceAddScreen: View {
     }
 
     private var uploadSection: some View {
-        DesignPane(title: "Voice sample", detail: "WAV, FLAC, OGG, or MP3") {
+        DesignPane(title: "Voice sample", detail: ".wav, .flac, .ogg, or .mp3 audio") {
             DesignActionButton(
                 title: vm.uploadedName == nil ? "Choose file" : "Replace file",
                 role: .quiet,
@@ -87,8 +166,8 @@ struct VoiceAddScreen: View {
             if let uploadedName = vm.uploadedName {
                 Text(uploadedName)
                     .designText(.caption)
-                    .foregroundStyle(DuskColors.ink3)
-                    .lineLimit(2)
+                    .foregroundStyle(DuskColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -114,13 +193,14 @@ struct VoiceAddScreen: View {
                 isEnabled: !vm.submitting
             )
             .accessibilityIdentifier("settings-voice-add-language")
-            VoiceTagField(tags: vm.tags, disabled: vm.submitting, onChange: { vm.tags = $0 })
+            VoiceTagField(tags: vm.tags, disabled: vm.submitting, onChange: { vm.tags = $0 }, draft: $tagDraft)
         }
     }
 
     private var submitButton: some View {
         DesignActionButton(
             title: "Create voice",
+            loadingTitle: "Creating voice…",
             state: vm.submitting ? .loading : vm.canSubmit ? .normal : .disabled,
             accessibilityId: "settings-voice-add-submit",
             action: vm.submit

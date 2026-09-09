@@ -15,11 +15,6 @@ private let slotOptions: [SegmentOption] = [
     SegmentOption(id: "user", label: "About you"),
 ]
 
-private let viewOptions: [SegmentOption] = [
-    SegmentOption(id: "edit", label: "Edit"),
-    SegmentOption(id: "preview", label: "Preview"),
-]
-
 private let slotExplain: [MemoryViewModel.Slot: String] = [
     .memory: "Notes the assistant can maintain over time. Edit them to seed or correct a fact.",
     .user: "Preferences and expectations the assistant has learned about you. Edit them to seed or correct a detail.",
@@ -41,14 +36,25 @@ struct MemoryScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
-            DesignSegmentedPicker(
-                title: "Memory file",
-                options: slotOptions.map { (value: $0.id, label: $0.label) },
-                selection: Binding(get: { slot.rawValue }, set: selectSlot),
-                accessibilityId: "settings-memory-slot"
-            )
-            slotCard
+        SettingsPageScaffold(
+            title: "Memory", screenId: "settings-memory-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-memory-back"
+        ) {
+            VStack(alignment: .leading, spacing: Space.md) {
+                DesignSegmentedPicker(
+                    title: "Memory file",
+                    options: slotOptions.map { (value: $0.id, label: $0.label) },
+                    selection: Binding(get: { slot.rawValue }, set: selectSlot),
+                    accessibilityId: "settings-memory-slot"
+                )
+                Text(slotExplain[slot] ?? "")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                slotContent
+            }
+            .padding(Space.md)
+            .designPlate()
         }
         .designApplyBarDock(
             isDirty: vm.isDirty,
@@ -58,17 +64,6 @@ struct MemoryScreen: View {
             onDiscard: attemptBack,
             onApply: { Task { await vm.save() } }
         )
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that shares the apply bar's discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-memory-back", action: attemptBack)
-                }
-            }
-        }
         .task(id: slot) { await vm.loadIfNeeded(slot) }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -88,38 +83,35 @@ struct MemoryScreen: View {
     }
 
     @ViewBuilder
-    private var slotCard: some View {
+    private var slotContent: some View {
         let state = vm.state(for: slot)
         if !state.loaded {
-            DesignCard(title: slot.label, detail: slotExplain[slot]) {
-                SoulLoadingRow()
-            }
+            SoulLoadingRow()
         } else if let loadError = state.loadError {
-            DesignCard(title: slot.label, detail: slotExplain[slot]) {
-                AsyncNotice(kind: .error, title: "Couldn't load this memory", detail: loadError) {
-                    Task { await vm.retry(slot) }
-                }
+            AsyncNotice(kind: .error, title: "Couldn't load this memory", detail: loadError) {
+                Task { await vm.retry(slot) }
             }
         } else {
-            DesignSettingsEditor(
-                title: slot.label,
-                detail: slotExplain[slot] ?? "",
-                state: state.isDirty ? .unsaved : .saved
-            ) {
-                editor(state)
-            }
+            editor(state)
         }
     }
 
     @ViewBuilder
     private func editor(_ state: MemoryViewModel.SlotState) -> some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            DesignSegmentedPicker(
-                title: "Memory view",
-                options: viewOptions.map { (value: $0.id, label: $0.label) },
-                selection: $viewMode,
-                accessibilityId: "settings-memory-view"
-            )
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                Text(viewMode == "edit" ? "Editing" : "Preview")
+                    .designText(.label)
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                DesignActionButton(
+                    title: viewMode == "edit" ? "Preview" : "Edit",
+                    role: .quiet,
+                    accessibilityId: "settings-memory-view",
+                    fillsWidth: false,
+                    action: { viewMode = viewMode == "edit" ? "preview" : "edit" }
+                )
+            }
             if viewMode == "edit" {
                 DesignMultilineEditor(
                     text: Binding(
@@ -132,8 +124,8 @@ struct MemoryScreen: View {
                 )
             } else {
                 Text(state.draft.isEmpty ? "Nothing to preview." : state.draft)
-                    .designText(.supporting)
-                    .foregroundStyle(state.draft.isEmpty ? DuskColors.ink4 : DuskColors.ink)
+                    .designText(.body)
+                    .foregroundStyle(state.draft.isEmpty ? DuskColors.ink2 : DuskColors.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("settings-memory-preview")
@@ -149,29 +141,4 @@ struct MemoryScreen: View {
     private func attemptBack() {
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
-}
-
-#Preview("edit") {
-    NavigationStack {
-        SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
-            DesignSegmentedPicker(
-                title: "Memory file",
-                options: slotOptions.map { (value: $0.id, label: $0.label) },
-                selection: .constant("memory"),
-                accessibilityId: "settings-memory-slot"
-            )
-            DesignSettingsEditor(
-                title: "Shared notes",
-                detail: slotExplain[.memory] ?? "",
-                state: .saved
-            ) {
-                DesignMultilineEditor(
-                    text: .constant("The kitchen light is on circuit 3."),
-                    maxLength: 4000,
-                    accessibilityId: "settings-memory-editor"
-                )
-            }
-        }
-    }
-    .preferredColorScheme(.dark)
 }

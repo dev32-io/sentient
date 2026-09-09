@@ -21,6 +21,7 @@ struct ToolsScreen: View {
     @State private var vm: ToolsViewModel
     @State private var openServers: Set<String> = []
     @State private var builtInsOpen = true
+    @State private var permissionGuideOpen = false
     @State private var showDiscard = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
@@ -30,7 +31,11 @@ struct ToolsScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Tools", screenId: "settings-tools-screen") {
+        SettingsPageScaffold(
+            title: "Tools", screenId: "settings-tools-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-tools-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
@@ -39,6 +44,7 @@ struct ToolsScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
+                capabilityOverview
                 groupsSection
                 builtInCard
             }
@@ -51,17 +57,6 @@ struct ToolsScreen: View {
             onDiscard: attemptBack,
             onApply: { Task { await vm.save() } }
         )
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that shares the apply bar's discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-tools-back", action: attemptBack)
-                }
-            }
-        }
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -77,6 +72,46 @@ struct ToolsScreen: View {
         case .alreadyApplying: .alreadyApplying
         case .applied: .applied
         case .failed(let message): .failed(message)
+        }
+    }
+
+    private var capabilityOverview: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Text("Control what Sentient can use")
+                .designText(.label)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text("Role and resource access checks still apply to every request.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+            DesignDisclosureGroup(isExpanded: permissionGuideOpen) {
+                DesignDisclosureButton(
+                    isExpanded: permissionGuideOpen,
+                    accessibilityLabel: "Permission meanings: Allow, Ask, Deny, Off",
+                    accessibilityId: "settings-tools-permission-guide",
+                    action: { permissionGuideOpen.toggle() }
+                ) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text("Permission meanings")
+                            .designText(.label)
+                            .foregroundStyle(DuskColors.ink)
+                        Text(ToolPermission.selectOptions.map(\.label).joined(separator: " · "))
+                            .designText(.supporting)
+                            .foregroundStyle(DuskColors.ink2)
+                    }
+                }
+            } content: {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    ForEach(ToolPermission.selectOptions, id: \.id) { option in
+                        if let permission = ToolPermission(wireValue: option.id) {
+                            Text("\(option.label) · \(permission.meaning)")
+                                .designText(.supporting)
+                                .foregroundStyle(DuskColors.ink2)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -108,14 +143,11 @@ struct ToolsScreen: View {
                 settable: tool.settable
             )
         }
-        let activeCount = rows.filter { $0.permission != .off }.count
         return ToolsServerCard(
             id: id,
-            serverDescription: entry.description_ ?? "Choose which capabilities are available.",
+            serverDescription: entry.description_,
             masterOn: vm.isGroupMasterOn(id, entry),
             isOpen: openServers.contains(id),
-            activeCount: activeCount,
-            totalCount: entry.tools.count,
             toolRows: rows,
             onToggleOpen: { toggleOpen(id) },
             onToggleServer: { turnOn in vm.setGroupMaster(id, entry.tools.map { $0.name }, turnOn) },
@@ -128,10 +160,7 @@ struct ToolsScreen: View {
         let builtins = (vm.catalog?.hermesBuiltins ?? []).sorted {
             $0.toolset == $1.toolset ? $0.name < $1.name : $0.toolset < $1.toolset
         }
-        DesignCard(
-            title: "Built-in capabilities",
-            detail: "Related capabilities may be enabled or disabled together."
-        ) {
+        DesignCard {
             DesignDisclosureGroup(isExpanded: builtInsOpen) {
                 DesignDisclosureButton(
                     isExpanded: builtInsOpen,
@@ -139,15 +168,23 @@ struct ToolsScreen: View {
                     accessibilityId: "settings-tools-hermes-expand",
                     action: { builtInsOpen.toggle() }
                 ) {
-                    Text("\(vm.hermesActiveCount(builtins)) of \(builtins.count) enabled")
-                        .designText(.caption)
-                        .foregroundStyle(DuskColors.ink3)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Space.sm) {
+                            builtInHeading
+                            Spacer(minLength: Space.sm)
+                            enabledCount(vm.hermesActiveCount(builtins), total: builtins.count)
+                        }
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            builtInHeading
+                            enabledCount(vm.hermesActiveCount(builtins), total: builtins.count)
+                        }
+                    }
                 }
             } content: {
                 ForEach(builtins, id: \.name) { tool in
                     DesignToggleRow(
                         title: capabilityName(tool.name),
-                        detail: tool.description.isEmpty ? tool.toolset : "\(tool.description) · \(tool.toolset)",
+                        detail: builtInDetail(tool.description, toolset: tool.toolset),
                         isOn: Binding(
                             get: { vm.isToolsetOn(tool.toolset) },
                             set: { _ in vm.toggleToolset(tool.toolset) }
@@ -157,6 +194,29 @@ struct ToolsScreen: View {
                 }
             }
         }
+    }
+
+    private var builtInHeading: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Built-in capabilities")
+                .designText(.label)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink)
+            Text("Related capabilities may be enabled or disabled together.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+        }
+    }
+
+    private func enabledCount(_ count: Int, total: Int) -> some View {
+        Text("\(count) of \(total) enabled")
+            .designText(.caption)
+            .foregroundStyle(DuskColors.ink2)
+    }
+
+    private func builtInDetail(_ description: String, toolset: String) -> String {
+        let group = capabilityName(toolset)
+        return description.isEmpty ? group : "\(description) · \(group)"
     }
 
     private func toggleOpen(_ id: String) {
@@ -173,7 +233,7 @@ struct ToolsScreen: View {
         SettingsPageScaffold(title: "Tools", screenId: "settings-tools-screen") {
             ToolsServerCard(
                 id: "home-assistant", serverDescription: "Smart-home control.",
-                masterOn: true, isOpen: true, activeCount: 1, totalCount: 2,
+                masterOn: true, isOpen: true,
                 toolRows: [
                     ToolPermissionRowModel(
                         id: "1", name: "turn_on", description: "Turn a device on.", permission: .allow, settable: true

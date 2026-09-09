@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // SettingsPageScaffold — shared chrome for a settings category detail page.
 //
-// A category page is PUSHED onto UserSessionHost's NavigationStack (as its Route),
-// so the system supplies the back button (pops to the settings root); the scaffold
-// only owns the scrolling body under an inline nav title. A page agent wraps its
-// real controls in this scaffold and keeps the `screenId` accessibilityIdentifier.
+// A category page is PUSHED onto UserSessionHost's NavigationStack (as its Route).
+// The scaffold supplies shared custom header chrome and keeps native interactive
+// back navigation available unless a page temporarily guards that transition. A
+// page agent wraps its real controls here and keeps the `screenId` identifier.
 //
 // The stub screens (one per not-yet-built category) render `SettingsStubScreen`
 // through this scaffold so the leveled navigation is fully wired NOW — a later page
@@ -15,10 +15,36 @@ import SwiftUI
 struct SettingsPageScaffold<Content: View>: View {
     let title: String
     let screenId: String
+    let onBack: (() -> Void)?
+    let allowsInteractiveBack: Bool
+    let backAccessibilityId: String?
     @ViewBuilder let content: () -> Content
 
+    init(
+        title: String,
+        screenId: String,
+        onBack: (() -> Void)? = nil,
+        allowsInteractiveBack: Bool = true,
+        backAccessibilityId: String? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.screenId = screenId
+        self.onBack = onBack
+        self.allowsInteractiveBack = allowsInteractiveBack
+        self.backAccessibilityId = backAccessibilityId
+        self.content = content
+    }
+
     var body: some View {
-        DesignPageChrome(title: title, accessibilityId: screenId, content: content)
+        DesignPageChrome(
+            title: title,
+            accessibilityId: screenId,
+            onBack: onBack,
+            allowsInteractiveBack: allowsInteractiveBack,
+            backAccessibilityId: backAccessibilityId,
+            content: content
+        )
     }
 }
 

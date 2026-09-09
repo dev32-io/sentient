@@ -252,6 +252,10 @@ private struct DesignToggleTrack: View {
                 ),
                 value: isEnabled
             )
+            .animation(
+                DesignCanvasSmallControlKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                value: pressed
+            )
             .transaction { transaction in
                 if reduceMotion {
                     transaction.animation = nil
@@ -442,13 +446,76 @@ private struct DesignSegmentedCanvasBackground: View, Animatable {
     }
 }
 
+/// Measures the same equal-width cells it places. A flexible HStack's ideal
+/// width is the sum of its children, which can understate the space needed by
+/// its longest label once the offered width is shared equally.
+struct DesignFittingSegmentsLayout: Layout {
+    private func geometry(width: CGFloat?, subviews: Subviews) -> (
+        size: CGSize, columns: Int, cell: CGSize
+    ) {
+        guard !subviews.isEmpty else { return (.zero, 1, .zero) }
+        let gap = DesignMetrics.segmentGap
+        let idealWidth = subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+        let naturalWidth = idealWidth * CGFloat(subviews.count) + gap * CGFloat(subviews.count - 1)
+        let available = max(DesignMetrics.minimumTarget, width.flatMap { $0.isFinite ? $0 : nil } ?? naturalWidth)
+        // Test the actual equal-cell allocation, including gaps, rather than
+        // a summed intrinsic estimate or a rounded fitting tolerance.
+        var columns: Int = 1
+        for candidate in stride(from: subviews.count, through: 1, by: -1) {
+            let cellsWidth: CGFloat = idealWidth * CGFloat(candidate)
+            let gapsWidth: CGFloat = gap * CGFloat(candidate - 1)
+            let requiredWidth: CGFloat = cellsWidth + gapsWidth
+            if requiredWidth <= available {
+                columns = candidate
+                break
+            }
+        }
+        let cellWidth = (available - gap * CGFloat(columns - 1)) / CGFloat(columns)
+        let cellHeight = subviews.map {
+            $0.sizeThatFits(.init(width: cellWidth, height: nil)).height
+        }.max() ?? DesignMetrics.minimumTarget
+        let rows = (subviews.count + columns - 1) / columns
+        return (
+            CGSize(width: available, height: CGFloat(rows) * cellHeight + CGFloat(rows - 1) * gap),
+            columns,
+            CGSize(width: cellWidth, height: cellHeight)
+        )
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        geometry(width: proposal.width, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = geometry(width: bounds.width, subviews: subviews)
+        for (index, subview) in subviews.enumerated() {
+            let column = index % layout.columns
+            let row = index / layout.columns
+            let offset = CGFloat(column) * (layout.cell.width + DesignMetrics.segmentGap)
+            // Layout coordinates are logical; SwiftUI mirrors each cell in RTL.
+            let x = bounds.minX + offset
+            subview.place(
+                at: CGPoint(x: x + layout.cell.width / 2,
+                            y: bounds.minY + CGFloat(row) * (layout.cell.height + DesignMetrics.segmentGap)),
+                anchor: .top,
+                proposal: .init(layout.cell)
+            )
+        }
+    }
+}
+
 struct DesignSegmentedPicker<Value: Hashable>: View {
     let title: String
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
     var accessibilityId: String? = nil
+    var optionAccessibilityId: ((Value) -> String)? = nil
     var isEnabled = true
     var visualHeight: CGFloat
+    /// Opt in to equal intrinsic measurement and whole-segment row reflow.
+    var reflowsToFit: Bool
+    /// Label inset for compact composites; native targets remain at least 44pt.
+    var segmentHorizontalPadding: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -461,7 +528,10 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
         selection: Binding<Value>,
         accessibilityId: String? = nil,
         isEnabled: Bool = true,
-        visualHeight: CGFloat = DesignMetrics.minimumTarget
+        visualHeight: CGFloat = DesignMetrics.minimumTarget,
+        optionAccessibilityId: ((Value) -> String)? = nil,
+        reflowsToFit: Bool = false,
+        segmentHorizontalPadding: CGFloat = DesignMetrics.segmentHorizontalPadding
     ) {
         self.title = title
         self.options = options
@@ -469,10 +539,19 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
         self.accessibilityId = accessibilityId
         self.isEnabled = isEnabled
         self.visualHeight = visualHeight
+        self.optionAccessibilityId = optionAccessibilityId
+        self.reflowsToFit = reflowsToFit
+        self.segmentHorizontalPadding = segmentHorizontalPadding
+    }
+
+    private var segmentLayout: AnyLayout {
+        reflowsToFit
+            ? AnyLayout(DesignFittingSegmentsLayout())
+            : AnyLayout(HStackLayout(spacing: DesignMetrics.segmentGap))
     }
 
     var body: some View {
-        HStack(spacing: DesignMetrics.segmentGap) {
+        segmentLayout {
             ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                 let selected = selection == option.value
                 Button {
@@ -490,7 +569,7 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                         .frame(maxWidth: .infinity, minHeight: segmentFaceHeight)
                         .padding(
                             .horizontal,
-                            DesignMetrics.segmentHorizontalPadding + DesignMetrics.hairline
+                            segmentHorizontalPadding + DesignMetrics.hairline
                         )
                         .contentShape(Rectangle())
                         .anchorPreference(
@@ -507,6 +586,7 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                 .contentShape(Rectangle())
                 .disabled(!isEnabled)
                 .accessibilityLabel(option.label)
+                .accessibilityIdentifier(optionAccessibilityId?(option.value) ?? "")
                 .accessibilityValue(selected ? "Selected" : "Not selected")
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
@@ -535,7 +615,11 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                 let measuredFaceHeight = measuredFrames.values
                     .map(\.height)
                     .max() ?? 0
-                let adaptiveBedHeight = measuredFaceHeight
+                let faceExtent = reflowsToFit
+                    ? (measuredFrames.values.map(\.maxY).max() ?? 0)
+                        - (measuredFrames.values.map(\.minY).min() ?? 0)
+                    : measuredFaceHeight
+                let adaptiveBedHeight = faceExtent
                     + DesignMetrics.segmentBedPadding * 2
                 let bedHeight = min(
                     max(max(visualHeight, adaptiveBedHeight), 0),
@@ -581,13 +665,6 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                 .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                 .animation(
                     DesignCanvasSmallControlKernel.transitionAnimation(
-                        for: .selectionTravel,
-                        reduceMotion: reduceMotion
-                    ),
-                    value: selectionBounds
-                )
-                .animation(
-                    DesignCanvasSmallControlKernel.transitionAnimation(
                         for: .feedback,
                         reduceMotion: reduceMotion
                     ),
@@ -601,6 +678,15 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                 }
             }
         }
+        // Start the complete selection transaction from semantic state, not
+        // from a later geometry-preference change after content has switched.
+        .animation(
+            DesignCanvasSmallControlKernel.transitionAnimation(
+                for: .selectionTravel,
+                reduceMotion: reduceMotion
+            ),
+            value: selection
+        )
         .onPreferenceChange(DesignSegmentPressedPreferenceKey.self) {
             pressedSegments = $0
         }
@@ -866,7 +952,10 @@ private struct DesignChipButtonStyle: ButtonStyle {
                 ),
                 value: selected
             )
-            .animation(nil, value: projection.control.state.isPressed)
+            .animation(
+                DesignCanvasSmallControlKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                value: projection.control.state.isPressed
+            )
     }
 }
 
@@ -966,7 +1055,10 @@ private struct DesignCheckboxMark: View {
             ),
             value: hovered
         )
-        .animation(nil, value: pressed)
+        .animation(
+            DesignCanvasSmallControlKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+            value: pressed
+        )
     }
 }
 

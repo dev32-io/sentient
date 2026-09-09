@@ -26,17 +26,7 @@ struct CalendarOverlayActions {
 enum CalendarOverlaySemantics {
     static let maximumHeightFraction = 0.84
     static let topRadius: CGFloat = 26
-    static let handleSize = CGSize(width: 42, height: 4)
     static let actionHeight: CGFloat = 48
-    static let scrimOpacity = 0.62
-    static let sheetBorderWidth = DesignMetrics.hairline
-    static let sheetShadowOpacity = 0.74
-    static let sheetShadowRadius: CGFloat = 35
-    static let sheetShadowY: CGFloat = -11
-    static let restingOffset: CGFloat = 0
-    static let dismissDragThreshold: CGFloat = 90
-    static let dismissPredictedThreshold: CGFloat = 160
-    static let dismissMinimumDistance: CGFloat = 12
     static let headerDisplaySize: CGFloat = 29
     static let metadataLabelWidth: CGFloat = 82
     static let noticeBackgroundOpacity = 0.10
@@ -48,6 +38,12 @@ enum CalendarOverlaySemantics {
     static func isOpen(_ mutation: CalendarMutationState) -> Bool {
         mutation.preview != nil || mutation.editor != nil || mutation.deleteConfirmation != nil ||
             mutation.conflict != nil || mutation.outcome != nil
+    }
+
+    static func allowsInteractiveDismiss(_ state: CalendarUiState) -> Bool {
+        if state.outcome != nil || state.conflict != nil || state.deleteConfirmation != nil { return false }
+        if state.editor != nil { return !state.mutation.isSubmitting }
+        return state.preview != nil
     }
 
     static func canSave(_ state: CalendarUiState, draft: CalendarMutationDraft) -> Bool {
@@ -102,7 +98,11 @@ enum CalendarOverlaySemantics {
         "Calendar error: \(errorMessage(error))"
     }
 
-    static func recurrenceSummary(_ recurrence: StructuredRecurrence?) -> String? {
+    static func recurrenceSummary(
+        _ recurrence: StructuredRecurrence?,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String? {
         guard let recurrence else { return nil }
         let interval = recurrence.interval?.intValue ?? 1
         let unit: String
@@ -114,7 +114,12 @@ enum CalendarOverlaySemantics {
         }
         var summary = interval == 1 ? "Every \(unit)" : "Every \(interval) \(unit)"
         if let count = recurrence.count?.intValue { summary += ", \(count) times" }
-        if let until = recurrence.until { summary += ", until \(until)" }
+        if let until = recurrence.until {
+            let displayUntil = CalendarOverlayDateCodec.displayRecurrenceUntil(
+                until, locale: locale, fallbackTimeZone: timeZone
+            )
+            summary += ", until \(displayUntil)"
+        }
         return summary
     }
 }

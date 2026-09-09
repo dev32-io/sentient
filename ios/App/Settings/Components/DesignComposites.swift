@@ -1,38 +1,200 @@
 import CoreGraphics
 import SwiftUI
 
+private enum DesignPageHeaderMetrics {
+    static let minimumHeight: CGFloat = 68
+}
+
+struct DesignPageHeader<Actions: View>: View {
+    let title: String
+    let subtitle: String?
+    let showsBack: Bool
+    let backAccessibilityId: String?
+    let onBack: (() -> Void)?
+    @ViewBuilder let actions: () -> Actions
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        showsBack: Bool = true,
+        backAccessibilityId: String? = nil,
+        onBack: (() -> Void)? = nil,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.showsBack = showsBack
+        self.backAccessibilityId = backAccessibilityId
+        self.onBack = onBack
+        self.actions = actions
+    }
+
+    var body: some View {
+        Group {
+            if Actions.self == EmptyView.self {
+                headingRow
+            } else if dynamicTypeSize.isAccessibilitySize {
+                stackedContent
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.sm) {
+                        // Test the complete intrinsic heading and controls,
+                        // rather than accepting a row with compressed labels.
+                        headingRow.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: Space.sm)
+                        actionFlow.fixedSize(horizontal: true, vertical: false)
+                    }
+                    stackedContent
+                }
+            }
+        }
+        .padding(.horizontal, Space.sm)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, minHeight: DesignPageHeaderMetrics.minimumHeight, alignment: .leading)
+        .background(DuskColors.bgElev)
+        .overlay(alignment: .bottom) { DesignDivider() }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var stackedContent: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            headingRow
+            actionFlow
+        }
+    }
+
+    private var actionFlow: some View {
+        // Native layout preserves natural control widths, wraps separate
+        // actions, and proposes the row width to an oversized localized label.
+        CenteredFlowLayout(
+            spacing: Space.sm,
+            alignment: .trailing
+        ) {
+            actions()
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var headingRow: some View {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: Space.sm) {
+            if showsBack {
+                backButton.fixedSize()
+            }
+            heading
+        }
+    }
+
+    private var backButton: some View {
+        DesignIconButton(
+            systemName: "chevron.backward",
+            label: "Back",
+            accessibilityId: backAccessibilityId,
+            action: performBack
+        )
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .font(Typo.ui(TypeScale.lg, .semibold))
+                .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
+            if let subtitle {
+                Text(subtitle)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func performBack() {
+        if let onBack {
+            onBack()
+        } else {
+            dismiss()
+        }
+    }
+}
+
+extension DesignPageHeader where Actions == EmptyView {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        showsBack: Bool = true,
+        backAccessibilityId: String? = nil,
+        onBack: (() -> Void)? = nil
+    ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            showsBack: showsBack,
+            backAccessibilityId: backAccessibilityId,
+            onBack: onBack
+        ) {
+            EmptyView()
+        }
+    }
+}
+
 struct DesignPageChrome<Content: View>: View {
     let title: String
     let accessibilityId: String
     let bottomPadding: CGFloat
+    let showsBack: Bool
+    let onBack: (() -> Void)?
+    let allowsInteractiveBack: Bool
+    let backAccessibilityId: String?
     @ViewBuilder let content: () -> Content
 
     init(
         title: String,
         accessibilityId: String,
         bottomPadding: CGFloat = Space.md,
+        showsBack: Bool = true,
+        onBack: (() -> Void)? = nil,
+        allowsInteractiveBack: Bool = true,
+        backAccessibilityId: String? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.accessibilityId = accessibilityId
         self.bottomPadding = bottomPadding
+        self.showsBack = showsBack
+        self.onBack = onBack
+        self.allowsInteractiveBack = allowsInteractiveBack
+        self.backAccessibilityId = backAccessibilityId
         self.content = content
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.lg) { content() }
-                .padding(.horizontal, Space.lg)
-                .padding(.top, Space.md)
-                .padding(.bottom, bottomPadding)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+        VStack(spacing: 0) {
+            DesignPageHeader(
+                title: title,
+                showsBack: showsBack,
+                backAccessibilityId: backAccessibilityId,
+                onBack: onBack
+            )
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.lg) { content() }
+                    .padding(.horizontal, Space.lg)
+                    .padding(.top, Space.md)
+                    .padding(.bottom, bottomPadding)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         }
         .background(DuskColors.bg)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(DuskColors.bg, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(!showsBack || !allowsInteractiveBack)
+        .nativeInteractiveBackNavigation(isEnabled: showsBack && allowsInteractiveBack)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityId)
         .duskTheme()
     }
@@ -88,11 +250,12 @@ struct DesignCard<Content: View>: View {
                 .padding(.vertical, Space.md)
                 .overlay(alignment: .bottom) { DesignDivider() }
         } else {
-            VStack(alignment: .leading, spacing: Space.xs) {
+            VStack(alignment: .leading, spacing: Space.md) {
                 headerContent
                 DesignDivider()
             }
-            .padding(.bottom, Space.md)
+            .padding(.horizontal, Space.lg)
+            .padding(.top, Space.md)
         }
     }
 
@@ -657,6 +820,70 @@ private struct PinShakeEffect: GeometryEffect {
     }
 }
 
+/// PIN input can be semantically disabled while authentication is in flight,
+/// but its material remains at rest as in the reviewed completion sequence.
+private struct DesignPinKeyButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isFocused) private var focused
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled
+        let cornerRadius = Radii.md
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .circular)
+        let state = DesignCanvasControlState(isPressed: pressed, isFocused: focused)
+
+        configuration.label
+            .font(.custom(DesignTypographyAdapter.uiMediumFace, size: TypeScale.lg, relativeTo: .headline))
+            .foregroundStyle(DuskColors.ink)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(shape)
+            .background {
+                DesignCanvasKernel(
+                    shape: .roundedRectangle(cornerRadius: cornerRadius),
+                    role: .secondary,
+                    state: state,
+                    increasedContrast: contrast == .increased,
+                    reduceMotion: reduceMotion,
+                    baseColor: DuskColors.paper
+                )
+                .animation(
+                    DesignCanvasKernel.transitionAnimation(for: .focus, reduceMotion: reduceMotion),
+                    value: state.isFocused
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+            .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
+            .animation(
+                reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.09),
+                value: pressed
+            )
+            .contentShape(shape)
+    }
+}
+
+private struct DesignPinKey<Label: View>: View {
+    let accessibilityLabel: String
+    let accessibilityId: String
+    let disabled: Bool
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .accessibilityHidden(true)
+        }
+        .buttonStyle(DesignPinKeyButtonStyle())
+        .disabled(disabled)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityId)
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
 private enum DesignPinKeypadState {
     static let length = 4
     static let checkingCycle: TimeInterval = 0.9
@@ -680,6 +907,7 @@ struct DesignPinKeypad: View {
     let onDelete: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var errorReady = true
+    @State private var checkingStartedAt: Date?
 
     private static let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "delete"]
 
@@ -689,7 +917,7 @@ struct DesignPinKeypad: View {
     private var status: String {
         if let success { return success }
         if let error { return error }
-        if isSubmitting { return "Checking Pin..." }
+        if isSubmitting { return "Checking Pin…" }
         if entered > 0 { return "\(entered) of \(DesignPinKeypadState.length) digits entered." }
         return "Enter your \(DesignPinKeypadState.length)-digit Pin."
     }
@@ -733,6 +961,12 @@ struct DesignPinKeypad: View {
             }
             return .ignored
         }
+        .onAppear {
+            if isChecking { checkingStartedAt = Date() }
+        }
+        .onChange(of: isChecking) { _, checking in
+            checkingStartedAt = checking ? Date() : nil
+        }
         .task(id: "\(errorRevision):\(error ?? "")") {
             guard error != nil else {
                 errorReady = true
@@ -751,10 +985,14 @@ struct DesignPinKeypad: View {
 
     @ViewBuilder
     private var progress: some View {
-        TimelineView(.animation(minimumInterval: 0.05, paused: !isChecking || shouldReduceMotion)) { context in
-            let cycle = context.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: !isChecking || shouldReduceMotion)) { context in
+            let elapsed = checkingStartedAt.map { max(0, context.date.timeIntervalSince($0)) } ?? 0
+            let cycleProgress = elapsed
                 .truncatingRemainder(dividingBy: DesignPinKeypadState.checkingCycle)
-            let phase = (sin(cycle / DesignPinKeypadState.checkingCycle * 2 * .pi) + 1) / 2
+                / DesignPinKeypadState.checkingCycle
+            // Cosine interpolation matches the source ease-in-out endpoints:
+            // rest at 0/900ms and maximum contraction at 450ms.
+            let phase = (1 - cos(cycleProgress * 2 * .pi)) / 2
             HStack(spacing: Space.md) {
                 ForEach(0..<DesignPinKeypadState.length, id: \.self) { index in
                     dot(index: index, phase: phase)
@@ -775,29 +1013,23 @@ struct DesignPinKeypad: View {
                 .aspectRatio(1, contentMode: .fit)
                 .accessibilityHidden(true)
         } else if key == "delete" {
-            DesignIconButton(
-                systemName: "delete.left",
-                label: "Delete last digit",
-                role: .quiet,
-                state: keyDisabled ? .disabled : .normal,
+            DesignPinKey(
+                accessibilityLabel: "Delete last digit",
                 accessibilityId: "pin-delete",
-                minimumSize: DesignMetrics.pinKeySize,
+                disabled: keyDisabled,
                 action: onDelete
-            )
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
+            ) {
+                Image(systemName: "delete.left")
+            }
         } else {
-            DesignActionButton(
-                title: key,
-                role: .quiet,
-                state: keyDisabled ? .disabled : .normal,
+            DesignPinKey(
+                accessibilityLabel: key,
                 accessibilityId: "pin-key-\(key)",
-                fillsWidth: true,
-                minimumHeight: DesignMetrics.pinKeySize,
+                disabled: keyDisabled,
                 action: { onDigit(Character(key)) }
-            )
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
+            ) {
+                Text(key)
+            }
         }
     }
 
@@ -809,16 +1041,32 @@ struct DesignPinKeypad: View {
     @ViewBuilder
     private func dot(index: Int, phase: Double) -> some View {
         let scale = isChecking && !shouldReduceMotion
-            ? 0.94 + (0.12 * phase)
+            ? 1 - (0.28 * phase)
             : entered > index ? 1.06 : 1
-        let opacity = isChecking && !shouldReduceMotion ? 0.72 + (0.28 * phase) : 1
+        let opacity = isChecking && !shouldReduceMotion ? 1 - (0.35 * phase) : 1
         dotFace(index: index)
             .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
-            .overlay(Circle().stroke(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
-            .shadow(color: dotGlow(index: index), radius: 5)
+            .overlay(Circle().strokeBorder(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
+            .background {
+                Canvas { context, size in
+                    var context = context
+                    let face = CGRect(x: 15, y: 15, width: size.width - 30, height: size.height - 30)
+                    DesignCanvasEffects.outerShadow(
+                        in: &context,
+                        sourcePath: Circle().path(in: face.insetBy(dx: 3, dy: 3)),
+                        color: error != nil ? DuskColors.stop.opacity(0.8) : DuskColors.accent,
+                        blur: 10
+                    )
+                }
+                .padding(-15)
+                .opacity(success == nil && (entered > index || error != nil) ? 1 : 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             .scaleEffect(scale)
             .opacity(opacity)
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: shouldReduceMotion), value: entered)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: shouldReduceMotion), value: success != nil)
     }
 
     @ViewBuilder
@@ -848,11 +1096,7 @@ struct DesignPinKeypad: View {
         return entered > index ? DuskColors.accent.opacity(0.62) : DuskColors.line
     }
 
-    private func dotGlow(index: Int) -> Color {
-        if success != nil { return .clear }
-        if error != nil { return DuskColors.stop.opacity(0.8) }
-        return entered > index ? DuskColors.accent : .clear
-    }
+
 }
 
 private enum DesignSettingsRowMetrics {
@@ -882,22 +1126,24 @@ struct DesignSettingsRow<Accessory: View>: View {
     @ViewBuilder
     private var rowContent: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: Space.sm) {
-                labelContent
-                HStack {
-                    Spacer(minLength: 0)
-                    accessory()
-                }
-            }
+            stackedContent
         } else {
-            HStack(alignment: .center, spacing: Space.lg) {
-                labelContent
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // Match the source grid's flexible label column while the
-                    // trailing accessory keeps its intrinsic control width.
-                    .layoutPriority(1)
-                accessory()
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: Space.lg) {
+                    labelContent.fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 0)
+                    accessory().fixedSize(horizontal: true, vertical: false)
+                }
+                stackedContent
             }
+        }
+    }
+
+    private var stackedContent: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            labelContent
+            accessory()
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
@@ -942,9 +1188,10 @@ struct DesignSettingsSelectRow<Value: Hashable>: View {
                 DesignMenuTriggerLabel(
                     currentLabel: currentLabel,
                     isEnabled: true,
-                    width: .fixed(DesignSettingsGroupMetrics.selectWidth)
+                    width: .flexible(minimum: 0)
                 )
             }
+            .frame(maxWidth: DesignSettingsGroupMetrics.selectWidth)
             .accessibilityLabel(title)
             .accessibilityValue(currentLabel)
             .accessibilityHint(detail ?? "")
@@ -985,7 +1232,7 @@ struct DesignSettingsSliderRow: View {
                     .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
                     .accessibilityHidden(true)
             }
-            .frame(width: DesignSettingsGroupMetrics.rangeWidth)
+            .frame(maxWidth: DesignSettingsGroupMetrics.rangeWidth)
             .frame(minHeight: DesignMetrics.minimumTarget)
         }
     }
@@ -1986,13 +2233,13 @@ struct SearchFilterRow<PrimaryFilter: View, Filters: View>: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Space.sm) {
+            if Filters.self != EmptyView.self {
+                CenteredFlowLayout(spacing: Space.sm, alignment: .leading) {
                     filters()
                 }
                 .padding(2)
+                .accessibilityLabel("Filters")
             }
-            .accessibilityLabel("Filters")
         }
         .padding(Space.lg - 2)
         .designPlate()
@@ -2851,7 +3098,7 @@ struct DesignApplyFeedback: View {
         case .saving:
             AsyncNotice(kind: .loading, title: "Saving…", accessibilityId: "settings-applying")
         case .restarting:
-            AsyncNotice(kind: .loading, title: "Applying — assistant restarting…", accessibilityId: "settings-applying")
+            AsyncNotice(kind: .loading, title: "Applying configuration…", accessibilityId: "settings-applying")
         case .alreadyApplying:
             AsyncNotice(
                 kind: .warning,
