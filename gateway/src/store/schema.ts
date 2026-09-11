@@ -141,6 +141,11 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_scheduled_occurrence ON sessions (scheduled_occurrence_id) WHERE scheduled_occurrence_id IS NOT NULL",
     ],
   },
+  {
+    version: 6,
+    name: "sessions.scheduled-schedule-id",
+    statements: ["ALTER TABLE sessions ADD COLUMN scheduled_schedule_id TEXT"],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */

@@ -101,7 +101,13 @@ export interface SessionStore {
   /** Compare-and-set title write. `false` when `expectedVersion` is stale or a
    *  `generated` title would overwrite a `user` one. */
   setTitle(sessionId: string, title: string, provenance: TitleProvenance, expectedVersion: number): boolean;
-  setScheduledProvenance?(sessionId: string, occurrenceId: string, intendedAt: string, actualAt: string): boolean;
+  setScheduledProvenance?(
+    sessionId: string,
+    scheduleId: string,
+    occurrenceId: string,
+    intendedAt: string,
+    actualAt: string,
+  ): boolean;
   setScheduledTurn?(sessionId: string, occurrenceId: string, turnId: string): boolean;
   recordScheduledTerminal?(
     sessionId: string,
@@ -263,9 +269,9 @@ export function openSessionStore(cap: Capability, dbFileName: string = DEFAULT_D
       assertOpen("setTitle");
       return metadata.setTitle(sessionId, title, provenance, expectedVersion);
     },
-    setScheduledProvenance(sessionId, occurrenceId, intendedAt, actualAt) {
+    setScheduledProvenance(sessionId, scheduleId, occurrenceId, intendedAt, actualAt) {
       assertOpen("setScheduledProvenance");
-      return metadata.setScheduledProvenance(sessionId, occurrenceId, intendedAt, actualAt);
+      return metadata.setScheduledProvenance(sessionId, scheduleId, occurrenceId, intendedAt, actualAt);
     },
     setScheduledTurn(sessionId, occurrenceId, turnId) {
       assertOpen("setScheduledTurn");
