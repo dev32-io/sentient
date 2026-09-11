@@ -60,6 +60,16 @@ enum class AuthServerErrorCode {
     INVALID_SCOPE,
     INVALID_MUTATION_SCOPE,
     MALFORMED,
+    VALIDATION,
+    IDEMPOTENCY_CONFLICT,
+    LIMIT_EXCEEDED,
+    UNAVAILABLE,
+    INVALID_REVOCATION_AUTHORITY,
+    EXPIRED_REVOCATION_AUTHORITY,
+    BINDING_GENERATION_MISMATCH,
+    OLD_BINDING_ACTIVE,
+    PROVIDER_UNAVAILABLE,
+    INTERNAL,
     UNKNOWN,
 }
 
@@ -102,6 +112,16 @@ private fun authServerErrorCode(body: String): AuthServerErrorCode {
         compact.contains("\"code\":\"invalid_scope\"") -> AuthServerErrorCode.INVALID_SCOPE
         compact.contains("\"code\":\"invalid_mutation_scope\"") -> AuthServerErrorCode.INVALID_MUTATION_SCOPE
         compact.contains("\"code\":\"malformed\"") -> AuthServerErrorCode.MALFORMED
+        compact.contains("\"code\":\"validation\"") -> AuthServerErrorCode.VALIDATION
+        compact.contains("\"code\":\"idempotency_conflict\"") -> AuthServerErrorCode.IDEMPOTENCY_CONFLICT
+        compact.contains("\"code\":\"limit_exceeded\"") -> AuthServerErrorCode.LIMIT_EXCEEDED
+        compact.contains("\"code\":\"unavailable\"") -> AuthServerErrorCode.UNAVAILABLE
+        compact.contains("\"code\":\"invalid_revocation_authority\"") -> AuthServerErrorCode.INVALID_REVOCATION_AUTHORITY
+        compact.contains("\"code\":\"expired_revocation_authority\"") -> AuthServerErrorCode.EXPIRED_REVOCATION_AUTHORITY
+        compact.contains("\"code\":\"binding_generation_mismatch\"") -> AuthServerErrorCode.BINDING_GENERATION_MISMATCH
+        compact.contains("\"code\":\"old_binding_active\"") -> AuthServerErrorCode.OLD_BINDING_ACTIVE
+        compact.contains("\"code\":\"provider_unavailable\"") -> AuthServerErrorCode.PROVIDER_UNAVAILABLE
+        compact.contains("\"code\":\"internal\"") -> AuthServerErrorCode.INTERNAL
         else -> AuthServerErrorCode.UNKNOWN
     }
 }

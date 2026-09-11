@@ -72,5 +72,16 @@ private fun AuthServerErrorCode.toCalendarErrorCode(): CalendarErrorCode? = when
     AuthServerErrorCode.INVALID_SCOPE -> CalendarErrorCode.INVALID_SCOPE
     AuthServerErrorCode.INVALID_MUTATION_SCOPE -> CalendarErrorCode.INVALID_MUTATION_SCOPE
     AuthServerErrorCode.MALFORMED -> CalendarErrorCode.MALFORMED
-    AuthServerErrorCode.UNKNOWN -> null
+    AuthServerErrorCode.VALIDATION,
+    AuthServerErrorCode.IDEMPOTENCY_CONFLICT,
+    AuthServerErrorCode.LIMIT_EXCEEDED,
+    AuthServerErrorCode.UNAVAILABLE,
+    AuthServerErrorCode.INVALID_REVOCATION_AUTHORITY,
+    AuthServerErrorCode.EXPIRED_REVOCATION_AUTHORITY,
+    AuthServerErrorCode.BINDING_GENERATION_MISMATCH,
+    AuthServerErrorCode.OLD_BINDING_ACTIVE,
+    AuthServerErrorCode.PROVIDER_UNAVAILABLE,
+    AuthServerErrorCode.INTERNAL,
+    AuthServerErrorCode.UNKNOWN,
+    -> null
 }

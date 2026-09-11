@@ -210,6 +210,7 @@ class IosUserSession(
         onTokenRefreshed = { bundle.tokenStore.save(it) },
         onLoggedOut = onLoggedOut,
         calendarDependency = calendarDependency,
+        onSessionSelected = component.sessionsRepository::switchToFireAndForget,
     )
 
     /** Background initialization is queued after any predecessor teardown. */
@@ -285,6 +286,7 @@ class IosUserSession(
         val runtimeAtClose = calendarLifecycleGate.close {
             calendarDependency.disable(CalendarDependencyUnavailableReason.CLOSED)
         }
+        settings.close()
         calendarDisposalJob = IosCalendarLifecycleQueue.enqueue {
             disposeRuntime(runtimeAtClose)
             calendarScope.cancel()

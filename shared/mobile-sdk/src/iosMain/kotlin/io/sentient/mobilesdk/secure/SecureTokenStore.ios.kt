@@ -78,7 +78,7 @@ private val volatileToken = AtomicReference<String?>(null)
 // ---------------------------------------------------------------------------
 
 private const val KEYCHAIN_SERVICE = "io.sentient.app"
-private const val KEYCHAIN_ACCOUNT = "auth.token"
+private const val DEFAULT_KEYCHAIN_ACCOUNT = "auth.token"
 
 /**
  * iOS [SecureTokenStore] backed by the system Keychain.
@@ -86,14 +86,18 @@ private const val KEYCHAIN_ACCOUNT = "auth.token"
  * No initialisation is required on iOS — the Keychain is always available
  * once the device has been unlocked for the first time after boot.
  */
-class IosSecureTokenStore : SecureTokenStore {
+class IosSecureTokenStore(
+    private val keychainAccount: String = DEFAULT_KEYCHAIN_ACCOUNT,
+) : SecureTokenStore {
+    private val volatileValue: AtomicReference<String?> =
+        if (keychainAccount == DEFAULT_KEYCHAIN_ACCOUNT) volatileToken else AtomicReference<String?>(null)
 
     override fun save(token: String) {
         log.debug("save", mapOf("tokenLength" to token.length))
         // Auth and SDK factories use distinct store instances. Retaining the
         // just-authenticated token process-locally makes the documented graceful
         // Keychain failure path actually usable without weakening durable storage.
-        volatileToken.store(token)
+        volatileValue.store(token)
         // A token-save failure must degrade gracefully, never abort the process.
         // Kotlin/Native traps any exception that escapes an @ObjCExport boundary
         // (SIGABRT via trapOnUndeclaredException). Catch here so a Keychain
@@ -154,7 +158,7 @@ class IosSecureTokenStore : SecureTokenStore {
         log.debug("load")
         // A load failure must degrade to null, never abort the process across
         // the @ObjCExport boundary (see save()).
-        volatileToken.load()?.let { return it }
+        volatileValue.load()?.let { return it }
         return runCatching { loadFromKeychain() }.getOrElse {
             log.warn("load-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
             null
@@ -210,7 +214,7 @@ class IosSecureTokenStore : SecureTokenStore {
 
     override fun clear() {
         log.debug("clear")
-        volatileToken.store(null)
+        volatileValue.store(null)
         runCatching {
             val query = buildBaseQuery(includeAccessible = false, valueData = null)
             try {
@@ -272,7 +276,7 @@ class IosSecureTokenStore : SecureTokenStore {
         // and are bridged to owned CFStringRef refs, released after the add.
         CFDictionaryAddValue(dict, kSecClass, kSecClassGenericPassword)
         addBridged(dict, kSecAttrService, NSString.create(string = KEYCHAIN_SERVICE))
-        addBridged(dict, kSecAttrAccount, NSString.create(string = KEYCHAIN_ACCOUNT))
+        addBridged(dict, kSecAttrAccount, NSString.create(string = keychainAccount))
         if (includeAccessible) {
             CFDictionaryAddValue(dict, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
         }

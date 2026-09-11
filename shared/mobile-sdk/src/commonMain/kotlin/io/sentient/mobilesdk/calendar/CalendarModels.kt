@@ -1,5 +1,6 @@
 package io.sentient.mobilesdk.calendar
 
+import kotlinx.datetime.TimeZone
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
@@ -69,6 +70,56 @@ typealias LocalDate = String
 typealias CalendarRevision = Int
 
 @Serializable
+enum class CalendarReminderMode {
+    @SerialName("at-start") AT_START,
+    @SerialName("lead") LEAD,
+    @SerialName("all-day") ALL_DAY,
+}
+
+/** Personal reminder input; enabled=false is the explicit update removal form. */
+@Serializable
+data class CalendarReminderInput(
+    val enabled: Boolean,
+    val mode: CalendarReminderMode? = null,
+    val leadMinutes: Int? = null,
+    val localTime: String? = null,
+    val timeZone: String? = null,
+)
+
+@Serializable
+data class CalendarReminderOutput(
+    val reminderId: String? = null,
+    val enabled: Boolean,
+    val mode: CalendarReminderMode? = null,
+    val leadMinutes: Int? = null,
+    val localTime: String? = null,
+    val timeZone: String? = null,
+)
+
+internal fun CalendarReminderInput.validate(start: String? = null, create: Boolean = false) {
+    if (!enabled) {
+        require(!create && mode == null && leadMinutes == null && localTime == null && timeZone == null)
+        return
+    }
+    requireNotNull(mode)
+    require((mode == CalendarReminderMode.LEAD) == (leadMinutes != null))
+    leadMinutes?.let { require(it in 1..43_200) }
+    require((mode == CalendarReminderMode.ALL_DAY) == (localTime != null && timeZone != null))
+    localTime?.let { require(Regex("^(?:[01]\\d|2[0-3]):[0-5]\\d$").matches(it)) }
+    timeZone?.let { require(it.isNotBlank()); TimeZone.of(it) }
+    start?.let { require(it.contains('T') != (mode == CalendarReminderMode.ALL_DAY)) }
+}
+
+internal fun CalendarReminderOutput.validate() {
+    if (!enabled) {
+        require(reminderId == null && mode == null && leadMinutes == null && localTime == null && timeZone == null)
+    } else {
+        require(!reminderId.isNullOrBlank())
+        CalendarReminderInput(true, mode, leadMinutes, localTime, timeZone).validate()
+    }
+}
+
+@Serializable
 enum class RecurrenceFrequency {
     @SerialName("daily") DAILY,
     @SerialName("weekly") WEEKLY,
@@ -114,6 +165,7 @@ data class CalendarCreateInput(
     val tags: List<String> = emptyList(),
     val recurrence: StructuredRecurrence? = null,
     @SerialName("notificationPolicy") val notificationPolicy: JsonObject? = null,
+    val reminder: CalendarReminderInput? = null,
 )
 
 /** Exact V2 persisted event projection (get/create response body). */
@@ -131,6 +183,7 @@ data class CalendarEventV2(
     val group: String? = null,
     val tags: List<String> = emptyList(),
     val recurrence: StructuredRecurrence? = null,
+    val reminder: CalendarReminderOutput? = null,
 )
 
 /** Exact V2 effective occurrence projection (list and occurrence get response body). */
@@ -151,6 +204,7 @@ data class EffectiveOccurrence(
     val group: String? = null,
     val tags: List<String> = emptyList(),
     val recurrence: StructuredRecurrence? = null,
+    val reminder: CalendarReminderOutput? = null,
 )
 
 /** Exact V2 bounded page returned by list. */
@@ -226,6 +280,8 @@ data class CalendarChanges(
     val group: CalendarPatch<String> = CalendarPatch.Unchanged,
     val tags: List<String>? = null,
     val recurrence: CalendarPatch<StructuredRecurrence> = CalendarPatch.Unchanged,
+    /** Null means omitted/preserve; enabled=false explicitly removes the personal reminder. */
+    val reminder: CalendarReminderInput? = null,
 )
 
 /**
@@ -252,6 +308,7 @@ internal object CalendarChangesSerializer : KSerializer<CalendarChanges> {
         element<String?>("group", isOptional = true)
         element<List<String>?>("tags", isOptional = true)
         element<StructuredRecurrence?>("recurrence", isOptional = true)
+        element<CalendarReminderInput>("reminder", isOptional = true)
     }
 
     override fun serialize(encoder: Encoder, value: CalendarChanges) {
@@ -269,6 +326,7 @@ internal object CalendarChangesSerializer : KSerializer<CalendarChanges> {
             encodePatch(6, value.group, String.serializer())
             value.tags?.let { encodeSerializableElement(descriptor, 7, tagsSerializer, it) }
             encodePatch(8, value.recurrence, recurrenceSerializer)
+            value.reminder?.let { encodeSerializableElement(descriptor, 9, CalendarReminderInput.serializer(), it) }
         }
     }
 
@@ -282,6 +340,7 @@ internal object CalendarChangesSerializer : KSerializer<CalendarChanges> {
         var group: CalendarPatch<String> = CalendarPatch.Unchanged
         var tags: List<String>? = null
         var recurrence: CalendarPatch<StructuredRecurrence> = CalendarPatch.Unchanged
+        var reminder: CalendarReminderInput? = null
 
         while (true) {
             when (val index = decodeElementIndex(descriptor)) {
@@ -295,10 +354,11 @@ internal object CalendarChangesSerializer : KSerializer<CalendarChanges> {
                 6 -> group = decodePatch(index, String.serializer())
                 7 -> tags = decodeNullableSerializableElement(descriptor, index, tagsSerializer.nullable)
                 8 -> recurrence = decodePatch(index, recurrenceSerializer)
+                9 -> reminder = decodeSerializableElement(descriptor, index, CalendarReminderInput.serializer())
                 else -> error("Unexpected CalendarChanges index: $index")
             }
         }
-        CalendarChanges(title, description, start, end, visibility, importance, group, tags, recurrence)
+        CalendarChanges(title, description, start, end, visibility, importance, group, tags, recurrence, reminder)
     }
 
     private fun <T : Any> CompositeEncoder.encodePatch(index: Int, patch: CalendarPatch<T>, serializer: KSerializer<T>) {
@@ -323,6 +383,7 @@ internal object CalendarChangesSerializer : KSerializer<CalendarChanges> {
         putPatch("group", group) { JsonPrimitive(it) }
         tags?.let { put("tags", patchJson.encodeToJsonElement(tagsSerializer, it)) }
         putPatch("recurrence", recurrence) { patchJson.encodeToJsonElement(recurrenceSerializer, it) }
+        reminder?.let { put("reminder", patchJson.encodeToJsonElement(CalendarReminderInput.serializer(), it)) }
     }
 
     private fun <T> kotlinx.serialization.json.JsonObjectBuilder.putPatch(
@@ -463,6 +524,7 @@ data class CalendarEvent(
     val revision: Int = 0,
     /** Effective-occurrence marker from V2; never inferred from occurrenceId. */
     val recurring: Boolean = false,
+    val reminder: CalendarReminderOutput? = null,
 ) {
     val eventId: String get() = id
     val persistedId: String get() = eventId
@@ -480,6 +542,7 @@ fun CalendarEvent.toCreateInput(): CalendarCreateInput = CalendarCreateInput(
     tags = tags,
     recurrence = recurrence,
     notificationPolicy = notification,
+    reminder = reminder?.toEnabledInput(),
 )
 
 fun CalendarEvent.toV2(): CalendarEventV2 = CalendarEventV2(
@@ -495,38 +558,55 @@ fun CalendarEvent.toV2(): CalendarEventV2 = CalendarEventV2(
     group = group,
     tags = tags,
     recurrence = recurrence,
+    reminder = reminder,
 )
 
-internal fun CalendarEventV2.toCompatibility(): CalendarEvent = CalendarEvent(
-    id = eventId,
-    scope = scope,
-    title = title,
-    description = description,
-    start = start.toCalendarTime(),
-    end = end?.toCalendarTime(),
-    recurrence = recurrence,
-    visibility = visibility,
-    importance = importance,
-    group = group,
-    tags = tags,
-    revision = revision,
-    recurring = false,
-)
+internal fun CalendarEventV2.toCompatibility(): CalendarEvent {
+    reminder?.validate()
+    return CalendarEvent(
+        id = eventId,
+        scope = scope,
+        title = title,
+        description = description,
+        start = start.toCalendarTime(),
+        end = end?.toCalendarTime(),
+        recurrence = recurrence,
+        visibility = visibility,
+        importance = importance,
+        group = group,
+        tags = tags,
+        revision = revision,
+        recurring = false,
+        reminder = reminder,
+    )
+}
 
-internal fun EffectiveOccurrence.toCompatibility(): CalendarEvent = CalendarEvent(
-    id = eventId,
-    scope = scope,
-    title = title,
-    description = description,
-    start = start.toCalendarTime(),
-    end = end?.toCalendarTime(),
-    recurrence = recurrence,
-    visibility = visibility,
-    importance = importance,
-    group = group,
-    tags = tags,
-    occurrenceId = occurrenceId,
-    originalStart = originalStart.toCalendarTime(),
-    revision = revision,
-    recurring = recurring,
+internal fun EffectiveOccurrence.toCompatibility(): CalendarEvent {
+    reminder?.validate()
+    return CalendarEvent(
+        id = eventId,
+        scope = scope,
+        title = title,
+        description = description,
+        start = start.toCalendarTime(),
+        end = end?.toCalendarTime(),
+        recurrence = recurrence,
+        visibility = visibility,
+        importance = importance,
+        group = group,
+        tags = tags,
+        occurrenceId = occurrenceId,
+        originalStart = originalStart.toCalendarTime(),
+        revision = revision,
+        recurring = recurring,
+        reminder = reminder,
+    )
+}
+
+private fun CalendarReminderOutput.toEnabledInput(): CalendarReminderInput? = if (!enabled) null else CalendarReminderInput(
+    enabled = true,
+    mode = mode,
+    leadMinutes = leadMinutes,
+    localTime = localTime,
+    timeZone = timeZone,
 )
