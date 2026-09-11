@@ -299,6 +299,38 @@ e2e: >
   identifiers/statuses; remove only disposable test resources.
 
 
+  ## E2E-001 — Scheduled user message runs a normal assistant conversation
+
+
+  ### Exercise
+
+
+  On the real local stack, create a disposable one-time schedule through
+  Scheduled messages settings. Use an ordinary request that exercises an
+  available skill and permitted read-only tool, then let it fire with no client
+  attached. Open the resulting inbox entry and send a follow-up. Repeat settings
+  creation across web, Android, and iOS without contacting production.
+
+
+  ### Oracle
+
+
+  One fresh session contains a user message labelled Scheduled and a normal
+  assistant response based on the skill/tool result. No reminder-only execution
+  mode replaces the request. The inbox opens that exact session and follow-up
+  continues through existing resume behavior.
+
+
+  ### Proof
+
+
+  Record redacted schedule/inbox/navigation states and matching run/session
+  identifiers. Use content-free skill/tool names and execution statuses solely
+  to prove the hidden invariant that the normal skill/tool path executed. Retain
+  no request, response, or tool content. Remove disposable schedules and test
+  accounts after all linked cases finish.
+
+
   ## Exclusions
 
 
