@@ -373,38 +373,40 @@ e2e: >
   message content. Remove only disposable test resources.
 
 
-  ## E2E-002 — Model selects schedules versus calendar and manages recurrence
+  ## E2E-002 — Model distinguishes one-time recurring and calendar requests
 
 
   ### Exercise
 
 
-  Using a disposable local account, ask the assistant for a medicine reminder
-  every morning and a daily news briefing, providing explicit times/timezone.
-  Separately request a calendar appointment, an appointment with a reminder, and
-  a materially ambiguous request. Ask the assistant to list, edit, pause/resume,
-  and delete a recurring scheduled message; inspect settings/calendar after each
-  action.
+  Using a disposable local account with an established harmless topic, request
+  'let's chat about that in 30 minutes', a medicine reminder every morning, and
+  a daily news briefing with explicit times/timezone. Separately request a
+  calendar appointment, an appointment with a reminder, and a materially
+  ambiguous request. List, edit, pause/resume, and delete schedules through the
+  model; inspect settings/calendar. Use near-term disposable occurrences to
+  exercise recurring retention rather than waiting 30 minutes.
 
 
   ### Oracle
 
 
-  Reminder/news requests create recurring schedules without calendar entries; an
-  appointment creates a calendar event; an explicit event-plus-reminder creates
-  exactly one linked reminder. Ambiguous intent is clarified instead of creating
-  both resources. Tool-driven lifecycle changes appear in settings, next-run
-  timing reflects the canonical recurrence, and paused/deleted schedules do not
-  execute pending occurrences.
+  The contextual chat request creates a one-time schedule with a meaningful
+  message and gateway-resolved delay. Morning reminder/news requests create
+  recurring schedules, not calendar events; a recurring schedule remains after
+  an occurrence for its next run. Appointment requests create calendar events,
+  explicit event-plus-reminder creates one linked reminder, and ambiguous intent
+  is clarified rather than creating both. Lifecycle changes match settings and
+  paused/deleted schedules do not fire pending occurrences.
 
 
   ### Proof
 
 
-  Retain sanitized resource types, counts, recurrence/timing fields, and
-  lifecycle states rather than chat content. Confirm no extra calendar event or
-  duplicate reminder. Clean up the disposable schedules, calendar events, and
-  account.
+  Retain resource types/counts, schedule kind/timing, and lifecycle states
+  without chat/message content. Verify no extra calendar event or duplicate
+  reminder and that one-time versus recurring behavior matches the tool
+  arguments. Clean up disposable resources.
 
 
   ## E2E-003 — Personal calendar reminders follow event lifecycle
