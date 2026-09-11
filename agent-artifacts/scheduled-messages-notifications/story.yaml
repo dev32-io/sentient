@@ -365,6 +365,39 @@ e2e: >
   account.
 
 
+  ## E2E-003 — Personal calendar reminders follow event lifecycle
+
+
+  ### Exercise
+
+
+  With two disposable household users, enable Remind me for one user through
+  calendar cards on web and native clients; verify default-off behavior for the
+  other. Exercise the optional model argument, omission on update, and explicit
+  disable. Move and cancel occurrences of a recurring event, delete an event,
+  and remove access before a pending reminder. Exercise an all-day event with an
+  explicitly chosen reminder time.
+
+
+  ### Oracle
+
+
+  Only subscribed authorized users receive reminders. Pending timing follows
+  moved occurrences; cancelled/deleted/inaccessible events do not fire. Omitted
+  update arguments preserve the reminder, disabling removes it, and each actual
+  reminder is a scheduled user message in a fresh session. Existing
+  conversations are not erased by event edits.
+
+
+  ### Proof
+
+
+  Capture redacted card/settings/inbox states and content-free
+  event/occurrence/run identifiers and timestamps. Verify one run per due
+  authorized occurrence and no cross-user entries. Remove disposable events,
+  schedules, and accounts.
+
+
   ## Exclusions
 
 
