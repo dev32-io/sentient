@@ -39,7 +39,10 @@ export function loadPendingSession(
       storage.setItem(PENDING_SESSION_KEY, query);
       return query;
     }
-    return storage.getItem(PENDING_SESSION_KEY);
+    const stored = storage.getItem(PENDING_SESSION_KEY);
+    if (stored && stored.length <= 200) return stored;
+    if (stored !== null) storage.removeItem(PENDING_SESSION_KEY);
+    return null;
   } catch {
     return null;
   }

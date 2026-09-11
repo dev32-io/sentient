@@ -29,6 +29,17 @@ describe("shell route session state", () => {
     expect(loadPendingSession(storage)).toBeNull();
   });
 
+  it("drops a malformed persisted session target before it reaches the connector", () => {
+    const removeItem = vi.fn();
+    const storage = {
+      getItem: () => "x".repeat(201),
+      setItem: vi.fn(),
+      removeItem,
+    };
+    expect(loadPendingSession(storage)).toBeNull();
+    expect(removeItem).toHaveBeenCalledWith(PENDING_SESSION_KEY);
+  });
+
   it("persists route changes and tolerates unavailable storage", () => {
     const setItem = vi.fn();
     storeRoute("calendar", { setItem });
