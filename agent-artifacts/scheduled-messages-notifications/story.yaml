@@ -20,14 +20,14 @@ spec: >
   ## Scope
 
 
-  **Included:** Scheduled messages settings on web, Android, and iOS; explicit
-  one-time or recurring schedules; one-time absolute times and relative delays
-  such as in 30 minutes; daily/weekly/monthly recurrence in an explicit
-  timezone; model tools to create, view, edit, pause/resume, and delete
-  schedules; gateway-owned one-time cleanup; personal calendar reminders; a
-  bell-accessible list of truncated message cards; push settings on all clients;
-  native device registration and APNs/FCM delivery; per-device privacy
-  defaulting to hidden; and gateway-managed Gorush on mini0.
+  **Included:** Scheduled messages settings on web and iOS; explicit one-time or
+  recurring schedules; one-time absolute times and relative delays such as in 30
+  minutes; daily/weekly/monthly recurrence in an explicit timezone; model tools
+  to create, view, edit, pause/resume, and delete schedules; gateway-owned
+  one-time cleanup; personal calendar reminders; a bell-accessible list of
+  truncated message cards; push settings on web and iOS; iOS device registration
+  and APNs delivery; per-device privacy defaulting to hidden; and
+  gateway-managed Gorush on mini0.
 
 
   **Keep it simple:** A cron-like runner using a canonical recurrence rule and
@@ -35,24 +35,27 @@ spec: >
   Scheduling and push delivery have small reusable interfaces, with
   scheduled-chat behavior outside those layers. Reuse existing chat execution
   and resume without adding special handling or verification for skills/tools.
+  Retain shared KMP SDK/data work needed by iOS.
 
 
   **Presentation:** Follow the existing Sentient design language and reuse the
-  shipped design tokens and component libraries on web, Android, and iOS. New
-  screens, cards, forms, and reminder controls must not introduce inline
-  hardcoded styling, copied palettes, or page-local replacements for shared
-  controls. Compose existing components; if a genuinely missing primitive is
-  necessary, add the smallest reusable token-backed component in the established
-  library rather than bypassing it.
+  shipped design tokens and component libraries on web and iOS. New screens,
+  cards, forms, and reminder controls must not introduce inline hardcoded
+  styling, copied palettes, or page-local replacements for shared controls.
+  Compose existing components; if a genuinely missing primitive is necessary,
+  add the smallest reusable token-backed component in the established library
+  rather than bypassing it.
 
 
-  **Excluded:** A separate inbox read/unread model, unread badges or read-state
-  synchronization, notification-management workflows, a run-history dashboard, a
-  general automation/plugin/DAG framework, arbitrary shell jobs, automatic
-  non-response escalation, implicit family broadcasts, and browser push delivery
-  in this release. Web still exposes the inbox and settings that accurately
-  explain browser-delivery availability. Production deployment and production
-  test messages are not part of verification.
+  **Excluded:** Android is deprecated: no Android feature delivery, app
+  builds/E2E, or FCM integration in this work. Removal of existing Android
+  source is also outside this change. A separate inbox read/unread model, unread
+  badges or read-state synchronization, notification-management workflows, a
+  run-history dashboard, a general automation/plugin/DAG framework, arbitrary
+  shell jobs, automatic non-response escalation, implicit family broadcasts, and
+  browser push delivery are excluded. Web still exposes the inbox and settings
+  that accurately explain browser-delivery availability. Production deployment
+  and production test messages are not part of verification.
 
 
   ## Behavior
@@ -259,9 +262,10 @@ design: >
   only the bounded projection metadata needed for these cards.
 
 
-  Gorush remains a replaceable APNs/FCM transport managed by the host
-  supervisor. Scheduling does not depend on Gorush, and push delivery does not
-  depend on calendar or schedule definitions. Browser push is deferred.
+  Gorush remains a replaceable APNs transport managed by the host supervisor.
+  Scheduling does not depend on Gorush, and push delivery does not depend on
+  calendar or schedule definitions. Browser push is deferred; Android/FCM
+  integration is excluded.
 
 
   ## Boundaries and Flow
@@ -349,11 +353,14 @@ design: >
   Focused tests at the scheduling and push-adapter boundaries prove
   recurrence/DST handling, durable cleanup/deduplication, per-device payload
   privacy/size, token association/revocation, and retry behavior. Adapter tests
-  may substitute provider responses but are not phone-delivery E2E. Actual
-  APNs/FCM delivery is optional operator verification with suitable
+  may substitute provider responses but are not phone-delivery E2E. Actual APNs
+  delivery is optional operator verification with suitable
   devices/signing/credentials: if unavailable, skip and explicitly report it as
   unverified rather than block local E2E or claim a pass. Notification-click
-  routing can be exercised independently through a session deep link.
+  routing can be exercised independently through a session deep link. Shared KMP
+  tests may use their existing JVM/Android-named unit-test targets solely to
+  verify common code used by iOS; this does not require Android app delivery or
+  testing.
 e2e: >
   # E2E
 
@@ -365,11 +372,10 @@ e2e: >
   services to verify one-time and recurring messages, gateway-owned cleanup,
   calendar-versus-schedule model intent, personal reminders, simple truncated
   session-card lists, available push settings, session-link resume, recovery,
-  and account isolation. Exercise web at desktop/mobile widths and Android/iOS
-  on available supported local clients/emulators. No special skill/tool
-  execution proof is required beyond normal chat behavior. Retain redacted UI
-  evidence and content-free identifiers/statuses; remove only disposable
-  resources.
+  and account isolation. Exercise web at desktop/mobile widths and iOS on
+  available supported local clients/simulators. No special skill/tool execution
+  proof is required beyond normal chat behavior. Retain redacted UI evidence and
+  content-free identifiers/statuses; remove only disposable resources.
 
 
   ## E2E-001 — One-time message creates a chat and cleans itself up
@@ -618,14 +624,15 @@ e2e: >
   ## Exclusions
 
 
-  Actual APNs/FCM receipt, lock-screen presentation, and notification-tap
-  behavior are not required automated E2E gates. If suitable devices, signing,
-  or development credentials are unavailable, skip those checks and report
-  actual phone delivery unverified; optional operator verification must use
-  authorized development devices, never production messages. Native
-  registration/OS-permission portions unavailable on the test platform may
-  likewise be skipped with their precise limitation recorded, not treated as
-  passed. Deterministic scheduling and push-adapter tests cover payload privacy,
-  size, association, retry, DST/month-boundary, and crash/cleanup invariants
-  without claiming OS delivery. Browser push, read/unread synchronization,
-  exhaustive OS/OEM behavior, and production smoke are excluded.
+  Actual APNs receipt, lock-screen presentation, and notification-tap behavior
+  are not required automated E2E gates. If suitable devices, signing, or
+  development credentials are unavailable, skip those checks and report actual
+  phone delivery unverified; optional operator verification must use authorized
+  development devices, never production messages. iOS registration/OS-permission
+  portions unavailable on the test platform may likewise be skipped with their
+  precise limitation recorded, not treated as passed. Deterministic scheduling
+  and push-adapter tests cover payload privacy, size, association, retry,
+  DST/month-boundary, and crash/cleanup invariants without claiming OS delivery.
+  Android delivery/E2E and FCM integration are excluded because Android is
+  deprecated. Browser push, read/unread synchronization, exhaustive OS behavior,
+  and production smoke are excluded.
