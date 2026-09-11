@@ -24,3 +24,26 @@ stages:
         without exemptions. No Android/FCM, fake test successes, production
         changes or accepted residual code defects merely because source was
         previously committed.
+  - id: gateway-calendar-integration
+    tasks:
+      - gateway-surfaces
+      - calendar-reminders
+    mode: sequential
+    checks:
+      - bash -lc "source scripts/env.sh && bun run ci && bun run
+        design:foundation:check && git diff --check"
+    review:
+      mode: required
+      focus: "The sequential baton pass is intentional: public gateway
+        composition/card projection must exist before calendar reminders consume
+        and extend the same bootstrap. Review actual route/provider mounting,
+        capability-scoped session-backed cards, unchanged client wire contracts,
+        one host lifecycle, optional APNs availability, current-principal
+        execution and private revoke-only cleanup. Then review actor-personal
+        calendar intent, event/job partial-write reconciliation, moved-earlier
+        wake and mutation-versus-claim linearization, recurring identity,
+        visibility loss and fired deduplication. Establish that all seven final
+        local journeys remain supported without new read-state or conversation
+        copies. Missing device credentials can limit only the explicitly
+        excluded provider/OS legs; deterministic privacy/lifecycle tests and
+        corrected iOS simulator tests remain mandatory."
