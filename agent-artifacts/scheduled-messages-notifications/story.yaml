@@ -63,10 +63,11 @@ spec: >
   clarify if the topic or timing is unclear rather than relying on replaying the
   originating chat.
 
-  - Recurring schedules remain until paused or deleted. They use canonical
-  calendar-style rules for daily/weekly/monthly local wall-clock execution: skip
-  nonexistent DST times, use the first instance of ambiguous times, and skip
-  nonexistent monthly dates.
+  - Recurring schedules remain after each run until deleted; pausing disables
+  execution without removing the entry. They use canonical calendar-style rules
+  for daily/weekly/monthly local wall-clock execution: skip nonexistent DST
+  times, use the first instance of ambiguous times, and skip nonexistent monthly
+  dates.
 
   - At each due occurrence, submit the saved body as an ordinary user message in
   a fresh server-minted session using existing chat behavior. Retain scheduling
