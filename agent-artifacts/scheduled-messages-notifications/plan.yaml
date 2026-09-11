@@ -39,7 +39,6 @@ stages:
   - id: execution-and-native-clients
     tasks:
       - scheduled-chat-execution
-      - android-experience
       - ios-experience
     mode: concurrent
     checks:
@@ -51,13 +50,13 @@ stages:
         submission, durable original-turn completion, atomic
         finalization/outbox/once-consumption and recurrent advancement, restart
         reconciliation, retained background work, content-free emission and
-        source authorization. Review both native clients' auth-gated
-        session-link routing, OS callbacks, pending unlink warnings/revoke-only
-        storage and replacement binding fence. Require a changed-file
-        component/token check for every new screen/card/control, including
-        changed legacy calendar files outside automated checker scope; forbid
-        hardcoded visuals and broadening allowlists. Core native state tests
-        must not be skipped merely because real push delivery is unavailable.
+        source authorization. Review the iOS client's auth-gated session-link
+        routing, OS callbacks, pending unlink warnings/revoke-only storage and
+        replacement binding fence. Require a changed-file component/token check
+        for every new screen/card/control, including changed legacy calendar
+        files outside automated checker scope; forbid hardcoded visuals and
+        broadening allowlists. Core iOS state tests must not be skipped merely
+        because real push delivery is unavailable.
   - id: gateway-and-calendar-integration
     tasks:
       - gateway-surfaces
