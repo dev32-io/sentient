@@ -474,39 +474,40 @@ e2e: >
   delivery; remove only disposable resources.
 
 
-  ## E2E-005 — Device registration and privacy are independent
+  ## E2E-005 — Push settings show device privacy and actual availability
 
 
   ### Exercise
 
 
-  On the local stack, register two authorized native test installations for one
-  disposable account. Keep one in default Hide content and choose Show content
-  on the other; exercise denied permission and registration failure. Generate a
-  scheduled result including a payload-limit case, change privacy while delivery
-  is pending, disable/unlink a destination, and exercise token
-  replacement/invalidation using controlled development setup.
+  Open push settings on web and available native test clients using a disposable
+  account. Exercise available enable/disable and privacy controls; where
+  supported, request permission, deny it, register/unlink a development
+  installation, and compare two installations' preferences. Do not require or
+  send an actual phone notification. Skip only native registration/permission
+  portions unavailable without suitable platform support or development
+  credentials and record the limitation.
 
 
   ### Oracle
 
 
-  Settings report actual permission/registration state. Hidden outbound payloads
-  contain only generic presentation and minimal routing metadata; the other
-  device receives bounded plain-text response content. Both reference the same
-  session with the full response available there. Latest preferences apply to
-  subsequent dispatch/retry, invalid or unlinked destinations stop receiving new
-  sends, and other devices/schedules remain unaffected.
+  Web accurately discloses deferred browser delivery. Native settings show
+  actual permission/registration state, default to hidden previews, and keep
+  supported device preferences independent. Denied permission or disabled push
+  does not stop schedules or session cards. Unsupported registration is never
+  presented as successfully enabled. This case makes no claim of provider
+  delivery or lock-screen presentation.
 
 
   ### Proof
 
 
-  Use a content-free transport-boundary assertion for the hidden privacy
-  invariant: report field presence, byte limits, destination identity aliases,
-  and routing equality without retaining payloads or tokens. Capture redacted
-  settings states. This case does not establish real OS delivery; unregister
-  test devices and remove disposable accounts.
+  Retain redacted settings states and content-free device aliases; record which
+  platform interactions were exercised and which were skipped. Lower-level
+  push-adapter tests, not this UI case, establish outbound payload privacy/size
+  and token association. Unlink any development registrations and remove
+  disposable resources.
 
 
   ## E2E-006 — Real phone push resumes the scheduled session
