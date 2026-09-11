@@ -35,6 +35,19 @@ final class NotificationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testRefreshingAuthorizedPermissionDoesNotReenableUnlinkedPush() async {
+        let registrar = FakeRegistrar()
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .authorized, granted: true),
+            registrar: registrar
+        )
+        await coordinator.refreshPermission()
+        XCTAssertEqual(coordinator.permission, .authorized)
+        XCTAssertEqual(registrar.calls, 0)
+        XCTAssertFalse(coordinator.registrationPending)
+    }
+
+    @MainActor
     func testPermissionGrantRegistersWithAPNsAndTokenCallbackIsObservable() async {
         let registrar = FakeRegistrar()
         let coordinator = NativePushCoordinator(

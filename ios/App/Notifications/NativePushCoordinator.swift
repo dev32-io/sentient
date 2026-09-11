@@ -84,12 +84,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     }
 
     func refreshPermission() async {
+        // Observing an already-authorized OS setting is not consent to create a
+        // new server binding. Only enable() initiates registration; otherwise a
+        // user who disabled/unlinked push would be silently rebound on reload.
         permission = Self.map(await permissions.authorizationStatus())
-        if lifecycle != nil, binding == nil, !registrationPending,
-           permission == .authorized || permission == .provisional {
-            registrationPending = true
-            registrar.register()
-        }
     }
 
     /// Registration is user-initiated. Merely opening Settings never prompts.
@@ -100,7 +98,6 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
             guard granted else { return }
             registrationPending = true
             registrar.register()
-            if deviceToken != nil { registerCurrentToken() }
         } catch {
             permission = .error
             registrationPending = false
@@ -144,6 +141,8 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
             }
         }
     }
+
+    func dismissLifecycleWarning() { lifecycleWarning = nil }
 
     func retryPendingUnlink() {
         guard let lifecycle else { return }

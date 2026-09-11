@@ -71,6 +71,8 @@ export interface CalendarCandidateBatch {
 export interface CalendarPersistence {
   /** The attenuated resource selected when this persistence handle was opened. */
   readonly scope?: "private" | "household";
+  /** Acting user retained for owner-personal reminder projection. */
+  readonly ownerUserId?: string;
   /** Role stamped into the capability, used for effective occurrence visibility. */
   readonly role?: UserRole;
   read(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
@@ -579,6 +581,7 @@ export function openCalendarPersistence(
 
   return {
     scope: cap.resource === "calendar-household" ? "household" : "private",
+    ownerUserId: cap.ownerUserId,
     role: cap.role,
     read: (id) => usable(() => authorized(id, false)),
     get: (id) => usable(() => authorized(id, false)),

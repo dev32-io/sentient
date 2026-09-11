@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Capability } from "../access/capability.js";
 import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
+import { openSessionStore } from "../store/session-store.js";
 import { instantForScheduleLocal, nextScheduleOccurrence } from "./recurrence.js";
 import { type ScheduleService, createScheduleService } from "./service.js";
 
@@ -68,6 +69,57 @@ describe("schedule persistence", () => {
     );
     await service.create(resource, once("alice", "2026-08-01T15:30:00Z"), new Date("2026-08-01T15:00:00Z"));
     expect(await service.list(bob, undefined, 50)).toEqual({ ok: true, value: { schedules: [] } });
+  });
+
+  test("projects completed cards from session provenance after one-time cleanup", async () => {
+    const { service, resource, root } = setup();
+    const sessionStore = openSessionStore(
+      Object.freeze({
+        ownerUserId: "u_aaaaaaaa",
+        resource: "session-store",
+        rootPath: join(root, "u_aaaaaaaa"),
+        role: "adult",
+      }),
+    );
+    sessionStore.createSession("session-card", "scheduled:occurrence-card");
+    sessionStore.setScheduledProvenance?.(
+      "session-card",
+      "schedule-deleted",
+      "occurrence-card",
+      "2026-08-01T15:00:00.000Z",
+      "2026-08-01T15:00:01.000Z",
+    );
+    sessionStore.setScheduledTurn?.("session-card", "occurrence-card", "turn-card");
+    const entry = sessionStore.append({
+      sessionId: "session-card",
+      turnId: "turn-card",
+      replyId: "reply-card",
+      kind: "assistant",
+      createdAt: Date.parse("2026-08-01T15:00:02.000Z"),
+      text: `  ${"response ".repeat(50)}  `,
+      toolCallId: null,
+      toolName: null,
+      toolArgs: null,
+      cutoff: null,
+      compactedThroughSeq: null,
+      pendingId: null,
+    });
+    sessionStore.recordScheduledTerminal?.(
+      "session-card",
+      "turn-card",
+      "completed",
+      "2026-08-01T15:00:03.000Z",
+      String(entry.seq),
+    );
+    sessionStore.close();
+
+    const cards = await service.cards(resource, undefined, 20);
+    expect(cards.ok).toBe(true);
+    if (cards.ok) {
+      expect(cards.value.cards).toHaveLength(1);
+      expect(cards.value.cards[0]?.sessionId).toBe("session-card");
+      expect(Array.from(cards.value.cards[0]?.preview ?? "").length).toBe(280);
+    }
   });
 
   test("cleans an expired once entry without yielding work", async () => {

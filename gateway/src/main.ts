@@ -5,13 +5,24 @@ import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
 import { claimSingleEvaluation, describeHotReloadRefusal } from "./bootstrap/single-evaluation.ts";
 import { type SingleInstanceIo, acquireSingleInstance, describeConflict } from "./bootstrap/single-instance.ts";
-import { loadLoggingConfig, loadStartupConfig, resolveSentientHome } from "./config/startup-config.ts";
+import { gatewayStateDir, loadLoggingConfig, loadStartupConfig, resolveSentientHome } from "./config/startup-config.ts";
 import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
+import { createUserPrincipal } from "./identity/user-principal.ts";
 import { createGatewayLogger, getLog } from "./logging/logger.ts";
 import { createUnavailableSessionLookup } from "./mcp-host/active-session-lookup.ts";
 import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-settings.js";
+import { createPushDeliveryService } from "./push/delivery-service.ts";
+import { createGorushApnsProvider } from "./push/gorush-provider.ts";
+import { createPushOutboxDrainer } from "./push/outbox-drainer.ts";
+import { openPushStore } from "./push/push-store.ts";
+import { createScheduledExecutionAuthorizer, createScheduledMessageSubmitter } from "./scheduled-chat/executor.ts";
+import { createScheduledChatRunner } from "./scheduled-chat/runner.ts";
+import { createScheduledPushOutboxQueue } from "./scheduling/push-outbox-adapter.ts";
+import { createScheduleService } from "./scheduling/service.ts";
 import { createGatewayServer } from "./server.ts";
 import { createCredentialRevoker } from "./session-handlers/credential-revocation.ts";
+import { buildSessionHandles } from "./session-handlers/session-binding.ts";
+import { openSessionStore } from "./store/session-store.ts";
 
 /** `~/.sentient/run` — the gateway's own runtime handles: the per-user MCP
  *  sockets, the native services' pid files, and the single-instance claim. */
@@ -295,6 +306,118 @@ services.delegatedExternalTool.sealEmpty(
 );
 
 // ---------------------------------------------------------------------------
+// Scheduled chat + push composition. These are process-owned background loops;
+// neither the HTTP handlers nor a client connection owns their lifetime.
+// ---------------------------------------------------------------------------
+const schedules = config.scheduling
+  ? createScheduleService({
+      userDataRoot: config.access.user_data_root,
+      graceMs: config.scheduling.missedGraceMs,
+      sessionDbFileName: config.store.db_filename,
+      cardsMaxPageSize: config.scheduling.cardsMaxPageSize,
+    })
+  : undefined;
+const pushStore = config.push
+  ? openPushStore(join(gatewayStateDir("push"), "push.db"), { revocationTtlMs: config.push.revocationTtlMs })
+  : undefined;
+
+const scheduledRunner =
+  schedules && services.createSessionRuntime && config.scheduling
+    ? createScheduledChatRunner({
+        claims: schedules,
+        authorizer: createScheduledExecutionAuthorizer({
+          users: services.auth.users,
+          accessManager: services.accessManager,
+          householdId: "home",
+        }),
+        submitter: createScheduledMessageSubmitter({
+          accessManager: services.accessManager,
+          dbFileName: services.dbFileName,
+          registry: services.sessionRegistry,
+          associateSession: (claim, sessionId) => schedules.associateSession(claim, sessionId),
+          buildHandles: (principal, sessionId, correlationId) =>
+            buildSessionHandles(services, principal, sessionId, correlationId),
+        }),
+        finalizer: schedules,
+        claimLimit: config.scheduling.dueClaimLimit,
+        leaseMs: config.scheduling.claimLeaseMs,
+        pollMs: config.scheduling.tickIntervalMs,
+      })
+    : undefined;
+scheduledRunner?.start();
+
+let pushController: AbortController | undefined;
+let pushLoop: Promise<void> | undefined;
+if (schedules && pushStore && config.push && config.scheduling) {
+  const pushConfig = config.push;
+  const delivery = createPushDeliveryService({
+    bindings: pushStore,
+    receipts: pushStore,
+    invalidator: pushStore,
+    provider: createGorushApnsProvider({
+      url: "http://127.0.0.1:8088/api/push",
+      topic: process.env.SENTIENT_APNS_TOPIC ?? "io.dev32.sentient",
+    }),
+    content: {
+      async resolve(reference, signal) {
+        if (signal.aborted) return { ok: false, error: { code: "closed", retryable: false } };
+        const user = await services.auth.users.get(reference.ownerUserId);
+        if (!user.ok) return { ok: false, error: { code: "provider_unavailable", retryable: true } };
+        if (!user.value) return { ok: false, error: { code: "forbidden", retryable: false } };
+        const principal = createUserPrincipal(reference.ownerUserId, user.value.role, "home");
+        const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
+        try {
+          const metadata = store.getSession(reference.sessionId);
+          if (!metadata?.scheduled || metadata.scheduled.entryId !== reference.entryId)
+            return { ok: false, error: { code: "not_found", retryable: false } };
+          const entry = store
+            .readSession(reference.sessionId)
+            .find((candidate) => String(candidate.seq) === reference.entryId && candidate.kind === "assistant");
+          return entry?.text
+            ? { ok: true, value: { plainText: entry.text } }
+            : { ok: false, error: { code: "not_found", retryable: false } };
+        } finally {
+          store.close();
+        }
+      },
+    },
+    config: {
+      request_timeout_ms: config.push.requestTimeoutMs,
+      payload_max_bytes: config.push.payloadMaxBytes,
+      content_preview_max_chars: config.push.contentPreviewMaxChars,
+    },
+  });
+  const drainer = createPushOutboxDrainer({
+    queue: createScheduledPushOutboxQueue(schedules),
+    delivery,
+    config: {
+      claimLimit: config.push.drainClaimLimit,
+      leaseMs: config.scheduling.outboxLeaseMs,
+      maxAttempts: config.push.maxAttempts,
+      retryBaseMs: config.push.retryBaseMs,
+      retryMaxMs: config.push.retryMaxMs,
+    },
+  });
+  pushController = new AbortController();
+  const signal = pushController.signal;
+  pushLoop = (async () => {
+    while (!signal.aborted) {
+      await drainer.drain(signal);
+      if (signal.aborted) break;
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, pushConfig.drainIntervalMs);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    }
+  })();
+}
+
+// ---------------------------------------------------------------------------
 // Accept traffic — LAST, and deliberately so.
 //
 // `Bun.serve()` starts taking WS connections synchronously, and a connection is
@@ -310,6 +433,8 @@ const server = createGatewayServer({
   port: config.port,
   host: config.host,
   services,
+  ...(schedules ? { schedules } : {}),
+  ...(pushStore ? { pushStore } : {}),
 });
 
 log.info("gateway-started", { host: server.hostname, port: server.port });
@@ -320,6 +445,10 @@ log.info("gateway-started", { host: server.hostname, port: server.port });
 async function shutdown(signal: string): Promise<never> {
   log.info("shutdown", { signal });
   services.systemOrchestrator?.stopHealthWatch();
+  pushController?.abort();
+  await Promise.all([scheduledRunner?.stop(), pushLoop]);
+  schedules?.close();
+  pushStore?.close();
   if (mcpHost) await mcpHost.stop();
   // Last, so the slot stays claimed for the whole teardown: a successor that
   // starts while this process is still holding the tool sockets would hit the

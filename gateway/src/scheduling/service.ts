@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   type Schedule,
@@ -7,7 +7,6 @@ import {
   type ScheduleListResponse,
   type ScheduleTiming,
   type ScheduledSessionCard,
-  type ScheduledSessionCardPage,
   scheduleSchema,
   scheduleSourceSchema,
 } from "@sentient/protocol";
@@ -101,6 +100,8 @@ export interface ScheduleServiceOptions {
   readonly userDataRoot?: string;
   readonly graceMs?: number;
   readonly maxSchedulesPerUser?: number;
+  readonly sessionDbFileName?: string;
+  readonly cardsMaxPageSize?: number;
   readonly id?: () => string;
 }
 
@@ -375,36 +376,75 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
       return { ok: true, value };
     });
 
-  const cards: ScheduleCommands["cards"] = (resource, cursor, limit) =>
-    withResource(resource, (db) => {
-      const bounded = Math.min(Math.max(1, limit || DEFAULT_PAGE_SIZE), 100);
-      const offset = cursor ? Number(cursor) : 0;
-      if (!Number.isInteger(offset) || offset < 0) return fail("validation");
-      const rows = db
-        .query<Record<string, string | null>, [number, number]>(
-          "SELECT * FROM scheduled_cards ORDER BY completed_at DESC, occurrence_id DESC LIMIT ? OFFSET ?",
-        )
+  const cards: ScheduleCommands["cards"] = async (resource, cursor, limit) => {
+    const bounded = Math.min(Math.max(1, limit || DEFAULT_PAGE_SIZE), options.cardsMaxPageSize ?? 100);
+    const offset = cursor ? Number(cursor) : 0;
+    if (!Number.isInteger(offset) || offset < 0) return fail("validation");
+
+    // Cards are a projection of the authoritative append-only session store.
+    // The schedule database deliberately contains only occurrence/outbox
+    // bookkeeping, so one-time consumption cannot erase this inbox entry.
+    const sessionDbPath = join(resource.rootPath, options.sessionDbFileName ?? "sessions.db");
+    if (!existsSync(sessionDbPath)) return { ok: true, value: { cards: [] } };
+    let sessionDb: Database | undefined;
+    try {
+      sessionDb = new Database(sessionDbPath, { readonly: true });
+      const rows = sessionDb
+        .query<
+          {
+            session_id: string;
+            schedule_id: string;
+            occurrence_id: string;
+            intended_at: string;
+            completed_at: string;
+            outcome: "completed" | "failed" | "interrupted";
+            preview: string | null;
+          },
+          [number, number]
+        >(`
+          SELECT s.session_id,
+                 s.scheduled_schedule_id AS schedule_id,
+                 s.scheduled_occurrence_id AS occurrence_id,
+                 s.scheduled_intended_at AS intended_at,
+                 s.scheduled_completed_at AS completed_at,
+                 s.scheduled_outcome AS outcome,
+                 e.text AS preview
+          FROM sessions s
+          LEFT JOIN entries e
+            ON e.session_id=s.session_id
+           AND CAST(e.seq AS TEXT)=s.scheduled_entry_id
+           AND e.kind='assistant'
+          WHERE s.scheduled_outcome IS NOT NULL
+            AND s.scheduled_completed_at IS NOT NULL
+          ORDER BY s.scheduled_completed_at DESC, s.scheduled_occurrence_id DESC
+          LIMIT ? OFFSET ?
+        `)
         .all(bounded + 1, offset);
-      const parsed: ScheduledSessionCard[] = [];
-      for (const row of rows.slice(0, bounded)) {
-        const card = {
+      const parsed: ScheduledSessionCard[] = rows.slice(0, bounded).map((row) => {
+        const preview = row.preview?.replace(/\s+/gu, " ").trim();
+        return {
           sessionId: row.session_id,
           scheduleId: row.schedule_id,
           occurrenceId: row.occurrence_id,
           intendedAt: row.intended_at,
           completedAt: row.completed_at,
-          status: row.status,
-          ...(row.preview === null ? {} : { preview: row.preview }),
+          status: row.outcome,
+          ...(row.outcome === "completed" && preview ? { preview: Array.from(preview).slice(0, 280).join("") } : {}),
         };
-        // The shared page schema validates this again at the HTTP boundary.
-        parsed.push(card as ScheduledSessionCard);
-      }
-      const value: ScheduledSessionCardPage = {
-        cards: parsed,
-        ...(rows.length > bounded ? { nextCursor: String(offset + bounded) } : {}),
+      });
+      return {
+        ok: true,
+        value: {
+          cards: parsed,
+          ...(rows.length > bounded ? { nextCursor: String(offset + bounded) } : {}),
+        },
       };
-      return { ok: true, value };
-    });
+    } catch {
+      return fail("internal");
+    } finally {
+      sessionDb?.close();
+    }
+  };
 
   function discover(): void {
     if (!options.userDataRoot) return;
@@ -709,7 +749,13 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
               );
             const saved = database
               .query<
-                { outbox_id: string; owner_user_id: string; session_id: string; entry_id: string; available_at: string },
+                {
+                  outbox_id: string;
+                  owner_user_id: string;
+                  session_id: string;
+                  entry_id: string;
+                  available_at: string;
+                },
                 [string]
               >(
                 "SELECT outbox_id,owner_user_id,session_id,entry_id,available_at FROM content_outbox WHERE occurrence_id=?",

@@ -15,7 +15,9 @@ import { createMcpCatalogHandler } from "./api/handlers/mcp-catalog.ts";
 import { createProfileEditHandler } from "./api/handlers/profile-edit.ts";
 import { createProfileHandler } from "./api/handlers/profile.ts";
 import { createProvidersHandler } from "./api/handlers/providers.ts";
+import { createPushHandler } from "./api/handlers/push.ts";
 import { createReadyHandler } from "./api/handlers/ready.ts";
+import { createScheduledMessagesHandler } from "./api/handlers/scheduled-messages.ts";
 import { type RequireAdminFn, createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
 import { createSessionsHandler } from "./api/handlers/sessions.ts";
@@ -31,6 +33,8 @@ import type { RouterDeps } from "./apply/router.ts";
 import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { getLog } from "./logging/logger.ts";
+import type { PushStore } from "./push/push-store.ts";
+import type { ScheduleService } from "./scheduling/service.ts";
 import {
   type SessionData,
   cleanupSession,
@@ -68,6 +72,8 @@ export interface GatewayServerOptions {
   port: number;
   host: string;
   services: GatewayServices;
+  schedules?: ScheduleService;
+  pushStore?: PushStore;
 }
 
 export function createGatewayServer(options: GatewayServerOptions): Server<SessionData> {
@@ -205,6 +211,23 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     accessManager: services.accessManager,
     dbFileName: services.dbFileName,
   });
+  const handleScheduledMessages = options.schedules
+    ? createScheduledMessagesHandler({
+        tokens: services.auth.tokens,
+        users: services.auth.users,
+        accessManager: services.accessManager,
+        schedules: options.schedules,
+      })
+    : undefined;
+  const handlePush = options.pushStore
+    ? createPushHandler({
+        tokens: services.auth.tokens,
+        users: services.auth.users,
+        accessManager: services.accessManager,
+        registrations: options.pushStore,
+        revocations: options.pushStore,
+      })
+    : undefined;
 
   return Bun.serve<SessionData>({
     port: options.port,
@@ -240,6 +263,8 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         handleDiagnostics,
         handleSessions,
         handleCalendar,
+        ...(handleScheduledMessages ? { handleScheduledMessages } : {}),
+        ...(handlePush ? { handlePush } : {}),
         handleStatic,
       });
       return router(request);

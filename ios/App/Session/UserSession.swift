@@ -184,10 +184,17 @@ final class UserSession: ObservableObject {
     /// Notification/deep-link destinations must name a session visible to the
     /// authenticated account before the route can resume it.
     func canResumeNotificationSession(_ sessionId: String) async -> Bool {
+        guard let destination = NotificationDestination(sessionId: sessionId) else { return false }
         do {
-            let sessions = try await component.observeSessions.invoke(limit: 100, offset: 0)
-            guard let destination = NotificationDestination(sessionId: sessionId) else { return false }
-            return canResumeNotificationDestination(destination, sessionIds: sessions.map(\.id))
+            let pageSize: Int32 = 100
+            var offset: Int32 = 0
+            while true {
+                try Task.checkCancellation()
+                let sessions = try await component.observeSessions.invoke(limit: pageSize, offset: offset)
+                if canResumeNotificationDestination(destination, sessionIds: sessions.map(\.id)) { return true }
+                if sessions.count < Int(pageSize) { return false }
+                offset += pageSize
+            }
         } catch is CancellationError {
             return false
         } catch {

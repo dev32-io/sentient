@@ -11,6 +11,7 @@ import {
   type CalendarPage,
   type CalendarPersistenceEvent,
   type CalendarReadScope,
+  type CalendarReminderOutput,
   type CalendarRevision,
   type CalendarScope,
   type CalendarTime,
@@ -63,6 +64,7 @@ interface InternalRow {
   readonly occurrence: Occurrence;
   readonly scope: CalendarScope;
   readonly revision: CalendarRevision;
+  readonly ownerUserId?: string;
 }
 interface SortTuple {
   readonly start: number;
@@ -420,7 +422,21 @@ function recurrenceInput(event: StoredCalendarEvent): Record<string, unknown> | 
     ...(rule.until !== undefined ? { until: rule.until } : {}),
   };
 }
-function projectedFields(event: StoredCalendarEvent): Record<string, unknown> {
+function projectedReminder(event: StoredCalendarEvent, ownerUserId?: string): CalendarReminderOutput {
+  const notification = event.notification as Record<string, unknown> | undefined;
+  const map = notification?.sentientPersonalReminders;
+  const value =
+    ownerUserId && map && typeof map === "object" && !Array.isArray(map)
+      ? (map as Record<string, unknown>)[ownerUserId]
+      : undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { enabled: false };
+  const reminder = value as Record<string, unknown>;
+  if (reminder.enabled !== true || !["at-start", "lead", "all-day"].includes(String(reminder.mode)))
+    return { enabled: false };
+  return { reminderId: `${event.id}:${ownerUserId}`, ...reminder } as CalendarReminderOutput;
+}
+
+function projectedFields(event: StoredCalendarEvent, ownerUserId?: string): Record<string, unknown> {
   return {
     title: event.title,
     ...(event.description !== undefined ? { description: event.description } : {}),
@@ -431,6 +447,7 @@ function projectedFields(event: StoredCalendarEvent): Record<string, unknown> {
     importance: event.importance,
     ...(event.group !== undefined ? { group: event.group } : {}),
     tags: [...event.tags].sort(),
+    reminder: projectedReminder(event, ownerUserId),
   };
 }
 
@@ -439,6 +456,7 @@ export function projectOccurrence(
   row: Occurrence,
   scope: CalendarScope,
   revision: CalendarRevision,
+  ownerUserId?: string,
 ): CalendarOccurrenceProjection {
   return {
     eventId: row.eventId,
@@ -447,7 +465,7 @@ export function projectOccurrence(
     recurring: row.recurrence !== undefined,
     revision,
     scope,
-    ...projectedFields(row),
+    ...projectedFields(row, ownerUserId),
   } as unknown as CalendarOccurrenceProjection;
 }
 /** Project a full effective event for get; internal child rows are never returned. */
@@ -455,13 +473,14 @@ export function projectEvent(
   event: StoredCalendarEvent,
   scope: CalendarScope,
   revision: CalendarRevision,
+  ownerUserId?: string,
 ): {
   eventId: string;
   revision: CalendarRevision;
   scope: CalendarScope;
   [key: string]: unknown;
 } {
-  return { eventId: event.id, revision, scope, ...projectedFields(event) };
+  return { eventId: event.id, revision, scope, ...projectedFields(event, ownerUserId) };
 }
 
 export class CalendarQueryService {
@@ -530,7 +549,12 @@ export class CalendarQueryService {
           if (query.group !== undefined && occurrence.group !== query.group) continue;
           if (query.importance !== undefined && occurrence.importance !== query.importance) continue;
           if (query.tags !== undefined && !query.tags.every((tag) => occurrence.tags.has(tag))) continue;
-          rows.push({ occurrence, scope, revision: raw.value.revision });
+          rows.push({
+            occurrence,
+            scope,
+            revision: raw.value.revision,
+            ...(persistence.ownerUserId ? { ownerUserId: persistence.ownerUserId } : {}),
+          });
           if (rows.length > max) return serializedFailure();
         }
       }
@@ -563,11 +587,13 @@ export class CalendarQueryService {
       // independent of maxOccurrences: a complete result larger than one REST
       // page is still incomplete from the tool's perspective.
       if (start || after.length > limit) return serializedFailure();
-      const complete = after.map((row) => projectOccurrence(row.occurrence, row.scope, row.revision));
+      const complete = after.map((row) => projectOccurrence(row.occurrence, row.scope, row.revision, row.ownerUserId));
       if (!serializeWithinBudget(complete, this.deps.config.output.maxResultChars)) return serializedFailure();
       return { ok: true, value: complete };
     }
-    const events = after.slice(0, limit).map((row) => projectOccurrence(row.occurrence, row.scope, row.revision));
+    const events = after
+      .slice(0, limit)
+      .map((row) => projectOccurrence(row.occurrence, row.scope, row.revision, row.ownerUserId));
     const last = after[events.length - 1];
     const hasMore = after.length > events.length;
     // REST consumers receive bounded pages and may traverse the complete
@@ -657,7 +683,7 @@ export class CalendarQueryService {
       const event = materialize(raw.value);
       if (!normalizedOriginal) {
         if (!isAdult(this.deps.role) && event.visibility === "adults") continue;
-        const result = projectEvent(event, storeScope, raw.value.revision);
+        const result = projectEvent(event, storeScope, raw.value.revision, persistence.ownerUserId);
         if (!serializeWithinBudget(result, this.deps.config.output.maxResultChars)) return serializedFailure();
         return { ok: true, value: result };
       }
@@ -679,7 +705,7 @@ export class CalendarQueryService {
         (candidate) => timeKey(candidate.originalStart) === timeKey(normalizedOriginal),
       );
       if (!occurrence || (!isAdult(this.deps.role) && occurrence.visibility === "adults")) continue;
-      const result = projectOccurrence(occurrence, storeScope, raw.value.revision);
+      const result = projectOccurrence(occurrence, storeScope, raw.value.revision, persistence.ownerUserId);
       if (!serializeWithinBudget(result, this.deps.config.output.maxResultChars)) return serializedFailure();
       return { ok: true, value: result };
     }

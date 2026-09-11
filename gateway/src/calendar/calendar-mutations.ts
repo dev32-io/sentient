@@ -25,6 +25,9 @@ import {
   type CalendarNotification,
   type CalendarPersistenceBaseEvent,
   type CalendarPersistenceEvent,
+  type CalendarReminderCreateInput,
+  type CalendarReminderOutput,
+  type CalendarReminderUpdateInput,
   type CalendarRevision,
   type CalendarScope,
   type CalendarTime,
@@ -36,6 +39,7 @@ import {
   type UtcInstant,
   calendarCreateInputSchema,
   calendarMutationCommandSchema,
+  calendarReminderEnabledInputSchema,
   isAdult,
 } from "./types.js";
 
@@ -141,7 +145,39 @@ function outputRecurrence(recurrence: Recurrence | undefined): CalendarEvent["re
     ...(rule.until !== undefined ? { until: rule.until as unknown as CalendarTimeInput } : {}),
   } as unknown as CalendarEvent["recurrence"];
 }
-function project(event: CalendarPersistenceEvent, scope: CalendarScope): CalendarEvent {
+const REMINDERS_KEY = "sentientPersonalReminders";
+
+function reminderMap(notification: CalendarNotification | undefined): Record<string, CalendarReminderCreateInput> {
+  if (!notification || !isRecord(notification[REMINDERS_KEY])) return {};
+  const reminders: Record<string, CalendarReminderCreateInput> = {};
+  for (const [owner, value] of Object.entries(notification[REMINDERS_KEY])) {
+    const parsed = calendarReminderEnabledInputSchema.safeParse(value);
+    if (parsed.success) reminders[owner] = parsed.data;
+  }
+  return reminders;
+}
+
+function withPersonalReminder(
+  notification: CalendarNotification | undefined,
+  ownerUserId: string | undefined,
+  reminder: CalendarReminderUpdateInput | undefined,
+): CalendarNotification | undefined {
+  if (!ownerUserId || reminder === undefined) return notification;
+  const next = { ...(notification ?? {}) } as CalendarNotification;
+  const reminders = reminderMap(notification);
+  if (reminder.enabled) reminders[ownerUserId] = reminder;
+  else delete reminders[ownerUserId];
+  if (Object.keys(reminders).length > 0) next[REMINDERS_KEY] = reminders;
+  else delete next[REMINDERS_KEY];
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function projectReminder(event: CalendarPersistenceEvent, ownerUserId: string | undefined): CalendarReminderOutput {
+  const reminder = ownerUserId ? reminderMap(event.notification)[ownerUserId] : undefined;
+  return reminder ? { reminderId: `${event.id}:${ownerUserId}`, ...reminder } : { enabled: false };
+}
+
+function project(event: CalendarPersistenceEvent, scope: CalendarScope, ownerUserId?: string): CalendarEvent {
   return {
     eventId: event.id,
     revision: event.revision,
@@ -155,6 +191,7 @@ function project(event: CalendarPersistenceEvent, scope: CalendarScope): Calenda
     ...(event.group !== undefined ? { group: event.group } : {}),
     tags: [...event.tags],
     ...(event.recurrence ? { recurrence: outputRecurrence(event.recurrence) } : {}),
+    reminder: projectReminder(event, ownerUserId),
   } as unknown as CalendarEvent;
 }
 function recurrenceLimits(config: CalendarConfig): RecurrenceExpansionLimits {
@@ -283,9 +320,14 @@ export function createCalendarEvent(
     visibility: checked.value.visibility,
     importance: checked.value.importance,
     ...(checked.value.group !== undefined ? { group: checked.value.group } : {}),
-    ...(checked.value.notificationPolicy
-      ? { notification: checked.value.notificationPolicy as CalendarNotification }
-      : {}),
+    ...(() => {
+      const notification = withPersonalReminder(
+        checked.value.notificationPolicy as CalendarNotification | undefined,
+        context.persistence.ownerUserId,
+        checked.value.reminder,
+      );
+      return notification ? { notification } : {};
+    })(),
     createdAt: now,
     updatedAt: now,
   };
@@ -303,7 +345,7 @@ export function createCalendarEvent(
     if (isAborted(context.signal)) return aborted();
     return storeError(result.error);
   }
-  return { ok: true, value: project(result.value, checked.scope) };
+  return { ok: true, value: project(result.value, checked.scope, context.persistence.ownerUserId) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -933,8 +975,14 @@ function updateWholeSeries(
       end: _end,
       recurrence: _recurrence,
       group: _group,
+      notification: _notification,
       ...base
     } = event;
+    const nextNotification = withPersonalReminder(
+      event.notification,
+      context.persistence.ownerUserId,
+      changes.reminder,
+    );
     const next: CalendarPersistenceBaseEvent = {
       ...base,
       title: changes.title ?? event.title,
@@ -958,6 +1006,7 @@ function updateWholeSeries(
             ? { group: event.group }
             : {}),
       revision: event.revision,
+      ...(nextNotification ? { notification: nextNotification } : {}),
       updatedAt: new Date().toISOString() as UtcInstant,
     };
     const revision = tx.compareAndSwapRevision(event.id, event.revision);

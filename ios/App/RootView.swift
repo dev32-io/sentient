@@ -35,6 +35,7 @@ struct RootView: View {
     @State private var showSetupOverride = false
     @State private var loginRevealed = false
     @StateObject private var startup: StartupReadinessCoordinator
+    @ObservedObject private var push = NativePushCoordinator.shared
     private let log = AppLog("root")
 
     init() {
@@ -106,6 +107,17 @@ struct RootView: View {
         }
         .onChange(of: startup.isCovering) { _, covering in
             if !covering { log.info("startup.reveal") }
+        }
+        .alert(
+            "Notifications may continue",
+            isPresented: Binding(
+                get: { push.lifecycleWarning != nil && !appConfig.hasToken },
+                set: { if !$0 { push.dismissLifecycleWarning() } }
+            )
+        ) {
+            Button("OK") { push.dismissLifecycleWarning() }
+        } message: {
+            Text(push.lifecycleWarning ?? "This device could not be unlinked yet.")
         }
     }
 }

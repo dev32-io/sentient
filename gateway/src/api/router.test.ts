@@ -61,6 +61,22 @@ describe("createApiRouter — voices route dispatch", () => {
   });
 });
 
+describe("createApiRouter — scheduled message routes", () => {
+  it("routes schedule cards and device push ahead of the SPA", async () => {
+    const handleScheduledMessages = vi.fn().mockResolvedValue(sentinel);
+    const handlePush = vi.fn().mockResolvedValue(sentinel);
+    const handleStatic = vi.fn().mockResolvedValue(new Response("index.html"));
+    const router = createApiRouter(makeDeps({ handleScheduledMessages, handlePush, handleStatic }));
+
+    await router(new Request("http://host/api/v1/scheduled-session-cards"));
+    await router(new Request("http://host/api/v1/push/registrations", { method: "POST" }));
+
+    expect(handleScheduledMessages).toHaveBeenCalledOnce();
+    expect(handlePush).toHaveBeenCalledOnce();
+    expect(handleStatic).not.toHaveBeenCalled();
+  });
+});
+
 describe("createApiRouter — sessions route dispatch", () => {
   it("routes GET /api/v1/sessions to handleSessions, ahead of the static fallback", async () => {
     const handleSessions = vi.fn().mockResolvedValue(sentinel);
