@@ -69,11 +69,11 @@ delivery: >-
   - Leave both shared modules building with no new scheduler implementation,
   platform APIs in commonMain, or duplicate repositories/transport.
 checks:
-  - source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
-    :shared:mobile-data:testDebugUnitTest
-  - source scripts/env.sh && ./gradlew
+  - bash -lc "source scripts/env.sh && ./gradlew
+    :shared:mobile-sdk:testDebugUnitTest :shared:mobile-data:testDebugUnitTest"
+  - bash -lc "source scripts/env.sh && ./gradlew
     :shared:mobile-sdk:compileKotlinIosSimulatorArm64
-    :shared:mobile-data:compileKotlinIosSimulatorArm64 && git diff --check
+    :shared:mobile-data:compileKotlinIosSimulatorArm64 && git diff --check"
 assignment:
   agent: implementer
   tier: medium
