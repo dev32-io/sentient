@@ -341,36 +341,36 @@ e2e: >
   resources.
 
 
-  ## E2E-001 — Scheduled user message runs a normal assistant conversation
+  ## E2E-001 — One-time message creates a chat and cleans itself up
 
 
   ### Exercise
 
 
-  On the real local stack, create a disposable one-time schedule through
-  Scheduled messages settings. Use an ordinary request that exercises an
-  available skill and permitted read-only tool, then let it fire with no client
-  attached. Open the resulting inbox entry and send a follow-up. Repeat settings
-  creation across web, Android, and iOS without contacting production.
+  On the real local stack, create a disposable one-time schedule with a short
+  relative delay through Scheduled messages settings. Let it run with no client
+  attached, then open its inbox card and send a follow-up. Repeat settings
+  creation across web and available Android/iOS clients; do not contact
+  production.
 
 
   ### Oracle
 
 
-  One fresh session contains a user message labelled Scheduled and a normal
-  assistant response based on the skill/tool result. No reminder-only execution
-  mode replaces the request. The inbox opens that exact session and follow-up
-  continues through existing resume behavior.
+  The saved message runs as an ordinary user message in one fresh session. The
+  gateway removes the consumed one-time entry without any model cleanup action.
+  Its truncated message card remains available, opens that session, and the
+  follow-up continues through existing resume behavior. No special skill/tool
+  behavior is required for this case.
 
 
   ### Proof
 
 
-  Record redacted schedule/inbox/navigation states and matching run/session
-  identifiers. Use content-free skill/tool names and execution statuses solely
-  to prove the hidden invariant that the normal skill/tool path executed. Retain
-  no request, response, or tool content. Remove disposable schedules and test
-  accounts after all linked cases finish.
+  Capture redacted pending/consumed schedule states and card/navigation state
+  with matching occurrence/session identifiers. Reopen settings to establish
+  durable one-time cleanup while the session remains accessible. Retain no
+  message content. Remove only disposable test resources.
 
 
   ## E2E-002 — Model selects schedules versus calendar and manages recurrence
