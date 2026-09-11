@@ -540,6 +540,41 @@ e2e: >
   disposable resources.
 
 
+  ## E2E-007 — Restart preserves one-time cleanup and recurring progress
+
+
+  ### Exercise
+
+
+  Using disposable local schedules with harmless messages, restart the gateway
+  around execution and one-time cleanup, and temporarily make the managed push
+  dependency unavailable. Include a missed occurrence inside the configured
+  grace window and older ones outside it. Restore services through their normal
+  local lifecycle and inspect pending schedules and session cards. Actual
+  provider receipt is not required.
+
+
+  ### Oracle
+
+
+  An executed occurrence retains one session identity. Completed one-time work
+  is consumed after recovery without another submission; interrupted execution
+  is recorded rather than blindly rerun, and its one-time entry is also cleaned
+  up. Recurring schedules retain the next occurrence. Older missed work is not
+  replayed as a backlog. Push unavailability does not remove saved chats or
+  recreate consumed jobs.
+
+
+  ### Proof
+
+
+  Retain content-free occurrence/session identifiers, schedule presence/absence,
+  timestamps, and submission counts for the cleanup/non-replay invariants.
+  Capture redacted card/settings states and sanitized service transitions.
+  Lower-level tests own exact crash-window and push retry proof. Restore local
+  configuration and remove disposable resources.
+
+
   ## Exclusions
 
 
