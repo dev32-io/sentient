@@ -496,6 +496,40 @@ e2e: >
   development destinations and clean disposable data.
 
 
+  ## E2E-007 — Restart and delivery failure preserve durable outcomes
+
+
+  ### Exercise
+
+
+  Using disposable local schedules and read-only assistant work, restart the
+  local gateway around execution/completion boundaries and temporarily make the
+  managed push dependency unavailable. Include a most-recent missed occurrence
+  inside the configured grace window and older missed occurrences outside it.
+  Restore local services through their normal lifecycle and inspect schedule
+  history, inbox, and delivery status.
+
+
+  ### Oracle
+
+
+  Each executed occurrence retains one run/session identity; interrupted
+  assistant execution is recorded rather than blindly replayed. Saved completion
+  reconciles into one inbox entry. Only the eligible most-recent missed
+  occurrence executes; no backlog floods the user. Delivery recovery does not
+  rerun the LLM or tool actions, and saved results remain available during the
+  outage.
+
+
+  ### Proof
+
+
+  Retain content-free run/session identifiers, statuses, timestamps, and
+  execution/delivery counts to establish recovery and non-replay invariants.
+  Record sanitized local service transitions, not model content. Restore normal
+  local configuration and remove disposable resources.
+
+
   ## Exclusions
 
 
