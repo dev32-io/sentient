@@ -58,3 +58,26 @@ stages:
         changed legacy calendar files outside automated checker scope; forbid
         hardcoded visuals and broadening allowlists. Core native state tests
         must not be skipped merely because real push delivery is unavailable.
+  - id: gateway-and-calendar-integration
+    tasks:
+      - gateway-surfaces
+      - calendar-reminders
+    mode: sequential
+    checks:
+      - source scripts/env.sh && bun run ci && bun run design:foundation:check
+        && git diff --check
+    review:
+      mode: required
+      focus: "Ordered fresh-agent baton pass is intentional: gateway-surfaces mounts
+        the stable services and session-card API, then calendar-reminders
+        consumes that composition and modifies the same central bootstrap with
+        one coherent calendar mutation/reconciliation owner. Review bounded
+        owner-scoped card projections, backward-compatible session APIs,
+        one-time activation of supervisors, optional push readiness, real model
+        tool registration, and current-authority execution. Then review personal
+        calendar intent transactions, idempotent derived jobs,
+        moved-earlier/claim linearization, cancellation/visibility/series-split
+        and partial-write recovery. Verify the fully composed
+        source-to-session-to-card/outbox journey and all mandatory local E2E
+        coverage; only explicitly unsupported native
+        permission/real-device/provider legs may skip with reasons."
