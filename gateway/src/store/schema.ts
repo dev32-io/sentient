@@ -127,6 +127,20 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "ALTER TABLE entries DROP COLUMN message_id",
     ],
   },
+  {
+    version: 5,
+    name: "sessions.scheduled-execution",
+    statements: [
+      "ALTER TABLE sessions ADD COLUMN scheduled_occurrence_id TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_intended_at TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_actual_at TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_turn_id TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_outcome TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_completed_at TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_entry_id TEXT",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_scheduled_occurrence ON sessions (scheduled_occurrence_id) WHERE scheduled_occurrence_id IS NOT NULL",
+    ],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */

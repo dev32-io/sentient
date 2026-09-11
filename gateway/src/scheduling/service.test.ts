@@ -105,6 +105,37 @@ describe("schedule persistence", () => {
     expect(reclaimed.value[0]?.claimToken).not.toBe(first.value[0]?.claimToken);
   });
 
+  test("finalizes response handoff atomically and keeps it after one-time cleanup", async () => {
+    const { service, resource } = setup();
+    await service.create(resource, once("terminal", "2026-08-01T15:00:00Z"), new Date("2026-08-01T14:00:00Z"));
+    const due = await service.claimDue(new Date("2026-08-01T15:01:00Z"), 1, 60_000);
+    if (!due.ok || !due.value[0]) throw new Error("claim failed");
+    const claim = due.value[0];
+    expect((await service.associateSession(claim, "session-terminal")).ok).toBe(true);
+    const content = {
+      ownerUserId: claim.ownerUserId,
+      sessionId: "session-terminal",
+      occurrenceId: claim.occurrenceId,
+      entryId: "9",
+    };
+    const finalized = await service.finalizeClaim(
+      claim,
+      { outcome: "completed", sessionId: "session-terminal", completedAt: "2026-08-01T15:01:30.000Z", content },
+      { outboxId: "delivery-terminal", content, availableAt: "2026-08-01T15:01:30.000Z" },
+    );
+    expect(finalized.ok && finalized.value.scheduleConsumed).toBe(true);
+    expect(await service.list(resource, undefined, 10)).toEqual({ ok: true, value: { schedules: [] } });
+    const queued = await service.claim(new Date("2026-08-01T15:02:00Z"), 10, 60_000);
+    expect(queued.ok && queued.value[0]?.content).toEqual(content);
+    const replay = await service.finalizeClaim(
+      claim,
+      { outcome: "completed", sessionId: "session-terminal", completedAt: "2026-08-01T15:01:30.000Z", content },
+      { outboxId: "different-id", content, availableAt: "2026-08-01T15:01:30.000Z" },
+    );
+    expect(replay.ok && replay.value.replayed).toBe(true);
+    expect((await service.claim(new Date("2026-08-01T15:03:01Z"), 10, 60_000)).ok).toBe(true);
+  });
+
   test("pause, edit, and delete fence already-issued claims", async () => {
     for (const operation of ["pause", "edit", "delete"] as const) {
       const { service, resource } = setup();

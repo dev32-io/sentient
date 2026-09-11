@@ -25,7 +25,13 @@ import { getLog } from "../logging/logger.js";
 import type { NewSessionEntry, SessionEntry } from "./entry-types.js";
 import { migrateStore } from "./migrate-store.js";
 import { STORE_DDL } from "./schema.js";
-import { type SessionMetadata, type TitleProvenance, createSessionMetadataOps } from "./session-metadata.js";
+import {
+  type ScheduledSessionExecution,
+  type ScheduledSessionOutcome,
+  type SessionMetadata,
+  type TitleProvenance,
+  createSessionMetadataOps,
+} from "./session-metadata.js";
 
 // Re-exported so a consumer of the public `SessionStore` surface (task 3:
 // resolve a mint-key conflict to the existing session) can `catch` and
@@ -95,6 +101,16 @@ export interface SessionStore {
   /** Compare-and-set title write. `false` when `expectedVersion` is stale or a
    *  `generated` title would overwrite a `user` one. */
   setTitle(sessionId: string, title: string, provenance: TitleProvenance, expectedVersion: number): boolean;
+  setScheduledProvenance?(sessionId: string, occurrenceId: string, intendedAt: string, actualAt: string): boolean;
+  setScheduledTurn?(sessionId: string, occurrenceId: string, turnId: string): boolean;
+  recordScheduledTerminal?(
+    sessionId: string,
+    turnId: string,
+    outcome: ScheduledSessionOutcome,
+    completedAt: string,
+    entryId: string | null,
+  ): ScheduledSessionExecution | null;
+  findScheduledByOccurrence?(occurrenceId: string): SessionMetadata | null;
   /** Release the handle. Idempotent. Every other method throws afterwards —
    *  see this file's header. */
   close(): void;
@@ -246,6 +262,22 @@ export function openSessionStore(cap: Capability, dbFileName: string = DEFAULT_D
     setTitle(sessionId, title, provenance, expectedVersion) {
       assertOpen("setTitle");
       return metadata.setTitle(sessionId, title, provenance, expectedVersion);
+    },
+    setScheduledProvenance(sessionId, occurrenceId, intendedAt, actualAt) {
+      assertOpen("setScheduledProvenance");
+      return metadata.setScheduledProvenance(sessionId, occurrenceId, intendedAt, actualAt);
+    },
+    setScheduledTurn(sessionId, occurrenceId, turnId) {
+      assertOpen("setScheduledTurn");
+      return metadata.setScheduledTurn(sessionId, occurrenceId, turnId);
+    },
+    recordScheduledTerminal(sessionId, turnId, outcome, completedAt, entryId) {
+      assertOpen("recordScheduledTerminal");
+      return metadata.recordScheduledTerminal(sessionId, turnId, outcome, completedAt, entryId);
+    },
+    findScheduledByOccurrence(occurrenceId) {
+      assertOpen("findScheduledByOccurrence");
+      return metadata.findScheduledByOccurrence(occurrenceId);
     },
     close() {
       if (closed) return;

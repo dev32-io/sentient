@@ -102,6 +102,21 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     expect(a.attachmentId).not.toBe(b.attachmentId);
   });
 
+  it("INVARIANT: a client joins the runtime created by socket-free scheduled acquisition", () => {
+    const registry = createSessionRegistry();
+    const spy = handlesSpy("u_aaaaaaaa", WORK_IN_FLIGHT);
+
+    const scheduled = registry.ensure("s_scheduled", spy.build);
+    const attachment = registry.attach("s_scheduled", "conn-a", SOCKET, spy.build);
+
+    expect(registry.runtimeFor("s_scheduled")).toBe(scheduled.runtime);
+    expect(registry.handlesFor("s_scheduled")).toBe(scheduled);
+    expect(spy.buildCallCount()).toBe(1);
+    expect(registry.subscribers("s_scheduled")).toContainEqual(
+      expect.objectContaining({ attachmentId: attachment.attachmentId }),
+    );
+  });
+
   it("INVARIANT: the runtime is disposed when the last attachment leaves", () => {
     const registry = createSessionRegistry();
     const spy = handlesSpy();
