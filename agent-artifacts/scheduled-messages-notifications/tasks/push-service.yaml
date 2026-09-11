@@ -1,0 +1,86 @@
+schemaVersion: 1
+id: push-service
+title: Build reusable private push delivery and managed Gorush transport
+dependsOn:
+  - contracts-authority
+description: Implement device-scoped push delivery independently of schedules or
+  calendar. A delivery carries a reference to a saved session response; device
+  privacy is evaluated at send time. Hidden mode sends only New message and
+  routing identifiers; content mode sends size-bounded plain text. Local logout
+  can leave unlink pending, but new-account push activation cannot overlap the
+  old binding. The provider adapter is replaceable and must not own scheduling,
+  conversation state, or uncontrolled retries.
+scope: >-
+  Own `gateway/src/push/` except the established contracts; new
+  `gateway/src/api/handlers/push.ts`; Gorush service/config assets under
+  `gateway/templates/services/`; push-specific protected credential
+  schema/accessor changes in `gateway/src/admin/secrets-store*`,
+  `gateway/src/bootstrap/secret-accessor.ts`, and templates as needed; the
+  Gorush managed-service stanza in `gateway/config.yaml`; and relevant
+  local/mac-prod addon provisioning documentation/assets. Own any necessary
+  push-specific capability-root refinement in `gateway/src/access/`, preserving
+  existing grants. No changes to schedule persistence, session store/runtime,
+  central API router or phase-services composition, shared protocol exports, or
+  client trees.
+
+
+  Consume the frozen registration/revocation DTOs and injected durable
+  outbox/content-resolver interfaces. Implement device bindings and
+  per-destination delivery receipts, not the producer's
+  occurrence-finalization/outbox transaction. The queue implementation and
+  public mounting arrive from later gateway tasks. Preserve per-owner access
+  while enforcing an atomic installation/binding-generation activation fence.
+delivery: >-
+  - Implement authenticated register/read-preferences/update/unlink APIs and
+  current-account/device authorization; deviceId is never proof of ownership.
+  Make old-binding disable precede new binding activation, including stale
+  requests and concurrent account replacement. Token refresh/invalidation
+  affects only the relevant generation/destination.
+
+  - Issue an unguessable exact-binding revoke-only credential through
+  authenticated registration, persist only its verifier, and implement the
+  frozen idempotent revoke/error semantics. It cannot read data, enable
+  delivery, alter another generation, or provide general account access. Do not
+  echo it from list/status APIs or log it. Expired/invalid authority never
+  falsely acknowledges a still-active binding.
+
+  - Drain injected content-reference jobs with bounded cancellation/retry.
+  Immediately before each send resolve current recipient/session access and the
+  device's active binding, enabled state, and privacy. Drop missing/inaccessible
+  source sessions; never send cached private content after access loss. Keep
+  per-device receipts idempotent and independent from schedule deletion.
+  Provider acceptance is not proof of presentation and exactly-once remote
+  delivery is not promised.
+
+  - Build payloads with generic hidden title or plain-text saved response
+  bounded by actual UTF-8 provider limits including metadata. Use stable
+  notification IDs/session destinations; never put credentials in links. Handle
+  partial per-device errors and permanent invalid tokens without replaying any
+  chat.
+
+  - Add a version/digest-pinned ARM64-compatible Docker Gorush dependency
+  through existing supervisor templates, explicit loopback binding, bounded
+  health checks and appropriate provider egress. Provision credentials only
+  through protected runtime storage; disable message/token/config disclosure and
+  stale-content upstream retries. Missing credentials or optional addon failure
+  must report push unavailable without blocking normal gateway use. Do not
+  mutate production or hand-start production services.
+
+  - Add deterministic handler/store/revocation/binding/adapter/template tests
+  with controlled provider responses and injected queue, covering privacy
+  changes during retry, failed references, partial failures, and no privilege
+  widening. These tests do not claim phone delivery. Document development
+  credential setup without actual keys and leave clean committed
+  provider-independent APIs ready for composition.
+checks:
+  - source scripts/env.sh && bun test gateway/src/push
+    gateway/src/api/handlers/push.test.ts gateway/src/system-orchestrator
+  - source scripts/env.sh && bun test gateway/src/access
+    gateway/src/admin/secrets-store.test.ts && bun run --filter
+    @sentient/gateway typecheck && git diff --check
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: Provider-independent delivery, registration lifecycle, and addon
+    assets are a cohesive adapter boundary; terminal scheduling ownership is
+    excluded to keep this at medium.
