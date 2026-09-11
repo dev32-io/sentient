@@ -3,6 +3,8 @@ import {
   goldenPushWireFixtures as fixture,
   pushDeliveryPayloadSchema,
   pushErrorSchema,
+  pushPreferenceGetQuerySchema,
+  pushPreferenceGetResponseSchema,
   pushPreferencePatchRequestSchema,
   pushRegistrationRequestSchema,
   pushRegistrationResponseSchema,
@@ -28,7 +30,26 @@ describe("push wire authority and privacy boundary", () => {
     ).toBe(false);
   });
 
-  it("confines revoke-only requests and never represents invalid authority as an acknowledgement", () => {
+  it("confines linked and revoke-only state to the exact binding generation", () => {
+    expect(pushUnlinkStateSchema.safeParse(fixture.linked).success).toBe(true);
+    expect(
+      pushUnlinkStateSchema.safeParse({
+        ...fixture.linked,
+        revocation: { ...fixture.linked.revocation, bindingId: "bind_other" },
+      }).success,
+    ).toBe(false);
+    expect(
+      pushUnlinkStateSchema.safeParse({
+        ...fixture.linked,
+        revocation: { ...fixture.linked.revocation, generation: 8 },
+      }).success,
+    ).toBe(false);
+    expect(
+      pushUnlinkStateSchema.safeParse({
+        ...fixture.linked,
+        binding: { ...fixture.linked.binding, state: "disabled" },
+      }).success,
+    ).toBe(false);
     expect(pushUnlinkStateSchema.safeParse(fixture.pendingUnlink).success).toBe(true);
     expect(pushRevokeRequestSchema.safeParse(fixture.pendingUnlink.request).success).toBe(true);
     expect(pushRevokeRequestSchema.safeParse({ ...fixture.pendingUnlink.request, readPreferences: true }).success).toBe(
@@ -72,7 +93,15 @@ describe("push wire authority and privacy boundary", () => {
     ).toBe(false);
   });
 
-  it("uses generation/revision CAS for per-device preferences", () => {
+  it("uses an authenticated installation read and generation/revision CAS for per-device preferences", () => {
+    expect(pushPreferenceGetQuerySchema.safeParse(fixture.preferenceGet.query).success).toBe(true);
+    expect(pushPreferenceGetResponseSchema.safeParse(fixture.preferenceGet.response).success).toBe(true);
+    expect(
+      pushPreferenceGetQuerySchema.safeParse({
+        installationId: fixture.preferenceGet.query.installationId,
+        token: true,
+      }).success,
+    ).toBe(false);
     expect(
       pushPreferencePatchRequestSchema.safeParse({
         bindingId: "bind_1",

@@ -85,6 +85,29 @@
       "start": "2026-08-05T09:00:00-04:00"
     },
     "enabledAtStart": { "enabled": true, "mode": "at-start" },
+    "linkedEnabledOutput": {
+      "reminderId": "rem_dentist_actor_1",
+      "enabled": true,
+      "mode": "at-start"
+    },
+    "allDayCreate": {
+      "title": "Family picnic",
+      "start": "2026-08-09",
+      "reminder": {
+        "enabled": true,
+        "mode": "all-day",
+        "localTime": "09:00",
+        "timeZone": "America/Toronto"
+      }
+    },
+    "allDayLinkedOutput": {
+      "reminderId": "rem_picnic_actor_1",
+      "enabled": true,
+      "mode": "all-day",
+      "localTime": "09:00",
+      "timeZone": "America/Toronto"
+    },
+    "updatePreservesByOmission": { "title": "Dentist appointment" },
     "disabled": { "enabled": false }
   }
 }

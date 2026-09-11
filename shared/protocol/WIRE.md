@@ -28,7 +28,7 @@ schemas are authoritative; runtime mounting lands separately):
 - `PATCH|DELETE /api/v1/schedules/:scheduleId`
 - `GET /api/v1/scheduled-session-cards`
 - `POST /api/v1/push/registrations`
-- `PATCH /api/v1/push/preferences`
+- `GET|PATCH /api/v1/push/preferences`
 - `POST /api/v1/push/revocations`
 
 Creates carry an idempotency key and mutations carry an expected revision.

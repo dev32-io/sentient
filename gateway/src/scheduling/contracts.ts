@@ -2,8 +2,9 @@ import type {
   Schedule,
   ScheduleCreateRequest,
   ScheduleErrorCode,
+  ScheduleListResponse,
   SchedulePatchRequest,
-  ScheduledSessionCard,
+  ScheduledSessionCardPage,
 } from "@sentient/protocol";
 import type { Result } from "@sentient/protocol";
 import type { PrivateScheduleResource } from "../access/private-schedule-resource.js";
@@ -37,12 +38,12 @@ export interface ScheduleCommands {
     resource: PrivateScheduleResource,
     cursor: string | undefined,
     limit: number,
-  ): Promise<SchedulingResult<ReadonlyArray<Schedule>>>;
+  ): Promise<SchedulingResult<ScheduleListResponse>>;
   cards(
     resource: PrivateScheduleResource,
     cursor: string | undefined,
     limit: number,
-  ): Promise<SchedulingResult<ReadonlyArray<ScheduledSessionCard>>>;
+  ): Promise<SchedulingResult<ScheduledSessionCardPage>>;
 }
 
 /**

@@ -27,19 +27,23 @@ const pushBindingShape = {
 };
 
 /** A pending replacement names the exact old binding that fences its activation. */
+const activePushBindingSchema = z
+  .object({ ...pushBindingShape, state: z.literal("active"), replaces: pushBindingReferenceSchema.optional() })
+  .strict();
+const disabledPushBindingSchema = z.object({ ...pushBindingShape, state: z.literal("disabled") }).strict();
+const pendingPushBindingSchema = z
+  .object({
+    ...pushBindingShape,
+    state: z.literal("pending-old-binding-disable"),
+    replaces: pushBindingReferenceSchema,
+  })
+  .strict();
 export const pushBindingSchema = z.discriminatedUnion("state", [
-  z
-    .object({ ...pushBindingShape, state: z.literal("active"), replaces: pushBindingReferenceSchema.optional() })
-    .strict(),
-  z.object({ ...pushBindingShape, state: z.literal("disabled") }).strict(),
-  z
-    .object({
-      ...pushBindingShape,
-      state: z.literal("pending-old-binding-disable"),
-      replaces: pushBindingReferenceSchema,
-    })
-    .strict(),
+  activePushBindingSchema,
+  disabledPushBindingSchema,
+  pendingPushBindingSchema,
 ]);
+const linkablePushBindingSchema = z.discriminatedUnion("state", [activePushBindingSchema, pendingPushBindingSchema]);
 
 /**
  * Narrow bearer authority returned at registration. The credential authorizes only
@@ -133,10 +137,27 @@ export const pushRevokeAcknowledgementSchema = z
  * "revoked": local logout has completed but delivery (including previews) may
  * continue until the exact request receives a server acknowledgement.
  */
+const linkedPushStateSchema = z
+  .object({
+    state: z.literal("linked"),
+    binding: linkablePushBindingSchema,
+    revocation: pushRevocationAuthoritySchema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.revocation.bindingId !== value.binding.bindingId ||
+      value.revocation.generation !== value.binding.generation
+    )
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["revocation"],
+        message: "linked state requires revoke-only authority for the exact binding generation",
+      });
+  });
+
 export const pushUnlinkStateSchema = z.union([
-  z
-    .object({ state: z.literal("linked"), binding: pushBindingSchema, revocation: pushRevocationAuthoritySchema })
-    .strict(),
+  linkedPushStateSchema,
   z
     .object({
       state: z.literal("pending-unlink"),
@@ -191,6 +212,8 @@ export type PushBindingReference = z.infer<typeof pushBindingReferenceSchema>;
 export type PushBinding = z.infer<typeof pushBindingSchema>;
 export type PushRegistrationRequest = z.infer<typeof pushRegistrationRequestSchema>;
 export type PushRegistrationResponse = z.infer<typeof pushRegistrationResponseSchema>;
+export type PushPreferenceGetQuery = z.infer<typeof pushPreferenceGetQuerySchema>;
+export type PushPreferenceGetResponse = z.infer<typeof pushPreferenceGetResponseSchema>;
 export type PushRevocationAuthority = z.infer<typeof pushRevocationAuthoritySchema>;
 export type PushRevokeRequest = z.infer<typeof pushRevokeRequestSchema>;
 export type PushUnlinkState = z.infer<typeof pushUnlinkStateSchema>;

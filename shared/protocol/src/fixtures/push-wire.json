@@ -29,6 +29,40 @@
     },
     "replayed": false
   },
+  "preferenceGet": {
+    "query": { "installationId": "ios-install-1" },
+    "response": {
+      "binding": {
+        "bindingId": "bind_1",
+        "installationId": "ios-install-1",
+        "platform": "ios",
+        "generation": 7,
+        "state": "active",
+        "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+        "createdAt": "2026-08-01T15:00:00.000Z",
+        "updatedAt": "2026-08-01T15:00:00.000Z"
+      }
+    }
+  },
+  "linked": {
+    "state": "linked",
+    "binding": {
+      "bindingId": "bind_1",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 7,
+      "state": "active",
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T15:00:00.000Z",
+      "updatedAt": "2026-08-01T15:00:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_1",
+      "generation": 7,
+      "credential": "test-revocation-authority",
+      "expiresAt": "2026-08-31T15:00:00.000Z"
+    }
+  },
   "hiddenPayload": {
     "bindingId": "bind_1",
     "generation": 7,

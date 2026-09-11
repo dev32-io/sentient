@@ -26,6 +26,8 @@ export interface PushRegistrationAuthority {
     request: PushRegistrationRequest,
     now: Date,
   ): Promise<PushResult<IssuedPushRegistration>>;
+  /** Authenticated read used to report this installation's actual binding and registration state. */
+  readPreferences(resource: PrivatePushResource, installationId: string): Promise<PushResult<PushBinding>>;
   updatePreferences(
     resource: PrivatePushResource,
     bindingId: string,
