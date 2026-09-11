@@ -403,6 +403,42 @@ e2e: >
   message content. Remove only disposable test resources.
 
 
+  ## E2E-002 — Model distinguishes one-time recurring and calendar requests
+
+
+  ### Exercise
+
+
+  Using a disposable local account with an established harmless topic, request
+  'let's chat about that in 30 minutes', a medicine reminder every morning, and
+  a daily news briefing with explicit times/timezone. Separately request a
+  calendar appointment, an appointment with a reminder, and a materially
+  ambiguous request. List, edit, pause/resume, and delete schedules through the
+  model; inspect settings/calendar. Use near-term disposable occurrences to
+  exercise recurring retention rather than waiting 30 minutes.
+
+
+  ### Oracle
+
+
+  The contextual chat request creates a one-time schedule with a meaningful
+  message and gateway-resolved delay. Morning reminder/news requests create
+  recurring schedules, not calendar events; a recurring schedule remains after
+  an occurrence for its next run. Appointment requests create calendar events,
+  explicit event-plus-reminder creates one linked reminder, and ambiguous intent
+  is clarified rather than creating both. Lifecycle changes match settings and
+  paused/deleted schedules do not fire pending occurrences.
+
+
+  ### Proof
+
+
+  Retain resource types/counts, schedule kind/timing, and lifecycle states
+  without chat/message content. Verify no extra calendar event or duplicate
+  reminder and that one-time versus recurring behavior matches the tool
+  arguments. Clean up disposable resources.
+
+
   ## Exclusions
 
 
