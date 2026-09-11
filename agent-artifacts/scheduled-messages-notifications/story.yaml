@@ -484,11 +484,11 @@ e2e: >
   ### Exercise
 
 
-  Use a disposable local account across web and available Android/iOS clients
-  with push disabled. Let a schedule produce a result, open the bell list, click
-  its truncated message card, and reload/reconnect. Exercise the session deep
-  link from cold launch and through login without requiring a received push.
-  Open a stale link after supported cleanup removes its disposable session.
+  Use a disposable local account across web and available iOS clients with push
+  disabled. Let a schedule produce a result, open the bell list, click its
+  truncated message card, and reload/reconnect. Exercise the session deep link
+  from cold launch and through login without requiring a received push. Open a
+  stale link after supported cleanup removes its disposable session.
 
 
   ### Oracle
