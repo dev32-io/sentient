@@ -24,6 +24,16 @@ scope: >-
   regression coverage rather than introducing replacements.
 
 
+  The preserved finalizer also writes a separate scheduled_cards table with null
+  previews. Do not extend that into a notification history or response mirror:
+  remove its redundant finalization writes while retaining authoritative
+  occurrence/deduplication/outbox bookkeeping. Include the scheduleId,
+  occurrenceId and intended/actual timestamps needed by the existing card DTO in
+  minimal session provenance so the later gateway owner can implement the real
+  session-backed query after one-time deletion. Preserve stored sessions and use
+  additive migrations; public card reads remain outside this task.
+
+
   A narrow callback-forwarding change in
   `gateway/src/bootstrap/phase-services.ts` is included; public service
   activation, API card projection, router/tool metadata, calendar mutation
