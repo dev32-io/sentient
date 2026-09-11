@@ -44,6 +44,22 @@ class PushLifecycleTest {
         assertNull(store.value)
     }
 
+    @Test fun staleAcknowledgementCannotClearPendingGrant() = runTest {
+        val store = MemoryStore()
+        val issued = json.decodeFromJsonElement(PushRegistrationResponse.serializer(), root.getValue("issued"))
+        val request = json.decodeFromJsonElement(PushRegistrationRequest.serializer(), root.getValue("registration"))
+        val stale = json.decodeFromJsonElement(PushRevokeAcknowledgement.serializer(), root.getValue("revokeAcknowledgement"))
+            .copy(generation = issued.binding.generation + 1)
+        val coordinator = PushUnlinkCoordinator(
+            FakePushClient(AuthResult.Success(issued), AuthResult.Success(stale)),
+            store,
+        )
+        coordinator.register("account-a", request)
+        assertIs<AuthResult.Failure>(coordinator.unlink("account-a"))
+        assertNotNull(store.value)
+        assertIs<PushLifecycleState.UnlinkFailed>(coordinator.state.value)
+    }
+
     @Test fun accountSwitchIsFencedWhileOldUnlinkFails() = runTest {
         val store = MemoryStore()
         val issued = json.decodeFromJsonElement(PushRegistrationResponse.serializer(), root.getValue("issued"))

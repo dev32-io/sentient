@@ -120,8 +120,18 @@ class PushUnlinkCoordinator(
         return when (val result = client.revoke(request)) {
             is AuthResult.Failure -> { _state.value = PushLifecycleState.UnlinkFailed(retryable = result.error.isRetryableUnlink()); result }
             is AuthResult.Success -> {
-                // Exact-generation match is validated by PushHttpClient. A stale acknowledgement can never clear a successor.
-                store.clear(); _state.value = PushLifecycleState.Unlinked; AuthResult.Success(result.value)
+                val acknowledgement = result.value
+                // Recheck at the lifecycle boundary: tests and future adapters may supply a
+                // client implementation other than PushHttpClient. A stale acknowledgement
+                // must never clear the exact frozen grant that is still pending.
+                if (acknowledgement.bindingId != request.bindingId || acknowledgement.generation != request.generation) {
+                    _state.value = PushLifecycleState.UnlinkFailed(retryable = false)
+                    AuthResult.Failure(AuthError.Unknown("stale-revocation-acknowledgement"))
+                } else {
+                    store.clear()
+                    _state.value = PushLifecycleState.Unlinked
+                    AuthResult.Success(acknowledgement)
+                }
             }
         }
     }
