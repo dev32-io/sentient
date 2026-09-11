@@ -67,11 +67,12 @@ delivery: >-
   without phone delivery. Leave the local stack ready for the calendar source
   adapter and final outside-in verification; no production actions.
 checks:
-  - source scripts/env.sh && bun test gateway/src/api gateway/src/store
-    gateway/src/scheduling gateway/src/scheduled-chat gateway/src/push
-  - source scripts/env.sh && bun test gateway/src/bootstrap
+  - bash -lc "source scripts/env.sh && bun test gateway/src/api
+    gateway/src/store gateway/src/scheduling gateway/src/scheduled-chat
+    gateway/src/push"
+  - bash -lc "source scripts/env.sh && bun test gateway/src/bootstrap
     gateway/src/tools/role-defaults.test.ts && bun run typecheck && git diff
-    --check
+    --check"
 assignment:
   agent: implementer
   tier: medium
