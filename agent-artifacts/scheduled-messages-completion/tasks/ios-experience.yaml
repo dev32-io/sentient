@@ -1,0 +1,102 @@
+schemaVersion: 1
+id: ios-experience
+title: Complete preserved iOS scheduling reminders and notifications
+dependsOn: []
+description: Complete the iOS feature using preserved source commit
+  ecfdc7201d5dada176d52ef7412b826c5309c40e, applying it into the assigned
+  workspace if absent rather than rebuilding the screens and APNs adapters. The
+  later b10fefb476b3d009f2462d2d6a8c4adcea9b51e0 commit is empty and need not be
+  replayed. The implementation already adds schedule settings, inbox and
+  push/navigation code, but its mandatory XCTest run was blocked by an incorrect
+  simulator selector and its personal calendar reminder controls are not present
+  in the preserved calendar UI. Complete the full iOS contract, not just a build
+  or destination workaround. Shared KMP APIs and wire contracts already exist;
+  Android/FCM are excluded.
+scope: >-
+  Own `ios/App/`, `ios/Tests/`, authoritative `ios/project.yml`, and narrowly
+  necessary iOS checker/test updates under
+  `scripts/design/ios-design-boundary*`. Consume existing shared experiences,
+  pending-revocation coordination and secure storage rather than building
+  another Swift data layer. A narrowly necessary shared/mobile-sdk or
+  shared/mobile-data bridge/data correction is allowed if required by the iOS
+  consumer; preserve validated fixtures and run the shared tests. Do not change
+  gateway/backend sources, web UI, public protocol semantics, canonical design
+  tokens, Android app code, or workflow artifacts.
+
+
+  Read DESIGN.md and compose existing
+  DesignPageChrome/DesignCard/DesignSettingsRow,
+  DesignField/DesignMultilineEditor/DesignSelect/DesignSegmentedPicker,
+  DesignToggleRow/DesignToggleSwitch and DesignActionButton/DesignIconButton
+  with DesignV2/Tokens/Typo. New calendar controls belong in checked leaf
+  components; excluded legacy calendar views only embed them. No inline visual
+  literals, local palettes, copied controls or broadened allowlists. Preserve
+  old contribution worktrees and replay only missing source commits without
+  discarding unrelated changes.
+delivery: >-
+  - Complete once absolute/delay and recurring timezone schedule forms, next
+  run, pause/resume/delete and typed pending/error/reload behavior over shared
+  data. Keep bounded newest-first inbox cards visually consistent with past
+  chats; no unread state, dashboard or full-response feed. Selection resumes the
+  existing session.
+
+  - Implement the missing default-off actor-personal calendar reminder controls
+  and data binding: timed events default to start with optional lead; all-day
+  reminders require chosen time; omission on update preserves intent and
+  explicit disable removes it. Household reminders remain personal. Use
+  established shared DTOs/experiences and keep calendar UI failures truthful.
+
+  - Complete permission/APNs registration and token callbacks, accurate
+  denied/unconfigured/error state, hidden-by-default per-device privacy,
+  disable/unlink and system-settings actions. Keep unconfigured simulator builds
+  usable without falsely enabling push. APNs keys, profiles and generated
+  project/private configuration are never committed.
+
+  - Validate supported session destinations, retain cold-launch/login navigation
+  and route through existing UserSessionHost membership-checked resume. Reject
+  arbitrary payload gateway URLs and clear stale account targets. Keep
+  authenticated ChatComponent lifetime above navigation.
+
+  - Wire immediate local logout and durable pending-unlink warning through the
+  shared coordinator; only narrow exact-binding revocation authority survives.
+  Retry cleanup on reconnect and prohibit activating a replacement delivery
+  binding until old-binding disable is acknowledged. Native lifecycle tests must
+  exercise the real coordinator/navigation boundaries, not merely an isolated
+  queue that cannot prove app wiring.
+
+  - Add/complete XCTest coverage for reminder omission/disable and all-day
+  inputs, schedule state, destination validation/login routing, permission/token
+  callbacks, logout teardown/warning, stale acknowledgement and account
+  replacement. Add only meaningful consumer regressions, not label/constant
+  tests. Preserve shared wire parity and cancellation behavior.
+
+  - Run actual XCTest on `platform=iOS Simulator,arch=arm64,name=iPhone
+  16,OS=18.3.1`. The installed runtime is displayed as iOS 18.3 by simctl but
+  reports version 18.3.1 to Xcode; do not reuse OS=18.3, spoof xcodebuild,
+  swallow failures, replace tests with a build, or claim destination resolution
+  is a pass. If the required runtime becomes unavailable, report the environment
+  blocker instead of modifying pinned checks or skipping tests.
+
+  - Review all changed visual code for component/token compliance, including
+  calendar files outside automated checker coverage. Preserve Dynamic Type,
+  VoiceOver, reduced motion and native layout behavior. Complete mandatory
+  deterministic tests without actual APNs delivery; only supported matrix
+  exclusions may remain explicitly unverified. Commit source changes, not
+  generated .xcodeproj, credentials or simulator artifacts.
+checks:
+  - bash -lc "source scripts/env.sh && bun scripts/design/ios-design-boundary.ts
+    && bun test scripts/design/ios-design-boundary.test.ts"
+  - bash -lc "source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
+    -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+    'platform=iOS Simulator,arch=arm64,name=iPhone 16,OS=18.3.1'
+    CODE_SIGNING_ALLOWED=NO"
+  - bash -lc "source scripts/env.sh && ./gradlew
+    :shared:mobile-sdk:testDebugUnitTest :shared:mobile-data:testDebugUnitTest
+    && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: One iOS owner completes the preserved screens, missing calendar
+    controls and OS lifecycle integration with mandatory simulator proof.
+    Shared/backend contracts are already established, and independent gateway
+    work stays separate.
