@@ -387,8 +387,7 @@ e2e: >
   On the real local stack, create a disposable one-time schedule with a short
   relative delay through Scheduled messages settings. Let it run with no client
   attached, then open its inbox card and send a follow-up. Repeat settings
-  creation across web and available Android/iOS clients; do not contact
-  production.
+  creation across web and available iOS clients; do not contact production.
 
 
   ### Oracle
