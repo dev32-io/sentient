@@ -48,6 +48,9 @@ interface RevokeRow {
   acknowledged_at: string;
   fingerprint: string;
 }
+interface RevocationAuthorityRow {
+  credential_expires_at: string;
+}
 
 export interface PushReceiptStore {
   read(deliveryId: string, bindingId: string, generation: number): Promise<PushDeliveryReceipt | null>;
@@ -93,6 +96,11 @@ CREATE TABLE IF NOT EXISTS push_registration_idempotency (
 CREATE TABLE IF NOT EXISTS push_revocation_idempotency (
  idempotency_key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, binding_id TEXT NOT NULL,
  generation INTEGER NOT NULL, status TEXT NOT NULL, acknowledged_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_revocation_authorities (
+ binding_id TEXT NOT NULL, generation INTEGER NOT NULL, credential_verifier TEXT NOT NULL,
+ credential_expires_at TEXT NOT NULL,
+ PRIMARY KEY(binding_id, generation, credential_verifier)
 );
 CREATE TABLE IF NOT EXISTS push_delivery_receipts (
  delivery_id TEXT NOT NULL, binding_id TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -216,9 +224,15 @@ export function openPushStore(databasePath: string, options: PushStoreOptions): 
                 if (!row) return fail("internal");
               }
             }
-            db.query(
-              "UPDATE push_bindings SET credential_verifier = ?, credential_expires_at = ? WHERE binding_id = ? AND generation = ?",
-            ).run(digest(credential), expiresAt, row.binding_id, row.generation);
+            // Registration retries may race and responses may arrive out of order. Keep
+            // every verifier issued for this exact binding valid instead of rotating the
+            // previous revoke-only authority out from under an earlier response.
+            db.query("INSERT OR IGNORE INTO push_revocation_authorities VALUES (?, ?, ?, ?)").run(
+              row.binding_id,
+              row.generation,
+              digest(credential),
+              expiresAt,
+            );
             return {
               ok: true,
               value: {
@@ -357,14 +371,26 @@ export function openPushStore(databasePath: string, options: PushStoreOptions): 
           }
           const row = binding(request.bindingId, request.generation);
           if (!row) return fail("invalid_revocation_authority");
-          if (!credentialMatches(request.revocationCredential, row.credential_verifier))
-            return fail("invalid_revocation_authority");
-          if (now.getTime() > Date.parse(row.credential_expires_at)) return fail("expired_revocation_authority");
+          const primaryAuthorityMatches = credentialMatches(request.revocationCredential, row.credential_verifier);
+          const replayAuthority = primaryAuthorityMatches
+            ? null
+            : (db
+                .query(
+                  "SELECT credential_expires_at FROM push_revocation_authorities WHERE binding_id = ? AND generation = ? AND credential_verifier = ?",
+                )
+                .get(
+                  row.binding_id,
+                  row.generation,
+                  digest(request.revocationCredential),
+                ) as RevocationAuthorityRow | null);
+          if (!replayAuthority && !primaryAuthorityMatches) return fail("invalid_revocation_authority");
+          const credentialExpiresAt = replayAuthority?.credential_expires_at ?? row.credential_expires_at;
+          if (now.getTime() > Date.parse(credentialExpiresAt)) return fail("expired_revocation_authority");
           const status = row.state === "disabled" ? ("already-revoked" as const) : ("revoked" as const);
           const acknowledgedAt = now.toISOString();
-          if (row.state === "active")
+          if (row.state !== "disabled")
             db.query(
-              "UPDATE push_bindings SET state = 'disabled', enabled = 0, revision = revision + 1, updated_at = ? WHERE binding_id = ? AND generation = ?",
+              "UPDATE push_bindings SET state = 'disabled', enabled = 0, revision = revision + 1, updated_at = ? WHERE binding_id = ? AND generation = ? AND state != 'disabled'",
             ).run(acknowledgedAt, row.binding_id, row.generation);
           db.query("INSERT INTO push_revocation_idempotency VALUES (?, ?, ?, ?, ?, ?)").run(
             request.idempotencyKey,

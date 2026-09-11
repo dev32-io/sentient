@@ -49,10 +49,15 @@ class PushUnlinkCoordinator(
         require(ownerFence.isNotBlank()); request.validate()
         if (hasUnreadableState()) return@withLock AuthResult.Failure(AuthError.Unknown("push-state-invalid"))
         var current = readStored()
+        var disabledBinding: PushBindingReference? = null
         if (current?.pendingUnlink != null) {
+            val pendingRequest = current.pendingUnlink
             when (val retried = revokeStored(current)) {
                 is AuthResult.Failure -> return@withLock retried
-                is AuthResult.Success -> current = null
+                is AuthResult.Success -> {
+                    disabledBinding = PushBindingReference(pendingRequest.bindingId, pendingRequest.generation)
+                    current = null
+                }
             }
         }
         val previous = current?.binding
@@ -62,10 +67,16 @@ class PushUnlinkCoordinator(
             persist(pending)
             when (val revoked = revokeStored(pending)) {
                 is AuthResult.Failure -> return@withLock revoked
-                is AuthResult.Success -> current = null
+                is AuthResult.Success -> {
+                    disabledBinding = PushBindingReference(previous.bindingId, previous.generation)
+                }
             }
         }
-        when (val result = client.register(request)) {
+        // Once the exact predecessor has been acknowledged disabled it is no
+        // longer a valid gateway replacement fence. The registration has not
+        // yet been submitted, so remove only that now-stale reference.
+        val registrationRequest = request.copy(replaces = request.replaces.takeUnless { it == disabledBinding })
+        when (val result = client.register(registrationRequest)) {
             is AuthResult.Failure -> result
             is AuthResult.Success -> {
                 val issued = result.value
@@ -73,7 +84,7 @@ class PushUnlinkCoordinator(
                     ownerFence = ownerFence,
                     binding = issued.binding,
                     revocation = issued.revocation,
-                    pendingRegistration = request.takeIf { issued.binding.state == PushBindingState.PENDING_OLD_BINDING_DISABLE },
+                    pendingRegistration = registrationRequest.takeIf { issued.binding.state == PushBindingState.PENDING_OLD_BINDING_DISABLE },
                 )
                 persist(stored)
                 AuthResult.Success(issued.binding)

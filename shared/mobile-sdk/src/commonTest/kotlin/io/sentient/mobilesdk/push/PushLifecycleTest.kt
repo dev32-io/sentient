@@ -60,6 +60,36 @@ class PushLifecycleTest {
         assertIs<PushLifecycleState.UnlinkFailed>(coordinator.state.value)
     }
 
+    @Test fun accountSwitchRemovesReplacementFenceAfterOldBindingIsRevoked() = runTest {
+        val store = MemoryStore()
+        val firstIssued = json.decodeFromJsonElement(PushRegistrationResponse.serializer(), root.getValue("issued"))
+        val firstRequest = json.decodeFromJsonElement(PushRegistrationRequest.serializer(), root.getValue("registration"))
+        val acknowledgement = json.decodeFromJsonElement(PushRevokeAcknowledgement.serializer(), root.getValue("revokeAcknowledgement"))
+        val client = FakePushClient(AuthResult.Success(firstIssued), AuthResult.Success(acknowledgement))
+        val coordinator = PushUnlinkCoordinator(client, store)
+        assertIs<AuthResult.Success<PushBinding>>(coordinator.register("account-a", firstRequest))
+
+        val nextBinding = firstIssued.binding.copy(bindingId = "bind_2", generation = 8)
+        client.registerResult = AuthResult.Success(
+            PushRegistrationResponse(
+                binding = nextBinding,
+                revocation = firstIssued.revocation.copy(bindingId = "bind_2", generation = 8),
+                replayed = false,
+            ),
+        )
+        val switched = coordinator.register(
+            "account-b",
+            firstRequest.copy(
+                idempotencyKey = "account-b",
+                replaces = PushBindingReference(firstIssued.binding.bindingId, firstIssued.binding.generation),
+            ),
+        )
+
+        assertIs<AuthResult.Success<PushBinding>>(switched)
+        assertNull(client.registerRequests.last().replaces)
+        assertEquals(nextBinding, (coordinator.state.value as PushLifecycleState.Linked).binding)
+    }
+
     @Test fun accountSwitchIsFencedWhileOldUnlinkFails() = runTest {
         val store = MemoryStore()
         val issued = json.decodeFromJsonElement(PushRegistrationResponse.serializer(), root.getValue("issued"))
@@ -81,10 +111,15 @@ private class MemoryStore : PushLifecycleStore {
     override fun clear() { value = null }
 }
 private class FakePushClient(
-    private val registerResult: AuthResult<PushRegistrationResponse> = AuthResult.Failure(AuthError.Network("unused")),
-    private val revokeResult: AuthResult<PushRevokeAcknowledgement> = AuthResult.Failure(AuthError.Network("unused")),
+    var registerResult: AuthResult<PushRegistrationResponse> = AuthResult.Failure(AuthError.Network("unused")),
+    var revokeResult: AuthResult<PushRevokeAcknowledgement> = AuthResult.Failure(AuthError.Network("unused")),
 ) : PushHttpClient(HttpClient(MockEngine { respondOk() }), "wss://example.test/api/v1/ws", { error("login token must not be read") }) {
     var registerCalls = 0
-    override suspend fun register(request: PushRegistrationRequest): AuthResult<PushRegistrationResponse> { registerCalls++; return registerResult }
+    val registerRequests = mutableListOf<PushRegistrationRequest>()
+    override suspend fun register(request: PushRegistrationRequest): AuthResult<PushRegistrationResponse> {
+        registerCalls++
+        registerRequests += request
+        return registerResult
+    }
     override suspend fun revoke(request: PushRevokeRequest): AuthResult<PushRevokeAcknowledgement> = revokeResult
 }

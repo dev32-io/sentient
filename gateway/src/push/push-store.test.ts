@@ -82,6 +82,91 @@ describe("push binding generation fence and revoke-only authority", () => {
     db.close();
   });
 
+  it("revokes a pending replacement without allowing a later replay to activate it", async () => {
+    const db = await store();
+    const first = await db.issue(
+      alice,
+      { idempotencyKey: "a", installationId: "phone", platform: "ios", apnsDeviceToken: token("0") },
+      new Date("2026-01-01T00:00:00Z"),
+    );
+    if (!first.ok) throw new Error("first issue failed");
+    const replacementRequest = {
+      idempotencyKey: "b",
+      installationId: "phone",
+      platform: "ios" as const,
+      apnsDeviceToken: token("1"),
+      replaces: { bindingId: first.value.binding.bindingId, generation: first.value.binding.generation },
+    };
+    const pending = await db.issue(bob, replacementRequest, new Date("2026-01-01T00:00:01Z"));
+    if (!pending.ok) throw new Error("replacement issue failed");
+
+    expect(
+      await db.revoke(
+        {
+          idempotencyKey: "unlink-pending",
+          bindingId: pending.value.binding.bindingId,
+          generation: pending.value.binding.generation,
+          revocationCredential: pending.value.revocation.credential,
+        },
+        new Date("2026-01-01T00:00:02Z"),
+      ),
+    ).toMatchObject({ ok: true, value: { status: "revoked" } });
+    await db.revoke(
+      {
+        idempotencyKey: "unlink-old",
+        bindingId: first.value.binding.bindingId,
+        generation: first.value.binding.generation,
+        revocationCredential: first.value.revocation.credential,
+      },
+      new Date("2026-01-01T00:00:03Z"),
+    );
+    const replay = await db.issue(bob, replacementRequest, new Date("2026-01-01T00:00:04Z"));
+    expect(replay).toMatchObject({
+      ok: true,
+      value: { binding: { state: "disabled" }, replayed: true },
+    });
+    expect(await db.activeForUser(bob.ownerUserId)).toMatchObject({ ok: true, value: [] });
+    db.close();
+  });
+
+  it("keeps an earlier replay response's revoke authority valid", async () => {
+    const db = await store();
+    const request = {
+      idempotencyKey: "a",
+      installationId: "phone",
+      platform: "ios" as const,
+      apnsDeviceToken: token("0"),
+    };
+    const first = await db.issue(alice, request, new Date("2026-01-01T00:00:00Z"));
+    const replay = await db.issue(alice, request, new Date("2026-01-01T00:00:01Z"));
+    if (!first.ok || !replay.ok) throw new Error("issue failed");
+    expect(replay.value.revocation.credential).not.toBe(first.value.revocation.credential);
+
+    expect(
+      await db.revoke(
+        {
+          idempotencyKey: "unlink-first-response",
+          bindingId: first.value.binding.bindingId,
+          generation: first.value.binding.generation,
+          revocationCredential: first.value.revocation.credential,
+        },
+        new Date("2026-01-01T00:00:02Z"),
+      ),
+    ).toMatchObject({ ok: true, value: { status: "revoked" } });
+    expect(
+      await db.revoke(
+        {
+          idempotencyKey: "unlink-replay-response",
+          bindingId: replay.value.binding.bindingId,
+          generation: replay.value.binding.generation,
+          revocationCredential: replay.value.revocation.credential,
+        },
+        new Date("2026-01-01T00:00:03Z"),
+      ),
+    ).toMatchObject({ ok: true, value: { status: "already-revoked" } });
+    db.close();
+  });
+
   it("rejects invalid/expired exact-binding authority and idempotently acknowledges valid revocation", async () => {
     const db = await store();
     const issued = await db.issue(
