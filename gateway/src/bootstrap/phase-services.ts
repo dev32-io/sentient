@@ -1830,6 +1830,18 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       setTitle: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
+      setScheduledProvenance: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      setScheduledTurn: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      recordScheduledTerminal: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      findScheduledByOccurrence: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
       close: () => {},
     };
 

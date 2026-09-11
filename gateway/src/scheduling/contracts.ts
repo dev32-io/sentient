@@ -8,6 +8,7 @@ import type {
 } from "@sentient/protocol";
 import type { Result } from "@sentient/protocol";
 import type { PrivateScheduleResource } from "../access/private-schedule-resource.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import type { UserId } from "../user-auth/user-id.js";
 
 export type SchedulingFailure = Readonly<{
@@ -87,6 +88,7 @@ export interface ContentOutboxEntry {
   readonly outboxId: string;
   readonly content: ScheduledContentReference;
   readonly availableAt: string;
+  readonly attempt?: number;
 }
 
 export interface FinalizationResult {
@@ -140,6 +142,7 @@ export interface AuthorizedScheduledContentResolver {
  */
 export interface AuthorizedScheduledExecution {
   readonly resource: PrivateScheduleResource;
+  readonly principal: UserPrincipal;
   readonly claim: DueClaim;
 }
 

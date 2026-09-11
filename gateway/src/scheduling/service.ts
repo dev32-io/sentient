@@ -12,10 +12,20 @@ import {
 } from "@sentient/protocol";
 import type { PrivateScheduleResource } from "../access/private-schedule-resource.js";
 import { type UserId, isValidUserId } from "../user-auth/user-id.js";
-import type { DueClaim, DueClaimSource, ScheduleCommands, SchedulingFailure, SchedulingResult } from "./contracts.js";
+import type {
+  AtomicScheduleFinalizer,
+  ContentOutboxEntry,
+  DueClaim,
+  DueClaimSource,
+  FinalizationResult,
+  ScheduleCommands,
+  ScheduledContentOutbox,
+  SchedulingFailure,
+  SchedulingResult,
+} from "./contracts.js";
 import { latestScheduleOccurrence, nextScheduleOccurrence } from "./recurrence.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_GRACE_MS = 15 * 60_000;
 const DEFAULT_MAX_SCHEDULES = 1_000;
 const DEFAULT_PAGE_SIZE = 50;
@@ -33,6 +43,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 CREATE TABLE IF NOT EXISTS occurrences (
   occurrence_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, generation INTEGER NOT NULL,
   intended_at TEXT NOT NULL, claim_token TEXT, claimed_until TEXT, session_id TEXT,
+  outcome TEXT, completed_at TEXT, entry_id TEXT, message TEXT, source_json TEXT, one_time INTEGER,
   UNIQUE(schedule_id, generation, intended_at)
 );
 CREATE INDEX IF NOT EXISTS schedules_due ON schedules(deleted, enabled, next_run_at);
@@ -40,6 +51,12 @@ CREATE TABLE IF NOT EXISTS scheduled_cards (
   occurrence_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, schedule_id TEXT NOT NULL,
   intended_at TEXT NOT NULL, completed_at TEXT NOT NULL, status TEXT NOT NULL, preview TEXT
 );
+CREATE TABLE IF NOT EXISTS content_outbox (
+  outbox_id TEXT PRIMARY KEY, occurrence_id TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL,
+  session_id TEXT NOT NULL, entry_id TEXT NOT NULL, available_at TEXT NOT NULL,
+  claim_token TEXT, claimed_until TEXT, attempt INTEGER NOT NULL DEFAULT 0, completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS content_outbox_due ON content_outbox(completed_at,available_at,claimed_until);
 `;
 
 type Row = {
@@ -64,8 +81,18 @@ type OccurrenceRow = {
   claim_token: string | null;
   claimed_until: string | null;
   session_id: string | null;
+  outcome: string | null;
 };
 type Candidate = { db: Database; row: Row; owner: UserId; intendedMs: number };
+type RecoverableRow = {
+  occurrence_id: string;
+  schedule_id: string;
+  intended_at: string;
+  message: string;
+  source_json: string;
+  one_time: number;
+};
+type Recoverable = { db: Database; owner: UserId; row: RecoverableRow };
 
 export interface ScheduleServiceOptions {
   /** Optional capability-root parent used by the boot scanner. */
@@ -82,7 +109,12 @@ export interface ScheduleClaimTransactions {
 }
 
 export type ScheduleCreateOutcome = Readonly<{ schedule: Schedule; replayed: boolean }>;
-export interface ScheduleService extends ScheduleCommands, DueClaimSource, ScheduleClaimTransactions {
+export interface ScheduleService
+  extends ScheduleCommands,
+    DueClaimSource,
+    ScheduleClaimTransactions,
+    AtomicScheduleFinalizer,
+    ScheduledContentOutbox {
   createDetailed(
     resource: PrivateScheduleResource,
     request: ScheduleCreateRequest,
@@ -160,6 +192,18 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
       throw new Error("newer schedule schema");
     }
     db.exec(DDL);
+    if (version < 2) {
+      const columns = db
+        .query<{ name: string }, []>("PRAGMA table_info(occurrences)")
+        .all()
+        .map((r) => r.name);
+      if (!columns.includes("outcome")) db.exec("ALTER TABLE occurrences ADD COLUMN outcome TEXT");
+      if (!columns.includes("completed_at")) db.exec("ALTER TABLE occurrences ADD COLUMN completed_at TEXT");
+      if (!columns.includes("entry_id")) db.exec("ALTER TABLE occurrences ADD COLUMN entry_id TEXT");
+      if (!columns.includes("message")) db.exec("ALTER TABLE occurrences ADD COLUMN message TEXT");
+      if (!columns.includes("source_json")) db.exec("ALTER TABLE occurrences ADD COLUMN source_json TEXT");
+      if (!columns.includes("one_time")) db.exec("ALTER TABLE occurrences ADD COLUMN one_time INTEGER");
+    }
     if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     return db;
   };
@@ -386,9 +430,20 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     const opened: Database[] = [];
     try {
       const found: Candidate[] = [];
+      const recoverable: Recoverable[] = [];
       for (const [owner, root] of roots) {
         const db = openRoot(root);
         opened.push(db);
+        for (const row of db
+          .query<RecoverableRow, [string]>(`
+            SELECT o.occurrence_id,o.schedule_id,o.intended_at,o.message,o.source_json,o.one_time
+            FROM occurrences o JOIN schedules s ON s.schedule_id=o.schedule_id
+            WHERE o.session_id IS NOT NULL AND o.outcome IS NULL
+              AND (o.claimed_until IS NULL OR o.claimed_until<=?)
+          `)
+          .all(iso(now))) {
+          if (row.message && row.source_json) recoverable.push({ db, owner, row });
+        }
         const rows = db
           .query<Row, []>("SELECT * FROM schedules WHERE deleted=0 AND enabled=1 AND next_run_at IS NOT NULL")
           .all();
@@ -423,7 +478,31 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
         }
       }
       found.sort((a, b) => a.intendedMs - b.intendedMs || a.row.schedule_id.localeCompare(b.row.schedule_id));
+      recoverable.sort((a, b) => a.row.intended_at.localeCompare(b.row.intended_at));
       const claims: DueClaim[] = [];
+      for (const pending of recoverable) {
+        if (claims.length >= limit) break;
+        const token = makeId();
+        const until = iso(new Date(now.getTime() + leaseMs));
+        const changed = pending.db
+          .query(`UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
+            AND (claimed_until IS NULL OR claimed_until<=?)`)
+          .run(token, until, pending.row.occurrence_id, iso(now));
+        const source = parseJson(pending.row.source_json) as DueClaim["source"];
+        if (changed.changes === 1 && source) {
+          claims.push({
+            claimToken: token,
+            scheduleId: pending.row.schedule_id,
+            occurrenceId: pending.row.occurrence_id,
+            ownerUserId: pending.owner,
+            source,
+            intendedAt: pending.row.intended_at,
+            claimedUntil: until,
+            message: pending.row.message,
+            oneTime: pending.row.one_time === 1,
+          });
+        }
+      }
       for (const candidate of found) {
         if (claims.length >= limit) break;
         const claim = candidate.db
@@ -439,24 +518,32 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             const oid = occurrenceId(current.schedule_id, current.generation, intendedAt);
             candidate.db
               .query(
-                "INSERT OR IGNORE INTO occurrences(occurrence_id,schedule_id,generation,intended_at) VALUES (?,?,?,?)",
+                "INSERT OR IGNORE INTO occurrences(occurrence_id,schedule_id,generation,intended_at,message,source_json,one_time) VALUES (?,?,?,?,?,?,?)",
               )
-              .run(oid, current.schedule_id, current.generation, intendedAt);
+              .run(
+                oid,
+                current.schedule_id,
+                current.generation,
+                intendedAt,
+                current.message,
+                current.source_json,
+                schedule.timing.kind === "once" ? 1 : 0,
+              );
             const occurrence = candidate.db
               .query<OccurrenceRow, [string]>(
-                "SELECT occurrence_id,claim_token,claimed_until,session_id FROM occurrences WHERE occurrence_id=?",
+                "SELECT occurrence_id,claim_token,claimed_until,session_id,outcome FROM occurrences WHERE occurrence_id=?",
               )
               .get(oid);
             if (
               !occurrence ||
-              occurrence.session_id ||
+              occurrence.outcome ||
               (occurrence.claimed_until && Date.parse(occurrence.claimed_until) > now.getTime())
             )
               return undefined;
             const token = makeId();
             const until = iso(new Date(now.getTime() + leaseMs));
             const changed = candidate.db
-              .query(`UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND session_id IS NULL
+              .query(`UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
             AND (claimed_until IS NULL OR claimed_until<=?)`)
               .run(token, until, oid, iso(now));
             if (changed.changes !== 1) return undefined;
@@ -518,9 +605,6 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             .get(claim.occurrenceId);
           if (
             !current ||
-            current.generation !== current.current_generation ||
-            current.enabled !== 1 ||
-            current.deleted === 1 ||
             current.claim_token !== claim.claimToken ||
             current.schedule_id !== claim.scheduleId ||
             current.intended_at !== claim.intendedAt ||
@@ -531,6 +615,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             return current.session_id === sessionId
               ? { ok: true, value: { occurrenceId: claim.occurrenceId, sessionId, replayed: true } }
               : fail("claim_lost");
+          if (current.generation !== current.current_generation || current.enabled !== 1 || current.deleted === 1)
+            return fail("claim_lost");
           const changed = database
             .query("UPDATE occurrences SET session_id=? WHERE occurrence_id=? AND claim_token=? AND session_id IS NULL")
             .run(sessionId, claim.occurrenceId, claim.claimToken);
@@ -548,6 +634,206 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     }
   };
 
+  const finalizeClaim: AtomicScheduleFinalizer["finalizeClaim"] = async (claim, receipt, outbox) => {
+    const root =
+      roots.get(claim.ownerUserId) ??
+      (options.userDataRoot ? resolve(options.userDataRoot, claim.ownerUserId) : undefined);
+    if (!root) return fail("claim_lost");
+    let db: Database | undefined;
+    try {
+      db = openRoot(root);
+      const database = db;
+      return database
+        .transaction((): SchedulingResult<FinalizationResult> => {
+          const occurrence = database
+            .query<
+              {
+                outcome: string | null;
+                session_id: string | null;
+                claim_token: string | null;
+                generation: number;
+                schedule_id: string;
+                intended_at: string;
+              },
+              [string]
+            >(
+              "SELECT outcome,session_id,claim_token,generation,schedule_id,intended_at FROM occurrences WHERE occurrence_id=?",
+            )
+            .get(claim.occurrenceId);
+          if (!occurrence || occurrence.schedule_id !== claim.scheduleId || occurrence.intended_at !== claim.intendedAt)
+            return fail("claim_lost");
+          if (occurrence.outcome) {
+            const schedule = database
+              .query<Row, [string]>("SELECT * FROM schedules WHERE schedule_id=?")
+              .get(claim.scheduleId);
+            return {
+              ok: true,
+              value: {
+                occurrenceId: claim.occurrenceId,
+                scheduleConsumed: schedule?.deleted === 1,
+                nextRunAt: schedule?.next_run_at ?? null,
+                replayed: true,
+              },
+            };
+          }
+          if (occurrence.claim_token !== claim.claimToken) return fail("claim_lost");
+          if (receipt.outcome !== "expired" && occurrence.session_id !== receipt.sessionId) return fail("claim_lost");
+          if (outbox) {
+            if (
+              receipt.outcome !== "completed" ||
+              outbox.content.occurrenceId !== claim.occurrenceId ||
+              outbox.content.ownerUserId !== claim.ownerUserId ||
+              outbox.content.sessionId !== receipt.sessionId ||
+              outbox.content.entryId !== receipt.content.entryId
+            )
+              return fail("validation");
+            database
+              .query(`INSERT OR IGNORE INTO content_outbox
+            (outbox_id,occurrence_id,owner_user_id,session_id,entry_id,available_at)
+            VALUES (?,?,?,?,?,?)`)
+              .run(
+                outbox.outboxId,
+                claim.occurrenceId,
+                outbox.content.ownerUserId,
+                outbox.content.sessionId,
+                outbox.content.entryId,
+                outbox.availableAt,
+              );
+          }
+          const entryId = receipt.outcome === "completed" ? receipt.content.entryId : null;
+          database
+            .query(
+              "UPDATE occurrences SET outcome=?,completed_at=?,entry_id=?,claimed_until=NULL WHERE occurrence_id=? AND outcome IS NULL",
+            )
+            .run(receipt.outcome, receipt.completedAt, entryId, claim.occurrenceId);
+          if (receipt.outcome !== "expired") {
+            database
+              .query(`INSERT OR REPLACE INTO scheduled_cards
+            (occurrence_id,session_id,schedule_id,intended_at,completed_at,status,preview)
+            VALUES (?,?,?,?,?,?,NULL)`)
+              .run(
+                claim.occurrenceId,
+                receipt.sessionId,
+                claim.scheduleId,
+                claim.intendedAt,
+                receipt.completedAt,
+                receipt.outcome,
+              );
+          }
+          const schedule = database
+            .query<Row, [string]>("SELECT * FROM schedules WHERE schedule_id=?")
+            .get(claim.scheduleId);
+          let consumed = false;
+          let nextRunAt = schedule?.next_run_at ?? null;
+          if (schedule && schedule.generation === occurrence.generation && !schedule.deleted) {
+            const timing = project(schedule)?.timing;
+            if (claim.oneTime) {
+              database
+                .query(
+                  "UPDATE schedules SET deleted=1,enabled=0,next_run_at=NULL,generation=generation+1,deleted_revision=revision WHERE schedule_id=? AND generation=?",
+                )
+                .run(claim.scheduleId, occurrence.generation);
+              consumed = true;
+              nextRunAt = null;
+            } else if (timing && timing.kind === "recurring") {
+              const from = new Date(Math.max(Date.parse(claim.intendedAt), Date.parse(receipt.completedAt)));
+              nextRunAt = iso(nextScheduleOccurrence(timing, from));
+              database
+                .query(
+                  "UPDATE schedules SET next_run_at=? WHERE schedule_id=? AND generation=? AND deleted=0 AND enabled=1",
+                )
+                .run(nextRunAt, claim.scheduleId, occurrence.generation);
+            }
+          }
+          return {
+            ok: true,
+            value: { occurrenceId: claim.occurrenceId, scheduleConsumed: consumed, nextRunAt, replayed: false },
+          };
+        })
+        .immediate();
+    } catch {
+      return fail("unavailable", true);
+    } finally {
+      try {
+        db?.close();
+      } catch {}
+    }
+  };
+
+  const claimOutbox: ScheduledContentOutbox["claim"] = async (now, limit, leaseMs) => {
+    if (closed) return fail("closed");
+    discover();
+    const entries: ContentOutboxEntry[] = [];
+    try {
+      for (const [owner, root] of roots) {
+        if (entries.length >= limit) break;
+        const db = openRoot(root);
+        try {
+          const rows = db
+            .query<
+              {
+                outbox_id: string;
+                occurrence_id: string;
+                session_id: string;
+                entry_id: string;
+                available_at: string;
+                attempt: number;
+              },
+              [string, string, number]
+            >(`
+            SELECT outbox_id,occurrence_id,session_id,entry_id,available_at,attempt FROM content_outbox
+            WHERE completed_at IS NULL AND available_at<=? AND (claimed_until IS NULL OR claimed_until<=?) LIMIT ?
+          `)
+            .all(iso(now), iso(now), limit - entries.length);
+          for (const row of rows) {
+            const until = iso(new Date(now.getTime() + leaseMs));
+            const changed = db
+              .query(
+                "UPDATE content_outbox SET claimed_until=?,attempt=attempt+1 WHERE outbox_id=? AND completed_at IS NULL AND (claimed_until IS NULL OR claimed_until<=?)",
+              )
+              .run(until, row.outbox_id, iso(now));
+            if (changed.changes === 1)
+              entries.push({
+                outboxId: row.outbox_id,
+                content: {
+                  ownerUserId: owner,
+                  sessionId: row.session_id,
+                  occurrenceId: row.occurrence_id,
+                  entryId: row.entry_id,
+                },
+                availableAt: row.available_at,
+                attempt: row.attempt + 1,
+              });
+          }
+        } finally {
+          db.close();
+        }
+      }
+      return { ok: true, value: entries };
+    } catch {
+      return fail("unavailable", true);
+    }
+  };
+
+  async function mutateOutbox(outboxId: string, sql: string, value?: string): Promise<SchedulingResult<void>> {
+    if (closed) return fail("closed");
+    discover();
+    try {
+      for (const root of roots.values()) {
+        const db = openRoot(root);
+        try {
+          const result = value === undefined ? db.query(sql).run(outboxId) : db.query(sql).run(value, outboxId);
+          if (result.changes === 1) return { ok: true, value: undefined };
+        } finally {
+          db.close();
+        }
+      }
+      return fail("not_found");
+    } catch {
+      return fail("unavailable", true);
+    }
+  }
+
   return {
     create,
     createDetailed,
@@ -557,6 +843,19 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     cards,
     claimDue,
     associateSession,
+    finalizeClaim,
+    claim: claimOutbox,
+    acknowledge: (outboxId) =>
+      mutateOutbox(
+        outboxId,
+        "UPDATE content_outbox SET completed_at=datetime('now'),claimed_until=NULL WHERE outbox_id=? AND completed_at IS NULL",
+      ),
+    retry: (outboxId, availableAt) =>
+      mutateOutbox(
+        outboxId,
+        "UPDATE content_outbox SET available_at=?,claimed_until=NULL WHERE outbox_id=? AND completed_at IS NULL",
+        iso(availableAt),
+      ),
     close: () => {
       closed = true;
       roots.clear();

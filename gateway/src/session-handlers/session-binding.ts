@@ -270,7 +270,7 @@ export async function bindSessionRuntime(
  * `SttSession`s the same way, so this argument supplies the connection id for
  * log correlation and nothing else.
  */
-function buildSessionHandles(
+export function buildSessionHandles(
   services: GatewayServices,
   principal: UserPrincipal,
   sessionId: string,
