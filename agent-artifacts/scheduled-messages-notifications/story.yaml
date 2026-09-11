@@ -182,9 +182,20 @@ spec: >
   recalled. Authenticated inbox previews are independent of lock-screen privacy
   settings.
 
-  - Logout/account switching removes the old delivery association. Token
-  replacement/invalidation affects only that destination. Disabling push or
-  changing one device's privacy does not affect other devices or schedules.
+  - Logout attempts to unlink the device but always permits immediate local
+  logout. If mini0 is unreachable or unlink fails, clearly warn that push may
+  continue, including previews when enabled, until server-side unlink succeeds.
+  Keep unlink pending and retry when connectivity returns without retaining
+  general account access solely for cleanup; never report the server association
+  removed before acknowledgement.
+
+  - Before an account switch activates a new delivery binding for the
+  installation, disable the old binding. If that cannot be confirmed, the new
+  account may sign in but push stays unavailable/pending rather than carrying
+  over the previous association. Other devices remain unaffected.
+
+  - Token replacement/invalidation affects only that destination. Disabling push
+  or changing one device's privacy does not affect other devices or schedules.
 
 
   ## Acceptance
@@ -318,6 +329,16 @@ design: >
   bodies.
 
 
+  Local logout is not blocked by offline push unlink. A pending unlink warning
+  accurately exposes the residual delivery window; retry uses only narrowly
+  limited revocation authority, not retained general account credentials.
+  Activation of a replacement account binding is fenced until the old binding is
+  disabled. Verify successful unlink, offline/failing unlink with immediate
+  local teardown, reconnection cleanup, and account replacement without
+  requiring actual phone delivery. Already-dispatched notifications cannot be
+  recalled.
+
+
   Local E2E proves scheduling, gateway-owned one-time cleanup, model intent
   selection, calendar linkage, simple card navigation, available settings
   behavior, recovery, and account isolation on the real stack. Existing chat
@@ -327,9 +348,9 @@ design: >
 
   Focused tests at the scheduling and push-adapter boundaries prove
   recurrence/DST handling, durable cleanup/deduplication, per-device payload
-  privacy/size, token association, and retry behavior. Adapter tests may
-  substitute provider responses but are not phone-delivery E2E. Actual APNs/FCM
-  delivery is optional operator verification with suitable
+  privacy/size, token association/revocation, and retry behavior. Adapter tests
+  may substitute provider responses but are not phone-delivery E2E. Actual
+  APNs/FCM delivery is optional operator verification with suitable
   devices/signing/credentials: if unavailable, skip and explicitly report it as
   unverified rather than block local E2E or claim a pass. Notification-click
   routing can be exercised independently through a session deep link.
