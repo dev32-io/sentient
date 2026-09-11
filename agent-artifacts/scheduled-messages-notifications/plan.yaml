@@ -1,2 +1,16 @@
 schemaVersion: 1
-stages: []
+stages:
+  - id: contracts
+    tasks:
+      - contracts-authority
+    mode: sequential
+    checks:
+      - source scripts/env.sh && bun run typecheck && git diff --check
+    review:
+      mode: required
+      focus: Review public once/recurring and actor-reminder contract compatibility,
+        capability confinement, bounded session-card projection, and complete
+        registration/revoke-only/pending-unlink/rebinding state semantics.
+        Confirm fixtures are sufficient for independently implemented clients
+        and services and do not add unread state, a second chat runtime, or
+        provider secrets.
