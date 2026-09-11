@@ -3,12 +3,13 @@ id: shared-mobile-data
 title: Add shared mobile scheduling cards and device lifecycle data
 dependsOn:
   - contracts-authority
-description: Provide portable SDK/data behavior for scheduled-message settings,
-  simple session cards, personal calendar reminder fields, and per-device push
-  preferences. Native apps remain thin UI/OS adapters. Normal chat resume
-  already accepts a sessionId; do not build another chat transport or
-  notification database. Pending push unlink must survive local logout without
-  retaining a general account token solely for cleanup.
+description: Provide portable SDK/data behavior used by iOS for
+  scheduled-message settings, simple session cards, personal calendar reminder
+  fields, and per-device push preferences. The iOS app remains a thin UI/OS
+  adapter; Android feature delivery is excluded because Android is deprecated.
+  Normal chat resume already accepts a sessionId; do not build another chat
+  transport or notification database. Pending push unlink must survive local
+  logout without retaining a general account token solely for cleanup.
 scope: >-
   Own additions/changes inside `shared/mobile-sdk/` and `shared/mobile-data/`,
   including their module build files, golden-fixture consumption,
@@ -20,13 +21,19 @@ scope: >-
 
 
   Do not edit Android/iOS app code, root Gradle version catalog, gateway, shared
-  TypeScript schemas, or canonical design-token values. Platform
-  permission/APNs/FCM calls belong to native apps. Narrow secure storage
-  adapters may live in SDK platform source sets; commonMain must contain no
-  platform types/APIs. Contract fixtures from `shared/protocol` are
-  authoritative for the new API shapes; reuse the existing
-  generated-calendar-fixture approach instead of copying independent wire
-  examples.
+  TypeScript schemas, or canonical design-token values. Platform permission/APNs
+  calls belong to the iOS app. Narrow iOS secure storage adapters may live in
+  SDK platform source sets; commonMain must contain no platform types/APIs. Do
+  not add Android-specific feature adapters or FCM support. Contract fixtures
+  from `shared/protocol` are authoritative for the new API shapes; reuse the
+  existing generated-calendar-fixture approach instead of copying independent
+  wire examples.
+
+
+  Retain existing shared-module JVM/common test commands even where Gradle names
+  the target testDebugUnitTest: these prove shared logic consumed by iOS, not
+  Android app behavior. No :android app build, lint, test or emulator work is
+  required.
 delivery: >-
   - Mirror validated once-at/once-after/recurring, pending next-run, reminder
   omission/disable, device privacy/status/revocation, and bounded session-card
@@ -70,6 +77,6 @@ checks:
 assignment:
   agent: implementer
   tier: medium
-  rationale: Shared DTO/data/lifecycle work is one reusable client boundary;
-    platform UI and provider callbacks are excluded and follow in independent
-    tasks.
+  rationale: Shared DTO/data/lifecycle work remains necessary for iOS and fits one
+    reusable data boundary; the dependent iOS task owns platform UI and provider
+    callbacks.
