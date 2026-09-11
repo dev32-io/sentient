@@ -398,6 +398,36 @@ e2e: >
   schedules, and accounts.
 
 
+  ## E2E-004 — Inbox works without push and synchronizes read state
+
+
+  ### Exercise
+
+
+  Use one disposable local account across web, Android, and iOS with push
+  disabled. Let a schedule produce a result, open its bell inbox entry, mark it
+  unread/read on another client, and reload/reconnect clients. Open a stale
+  notification whose test session has been removed using the supported
+  disposable-data cleanup path.
+
+
+  ### Oracle
+
+
+  The saved result remains discoverable regardless of push availability.
+  Read/unread state converges across clients; opening navigates to the same
+  resumable session without copying the conversation into another store. A
+  removed session displays a safe unavailable state. Web push settings
+  accurately disclose that browser delivery is not included.
+
+
+  ### Proof
+
+
+  Retain redacted inbox/read-state/navigation screenshots and matching session
+  identifiers. Do not capture message content. Remove only disposable test data.
+
+
   ## Exclusions
 
 
