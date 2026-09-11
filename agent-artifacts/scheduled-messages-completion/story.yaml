@@ -472,6 +472,38 @@ e2e: >
   schedules, and accounts.
 
 
+  ## E2E-004 — Simple message cards resume their sessions without push
+
+
+  ### Exercise
+
+
+  Use a disposable local account across web and available iOS clients with push
+  disabled. Let a schedule produce a result, open the bell list, click its
+  truncated message card, and reload/reconnect. Exercise the session deep link
+  from cold launch and through login without requiring a received push. Open a
+  stale link after supported cleanup removes its disposable session.
+
+
+  ### Oracle
+
+
+  The inbox is a compact newest-first message-card list visually consistent with
+  past chats, not a full response feed or read/unread workflow. Its card
+  persists after one-time schedule cleanup and opens the same existing session
+  with the full conversation. Navigation survives cold launch/login, and removed
+  sessions show a safe unavailable state. No push delivery is needed.
+
+
+  ### Proof
+
+
+  Capture redacted list layout and navigation states with matching session
+  identifiers. Assert that displayed previews are bounded without retaining
+  message text. Record deep-link routing independently of OS notification
+  delivery; remove only disposable resources.
+
+
   ## Exclusions
 
 
