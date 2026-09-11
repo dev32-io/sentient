@@ -504,6 +504,42 @@ e2e: >
   delivery; remove only disposable resources.
 
 
+  ## E2E-005 — Push settings show device privacy and actual availability
+
+
+  ### Exercise
+
+
+  Open push settings on web and available native test clients using a disposable
+  account. Exercise available enable/disable and privacy controls; where
+  supported, request permission, deny it, register/unlink a development
+  installation, and compare two installations' preferences. Do not require or
+  send an actual phone notification. Skip only native registration/permission
+  portions unavailable without suitable platform support or development
+  credentials and record the limitation.
+
+
+  ### Oracle
+
+
+  Web accurately discloses deferred browser delivery. Native settings show
+  actual permission/registration state, default to hidden previews, and keep
+  supported device preferences independent. Denied permission or disabled push
+  does not stop schedules or session cards. Unsupported registration is never
+  presented as successfully enabled. This case makes no claim of provider
+  delivery or lock-screen presentation.
+
+
+  ### Proof
+
+
+  Retain redacted settings states and content-free device aliases; record which
+  platform interactions were exercised and which were skipped. Lower-level
+  push-adapter tests, not this UI case, establish outbound payload privacy/size
+  and token association. Unlink any development registrations and remove
+  disposable resources.
+
+
   ## Exclusions
 
 
