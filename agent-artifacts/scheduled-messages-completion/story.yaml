@@ -439,6 +439,39 @@ e2e: >
   arguments. Clean up disposable resources.
 
 
+  ## E2E-003 — Personal calendar reminders follow event lifecycle
+
+
+  ### Exercise
+
+
+  With two disposable household users on the real local stack, enable Remind me
+  for one user through web and available native calendar cards; verify
+  default-off behavior for the other. Exercise the optional model argument,
+  omission on update, and explicit disable. Move/cancel recurring occurrences,
+  delete an event, remove visibility before a reminder, and exercise an all-day
+  event with a chosen reminder time.
+
+
+  ### Oracle
+
+
+  Only subscribed authorized users receive the correct scheduled chats. Pending
+  timing follows moved occurrences; cancelled/deleted/inaccessible events do not
+  fire. Omitted update arguments preserve the reminder and disabling removes it.
+  One-time reminders are consumed by the gateway while recurring subscriptions
+  remain. Existing sessions/cards survive event changes and one-time cleanup.
+
+
+  ### Proof
+
+
+  Capture redacted card/settings/session-list states and
+  event/occurrence/session identifiers and timestamps. Verify one session per
+  due authorized occurrence and no cross-user entries. Remove disposable events,
+  schedules, and accounts.
+
+
   ## Exclusions
 
 
