@@ -30,6 +30,12 @@ scope: >-
   occurrence-finalization/outbox transaction. The queue implementation and
   public mounting arrive from later gateway tasks. Preserve per-owner access
   while enforcing an atomic installation/binding-generation activation fence.
+
+
+  Only iOS/APNs delivery is in scope. Android is deprecated: do not implement
+  FCM payloads, registration, credentials, setup or tests. Configure Gorush for
+  APNs only and keep unused provider delivery disabled. Preserve the replaceable
+  transport interface without speculative multi-provider implementation.
 delivery: >-
   - Implement authenticated register/read-preferences/update/unlink APIs and
   current-account/device authorization; deviceId is never proof of ownership.
