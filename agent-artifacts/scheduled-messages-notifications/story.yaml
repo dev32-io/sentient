@@ -37,6 +37,15 @@ spec: >
   and resume without adding special handling or verification for skills/tools.
 
 
+  **Presentation:** Follow the existing Sentient design language and reuse the
+  shipped design tokens and component libraries on web, Android, and iOS. New
+  screens, cards, forms, and reminder controls must not introduce inline
+  hardcoded styling, copied palettes, or page-local replacements for shared
+  controls. Compose existing components; if a genuinely missing primitive is
+  necessary, add the smallest reusable token-backed component in the established
+  library rather than bypassing it.
+
+
   **Excluded:** A separate inbox read/unread model, unread badges or read-state
   synchronization, notification-management workflows, a run-history dashboard, a
   general automation/plugin/DAG framework, arbitrary shell jobs, automatic
