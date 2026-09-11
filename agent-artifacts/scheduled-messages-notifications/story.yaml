@@ -442,34 +442,36 @@ e2e: >
   schedules, and accounts.
 
 
-  ## E2E-004 — Inbox works without push and synchronizes read state
+  ## E2E-004 — Simple message cards resume their sessions without push
 
 
   ### Exercise
 
 
-  Use one disposable local account across web, Android, and iOS with push
-  disabled. Let a schedule produce a result, open its bell inbox entry, mark it
-  unread/read on another client, and reload/reconnect clients. Open a stale
-  notification whose test session has been removed using the supported
-  disposable-data cleanup path.
+  Use a disposable local account across web and available Android/iOS clients
+  with push disabled. Let a schedule produce a result, open the bell list, click
+  its truncated message card, and reload/reconnect. Exercise the session deep
+  link from cold launch and through login without requiring a received push.
+  Open a stale link after supported cleanup removes its disposable session.
 
 
   ### Oracle
 
 
-  The saved result remains discoverable regardless of push availability.
-  Read/unread state converges across clients; opening navigates to the same
-  resumable session without copying the conversation into another store. A
-  removed session displays a safe unavailable state. Web push settings
-  accurately disclose that browser delivery is not included.
+  The inbox is a compact newest-first message-card list visually consistent with
+  past chats, not a full response feed or read/unread workflow. Its card
+  persists after one-time schedule cleanup and opens the same existing session
+  with the full conversation. Navigation survives cold launch/login, and removed
+  sessions show a safe unavailable state. No push delivery is needed.
 
 
   ### Proof
 
 
-  Retain redacted inbox/read-state/navigation screenshots and matching session
-  identifiers. Do not capture message content. Remove only disposable test data.
+  Capture redacted list layout and navigation states with matching session
+  identifiers. Assert that displayed previews are bounded without retaining
+  message text. Record deep-link routing independently of OS notification
+  delivery; remove only disposable resources.
 
 
   ## E2E-005 — Device registration and privacy are independent
