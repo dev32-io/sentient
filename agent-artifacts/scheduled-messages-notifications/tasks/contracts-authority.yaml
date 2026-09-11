@@ -67,10 +67,10 @@ delivery: >-
   lives in YAML, not consumer fallbacks. Leave a clean, compiling committed
   boundary that services and clients can consume independently.
 checks:
-  - source scripts/env.sh && bun run --filter @sentient/protocol test:unit &&
-    bun run --filter @sentient/config test:unit
-  - source scripts/env.sh && bun test gateway/src/access && bun run typecheck &&
-    git diff --check
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/protocol
+    test:unit && bun run --filter @sentient/config test:unit"
+  - bash -lc "source scripts/env.sh && bun test gateway/src/access && bun run
+    typecheck && git diff --check"
 assignment:
   agent: implementer
   tier: medium
