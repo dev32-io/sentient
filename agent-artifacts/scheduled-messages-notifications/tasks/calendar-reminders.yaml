@@ -75,12 +75,12 @@ delivery: >-
   retain no user content or credentials in evidence and perform no production
   mutation.
 checks:
-  - source scripts/env.sh && bun test gateway/src/calendar
+  - bash -lc "source scripts/env.sh && bun test gateway/src/calendar
     gateway/src/api/handlers/calendar.test.ts
     gateway/src/bootstrap/product-tools/calendar-provider.test.ts
-    gateway/src/scheduling gateway/src/scheduled-chat
-  - source scripts/env.sh && bun run --filter @sentient/gateway test:unit && bun
-    run typecheck && git diff --check
+    gateway/src/scheduling gateway/src/scheduled-chat"
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/gateway
+    test:unit && bun run typecheck && git diff --check"
 assignment:
   agent: implementer
   tier: medium
