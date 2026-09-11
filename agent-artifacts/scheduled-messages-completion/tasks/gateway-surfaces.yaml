@@ -3,7 +3,6 @@ id: gateway-surfaces
 title: Compose gateway scheduling push and session-backed cards
 dependsOn:
   - scheduled-chat-execution
-  - ios-experience
 description: Finish public gateway mounting and lifecycle composition over the
   existing schedule/push services and completed scheduled-chat runner, and
   implement the session-backed card projection consumed by web and iOS. Schedule
