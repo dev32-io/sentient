@@ -24,6 +24,7 @@ import MobileData
 struct UserSessionHost: View {
     /// User/Connection scope: the SDK + ChatComponent live here, above the stack.
     @StateObject private var userSession: UserSession
+    @ObservedObject private var notificationNavigation = NativePushCoordinator.shared.navigation
 
     /// Shared OTA-update state (owned by UpdateGate above). Forwarded to Settings
     /// and re-checked on real foregrounds, riding the same scenePhase resume signal.
@@ -61,6 +62,7 @@ struct UserSessionHost: View {
         userName = appConfig.displayName
         onLogout = { appConfig.logout() }
         self.updateModel = updateModel
+        NativePushCoordinator.shared.configure(appConfig: appConfig)
         _userSession = StateObject(wrappedValue: UserSession(
             gatewayWsUrl: appConfig.gatewayWsUrl,
             allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
@@ -70,7 +72,10 @@ struct UserSessionHost: View {
             authenticatedUserId: appConfig.authenticatedUserId ?? "",
             // Settings Account-logout hook (KMP AccountUseCases): drop token →
             // RootView routes to login. Root "Log out" stays the danger-row wiring below.
-            onLoggedOut: { appConfig.logout() }
+            onLoggedOut: {
+                NativePushCoordinator.shared.unlinkForLogout()
+                appConfig.logout()
+            }
         ))
         // Cold start mirrors Android's CURRENT behavior: enter at chat(nil) → a new
         // conversation. (A resume-vs-new refinement is a separate follow-up.)
@@ -98,6 +103,7 @@ struct UserSessionHost: View {
                     path.removeAll()
                 },
                 onOpenSettings: { path = [.settings] },
+                onOpenInbox: { path = [.scheduledInbox] },
                 onLogout: logout,
                 onAuthenticationExpired: authenticationExpired
             )
@@ -105,6 +111,13 @@ struct UserSessionHost: View {
             .navigationDestination(for: Route.self) { route in
                 destination(for: route)
             }
+        }
+        .onReceive(notificationNavigation.$destination) { destination in
+            guard destination != nil, let destination = notificationNavigation.take() else { return }
+            resumeNotificationDestination(destination)
+        }
+        .onAppear {
+            if let destination = notificationNavigation.take() { resumeNotificationDestination(destination) }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -134,11 +147,13 @@ struct UserSessionHost: View {
     /// Logout: tear down the SDK session, then clear the auth gate so RootView
     /// routes back to login (this view leaves the authed branch → @StateObject deinits).
     private func logout() {
+        NativePushCoordinator.shared.unlinkForLogout()
         userSession.explicitLogout()
         onLogout()
     }
 
     private func authenticationExpired() {
+        NativePushCoordinator.shared.unlinkForLogout()
         userSession.authenticationExpired()
         onLogout()
     }
@@ -150,6 +165,18 @@ struct UserSessionHost: View {
 
     /// Pop one level off the stack (category page → settings root, or sub → parent).
     private func popRoute() { if !path.isEmpty { path.removeLast() } }
+
+    private func activateSession(_ sessionId: String) {
+        activeSessionId = sessionId
+        path.removeAll()
+    }
+
+    private func resumeNotificationDestination(_ destination: NotificationDestination) {
+        Task {
+            guard await userSession.canResumeNotificationSession(destination.sessionId) else { return }
+            activateSession(destination.sessionId)
+        }
+    }
 
     @ViewBuilder
     private func destination(for route: Route) -> some View {
@@ -166,6 +193,10 @@ struct UserSessionHost: View {
             MemoryScreen(settings: settings, onBack: popRoute)
         case .settingsCalendar:
             CalendarSessionRoute(userSession: userSession, onBack: popRoute)
+        case .settingsScheduledMessages:
+            ScheduledMessagesScreen(settings: settings, onBack: popRoute)
+        case .settingsPushNotifications:
+            PushNotificationsScreen(settings: settings, onBack: popRoute)
         case .settingsPersonalities:
             PersonalitiesScreen(settings: settings, onBack: popRoute)
         case .settingsVoice:
@@ -205,6 +236,8 @@ struct UserSessionHost: View {
             SecretsScreen(settings: settings, onBack: popRoute)
         case .settingsDiagnostics:
             DiagnosticsScreen(onBack: popRoute)
+        case .scheduledInbox:
+            ScheduledInboxScreen(settings: settings, onBack: popRoute, onSelectSession: activateSession)
         case .history:
             // History is presented as the in-chat keeper drawer, not a stack page;
             // this case exists for the typed graph's completeness.

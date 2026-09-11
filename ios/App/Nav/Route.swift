@@ -23,11 +23,14 @@ import Foundation
 /// the page's own file and never touches this enum or the host again.
 enum Route: Hashable {
     case history
+    case scheduledInbox
     case settings
 
     // ── Settings · Soul group ──
     case settingsMemory
     case settingsCalendar
+    case settingsScheduledMessages
+    case settingsPushNotifications
     case settingsPersonalities
     case settingsVoice
     case settingsVoiceAdd

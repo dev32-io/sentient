@@ -15,9 +15,9 @@ export interface IosDesignTransitionalEntry {
 }
 
 /**
- * This contribution owns Theme and non-Calendar Settings. Calendar is listed
- * file-by-file so adding a new production file cannot silently inherit an
- * excluded directory. Chat and the QA catalog are outside this checker scope.
+ * This contribution owns Theme, non-Calendar Settings, and the scheduling
+ * inbox. Calendar is listed file-by-file so adding a new production file cannot
+ * silently inherit an excluded directory. Chat and the QA catalog are outside.
  */
 export const IOS_DESIGN_EXCLUDED_PATHS = new Set<string>([
   "ios/App/Settings/Calendar/CalendarAgendaView.swift",
@@ -44,7 +44,7 @@ export const IOS_DESIGN_EXCLUDED_PATHS = new Set<string>([
   "ios/App/QAVisualReviewInventory.swift",
 ]);
 
-const IOS_DESIGN_SCOPE_PREFIXES = ["ios/App/Theme/", "ios/App/Settings/"] as const;
+const IOS_DESIGN_SCOPE_PREFIXES = ["ios/App/Theme/", "ios/App/Settings/", "ios/App/Inbox/"] as const;
 
 /** Existing specialized product visuals that remain outside this library. */
 export const IOS_DESIGN_TRANSITIONAL_ALLOWLIST: readonly IosDesignTransitionalEntry[] = [

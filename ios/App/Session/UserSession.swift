@@ -154,6 +154,7 @@ final class UserSession: ObservableObject {
                         calendarUnavailableSignal(experience)
                     },
                     onRecovery: {
+                        NativePushCoordinator.shared.retryPendingUnlink()
                         guard let experience = self.calendarExperience else { return }
                         calendarRecoverySignal(experience)
                     }
@@ -178,6 +179,21 @@ final class UserSession: ObservableObject {
     /// Build the history VM over the shared ChatComponent (reads + rename/delete).
     func makeHistoryVM() -> HistoryViewModel {
         HistoryViewModel(component: component)
+    }
+
+    /// Notification/deep-link destinations must name a session visible to the
+    /// authenticated account before the route can resume it.
+    func canResumeNotificationSession(_ sessionId: String) async -> Bool {
+        do {
+            let sessions = try await component.observeSessions.invoke(limit: 100, offset: 0)
+            guard let destination = NotificationDestination(sessionId: sessionId) else { return false }
+            return canResumeNotificationDestination(destination, sessionIds: sessions.map(\.id))
+        } catch is CancellationError {
+            return false
+        } catch {
+            log.warn("notification destination validation failed code=transport")
+            return false
+        }
     }
 
     // ── Presence (scenePhase) ───────────────────────────────────────────────────

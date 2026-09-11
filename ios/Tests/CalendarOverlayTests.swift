@@ -64,6 +64,48 @@ struct CalendarOverlayTests {
                                                    isSubmitting: false, draft: valid))
     }
 
+    @Test func reminderDraftDistinguishesOmittedUpdateFromExplicitDisable() {
+        let existing = CalendarReminderInput(
+            enabled: true, mode: .atStart, leadMinutes: nil, localTime: nil, timeZone: nil
+        )
+        let untouched = copyOverlayDraft(overlayDraft(), reminder: existing, reminderChanged: false)
+        #expect(untouched.reminder?.enabled == true)
+        #expect(!untouched.reminderChanged)
+
+        let disabled = copyOverlayDraft(untouched, clearReminder: true, reminderChanged: true)
+        #expect(disabled.reminder == nil)
+        #expect(disabled.reminderChanged)
+    }
+
+    @Test func allDayReminderRequiresLocalTimeAndTimeZone() {
+        let base = CalendarMutationDraft(
+            title: "School holiday", description: nil, allDay: true,
+            start: "2026-08-17", end: nil, scope: .household,
+            visibility: .everyone, importance: .normal, group: nil, tags: [], recurrence: nil,
+            eventId: nil, occurrenceId: nil, originalStart: nil, expectedRevision: nil,
+            inputTimeZoneId: "America/Los_Angeles", recurring: false,
+            reminder: CalendarReminderInput(
+                enabled: true, mode: .allDay, leadMinutes: nil,
+                localTime: "09:00", timeZone: "America/Los_Angeles"
+            ),
+            reminderChanged: true
+        )
+        let editor = CalendarMutationEditorState(
+            mode: .create, draft: base, target: nil,
+            applicableScopes: [.entireSeries], selectedScope: .entireSeries
+        )
+        #expect(CalendarMutationDraftValidation.shared.isValid(editor: editor, draft: base))
+
+        let missingInputs = copyOverlayDraft(
+            base,
+            reminder: CalendarReminderInput(
+                enabled: true, mode: .allDay, leadMinutes: nil, localTime: nil, timeZone: nil
+            ),
+            reminderChanged: true
+        )
+        #expect(!CalendarMutationDraftValidation.shared.isValid(editor: editor, draft: missingInputs))
+    }
+
     @Test func closedMutationHasNoAccessibleOverlay() {
         let closed = CalendarMutationState(
             phase: .idle, preview: nil, editor: nil, deleteConfirmation: nil,
@@ -322,7 +364,7 @@ private func overlayOccurrence() -> EffectiveOccurrence {
         originalStart: "2026-08-17T09:00:00-07:00", recurring: true, revision: 7,
         scope: .household, title: "School pickup", description: "Bring forms",
         start: "2026-08-17T10:00:00-07:00", end: "2026-08-17T10:30:00-07:00",
-        visibility: .everyone, importance: .important, group: "family", tags: ["school"], recurrence: nil
+        visibility: .everyone, importance: .important, group: "family", tags: ["school"], recurrence: nil, reminder: nil
     )
 }
 
@@ -334,12 +376,16 @@ private func overlayDraft() -> CalendarMutationDraft {
         group: "family", tags: ["school"], recurrence: nil,
         eventId: "event-7", occurrenceId: "occurrence-7",
         originalStart: "2026-08-17T09:00:00-07:00", expectedRevision: 7,
-        inputTimeZoneId: "America/Los_Angeles", recurring: true
+        inputTimeZoneId: "America/Los_Angeles", recurring: true,
+        reminder: nil, reminderChanged: false
     )
 }
 
 private func copyOverlayDraft(_ draft: CalendarMutationDraft, title: String? = nil,
-                              start: String? = nil, recurrence: StructuredRecurrence? = nil) -> CalendarMutationDraft {
+                              start: String? = nil, recurrence: StructuredRecurrence? = nil,
+                              reminder: CalendarReminderInput? = nil,
+                              clearReminder: Bool = false,
+                              reminderChanged: Bool? = nil) -> CalendarMutationDraft {
     CalendarMutationDraft(
         title: title ?? draft.title, description: draft.description_, allDay: draft.allDay,
         start: start ?? draft.start, end: draft.end, scope: draft.scope,
@@ -347,6 +393,7 @@ private func copyOverlayDraft(_ draft: CalendarMutationDraft, title: String? = n
         tags: draft.tags, recurrence: recurrence ?? draft.recurrence, eventId: draft.eventId,
         occurrenceId: draft.occurrenceId, originalStart: draft.originalStart,
         expectedRevision: draft.expectedRevision, inputTimeZoneId: draft.inputTimeZoneId,
-        recurring: draft.recurring
+        recurring: draft.recurring, reminder: clearReminder ? nil : (reminder ?? draft.reminder),
+        reminderChanged: reminderChanged ?? draft.reminderChanged
     )
 }

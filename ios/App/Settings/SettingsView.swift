@@ -57,6 +57,8 @@ private let responseItems: [CategoryItem] = [
 
 private let capabilityItems: [CategoryItem] = [
     .init(icon: .calendar, title: "Calendar", route: .settingsCalendar, key: "calendar"),
+    .init(icon: .advanced, title: "Scheduled messages", route: .settingsScheduledMessages, key: "scheduled-messages"),
+    .init(icon: .audio, title: "Push notifications", route: .settingsPushNotifications, key: "push-notifications"),
     .init(icon: .tools, title: "Tools", route: .settingsTools, key: "tools"),
 ]
 

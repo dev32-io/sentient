@@ -56,6 +56,8 @@ struct ChatView: View {
     /// (leveled nav: root category list → per-category pages). The shared UpdateModel
     /// is owned by the host and threaded into the pushed SettingsSheet, not here.
     let onOpenSettings: () -> Void
+    /// Open the session-backed scheduled-message inbox.
+    let onOpenInbox: () -> Void
     /// Logout → host shuts the UserSession down + clears the token.
     let onLogout: () -> Void
     /// Authentication expiry uses its distinct authenticated-lifecycle entry point.
@@ -93,6 +95,7 @@ struct ChatView: View {
         onSelectSession: @escaping (String) -> Void,
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
+        onOpenInbox: @escaping () -> Void,
         onLogout: @escaping () -> Void,
         onAuthenticationExpired: @escaping () -> Void
     ) {
@@ -103,6 +106,7 @@ struct ChatView: View {
         self.onSelectSession = onSelectSession
         self.onNewChat = onNewChat
         self.onOpenSettings = onOpenSettings
+        self.onOpenInbox = onOpenInbox
         self.onLogout = onLogout
         self.onAuthenticationExpired = onAuthenticationExpired
     }
@@ -354,6 +358,7 @@ struct ChatView: View {
         ChatTitleBar(
             markMode: currentSentientIdentityState,
             onOpenPanel: { drawerOpen = true },
+            onOpenInbox: onOpenInbox,
             onNewChat: { onNewChat() }
         )
     }
