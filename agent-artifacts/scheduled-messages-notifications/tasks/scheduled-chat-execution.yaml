@@ -72,13 +72,13 @@ delivery: >-
   provider outcomes and temporary stores, not real providers or special
   skill/tool tests. Leave a clean committed execution boundary ready to mount.
 checks:
-  - source scripts/env.sh && bun test gateway/src/scheduled-chat
+  - bash -lc "source scripts/env.sh && bun test gateway/src/scheduled-chat
     gateway/src/scheduling gateway/src/store
-    gateway/src/session-handlers/session-registry.test.ts
-  - source scripts/env.sh && bun test
+    gateway/src/session-handlers/session-registry.test.ts"
+  - bash -lc "source scripts/env.sh && bun test
     gateway/src/runtime/session-runtime.test.ts
     gateway/src/runtime/session-retention.test.ts && bun run --filter
-    @sentient/gateway typecheck && git diff --check
+    @sentient/gateway typecheck && git diff --check"
 assignment:
   agent: implementer
   tier: medium
