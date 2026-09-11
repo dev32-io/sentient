@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Capability } from "../../access/capability.js";
 import { createCalendarEvent, mutateCalendarEvent } from "../../calendar/calendar-mutations.js";
 import { CalendarQueryService } from "../../calendar/calendar-query.js";
+import type { CalendarReminderScheduler } from "../../calendar/calendar-reminder-scheduler.js";
 import type { CalendarPersistence } from "../../calendar/calendar-store.js";
 import {
   normalizeCalendarEventTimes,
@@ -16,6 +17,7 @@ import {
   calendarOccurrenceChangesSchema,
   calendarReadScopeSchema,
   calendarRecurrenceInputSchema,
+  calendarReminderEnabledInputSchema,
   calendarTimeInputSchema,
   calendarUpdateChangesSchema,
   calendarWriteScopeSchema,
@@ -28,7 +30,7 @@ const READ = "read" as const;
 const WRITE = "write" as const;
 const CONFIRM = "confirm" as const;
 const schedulerFence =
-  "This calendar stores durable dated/timed events only. Relative reminders (for example, 'remind me tomorrow morning'), recurring briefings (for example, '9am every Monday'), and interval reminders (for example, 'every 4h') belong to a future scheduler, not the calendar.";
+  "This calendar stores durable dated/timed events only. Future assistant messages and standalone reminders belong to scheduled-message tools. An explicit event-plus-reminder request creates this event with one linked personal reminder, not a second independent schedule.";
 
 export const CALENDAR_TOOL_SETTINGS = [
   { name: "calendar_list", description: `List durable dated/timed calendar events. ${schedulerFence}`, tier: READ },
@@ -59,6 +61,7 @@ export interface CalendarProductToolConfig extends Readonly<Record<string, unkno
   readonly queryService?: CalendarQueryService;
   readonly privateCap?: Capability;
   readonly householdCap?: Capability;
+  readonly reminders?: CalendarReminderScheduler;
 }
 
 const time = calendarTimeInputSchema;
@@ -88,6 +91,7 @@ const createSchema = z
     importance: z.enum(["normal", "important", "pinned"]).default("normal"),
     group: z.string().min(1).optional(),
     tags: z.array(z.string()).default([]),
+    reminder: calendarReminderEnabledInputSchema.optional(),
     scope: writeScope.optional(),
   })
   .strict();
@@ -204,6 +208,39 @@ const filtersParameter = {
   tags: { type: "array", items: { type: "string" } },
   importance: importanceParameter,
 };
+const reminderParameter = {
+  description: "Optional acting-user reminder linked to this event; use enabled:false on update to remove it.",
+  oneOf: [
+    { type: "object", properties: { enabled: { const: false } }, required: ["enabled"], additionalProperties: false },
+    {
+      type: "object",
+      properties: { enabled: { const: true }, mode: { const: "at-start" } },
+      required: ["enabled", "mode"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        enabled: { const: true },
+        mode: { const: "lead" },
+        leadMinutes: { type: "integer", minimum: 1, maximum: 43200 },
+      },
+      required: ["enabled", "mode", "leadMinutes"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        enabled: { const: true },
+        mode: { const: "all-day" },
+        localTime: { type: "string", description: "HH:mm" },
+        timeZone: { type: "string", description: "IANA timezone" },
+      },
+      required: ["enabled", "mode", "localTime", "timeZone"],
+      additionalProperties: false,
+    },
+  ],
+};
 const changesParameter = {
   type: "object",
   properties: {
@@ -216,6 +253,7 @@ const changesParameter = {
     importance: importanceParameter,
     group: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
+    reminder: reminderParameter,
   },
   additionalProperties: false,
 };
@@ -231,6 +269,7 @@ const createParameters = {
     importance: importanceParameter,
     group: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
+    reminder: reminderParameter,
     scope: writeScopeParameter,
   },
   required: ["title", "start"],
@@ -496,13 +535,20 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
           if (gate) return gate;
           const selected = target(p.scope);
           if (!selected) return failure("forbidden", "The household calendar is unavailable.");
-          return domainResult(
-            createCalendarEvent(
-              { ...p, scope: p.scope ?? "private" },
-              { persistence: selected.persistence, config: calendarConfig, signal: ctx.signal },
-            ),
-            calendarConfig,
+          const result = createCalendarEvent(
+            { ...p, scope: p.scope ?? "private" },
+            { persistence: selected.persistence, config: calendarConfig, signal: ctx.signal },
           );
+          if (result.ok && supplied.reminders) {
+            const reconciled = await supplied.reminders.reconcile(
+              selected.persistence,
+              result.value.eventId,
+              p.scope ?? "private",
+            );
+            if (!reconciled.ok)
+              return failure("io_error", "The event was saved, but its reminder could not be scheduled yet.");
+          }
+          return domainResult(result, calendarConfig);
         },
       ),
       runner(
@@ -521,14 +567,33 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
           const selected = target(p.scope);
           if (!selected) return failure("forbidden", "The household calendar is unavailable.");
           const command = { ...p, operation: "update", scope: p.scope ?? "private" } as CalendarMutationCommand;
-          return domainResult(
-            mutateCalendarEvent(command, {
-              persistence: selected.persistence,
-              config: calendarConfig,
-              signal: ctx.signal,
-            }),
-            calendarConfig,
-          );
+          const result = mutateCalendarEvent(command, {
+            persistence: selected.persistence,
+            config: calendarConfig,
+            signal: ctx.signal,
+          });
+          if (result.ok && supplied.reminders) {
+            const ids = new Set(
+              [
+                p.eventId,
+                result.value.eventId,
+                "successorEventId" in result.value ? result.value.successorEventId : undefined,
+              ].filter((id): id is string => Boolean(id)),
+            );
+            for (const id of ids) {
+              const original = id === p.eventId && p.applyTo === "this_occurrence" ? p.originalStart : undefined;
+              const reconciled = await supplied.reminders.reconcile(
+                selected.persistence,
+                id,
+                p.scope ?? "private",
+                undefined,
+                original,
+              );
+              if (!reconciled.ok)
+                return failure("io_error", "The event was saved, but its reminder could not be rescheduled yet.");
+            }
+          }
+          return domainResult(result, calendarConfig);
         },
       ),
       runner(
@@ -547,14 +612,23 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
           const selected = target(p.scope);
           if (!selected) return failure("forbidden", "The household calendar is unavailable.");
           const command = { ...p, operation: "delete", scope: p.scope ?? "private" } as CalendarMutationCommand;
-          return domainResult(
-            mutateCalendarEvent(command, {
-              persistence: selected.persistence,
-              config: calendarConfig,
-              signal: ctx.signal,
-            }),
-            calendarConfig,
-          );
+          const result = mutateCalendarEvent(command, {
+            persistence: selected.persistence,
+            config: calendarConfig,
+            signal: ctx.signal,
+          });
+          if (result.ok && supplied.reminders) {
+            const reconciled = await supplied.reminders.reconcile(
+              selected.persistence,
+              p.eventId,
+              p.scope ?? "private",
+              undefined,
+              p.applyTo === "this_occurrence" ? p.originalStart : undefined,
+            );
+            if (!reconciled.ok)
+              return failure("io_error", "The event was deleted, but its pending reminder could not be cancelled yet.");
+          }
+          return domainResult(result, calendarConfig);
         },
       ),
     ];

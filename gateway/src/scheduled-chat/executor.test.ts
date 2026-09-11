@@ -3,6 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { UserRole } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
@@ -12,11 +13,7 @@ import { createScheduleService } from "../scheduling/service.js";
 import type { SessionHandles } from "../session-handlers/session-registry.js";
 import { createSessionRegistry } from "../session-handlers/session-registry.js";
 import { openSessionStore } from "../store/session-store.js";
-import type { UserRole } from "@sentient/protocol";
-import {
-  createScheduledExecutionAuthorizer,
-  createScheduledMessageSubmitter,
-} from "./executor.js";
+import { createScheduledExecutionAuthorizer, createScheduledMessageSubmitter } from "./executor.js";
 import { createScheduledChatRunner } from "./runner.js";
 
 const roots: string[] = [];
@@ -219,7 +216,9 @@ describe("scheduled chat consumer boundary", () => {
     const queued = await service.claim(new Date("2026-08-01T15:02:00Z"), 10, 1_000);
     expect(queued.ok && queued.value).toHaveLength(1);
     const schedulingDb = new Database(join(root, principal.userId, "scheduling-v1", "schedules.db"));
-    expect(schedulingDb.query<{ count: number }, []>("SELECT count(*) count FROM scheduled_cards").get()?.count).toBe(0);
+    expect(schedulingDb.query<{ count: number }, []>("SELECT count(*) count FROM scheduled_cards").get()?.count).toBe(
+      0,
+    );
     schedulingDb.close();
     service.close();
   });
@@ -321,7 +320,9 @@ describe("scheduled chat consumer boundary", () => {
       },
       authorizer: { authorize: async () => ({ ok: false as const, error: { code: "forbidden", retryable: false } }) },
       submitter: { submit: async () => ({ ok: false as const, error: { code: "unavailable", retryable: true } }) },
-      finalizer: { finalizeClaim: async () => ({ ok: false as const, error: { code: "unavailable", retryable: true } }) },
+      finalizer: {
+        finalizeClaim: async () => ({ ok: false as const, error: { code: "unavailable", retryable: true } }),
+      },
       claimLimit: 1,
       leaseMs: 1_000,
       pollMs: 10,

@@ -47,6 +47,13 @@ final class NotificationIntegrationTests: XCTestCase {
         XCTAssertFalse(coordinator.registrationPending)
     }
 
+    func testAuthorizedUnboundDeviceIsOfferedExplicitReenable() {
+        XCTAssertTrue(canOfferPushEnable(permission: .authorized, hasBinding: false))
+        XCTAssertTrue(canOfferPushEnable(permission: .provisional, hasBinding: false))
+        XCTAssertFalse(canOfferPushEnable(permission: .authorized, hasBinding: true))
+        XCTAssertFalse(canOfferPushEnable(permission: .denied, hasBinding: false))
+    }
+
     @MainActor
     func testPermissionGrantRegistersWithAPNsAndTokenCallbackIsObservable() async {
         let registrar = FakeRegistrar()

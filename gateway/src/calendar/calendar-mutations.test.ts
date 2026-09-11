@@ -1130,4 +1130,52 @@ describe("calendar mutation boundary", () => {
     expect(JSON.stringify(result)).not.toContain("secret synthetic payload");
     persistence.close();
   });
+
+  it("applies actor-personal reminder changes to occurrence and following scopes", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(
+      createInput({ recurrence: { frequency: "daily", count: 4 }, reminder: { enabled: true, mode: "at-start" } }),
+      persistence,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const occurrence = mutateCalendarEvent(
+      mutation({
+        operation: "update",
+        eventId: created.value.eventId,
+        applyTo: "this_occurrence",
+        originalStart: "2026-01-06T14:00:00.000Z",
+        changes: { reminder: { enabled: false } },
+      }),
+      persistence,
+      config,
+    );
+    expect(occurrence.ok).toBe(true);
+    const query = createCalendarQueryService({ private: persistence, role: "adult", config });
+    const projected = query.get({
+      eventId: created.value.eventId,
+      originalStart: "2026-01-06T14:00:00.000Z" as never,
+      scope: "private",
+    });
+    expect(projected.ok && projected.value.reminder).toEqual({ enabled: false });
+
+    const following = mutateCalendarEvent(
+      mutation({
+        operation: "update",
+        eventId: created.value.eventId,
+        applyTo: "this_and_following",
+        originalStart: "2026-01-07T14:00:00.000Z",
+        changes: { reminder: { enabled: false } },
+      }),
+      persistence,
+      config,
+    );
+    expect(following.ok).toBe(true);
+    if (following.ok && "successorEventId" in following.value && following.value.successorEventId) {
+      const successor = persistence.read(following.value.successorEventId as CalendarEventId);
+      expect(successor.ok && successor.value.notification).toBeUndefined();
+    }
+    persistence.close();
+  });
 });

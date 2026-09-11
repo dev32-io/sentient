@@ -1,6 +1,11 @@
 import MobileData
 import SwiftUI
 
+func canOfferPushEnable(permission: NativePushPermission, hasBinding: Bool) -> Bool {
+    guard !hasBinding else { return false }
+    return permission == .notDetermined || permission == .authorized || permission == .provisional || permission == .error
+}
+
 @MainActor
 @Observable
 private final class PushNotificationsViewModel {
@@ -63,7 +68,7 @@ struct PushNotificationsScreen: View {
                     )
                 }
                 DesignActionButton(title: "Disable and unlink this device", role: .destructive) { native.unlinkForLogout(); vm.sync() }
-            } else if native.permission == .notDetermined {
+            } else if canOfferPushEnable(permission: native.permission, hasBinding: false) {
                 DesignActionButton(title: "Enable notifications", accessibilityId: "push-enable") { Task { await native.enable(); vm.sync() } }
             }
             if native.permission == .denied {

@@ -1,6 +1,7 @@
 import type { AccessManager } from "../../access/access-manager.js";
 import { createCalendarEvent, mutateCalendarEvent } from "../../calendar/calendar-mutations.js";
 import { createCalendarQueryService } from "../../calendar/calendar-query.js";
+import type { CalendarReminderScheduler } from "../../calendar/calendar-reminder-scheduler.js";
 import { type CalendarPersistence, openCalendarPersistence } from "../../calendar/calendar-store.js";
 import { normalizeCalendarQuery } from "../../calendar/calendar-temporal.js";
 import {
@@ -44,6 +45,7 @@ export interface CalendarHandlerDeps {
   householdTimeZone?: string;
   /** Injectable request-scoped V2 persistence opener used by handler tests. */
   openStore?: (cap: ReturnType<AccessManager["grant"]>, cfg: CalendarConfig) => CalendarPersistence;
+  reminders?: CalendarReminderScheduler;
 }
 
 export function createCalendarHandler(deps: CalendarHandlerDeps): (request: Request) => Promise<Response> {
@@ -124,11 +126,13 @@ async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Prom
     });
 
     if (route.kind === "list") {
-      if (request.method === "POST") return createEvent(privateStore, householdStore, body, cfg, requestId);
+      if (request.method === "POST")
+        return await createEvent(privateStore, householdStore, body, cfg, requestId, deps.reminders);
       return listEvents(query, url, requestId);
     }
     if (route.kind === "get") return getEvent(query, route.eventId, url, requestId);
-    if (route.kind === "mutate") return mutateEvent(privateStore, householdStore, route.eventId, body, cfg, requestId);
+    if (route.kind === "mutate")
+      return await mutateEvent(privateStore, householdStore, route.eventId, body, cfg, requestId, deps.reminders);
     return error(404, "not_found", "Calendar route not found", requestId);
   } catch {
     // Domain services return typed failures. This catch is only the adapter
@@ -188,13 +192,14 @@ function getEvent(
   return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 
-function createEvent(
+async function createEvent(
   privateStore: CalendarPersistence,
   householdStore: CalendarPersistence,
   input: unknown,
   cfg: CalendarConfig,
   requestId: string,
-): Response {
+  reminders?: CalendarReminderScheduler,
+): Promise<Response> {
   if (isRecord(input) && input.scope !== undefined && input.scope !== "private" && input.scope !== "household") {
     return error(422, "invalid_scope", "calendar writes require one private or household target", requestId);
   }
@@ -203,17 +208,23 @@ function createEvent(
   if (!parsed.success) return error(422, "malformed", "Calendar create fields are invalid", requestId);
   const persistence = parsed.data.scope === "household" ? householdStore : privateStore;
   const result = createCalendarEvent(parsed.data as CalendarCreateInput, persistence, cfg);
+  if (result.ok && reminders) {
+    const reconciled = await reminders.reconcile(persistence, result.value.eventId, parsed.data.scope ?? "private");
+    if (!reconciled.ok)
+      return error(503, "io_error", "The event was saved, but its reminder could not be scheduled yet", requestId);
+  }
   return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 
-function mutateEvent(
+async function mutateEvent(
   privateStore: CalendarPersistence,
   householdStore: CalendarPersistence,
   eventId: CalendarEventId,
   input: unknown,
   cfg: CalendarConfig,
   requestId: string,
-): Response {
+  reminders?: CalendarReminderScheduler,
+): Promise<Response> {
   if (!isRecord(input) || (input.operation !== "update" && input.operation !== "delete")) {
     return error(422, "malformed", "Mutation operation must be update or delete", requestId);
   }
@@ -230,6 +241,22 @@ function mutateEvent(
   const scope = parsed.data.scope ?? "private";
   const persistence = scope === "household" ? householdStore : privateStore;
   const result = mutateCalendarEvent(parsed.data as CalendarMutationCommand, persistence, cfg);
+  if (result.ok && reminders) {
+    const ids = new Set(
+      [
+        eventId,
+        result.value.eventId,
+        "successorEventId" in result.value ? result.value.successorEventId : undefined,
+      ].filter((id): id is string => Boolean(id)),
+    );
+    for (const id of ids) {
+      const original =
+        id === eventId && parsed.data.applyTo === "this_occurrence" ? parsed.data.originalStart : undefined;
+      const reconciled = await reminders.reconcile(persistence, id, scope, undefined, original);
+      if (!reconciled.ok)
+        return error(503, "io_error", "The event was saved, but its reminder could not be reconciled yet", requestId);
+    }
+  }
   return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 

@@ -758,6 +758,14 @@ function updateOccurrence(
     else if (existing?.group !== undefined) merged.group = existing.group;
     if (changes.tags !== undefined) merged.tags = changes.tags;
     else if (existing?.tags !== undefined) merged.tags = tagsForOverride(existing.tags) ?? null;
+    if (changes.reminder !== undefined) {
+      merged.notification =
+        withPersonalReminder(
+          existing?.notification === null ? undefined : (existing?.notification ?? event.notification),
+          context.persistence.ownerUserId,
+          changes.reminder,
+        ) ?? null;
+    } else if (existing?.notification !== undefined) merged.notification = existing.notification;
 
     if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
     const revision = tx.compareAndSwapRevision(event.id, event.revision);
@@ -1298,8 +1306,14 @@ function updateThisAndFollowing(
       end: _end,
       recurrence: _recurrence,
       group: _group,
+      notification: _notification,
       ...base
     } = event;
+    const successorNotification = withPersonalReminder(
+      event.notification,
+      context.persistence.ownerUserId,
+      changes.reminder,
+    );
     const successorId = crypto.randomUUID() as CalendarEventId;
     const successor: CalendarPersistenceBaseEvent = {
       ...base,
@@ -1324,6 +1338,7 @@ function updateThisAndFollowing(
           : event.group !== undefined
             ? { group: event.group }
             : {}),
+      ...(successorNotification ? { notification: successorNotification } : {}),
       revision: 1 as CalendarRevision,
       updatedAt: now,
     };
@@ -1339,6 +1354,7 @@ function updateThisAndFollowing(
         start: proposal.prefix.start,
         ...(event.end ? { end: event.end } : {}),
         recurrence: proposal.prefix.recurrence,
+        ...(event.notification ? { notification: event.notification } : {}),
         updatedAt: now,
       };
       const replacedBase = tx.replaceBaseEvent(prefix);

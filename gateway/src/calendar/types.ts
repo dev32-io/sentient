@@ -67,6 +67,8 @@ export interface ExceptionOverride {
   importance?: Importance | null;
   group?: Group | null;
   tags?: readonly string[] | Tags | null;
+  /** Actor-personal reminder overrides for this occurrence. */
+  notification?: CalendarNotification | null;
 }
 
 export interface StoredCalendarEvent {

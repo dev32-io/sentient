@@ -123,6 +123,7 @@ const overrideSchema = z
     importance: z.enum(["normal", "important", "pinned"]).nullable().optional(),
     group: z.string().nullable().optional(),
     tags: z.array(z.string()).nullable().optional(),
+    notification: z.record(z.unknown()).nullable().optional(),
   })
   .strict();
 

@@ -32,6 +32,7 @@ import { runApply } from "./apply/orchestrator.ts";
 import type { RouterDeps } from "./apply/router.ts";
 import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
+import { createCalendarReminderScheduler } from "./calendar/calendar-reminder-scheduler.ts";
 import { getLog } from "./logging/logger.ts";
 import type { PushStore } from "./push/push-store.ts";
 import type { ScheduleService } from "./scheduling/service.ts";
@@ -204,6 +205,15 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     accessManager: services.accessManager,
     ...(services.calendarConfig ? { calendarConfig: services.calendarConfig } : {}),
     ...(services.calendarHouseholdTimeZone ? { householdTimeZone: services.calendarHouseholdTimeZone } : {}),
+    ...(services.schedules && services.calendarConfig
+      ? {
+          reminders: createCalendarReminderScheduler({
+            schedules: services.schedules,
+            accessManager: services.accessManager,
+            calendarConfig: services.calendarConfig,
+          }),
+        }
+      : {}),
   });
   const handleSessions = createSessionsHandler({
     tokens: services.auth.tokens,

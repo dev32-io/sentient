@@ -298,6 +298,12 @@ function applyException(
     } else result.group = ex.group;
   }
   if (ex?.tags !== undefined) result.tags = ex.tags === null ? new Set() : new Set(ex.tags);
+  if (ex?.notification !== undefined) {
+    if (ex.notification === null) {
+      const { notification: _notification, ...withoutNotification } = result;
+      result = withoutNotification;
+    } else result.notification = ex.notification;
+  }
   return result;
 }
 

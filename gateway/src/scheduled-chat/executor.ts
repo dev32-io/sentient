@@ -29,11 +29,7 @@ export function createScheduledExecutionAuthorizer(deps: {
         if (signal.aborted) return cancelled();
         if (!user.ok) return unavailable();
         if (!user.value) return forbidden();
-        const principal = createUserPrincipal(
-          claim.ownerUserId,
-          user.value.role,
-          deps.householdId,
-        );
+        const principal = createUserPrincipal(claim.ownerUserId, user.value.role, deps.householdId);
         const execution: AuthorizedScheduledExecution = {
           claim,
           principal,

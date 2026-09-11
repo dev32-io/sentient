@@ -38,9 +38,7 @@ export function createScheduledChatRunner(deps: {
   let loop: Promise<void> | null = null;
   let activeRun: Promise<SchedulingResult<{ claimed: number; finalized: number }>> | null = null;
 
-  async function executeOnce(
-    signal: AbortSignal,
-  ): Promise<SchedulingResult<{ claimed: number; finalized: number }>> {
+  async function executeOnce(signal: AbortSignal): Promise<SchedulingResult<{ claimed: number; finalized: number }>> {
     const due = await deps.claims.claimDue(deps.now?.() ?? new Date(), deps.claimLimit, deps.leaseMs);
     if (!due.ok) return due;
     let finalized = 0;

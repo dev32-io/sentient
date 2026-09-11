@@ -5,6 +5,7 @@ import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
 import { claimSingleEvaluation, describeHotReloadRefusal } from "./bootstrap/single-evaluation.ts";
 import { type SingleInstanceIo, acquireSingleInstance, describeConflict } from "./bootstrap/single-instance.ts";
+import { authorizeCalendarReminderExecution } from "./calendar/calendar-reminder-scheduler.ts";
 import { gatewayStateDir, loadLoggingConfig, loadStartupConfig, resolveSentientHome } from "./config/startup-config.ts";
 import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
 import { createUserPrincipal } from "./identity/user-principal.ts";
@@ -18,7 +19,6 @@ import { openPushStore } from "./push/push-store.ts";
 import { createScheduledExecutionAuthorizer, createScheduledMessageSubmitter } from "./scheduled-chat/executor.ts";
 import { createScheduledChatRunner } from "./scheduled-chat/runner.ts";
 import { createScheduledPushOutboxQueue } from "./scheduling/push-outbox-adapter.ts";
-import { createScheduleService } from "./scheduling/service.ts";
 import { createGatewayServer } from "./server.ts";
 import { createCredentialRevoker } from "./session-handlers/credential-revocation.ts";
 import { buildSessionHandles } from "./session-handlers/session-binding.ts";
@@ -309,18 +309,12 @@ services.delegatedExternalTool.sealEmpty(
 // Scheduled chat + push composition. These are process-owned background loops;
 // neither the HTTP handlers nor a client connection owns their lifetime.
 // ---------------------------------------------------------------------------
-const schedules = config.scheduling
-  ? createScheduleService({
-      userDataRoot: config.access.user_data_root,
-      graceMs: config.scheduling.missedGraceMs,
-      sessionDbFileName: config.store.db_filename,
-      cardsMaxPageSize: config.scheduling.cardsMaxPageSize,
-    })
-  : undefined;
+const schedules = services.schedules;
 const pushStore = config.push
   ? openPushStore(join(gatewayStateDir("push"), "push.db"), { revocationTtlMs: config.push.revocationTtlMs })
   : undefined;
 
+const calendarConfig = services.calendarConfig;
 const scheduledRunner =
   schedules && services.createSessionRuntime && config.scheduling
     ? createScheduledChatRunner({
@@ -329,6 +323,16 @@ const scheduledRunner =
           users: services.auth.users,
           accessManager: services.accessManager,
           householdId: "home",
+          ...(calendarConfig
+            ? {
+                authorizeCalendarReminder: (execution, signal) =>
+                  authorizeCalendarReminderExecution(
+                    execution,
+                    { accessManager: services.accessManager, calendarConfig },
+                    signal,
+                  ),
+              }
+            : {}),
         }),
         submitter: createScheduledMessageSubmitter({
           accessManager: services.accessManager,

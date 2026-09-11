@@ -6,6 +6,7 @@ import {
   type ScheduleCreateRequest,
   type ScheduleListResponse,
   type ScheduleTiming,
+  type ScheduleTimingInput,
   type ScheduledSessionCard,
   scheduleSchema,
   scheduleSourceSchema,
@@ -112,6 +113,13 @@ export interface ScheduleClaimTransactions {
 }
 
 export type ScheduleCreateOutcome = Readonly<{ schedule: Schedule; replayed: boolean }>;
+export type CalendarReminderScheduleInput = Readonly<{
+  eventId: string;
+  reminderId: string;
+  enabled: boolean;
+  message?: string;
+  timing?: ScheduleTimingInput;
+}>;
 export interface ScheduleService
   extends ScheduleCommands,
     DueClaimSource,
@@ -123,6 +131,12 @@ export interface ScheduleService
     request: ScheduleCreateRequest,
     acceptedAt: Date,
   ): Promise<SchedulingResult<ScheduleCreateOutcome>>;
+  /** Idempotently projects one actor-owned calendar reminder into scheduling. */
+  reconcileCalendarReminder(
+    resource: PrivateScheduleResource,
+    input: CalendarReminderScheduleInput,
+    acceptedAt: Date,
+  ): Promise<SchedulingResult<void>>;
   close(): void;
 }
 
@@ -289,6 +303,66 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     const result = await createDetailed(resource, request, acceptedAt);
     return result.ok ? { ok: true, value: result.value.schedule } : result;
   };
+
+  const reconcileCalendarReminder: ScheduleService["reconcileCalendarReminder"] = (resource, input, acceptedAt) =>
+    withResource<void>(resource, (db) =>
+      db
+        .transaction((): SchedulingResult<void> => {
+          if (!input.eventId || !input.reminderId || !Number.isFinite(acceptedAt.getTime())) return fail("validation");
+          const source = JSON.stringify({
+            kind: "calendar-reminder",
+            eventId: input.eventId,
+            reminderId: input.reminderId,
+          });
+          const existing = db.query<Row, [string]>("SELECT * FROM schedules WHERE source_json=?").get(source);
+          const at = iso(acceptedAt);
+          if (!input.enabled) {
+            if (existing && !existing.deleted) {
+              db.query(
+                "UPDATE schedules SET revision=revision+1,generation=generation+1,enabled=0,next_run_at=NULL,updated_at=?,deleted=1,deleted_revision=revision+1 WHERE schedule_id=?",
+              ).run(at, existing.schedule_id);
+            }
+            return { ok: true, value: undefined };
+          }
+          if (!input.message || !input.timing) return fail("validation");
+          let timing: ScheduleTiming;
+          let run: string | null;
+          try {
+            timing = timingAt(input.timing, acceptedAt);
+            run = nextRun(timing, acceptedAt, true);
+          } catch {
+            return fail("validation");
+          }
+          if (existing) {
+            db.query(
+              "UPDATE schedules SET revision=revision+1,generation=generation+1,message=?,timing_json=?,enabled=1,next_run_at=?,updated_at=?,deleted=0,deleted_revision=NULL WHERE schedule_id=?",
+            ).run(input.message, JSON.stringify(timing), run, at, existing.schedule_id);
+            return { ok: true, value: undefined };
+          }
+          if (
+            (db.query<{ n: number }, []>("SELECT count(*) n FROM schedules WHERE deleted=0").get()?.n ?? 0) >=
+            maxSchedules
+          )
+            return fail("limit_exceeded");
+          const id = `sch_${makeId()}`;
+          const idempotencyKey = `calendar:${resource.ownerUserId}:${input.eventId}:${input.reminderId}`;
+          db.query("INSERT INTO schedules VALUES (?,?,1,1,?,?,?,?,?,?,?,?,?,0,NULL)").run(
+            id,
+            resource.ownerUserId,
+            input.message,
+            JSON.stringify(timing),
+            1,
+            source,
+            run,
+            at,
+            at,
+            idempotencyKey,
+            JSON.stringify({ source, message: input.message, timing }),
+          );
+          return { ok: true, value: undefined };
+        })
+        .immediate(),
+    );
 
   const patch: ScheduleCommands["patch"] = (resource, scheduleId, request, acceptedAt) =>
     withResource<Schedule>(resource, (db) =>
@@ -896,6 +970,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
   return {
     create,
     createDetailed,
+    reconcileCalendarReminder,
     patch,
     delete: remove,
     list,
