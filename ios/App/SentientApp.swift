@@ -3,6 +3,7 @@ import MobileData
 
 @main
 struct SentientApp: App {
+    @UIApplicationDelegateAdaptor(SentientAppDelegate.self) private var appDelegate
     private let visualCaptureMode: Bool
 
     init() {
@@ -62,5 +63,6 @@ private struct ProductionAppRoot: View {
     var body: some View {
         RootView()
             .environmentObject(appConfig)
+            .onOpenURL { NativePushCoordinator.shared.receive(url: $0) }
     }
 }

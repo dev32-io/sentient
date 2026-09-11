@@ -22,6 +22,12 @@ struct CalendarDraftFields: View {
     @State private var untilDate: Date
     @State private var hasUntil: Bool
     @State private var weekdays: Set<Weekday>
+    @State private var reminderEnabled: Bool
+    @State private var reminderUsesLead: Bool
+    @State private var reminderLeadMinutes: String
+    @State private var reminderTime: Date
+    @State private var reminderTimeZoneId: String
+    @State private var reminderChanged = false
 
     private let zone: TimeZone
     private let sourceUntil: CalendarOverlayRecurrenceUntil?
@@ -62,6 +68,17 @@ struct CalendarDraftFields: View {
         _untilDate = State(initialValue: sourceUntil?.date ?? start)
         _hasUntil = State(initialValue: recurrence?.until != nil)
         _weekdays = State(initialValue: Set(recurrence?.weekdays ?? []))
+        let reminder = value.reminder
+        let reminderZoneId = reminder?.timeZone ?? zone.identifier
+        let reminderZone = TimeZone(identifier: reminderZoneId) ?? zone
+        let reminderFormatter = DateFormatter()
+        reminderFormatter.dateFormat = "HH:mm"
+        reminderFormatter.timeZone = reminderZone
+        _reminderEnabled = State(initialValue: reminder?.enabled == true)
+        _reminderUsesLead = State(initialValue: reminder?.mode == .lead)
+        _reminderLeadMinutes = State(initialValue: String(Int(reminder?.leadMinutes?.intValue ?? 15)))
+        _reminderTime = State(initialValue: reminder?.localTime.flatMap(reminderFormatter.date(from:)) ?? reminderFormatter.date(from: "09:00") ?? start)
+        _reminderTimeZoneId = State(initialValue: reminderZoneId)
     }
 
     var body: some View {
@@ -88,6 +105,19 @@ struct CalendarDraftFields: View {
                 group: $group,
                 tags: $tags,
                 onChange: { emit() }
+            )
+            CalendarReminderControls(
+                allDay: allDay,
+                enabled: $reminderEnabled,
+                usesLead: $reminderUsesLead,
+                leadMinutes: $reminderLeadMinutes,
+                reminderTime: $reminderTime,
+                timeZoneId: $reminderTimeZoneId,
+                timeZone: TimeZone(identifier: reminderTimeZoneId) ?? zone,
+                onChange: {
+                    reminderChanged = true
+                    emit()
+                }
             )
             CalendarDraftRecurrenceSection(
                 repeats: $repeats,
@@ -169,10 +199,38 @@ struct CalendarDraftFields: View {
             originalStart: draft.originalStart,
             expectedRevision: draft.expectedRevision,
             inputTimeZoneId: draft.inputTimeZoneId,
-            recurring: draft.recurring
+            recurring: draft.recurring,
+            reminder: reminderInput,
+            reminderChanged: reminderChanged
         )
         draft = updated
         onUpdate(updated)
+    }
+
+    private var reminderInput: CalendarReminderInput? {
+        guard reminderEnabled else { return nil }
+        if allDay {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            formatter.timeZone = TimeZone(identifier: reminderTimeZoneId) ?? zone
+            return CalendarReminderInput(
+                enabled: true,
+                mode: .allDay,
+                leadMinutes: nil,
+                localTime: formatter.string(from: reminderTime),
+                timeZone: reminderTimeZoneId
+            )
+        }
+        if reminderUsesLead {
+            return CalendarReminderInput(
+                enabled: true,
+                mode: .lead,
+                leadMinutes: Int(reminderLeadMinutes).map { KotlinInt(int: Int32($0)) },
+                localTime: nil,
+                timeZone: nil
+            )
+        }
+        return CalendarReminderInput(enabled: true, mode: .atStart, leadMinutes: nil, localTime: nil, timeZone: nil)
     }
 }
 

@@ -11,7 +11,7 @@ private enum CalendarOverlayPreviewFixture {
         visibility: .everyone, importance: .important, group: "family",
         tags: ["family", "weekend"],
         recurrence: StructuredRecurrence(frequency: .weekly, interval: 1,
-                                         weekdays: [.saturday], count: 12, until: nil)
+                                         weekdays: [.saturday], count: 12, until: nil), reminder: nil
     )
     static let timedDraft = CalendarMutationDraft(
         title: "Family brunch", description: "Bring the picnic basket", allDay: false,
@@ -20,14 +20,16 @@ private enum CalendarOverlayPreviewFixture {
         group: "family", tags: ["family", "weekend"], recurrence: occurrence.recurrence,
         eventId: occurrence.eventId, occurrenceId: occurrence.occurrenceId,
         originalStart: occurrence.originalStart, expectedRevision: 4,
-        inputTimeZoneId: "America/Los_Angeles", recurring: true
+        inputTimeZoneId: "America/Los_Angeles", recurring: true,
+        reminder: nil, reminderChanged: false
     )
     static let allDayDraft = CalendarMutationDraft(
         title: "", description: nil, allDay: true, start: "2026-04-18", end: nil,
         scope: .private, visibility: .everyone, importance: .normal,
         group: nil, tags: [], recurrence: nil, eventId: nil, occurrenceId: nil,
         originalStart: nil, expectedRevision: nil,
-        inputTimeZoneId: "America/Los_Angeles", recurring: false
+        inputTimeZoneId: "America/Los_Angeles", recurring: false,
+        reminder: nil, reminderChanged: false
     )
     static let allDayEditDraft = CalendarMutationDraft(
         title: "School holiday", description: "No classes", allDay: true,
@@ -35,7 +37,8 @@ private enum CalendarOverlayPreviewFixture {
         visibility: .everyone, importance: .normal, group: "school", tags: ["holiday"],
         recurrence: nil, eventId: occurrence.eventId, occurrenceId: occurrence.occurrenceId,
         originalStart: "2026-04-18", expectedRevision: 4,
-        inputTimeZoneId: "America/Los_Angeles", recurring: false
+        inputTimeZoneId: "America/Los_Angeles", recurring: false,
+        reminder: nil, reminderChanged: false
     )
     static let target = CalendarMutationTarget(
         eventId: occurrence.eventId, scope: occurrence.scope,

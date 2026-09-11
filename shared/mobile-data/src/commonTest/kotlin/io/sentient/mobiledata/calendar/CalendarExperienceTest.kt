@@ -45,6 +45,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -964,6 +965,7 @@ class CalendarExperienceTest {
         assertEquals(Visibility.ADULTS, create.visibility)
         assertEquals(Importance.PINNED, create.importance)
         assertEquals(recurrence, create.recurrence)
+        assertNull(create.reminder)
 
         for (scope in io.sentient.mobilesdk.calendar.CalendarMutationScope.entries) {
             val result = assertIs<CalendarCommandBuildResult.Success<CalendarMutationRequest.Update>>(
@@ -978,6 +980,7 @@ class CalendarExperienceTest {
                 result.command.originalStart,
             )
             assertEquals("2026-08-10T09:00:00-04:00", result.command.changes?.start)
+            assertNull(result.command.changes?.reminder, "untouched reminders must be omitted")
             if (scope == io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_OCCURRENCE) {
                 assertEquals(
                     io.sentient.mobilesdk.calendar.CalendarPatch.Unchanged,
@@ -985,6 +988,50 @@ class CalendarExperienceTest {
                 )
             }
         }
+
+        val disabledReminder = assertIs<CalendarCommandBuildResult.Success<CalendarMutationRequest.Update>>(
+            buildCalendarUpdateRequest(
+                draft.copy(reminder = null, reminderChanged = true),
+                io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
+            ),
+        ).value.command.changes?.reminder
+        assertEquals(false, disabledReminder?.enabled)
+        assertNull(disabledReminder?.mode)
+
+        val allDayReminder = io.sentient.mobilesdk.calendar.CalendarReminderInput(
+            enabled = true,
+            mode = io.sentient.mobilesdk.calendar.CalendarReminderMode.ALL_DAY,
+            localTime = "09:00",
+            timeZone = "America/Toronto",
+        )
+        val allDayCreate = assertIs<CalendarCommandBuildResult.Success<io.sentient.mobilesdk.calendar.CalendarCreateInput>>(
+            buildCalendarCreateInput(
+                draft.copy(
+                    allDay = true,
+                    start = "2026-08-10",
+                    end = null,
+                    recurrence = null,
+                    eventId = null,
+                    occurrenceId = null,
+                    originalStart = null,
+                    expectedRevision = null,
+                    reminder = allDayReminder,
+                    reminderChanged = true,
+                ),
+            ),
+        ).value
+        assertEquals(allDayReminder, allDayCreate.reminder)
+        assertIs<CalendarCommandBuildResult.Failure>(
+            buildCalendarCreateInput(
+                draft.copy(
+                    allDay = true,
+                    start = "2026-08-10",
+                    end = null,
+                    recurrence = null,
+                    reminder = allDayReminder.copy(localTime = null),
+                ),
+            ),
+        )
 
         val noSeconds = draft.copy(
             start = "2026-08-10T09:00-04:00",

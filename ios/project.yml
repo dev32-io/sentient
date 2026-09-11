@@ -43,6 +43,11 @@ targets:
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Viewer
+            CFBundleURLName: io.dev32.sentient.session
+            CFBundleURLSchemes:
+              - sentient
         # Required for iOS Local Network access (LAN gateway). The system shows this
         # string in the Local Network permission prompt; without the key the prompt
         # (and all local-network connections) are blocked.
@@ -65,9 +70,13 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: App/SentientApp.entitlements
       configs:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
     preBuildScripts:
       - name: Verify Sentient identity checksum
         script: |

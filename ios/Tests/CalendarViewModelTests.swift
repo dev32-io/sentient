@@ -1232,7 +1232,7 @@ private func makeOccurrence(revision: Int32 = 7) -> EffectiveOccurrence {
         originalStart: "2026-08-17T09:00:00-07:00", recurring: true, revision: revision,
         scope: .household, title: "School pickup", description: "Bring forms",
         start: "2026-08-17T10:00:00-07:00", end: "2026-08-17T10:30:00-07:00",
-        visibility: .everyone, importance: .important, group: "family", tags: ["school"], recurrence: nil
+        visibility: .everyone, importance: .important, group: "family", tags: ["school"], recurrence: nil, reminder: nil
     )
 }
 
@@ -1243,7 +1243,8 @@ private func makeDraft() -> CalendarMutationDraft {
         scope: .household, visibility: .everyone, importance: .important, group: "family", tags: ["school"],
         recurrence: nil, eventId: "event-42", occurrenceId: "occurrence-42",
         originalStart: "2026-08-17T09:00:00-07:00", expectedRevision: 7,
-        inputTimeZoneId: "America/Los_Angeles", recurring: true
+        inputTimeZoneId: "America/Los_Angeles", recurring: true,
+        reminder: nil, reminderChanged: false
     )
 }
 
