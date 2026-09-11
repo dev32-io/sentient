@@ -66,12 +66,13 @@ delivery: >-
   surfaces in the existing local review/test infrastructure; do not add tests
   that merely pin labels or constants. Leave clean tested source.
 checks:
-  - source scripts/env.sh && bun run --filter @sentient/web-sdk test:unit && bun
-    run --filter @sentient/webui test:unit
-  - source scripts/env.sh && bun run --filter @sentient/webui typecheck && bun
-    run --filter @sentient/webui build
-  - source scripts/env.sh && bun scripts/design/web-foundation-check.ts && bun
-    test scripts/design/web-foundation-check.test.ts && git diff --check
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/web-sdk
+    test:unit && bun run --filter @sentient/webui test:unit"
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/webui
+    typecheck && bun run --filter @sentient/webui build"
+  - bash -lc "source scripts/env.sh && bun
+    scripts/design/web-foundation-check.ts && bun test
+    scripts/design/web-foundation-check.test.ts && git diff --check"
 assignment:
   agent: implementer
   tier: medium
