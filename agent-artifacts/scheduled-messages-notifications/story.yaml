@@ -510,38 +510,39 @@ e2e: >
   disposable resources.
 
 
-  ## E2E-007 — Restart and delivery failure preserve durable outcomes
+  ## E2E-007 — Restart preserves one-time cleanup and recurring progress
 
 
   ### Exercise
 
 
-  Using disposable local schedules and read-only assistant work, restart the
-  local gateway around execution/completion boundaries and temporarily make the
-  managed push dependency unavailable. Include a most-recent missed occurrence
-  inside the configured grace window and older missed occurrences outside it.
-  Restore local services through their normal lifecycle and inspect schedule
-  history, inbox, and delivery status.
+  Using disposable local schedules with harmless messages, restart the gateway
+  around execution and one-time cleanup, and temporarily make the managed push
+  dependency unavailable. Include a missed occurrence inside the configured
+  grace window and older ones outside it. Restore services through their normal
+  local lifecycle and inspect pending schedules and session cards. Actual
+  provider receipt is not required.
 
 
   ### Oracle
 
 
-  Each executed occurrence retains one run/session identity; interrupted
-  assistant execution is recorded rather than blindly replayed. Saved completion
-  reconciles into one inbox entry. Only the eligible most-recent missed
-  occurrence executes; no backlog floods the user. Delivery recovery does not
-  rerun the LLM or tool actions, and saved results remain available during the
-  outage.
+  An executed occurrence retains one session identity. Completed one-time work
+  is consumed after recovery without another submission; interrupted execution
+  is recorded rather than blindly rerun, and its one-time entry is also cleaned
+  up. Recurring schedules retain the next occurrence. Older missed work is not
+  replayed as a backlog. Push unavailability does not remove saved chats or
+  recreate consumed jobs.
 
 
   ### Proof
 
 
-  Retain content-free run/session identifiers, statuses, timestamps, and
-  execution/delivery counts to establish recovery and non-replay invariants.
-  Record sanitized local service transitions, not model content. Restore normal
-  local configuration and remove disposable resources.
+  Retain content-free occurrence/session identifiers, schedule presence/absence,
+  timestamps, and submission counts for the cleanup/non-replay invariants.
+  Capture redacted card/settings states and sanitized service transitions.
+  Lower-level tests own exact crash-window and push retry proof. Restore local
+  configuration and remove disposable resources.
 
 
   ## E2E-008 — Schedules notifications and links preserve account isolation
