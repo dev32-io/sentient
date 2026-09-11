@@ -1,2 +1,26 @@
 schemaVersion: 1
-stages: []
+stages:
+  - id: complete-preserved-features
+    tasks:
+      - scheduled-chat-execution
+      - ios-experience
+    mode: concurrent
+    checks:
+      - bash -lc "source scripts/env.sh && bun run typecheck && bun run
+        design:foundation:check && git diff --check"
+    review:
+      mode: required
+      focus: Review the recovered implementation, not just changes made during
+        continuation. Confirm safe source preservation; single-runtime ordinary
+        chat execution; original-turn durable completion; atomic
+        finalization/reference outbox/once cleanup; crash recovery and current
+        authorization; removal of redundant history writes with sufficient
+        session provenance. Review completed iOS schedule/inbox/reminder UI,
+        APNs and auth-gated navigation, immediate logout with truthful pending
+        unlink, revoke-only storage and replacement-binding fence. Require
+        actual XCTest on iPhone 16 OS 18.3.1 and consumer tests that exercise
+        real lifecycle integration. Inspect changed visual files, including
+        legacy calendar embeddings, for shared component/token compliance
+        without exemptions. No Android/FCM, fake test successes, production
+        changes or accepted residual code defects merely because source was
+        previously committed.
