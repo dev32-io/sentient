@@ -14,3 +14,25 @@ stages:
         Confirm fixtures are sufficient for independently implemented clients
         and services and do not add unread state, a second chat runtime, or
         provider secrets.
+  - id: independent-layers
+    tasks:
+      - schedule-service
+      - push-service
+      - shared-mobile-data
+      - web-experience
+    mode: concurrent
+    checks:
+      - source scripts/env.sh && bun run typecheck && bun run
+        design:foundation:check && git diff --check
+    review:
+      mode: required
+      focus: Review scheduling mutation/claim fencing and recurrence; per-device
+        privacy, revoke-only authority, account-binding generations, safe
+        protected Gorush configuration and missing-credential degradation; exact
+        KMP/web fixture parity and logout cleanup without retaining general
+        auth. Confirm terminal/outbox production is still reserved to its one
+        owner. For web screens and calendar controls, verify named
+        foundation-component reuse, token-only visuals, accessible bounded
+        session cards, no read-state machinery and no new style allowlist
+        exemptions. Check changed excluded calendar lines only embed checked
+        visual components.
