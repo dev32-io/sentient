@@ -63,8 +63,8 @@ stages:
       - calendar-reminders
     mode: sequential
     checks:
-      - source scripts/env.sh && bun run ci && bun run design:foundation:check
-        && git diff --check
+      - bash -lc "source scripts/env.sh && bun run ci && bun run
+        design:foundation:check && git diff --check"
     review:
       mode: required
       focus: "Ordered fresh-agent baton pass is intentional: gateway-surfaces mounts
