@@ -1,0 +1,86 @@
+schemaVersion: 1
+id: ios-experience
+title: Add native iOS scheduling inbox and push integration
+dependsOn:
+  - shared-mobile-data
+description: Build thin SwiftUI screens and APNs integration over the shared
+  mobile APIs. Users manage once/recurring messages, enable personal calendar
+  reminders, browse compact session cards, register the installation for
+  notifications and choose per-device preview privacy. Notification/card
+  activation reuses Route/UserSessionHost session resume. Use existing Sentient
+  design components/tokens; no inline hardcoded styling.
+scope: >-
+  Own `ios/App/` feature screens, Notifications adapters, Settings/Calendar
+  embedding, Route/UserSessionHost, UserSession/RootView/SentientApp lifecycle
+  integration, `ios/Tests/`, and authoritative `ios/project.yml` for
+  entitlements/deep-link configuration. Own narrowly necessary iOS checker/test
+  updates under `scripts/design/ios-design-boundary*`; do not broaden
+  allowlists. Do not edit shared KMP source, Android, gateway, root version
+  catalog or canonical design tokens. Consume exported shared experiences,
+  pending unlink coordinator and secure revoke-only storage APIs; use SKIE/Swift
+  concurrency as the surrounding code does.
+
+
+  Component inventory: existing settings/page scaffold with
+  DesignPageChrome/DesignCard/DesignSettingsRow;
+  DesignField/DesignMultilineEditor/DesignSelect/DesignSegmentedPicker for
+  forms; DesignToggleRow/DesignToggleSwitch for reminders/privacy;
+  DesignActionButton/DesignIconButton for actions; existing session-card
+  presentation for the inbox. All visual values come through
+  DesignV2/Tokens/Typo and the shared library. Add only a missing reusable
+  semantic variant, not a page-specific style.
+delivery: >-
+  - Add typed Scheduled messages, Push notifications and simple inbox
+  destinations. Bind once absolute/delay/recurring forms, timezone/next-run,
+  pause/resume/delete, reminder lead/all-day time and async error states to
+  shared data. Cards show bounded previews without unread state; selection sets
+  the existing active session and resumes rather than creates a chat.
+
+  - Integrate UNUserNotificationCenter/APNs permission and token lifecycle using
+  an owned delegate/coordinator, explicit user registration, accurate
+  denied/unconfigured/error state, token refresh, independent privacy and
+  disable/unlink/system-settings actions. Configure development/production
+  environments from build/runtime metadata without committing keys, provisioning
+  profiles or generated project state; simulator builds work without push
+  credentials.
+
+  - Parse only supported session destinations, preserve pending navigation
+  across cold launch/login, validate through existing session access, and never
+  accept arbitrary payload gateway URLs or bypass auth. Keep the authenticated
+  UserSession/ChatComponent lifetime above navigation.
+
+  - Local logout remains immediate even if network unlink fails: show the
+  pending warning, retain only revoke-only cleanup authority, retry on
+  reconnection, and fence replacement push activation until the old binding is
+  disabled. Do not retain general account credentials solely for cleanup.
+  Delegate data/lifecycle folding to shared code, not a second Swift repository.
+
+  - No inline visual constants, local colors, fonts, radius/spacing/motion
+  recipes, copied prototype assets or allowlist exemptions. New reminder visual
+  components must be in new checked files, with old excluded calendar files only
+  embedding them. Ensure the design checker covers every new
+  Settings/Calendar/inbox visual file, and make component/token inspection of
+  changed excluded lines an explicit acceptance condition. Preserve Dynamic
+  Type, focus/VoiceOver, reduced motion, contrast and native safe-area/sheet
+  behavior.
+
+  - Add XCTest/native boundary tests for destination parsing and cold-login
+  navigation, permission/status callbacks, token/account replacement and offline
+  unlink states using controlled platform inputs. Core lifecycle assertions are
+  mandatory without actual APNs. Actual OS delivery/tap may be skipped only for
+  missing device/signing/provider prerequisites, with the limitation stated.
+  Regenerate/build using scripts/ios-setup.sh and project.yml; commit no
+  generated .xcodeproj or private xcconfig.
+checks:
+  - source scripts/env.sh && bun scripts/design/ios-design-boundary.ts && bun
+    test scripts/design/ios-design-boundary.test.ts
+  - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test -project
+    ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+    Simulator,name=iPhone 16,OS=18.3' CODE_SIGNING_ALLOWED=NO
+  - source scripts/env.sh && git diff --check
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: One iOS owner keeps SwiftUI navigation, APNs delegates and lifecycle
+    coherent; shared data and existing design primitives avoid duplicating
+    backend behavior.
