@@ -10,95 +10,104 @@ spec: >
 
 
   Family members can ask Sentient to reach out later, manage scheduled messages,
-  and enable personal calendar reminders. Every executed occurrence submits an
-  ordinary **user message in a fresh chat session** and runs the normal
-  assistant, including its skills and permitted tools. The saved assistant
-  response is discoverable through a durable notification inbox and optional
-  phone push; either destination resumes that session through the existing
-  authenticated path. Even a simple reminder is an assistant interaction, not
-  canned notification text.
+  and enable personal calendar reminders. At the scheduled time, the gateway
+  submits the message as an ordinary user message in a fresh chat session. Users
+  find the result in a simple session-card inbox or through optional phone push;
+  clicking either resumes that session. Even simple reminders go through chat
+  rather than canned notification text.
 
 
   ## Scope
 
 
-  **Included:** Scheduled messages settings on web, Android, and iOS; one-time
-  and daily/weekly/monthly schedules in an explicit timezone; model tools to
-  create, view, edit, pause/resume, and delete the owner's schedules; personal
-  calendar reminders through cards and optional calendar-tool arguments; a
-  bell-accessible inbox; push settings on all clients; native device
-  registration and APNs/FCM delivery; per-device preview privacy, initially
-  hidden; a gateway-managed Gorush dependency suitable for mini0.
+  **Included:** Scheduled messages settings on web, Android, and iOS; explicit
+  one-time or recurring schedules; one-time absolute times and relative delays
+  such as in 30 minutes; daily/weekly/monthly recurrence in an explicit
+  timezone; model tools to create, view, edit, pause/resume, and delete
+  schedules; gateway-owned one-time cleanup; personal calendar reminders; a
+  bell-accessible list of truncated message cards; push settings on all clients;
+  native device registration and APNs/FCM delivery; per-device privacy
+  defaulting to hidden; and gateway-managed Gorush on mini0.
 
 
-  **Keep the first version simple:** A cron-like scheduled-message runner, not a
-  general automation platform. One occurrence executes one normal chat turn.
-  Recurrence uses a canonical calendar-style rule and established
-  time/recurrence utilities rather than ad hoc timers or a new bespoke
-  recurrence language. Users need not enter cron expressions.
+  **Keep it simple:** A cron-like runner using a canonical recurrence rule and
+  established time/recurrence utilities. Users need not enter cron expressions.
+  Scheduling and push delivery have small reusable interfaces, with
+  scheduled-chat behavior outside those layers. Reuse existing chat execution
+  and resume without adding special handling or verification for skills/tools.
 
 
-  **Excluded:** Browser push delivery in this release (web retains the inbox and
-  a settings page that clearly states browser delivery is unavailable);
-  arbitrary shell jobs; workflow/DAG automation; automatic non-response
-  escalation; implicit family-wide broadcasts; and production deployment or
-  production test messages during verification.
+  **Excluded:** A separate inbox read/unread model, unread badges or read-state
+  synchronization, notification-management workflows, a run-history dashboard, a
+  general automation/plugin/DAG framework, arbitrary shell jobs, automatic
+  non-response escalation, implicit family broadcasts, and browser push delivery
+  in this release. Web still exposes the inbox and settings that accurately
+  explain browser-delivery availability. Production deployment and production
+  test messages are not part of verification.
 
 
   ## Behavior
 
 
-  ### Scheduling and ordinary chat execution
+  ### One-time and recurring messages
 
-  - A user-owned schedule contains an ordinary user-message body, timing,
-  timezone, and enabled state. Settings show the next run and recent outcomes.
-  Daily reminders and daily news requests use the same mechanism, with no
-  separate reminder-only execution mode.
+  - A user-owned schedule contains a normal user-message body, timing, timezone,
+  and enabled state. Settings show pending one-time and recurring entries with
+  their next run. The tool schema and descriptions explicitly distinguish
+  one-time from recurring scheduling.
 
-  - Each occurrence receives a stable run identity and a fresh server-minted
-  session. Append the body as a normal user message, visibly labelled Scheduled,
-  and execute the normal assistant with normal skill discovery/use, permitted
-  tools, and personalization. Do not rewrite the request into a canned reminder
-  or restricted text-only prompt. Supply intended and actual execution times as
-  scheduling context; do not replay the originating chat automatically.
+  - One-time scheduling accepts an absolute time or a positive relative delay,
+  resolved to an execution instant by the gateway when accepted. Thus 'let's
+  chat about that in 30 minutes' creates a one-time schedule. Store a meaningful
+  message about the referenced topic using available conversational context;
+  clarify if the topic or timing is unclear rather than relying on replaying the
+  originating chat.
 
-  - Resolve the owner's current authorization at execution. Scheduling neither
-  grants new permissions nor bypasses existing tool policies or confirmation
-  requirements; model-generated calls are not themselves authorization.
+  - Recurring schedules remain until paused or deleted. They use canonical
+  calendar-style rules for daily/weekly/monthly local wall-clock execution: skip
+  nonexistent DST times, use the first instance of ambiguous times, and skip
+  nonexistent monthly dates.
+
+  - At each due occurrence, submit the saved body as an ordinary user message in
+  a fresh server-minted session using existing chat behavior. Retain scheduling
+  provenance and intended/actual time as metadata. Do not introduce a special
+  reminder execution mode or replay the original chat.
+
+  - The gateway automatically removes a one-time schedule after its execution
+  attempt reaches a terminal outcome. The model does not perform cleanup.
+  Preserve the resulting session and any pending push delivery; push failure
+  must not retain or recreate the consumed schedule. Expired/skipped one-time
+  entries are also cleaned up by the gateway.
 
   - Editing, pausing, or deleting affects occurrences not yet started, without
-  erasing existing chats. Recurrence follows local wall time: skip nonexistent
-  DST times, use the first instance of ambiguous times, and skip nonexistent
-  monthly dates.
+  erasing existing chats. Resolve current user authorization at execution and
+  preserve existing chat/tool policy; scheduling grants no additional
+  permissions.
 
   - After downtime, execute only the most recent missed occurrence if within a
-  YAML-configured grace window, initially 15 minutes; older occurrences are
-  skipped. Never replay a backlog. Interrupted assistant execution is recorded
-  rather than blindly rerun. Retrying notification delivery never executes the
-  user message again.
+  YAML-configured grace window, initially 15 minutes; skip older occurrences
+  rather than replaying a backlog. Record interrupted execution and do not
+  blindly rerun it. Push retries never execute the message again.
 
 
   ### Calendar versus scheduled-message intent
 
-  - **Calendar:** Record a dated/timed real-world event, appointment, or
-  activity. **Scheduled message:** Ask the assistant to reach out or perform an
-  ordinary chat request later, once or repeatedly. Recurrence alone does not
-  make something a calendar event.
+  - Calendar tools record real-world dated/timed events, appointments, or
+  activities. Scheduled-message tools ask the assistant to reach out or handle a
+  chat request later. Recurrence alone does not imply a calendar event.
 
-  - Tool and argument descriptions in both families must state this distinction,
-  name the alternative tool family, and give contrasting examples. Explain that
-  the scheduled message argument is the instruction the user wants executed
-  later, while timing/recurrence arguments specify when. Calendar event fields
-  describe the event; reminder arguments opt the acting user into a linked
-  scheduled assistant message.
+  - Both tool families and their arguments must explain this distinction and
+  name the alternative. The scheduled message is the normal user instruction to
+  submit later; timing arguments specify once at/after a time or recurring with
+  a timezone. State explicitly that the gateway consumes one-time entries
+  automatically.
 
-  - 'Remind me to take medicine every morning' and 'Send me my daily news every
-  morning' create scheduled messages, not calendar events. 'Put my dentist
-  appointment on the calendar' creates a calendar event. 'Put my appointment on
-  the calendar and remind me beforehand' creates the event with one linked
-  reminder, not an additional independent duplicate. Clarify materially
-  ambiguous intent or missing timing rather than creating both resources
-  speculatively.
+  - 'Chat about that in 30 minutes', 'Remind me to take medicine every morning',
+  and 'Send me my daily news every morning' create schedules, not calendar
+  events. 'Put my dentist appointment on the calendar' creates an event. An
+  explicit event-plus-reminder request creates the event with one linked
+  reminder, not a duplicate independent schedule. Clarify materially ambiguous
+  requests instead of creating both resources.
 
 
   ### Personal calendar reminders
@@ -107,90 +116,105 @@ spec: >
   household events. Timed events default to a reminder at their start with an
   optional lead time; all-day events require a chosen reminder time.
 
-  - Recurring reminders follow the series and its moved/cancelled occurrences.
-  Event edits update pending reminders; deletion or lost visibility cancels
-  them. Existing completed conversations remain intact.
+  - Recurring reminders follow event/occurrence identity and moved/cancelled
+  occurrences. Event edits update pending reminders; deletion or lost visibility
+  cancels them. Completed conversations remain intact.
 
-  - Calendar create/update tools accept optional reminder settings. Omission on
-  update preserves the current reminder; explicit disabling removes it. Linked
-  reminders appear in Scheduled messages and use the same fresh-session
-  execution path.
-
-
-  ### Inbox and push
-
-  - A saved completed response creates one inbox entry referencing its session.
-  The inbox indexes notifications; the session store remains the conversation
-  source of truth. Failed/interrupted runs remain visible with truthful status,
-  not fabricated assistant replies.
-
-  - Read/unread state synchronizes across clients. Opening marks an entry read;
-  push acceptance or delivery does not. Push is sent after the response is
-  saved. Push failure or disabled push does not hide inbox results or disable
-  schedules.
-
-  - Both inbox and push navigate to the existing authenticated session-resume
-  path. Retain the intended destination across cold launch/login. A missing or
-  unauthorized session produces a safe unavailable state; its ID never grants
-  access.
+  - Calendar create/update tools accept optional reminder settings: omission on
+  update preserves the reminder, explicit disabling removes it. Linked reminders
+  appear in Scheduled messages and use the same fresh-session path. A one-time
+  event reminder is consumed by the gateway; a recurring subscription remains
+  for future occurrences.
 
 
-  ### Per-device privacy and registration
+  ### Simple inbox and session links
 
-  - Each native installation has an independently authorized account
-  association, push-enabled state, and preview preference. Explicit user action
-  requests OS permission and registers delivery. Show actual
-  permission/registration failures, allow disabling/unlinking, and link to OS
-  settings where supported.
+  - The bell opens a newest-first list of compact message cards, visually
+  consistent with the existing past-chat list. Each card shows a truncated saved
+  assistant message and points to its sessionId; the full conversation stays in
+  the session store.
 
-  - Hide content is the default: generic New message title, no response,
+  - Clicking a card resumes that session through the existing path. Reuse a
+  lightweight session-backed projection with only the metadata needed to
+  identify these sessions and display their cards; do not add a separate
+  conversation copy or notification lifecycle database.
+
+  - No read/unread state, read receipts, unread badges, or separate
+  notification-management controls are required. Failed/interrupted sessions may
+  show a safe status in place of a missing preview using existing session state;
+  no additional history dashboard is needed.
+
+  - Push is optional and follows the saved response. Disabled/unavailable push
+  does not affect scheduled execution or the card list. One-time schedule
+  cleanup does not remove its card/session.
+
+  - Both card and push links carry the session destination into the existing
+  authenticated resume path, including cold launch and login.
+  Missing/unauthorized sessions show a safe unavailable state; an identifier
+  never grants access.
+
+
+  ### Per-device push privacy
+
+  - Each native installation has an authorized account association, push-enabled
+  state, and independent preview preference. Explicit user action requests OS
+  permission/registers delivery. Settings show actual permission/registration
+  state, support disabling/unlinking, and link to system settings where
+  supported.
+
+  - Hide content is the default: generic New message title with no response,
   instruction, event title, or identifying preview. Show content includes the
   saved assistant response as plain text bounded to provider payload limits; the
-  full response is always in the session. Both modes retain minimal
-  session-routing metadata.
+  full response remains in the session. Both retain minimal routing metadata.
 
-  - Apply current device privacy on the gateway before every dispatch/retry, not
-  just in the client presentation. Already-dispatched content cannot be
-  recalled. The authenticated inbox can display results independently of push
-  preview privacy.
+  - Apply the current device association, enabled state, and privacy on the
+  gateway before each dispatch/retry. Already-dispatched content cannot be
+  recalled. Authenticated inbox previews are independent of lock-screen privacy
+  settings.
 
-  - Logout/account switching removes the old delivery association. Invalid
-  tokens disable that destination, not the schedule. One device's preference
-  does not affect another.
+  - Logout/account switching removes the old delivery association. Token
+  replacement/invalidation affects only that destination. Disabling push or
+  changing one device's privacy does not affect other devices or schedules.
 
 
   ## Acceptance
 
 
-  - UI-created and model-created schedules expose equivalent timing and
-  lifecycle behavior; ordinary recurring requests need no cron syntax.
+  - UI and model tools support one-time absolute/delay scheduling and recurring
+  schedules with the same lifecycle behavior. A contextual request to chat in 30
+  minutes becomes one meaningful future user message, not a calendar event.
 
-  - Every executed occurrence creates a distinct resumable conversation
-  containing the scheduled user message and normal assistant turn. A scheduled
-  request can invoke an available skill and permitted tool just as an
-  interactive request can.
+  - Each executed occurrence uses a fresh resumable session and normal chat
+  submission. No new skill/tool execution subsystem or feature-specific proof of
+  existing skill/tool behavior is required.
 
-  - Representative reminders/news requests create schedules without calendar
-  entries; appointment requests create calendar events; an explicit
-  event-plus-reminder request creates one linked reminder. Tool and argument
-  descriptions support these distinctions.
+  - The gateway consumes one-time schedules automatically after terminal
+  execution or expiry, without a model cleanup call; their sessions/cards and
+  pending push delivery survive. Recurring schedules remain for the next
+  occurrence.
 
-  - Calendar updates/cancellations and permissions are reflected in pending
-  personal reminders without duplicate or cross-user delivery.
+  - Tool and argument descriptions distinguish schedules from calendar events,
+  with representative requests producing only the intended resource and one
+  linked reminder for an explicit event-plus-reminder request.
 
-  - Push and inbox open the same session, including cold-start/login recovery.
-  Read state synchronizes while push remains optional.
+  - Personal calendar reminders follow authorized event changes/cancellations
+  without duplicate or cross-user execution.
 
-  - Two devices on one account can receive different previews for the same
-  result; hidden-mode outbound payloads contain no message/event content.
-  Oversized responses remain fully available through session resume.
+  - The inbox is a past-chat-style list of truncated message cards that resume
+  the identified sessions. It requires no read/unread infrastructure and works
+  without push.
 
-  - Restarts, missed occurrences, permission denial, and provider failures
-  produce truthful outcomes without duplicate run sessions, blind assistant/tool
-  replay, or loss of saved results.
+  - Per-device hidden-mode payloads contain no message/event content;
+  content-enabled payloads are size-bounded and route to the same session.
+  Registration and preferences remain account/device scoped.
 
-  - Another account cannot read schedules/inbox entries, register delivery on
-  the owner's behalf, or gain access through a session link.
+  - Recovery and delivery retries do not duplicate session creation or blindly
+  replay chat execution. Current authorization and existing session access
+  checks remain in force.
+
+  - Scheduling and push delivery are encapsulated independently of calendar UI
+  and scheduled-chat behavior, enabling future callers without a new general
+  automation framework.
 design: >
   # Design
 
@@ -198,89 +222,107 @@ design: >
   ## Approach
 
 
-  Keep scheduling, run identities, inbox state, device registrations, and
-  durable delivery records inside the gateway's existing authorization boundary.
-  Use a thin persistent cron-like runner with canonical one-time/recurrence
-  schedules and existing time/recurrence utilities where applicable; do not turn
-  schedules into calendar events or build a second assistant runtime. Preserve
-  the normal prompt, skill, and mediated tool path for scheduled user messages.
+  Use three small boundaries: a reusable scheduling service that owns when work
+  is due and its durable one-time/recurring lifecycle; a scheduled-message
+  adapter that submits a normal message in a new session; and a reusable
+  push-delivery service that owns device destinations, privacy, and provider
+  dispatch. Keep typed interfaces narrow, with only the current
+  scheduled-message action implemented. Do not expose arbitrary job execution to
+  the model or build speculative plugin machinery.
 
 
-  Reuse the session/runtime machinery for headless turns and the existing client
-  resume path for navigation. Gorush is only a replaceable native APNs/FCM
-  transport, supervised as a host dependency; it owns neither scheduling nor
-  notification truth. Push-provider acceptance is not a guarantee of device
-  presentation. Browser transport is deferred.
+  Reuse existing recurrence/time utilities, chat submission, session storage,
+  client navigation, and past-chat card presentation. The inbox is a minimal
+  projection of scheduled-origin sessions, not a parallel notification state
+  machine. Existing session rows do not currently expose a message preview; add
+  only the bounded projection metadata needed for these cards.
+
+
+  Gorush remains a replaceable APNs/FCM transport managed by the host
+  supervisor. Scheduling does not depend on Gorush, and push delivery does not
+  depend on calendar or schedule definitions. Browser push is deferred.
 
 
   ## Boundaries and Flow
 
 
-  1. Authenticated settings or mediated tools create/update a user-owned
-  schedule. Shared domain validation provides the same semantics to both entry
-  points.
+  1. Authenticated settings and mediated tools use the same scheduled-message
+  API. It validates one-time/recurring timing and persists the owner and
+  message; descriptions distinguish this from creating calendar events.
 
-  2. The durable runner claims a due occurrence with a stable identity, resolves
-  current user authority, and associates a fresh server-minted session before
-  execution.
+  2. The scheduling service yields a due occurrence with a stable identity. The
+  scheduled-message adapter resolves current authorization, associates one fresh
+  session with that occurrence, and submits the message through normal chat
+  behavior.
 
-  3. The ordinary user message enters the native LLM loop with normal
-  skills/tools. Calendar reminder context is authorized event data, not
-  permission to execute instructions embedded in event fields.
+  3. On terminal execution, acknowledge the occurrence: consume a one-time job
+  or advance a recurring job. Preserve only the durable completion/deduplication
+  bookkeeping needed for crash safety; removing the schedule must not erase its
+  session or pending delivery. Expired one-time jobs are also consumed by the
+  gateway.
 
-  4. Saved completion is reconciled into one inbox entry and device delivery
-  records. The append-only session store remains authoritative for conversation
-  content.
+  4. Session-backed card data becomes available through the inbox projection. A
+  saved response can be passed to the push-delivery service with authorized
+  recipient and session destination; it applies per-device privacy and
+  dispatches through its provider adapter. Push retry state is independent of
+  schedule cleanup.
 
-  5. Before each send, validate the destination's current account association,
-  enabled state, and privacy; construct the minimal payload and dispatch through
-  Gorush.
-
-  6. Clients open the session through existing authentication and membership
-  checks. Shared mobile layers own shared data/cache behavior; native layers own
-  OS permission, token lifecycle, notification clicks, and platform navigation.
-
-
-  Personal reminder subscriptions reference calendar event/occurrence identity
-  rather than using a household-wide notification switch. Existing calendar
-  recurrence semantics remain intact. The calendar tool descriptions currently
-  referring to a future scheduler must point to the actual scheduled-message
-  tools.
+  5. Cards and notification clicks use the existing authenticated session-resume
+  path. Shared mobile layers own shared data; native layers own OS permission,
+  token lifecycle, and notification-click handling.
 
 
-  Gorush has private host access, protected credentials, sanitized logging,
-  bounded health/recovery, and provider egress. Existing launchd ownership and
-  health-gated production deployment remain unchanged. Operator-tunable timing,
-  retry, and resource limits belong in YAML.
+  Calendar reminders are personal subscriptions linked to event/occurrence
+  identity, translated into the same scheduling path; they are not
+  household-wide switches. Calendar data remains untrusted context rather than
+  authority. Existing calendar recurrence semantics remain intact.
+
+
+  Keep scheduling, chat execution, inbox projection, and push delivery
+  separately encapsulated behind explicit interfaces without duplicating
+  conversation content or adding read-state storage. Preserve
+  immutable-principal/capability authorization at public boundaries. Gorush uses
+  private host access, protected credentials, sanitized logging, bounded
+  health/recovery, and provider egress. Operator timing/retry/resource limits
+  belong in YAML. Existing launchd ownership and production deployment
+  procedures remain unchanged.
 
 
   ## Failure and Verification
 
 
-  Persist run/session identity before execution, and reconcile saved completion
-  after restart without creating another session or replaying an assistant turn.
-  Record interrupted runs instead of claiming exactly-once external tool
-  effects. Bound and cancel external calls; persist delivery attempts and use
-  bounded retries. Transport duplicates remain possible; use stable notification
-  identity where supported and never turn a push retry into another LLM
-  execution.
+  Keep enough durable occurrence/session identity to reconcile a saved result
+  and finish one-time cleanup after a crash without another session or message
+  submission. Treat interrupted execution as a terminal recorded outcome rather
+  than claiming exactly-once external effects or blindly replaying chat work.
+  One-time cleanup and push retries are independent; bounded delivery retry must
+  never recreate a consumed job. Preserve recurring next-run behavior and avoid
+  downtime backlogs.
 
 
-  Revalidate current user/event authorization and device association at relevant
-  boundaries. Hidden-mode privacy is proved at outbound payload construction.
-  Disable invalid destinations independently; missing provider credentials or
-  addon failure degrades push availability without discarding schedules or inbox
-  results. Session removal or access loss yields a safe navigation result.
+  External calls are cancellable and bounded. Revalidate current user/event
+  access and device association at relevant boundaries. Invalid tokens or
+  provider outages affect delivery, not sessions or scheduling. Use existing
+  session failure/unavailable behavior rather than a new notification lifecycle
+  UI. Never log credentials, tokens, prompts, transcripts, or notification
+  bodies.
 
 
-  Verify recurrence/time transitions, run deduplication, recovery,
-  authorization, and privacy at stable boundaries. Use actual assistant journeys
-  to prove schedule/calendar intent separation and normal skill/tool execution,
-  not string-only tests of descriptions. All retained evidence is content-free
-  or redacted: never log credentials, device tokens, prompts, transcripts, or
-  notification bodies. Local E2E uses the real local stack. Actual APNs/FCM
-  receipt requires development credentials, signing, and authorized devices;
-  absence is a reported verification gap, never a synthetic pass.
+  Local E2E proves scheduling, gateway-owned one-time cleanup, model intent
+  selection, calendar linkage, simple card navigation, available settings
+  behavior, recovery, and account isolation on the real stack. Existing chat
+  tests own skill/tool execution; do not add feature-specific re-verification of
+  those internals.
+
+
+  Focused tests at the scheduling and push-adapter boundaries prove
+  recurrence/DST handling, durable cleanup/deduplication, per-device payload
+  privacy/size, token association, and retry behavior. Adapter tests may
+  substitute provider responses but are not phone-delivery E2E. Actual APNs/FCM
+  delivery is optional operator verification with suitable
+  devices/signing/credentials: if unavailable, skip and explicitly report it as
+  unverified rather than block local E2E or claim a pass. Notification-click
+  routing can be exercised independently through a session deep link.
 e2e: >
   # E2E
 
@@ -288,15 +330,15 @@ e2e: >
   ## Scope
 
 
-  Outside-in journeys cover scheduled-message settings, model tool
-  intent/lifecycle, normal scheduled skill/tool execution, personal calendar
-  reminders, cross-client inbox/read state, per-device registration/privacy,
-  existing session resume, recovery, and account isolation. Use disposable
-  accounts/schedules and the real local gateway with its managed addon; exercise
-  web at desktop/mobile widths and Android/iOS native clients. Real phone
-  delivery uses separately configured development provider credentials and
-  authorized test devices. Retain only redacted UI evidence and content-free
-  identifiers/statuses; remove only disposable test resources.
+  Use disposable accounts and schedules on the real local gateway and managed
+  services to verify one-time and recurring messages, gateway-owned cleanup,
+  calendar-versus-schedule model intent, personal reminders, simple truncated
+  session-card lists, available push settings, session-link resume, recovery,
+  and account isolation. Exercise web at desktop/mobile widths and Android/iOS
+  on available supported local clients/emulators. No special skill/tool
+  execution proof is required beyond normal chat behavior. Retain redacted UI
+  evidence and content-free identifiers/statuses; remove only disposable
+  resources.
 
 
   ## E2E-001 — Scheduled user message runs a normal assistant conversation
@@ -565,10 +607,14 @@ e2e: >
   ## Exclusions
 
 
-  No production smoke or production messages; browser push delivery is out of
-  scope; no exhaustive OS/OEM delivery matrix or promise that the OS displays
-  the full response. Physical-device/provider delivery requires
-  operator-authorized development credentials and devices; absent prerequisites
-  leave the phone-delivery case explicitly blocked. Deterministic
-  DST/month-boundary and crash-window invariants are proved by focused
-  lower-level tests rather than wall-clock E2E waiting.
+  Actual APNs/FCM receipt, lock-screen presentation, and notification-tap
+  behavior are not required automated E2E gates. If suitable devices, signing,
+  or development credentials are unavailable, skip those checks and report
+  actual phone delivery unverified; optional operator verification must use
+  authorized development devices, never production messages. Native
+  registration/OS-permission portions unavailable on the test platform may
+  likewise be skipped with their precise limitation recorded, not treated as
+  passed. Deterministic scheduling and push-adapter tests cover payload privacy,
+  size, association, retry, DST/month-boundary, and crash/cleanup invariants
+  without claiming OS delivery. Browser push, read/unread synchronization,
+  exhaustive OS/OEM behavior, and production smoke are excluded.
