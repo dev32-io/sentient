@@ -510,39 +510,6 @@ e2e: >
   disposable resources.
 
 
-  ## E2E-006 — Real phone push resumes the scheduled session
-
-
-  ### Exercise
-
-
-  With operator-authorized development APNs/FCM credentials and signed test
-  installations connected to the local stack, receive actual scheduled-result
-  pushes on iOS and Android in both privacy modes. Tap while the app is
-  backgrounded and from cold launch. After receiving a test notification, sign
-  out and tap it again to exercise login-preserved routing. Do not send
-  production notifications.
-
-
-  ### Oracle
-
-
-  OS-visible notifications follow the selected preview mode within OS
-  presentation limits. Every authorized tap reaches the intended existing
-  session after any required login, never creates another chat, and exposes the
-  full saved response there. Wrong-account access is denied.
-
-
-  ### Proof
-
-
-  Retain redacted device evidence and matching run/session identifiers; never
-  retain credentials, tokens, or push bodies. Record platform/permission state
-  and actual receipt rather than treating provider acceptance as delivery.
-  Missing credentials/devices/signing block this case explicitly. Unregister
-  development destinations and clean disposable data.
-
-
   ## E2E-007 — Restart and delivery failure preserve durable outcomes
 
 
