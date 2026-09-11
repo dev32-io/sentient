@@ -5,6 +5,10 @@ import type { ScheduledContentOutbox } from "./contracts.js";
  * drainer. It contains no executor reference, so delivery retries cannot
  * re-enter chat execution. */
 export function createScheduledPushOutboxQueue(outbox: ScheduledContentOutbox): PushOutboxQueue {
+  const requireMutation = async (operation: Promise<{ ok: boolean }>, action: string): Promise<void> => {
+    const result = await operation;
+    if (!result.ok) throw new Error(`scheduled push outbox ${action} failed`);
+  };
   return {
     async claim(limit, leaseMs, now, signal) {
       if (signal.aborted) return { ok: false, error: { code: "closed", retryable: false } };
@@ -31,13 +35,13 @@ export function createScheduledPushOutboxQueue(outbox: ScheduledContentOutbox): 
       };
     },
     async complete(deliveryId) {
-      await outbox.acknowledge(deliveryId);
+      await requireMutation(outbox.acknowledge(deliveryId), "complete");
     },
     async drop(deliveryId) {
-      await outbox.acknowledge(deliveryId);
+      await requireMutation(outbox.acknowledge(deliveryId), "drop");
     },
     async retry(deliveryId, _failure, nextAttemptAt) {
-      await outbox.retry(deliveryId, nextAttemptAt);
+      await requireMutation(outbox.retry(deliveryId, nextAttemptAt), "retry");
     },
   };
 }

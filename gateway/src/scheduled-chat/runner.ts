@@ -36,9 +36,10 @@ export function createScheduledChatRunner(deps: {
     throw new Error("invalid scheduled chat runner limits");
   let controller: AbortController | null = null;
   let loop: Promise<void> | null = null;
+  let activeRun: Promise<SchedulingResult<{ claimed: number; finalized: number }>> | null = null;
 
-  async function runOnce(
-    signal = new AbortController().signal,
+  async function executeOnce(
+    signal: AbortSignal,
   ): Promise<SchedulingResult<{ claimed: number; finalized: number }>> {
     const due = await deps.claims.claimDue(deps.now?.() ?? new Date(), deps.claimLimit, deps.leaseMs);
     if (!due.ok) return due;
@@ -72,6 +73,23 @@ export function createScheduledChatRunner(deps: {
     return { ok: true, value: { claimed: due.value.length, finalized } };
   }
 
+  function runOnce(
+    signal = new AbortController().signal,
+  ): Promise<SchedulingResult<{ claimed: number; finalized: number }>> {
+    if (activeRun) return activeRun;
+    const run = executeOnce(signal).catch(
+      (): SchedulingResult<{ claimed: number; finalized: number }> => ({
+        ok: false,
+        error: { code: "unavailable", retryable: true },
+      }),
+    );
+    activeRun = run;
+    void run.finally(() => {
+      if (activeRun === run) activeRun = null;
+    });
+    return run;
+  }
+
   return {
     runOnce,
     start() {
@@ -83,15 +101,13 @@ export function createScheduledChatRunner(deps: {
           await runOnce(signal);
           if (signal.aborted) break;
           await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, deps.pollMs);
-            signal.addEventListener(
-              "abort",
-              () => {
-                clearTimeout(timer);
-                resolve();
-              },
-              { once: true },
-            );
+            const finish = () => {
+              clearTimeout(timer);
+              signal.removeEventListener("abort", finish);
+              resolve();
+            };
+            const timer = setTimeout(finish, deps.pollMs);
+            signal.addEventListener("abort", finish, { once: true });
           });
         }
       })();

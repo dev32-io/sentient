@@ -18,6 +18,7 @@ export type TitleProvenance = "generated" | "user";
 export type ScheduledSessionOutcome = "completed" | "failed" | "interrupted";
 
 export interface ScheduledSessionExecution {
+  scheduleId: string;
   occurrenceId: string;
   intendedAt: string;
   actualAt: string;
@@ -68,7 +69,13 @@ export interface SessionMetadataOps {
    * still let a delayed auto-title clobber a rename that landed in between.
    */
   setTitle(sessionId: string, title: string, provenance: TitleProvenance, expectedVersion: number): boolean;
-  setScheduledProvenance(sessionId: string, occurrenceId: string, intendedAt: string, actualAt: string): boolean;
+  setScheduledProvenance(
+    sessionId: string,
+    scheduleId: string,
+    occurrenceId: string,
+    intendedAt: string,
+    actualAt: string,
+  ): boolean;
   setScheduledTurn(sessionId: string, occurrenceId: string, turnId: string): boolean;
   recordScheduledTerminal(
     sessionId: string,
@@ -87,6 +94,7 @@ interface SessionRow {
   title: string | null;
   title_provenance: string | null;
   version: number;
+  scheduled_schedule_id: string | null;
   scheduled_occurrence_id: string | null;
   scheduled_intended_at: string | null;
   scheduled_actual_at: string | null;
@@ -105,8 +113,9 @@ function toMetadata(row: SessionRow): SessionMetadata {
     titleProvenance: row.title_provenance as TitleProvenance | null,
     version: row.version,
     scheduled:
-      row.scheduled_occurrence_id && row.scheduled_intended_at && row.scheduled_actual_at
+      row.scheduled_schedule_id && row.scheduled_occurrence_id && row.scheduled_intended_at && row.scheduled_actual_at
         ? {
+            scheduleId: row.scheduled_schedule_id,
             occurrenceId: row.scheduled_occurrence_id,
             intendedAt: row.scheduled_intended_at,
             actualAt: row.scheduled_actual_at,
@@ -138,9 +147,9 @@ export function createSessionMetadataOps(db: Database, userId: string): SessionM
   const selectBySessionId = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE session_id = ?");
   const selectByOccurrence = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE scheduled_occurrence_id = ?");
   const selectAllByUpdatedAt = db.query<SessionRow, []>("SELECT * FROM sessions ORDER BY updated_at DESC");
-  const setScheduled = db.query<SessionRow, [string, string, string, string, string]>(`
-    UPDATE sessions SET scheduled_occurrence_id=?, scheduled_intended_at=?, scheduled_actual_at=?
-    WHERE session_id=? AND (scheduled_occurrence_id IS NULL OR scheduled_occurrence_id=?)
+  const setScheduled = db.query<SessionRow, [string, string, string, string, string, string, string]>(`
+    UPDATE sessions SET scheduled_schedule_id=?, scheduled_occurrence_id=?, scheduled_intended_at=?, scheduled_actual_at=?
+    WHERE session_id=? AND (scheduled_occurrence_id IS NULL OR (scheduled_schedule_id=? AND scheduled_occurrence_id=?))
     RETURNING *
   `);
   const setScheduledTurn = db.query<SessionRow, [string, string, string]>(`
@@ -213,8 +222,8 @@ export function createSessionMetadataOps(db: Database, userId: string): SessionM
       log.debug("session.metadata.title-set", { userId, sessionId, provenance, version: row.version });
       return true;
     },
-    setScheduledProvenance(sessionId, occurrenceId, intendedAt, actualAt) {
-      const row = setScheduled.get(occurrenceId, intendedAt, actualAt, sessionId, occurrenceId);
+    setScheduledProvenance(sessionId, scheduleId, occurrenceId, intendedAt, actualAt) {
+      const row = setScheduled.get(scheduleId, occurrenceId, intendedAt, actualAt, sessionId, scheduleId, occurrenceId);
       return row !== null;
     },
     setScheduledTurn(sessionId, occurrenceId, turnId) {

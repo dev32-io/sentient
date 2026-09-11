@@ -1221,8 +1221,12 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     if (observe) terminalObservers.set(turnId, [...(terminalObservers.get(turnId) ?? []), observe]);
     if (stimulus.kind === "conversational" && stimulus.pendingId) {
       const metadata = store.getSession(sessionId);
-      if (metadata?.scheduled?.occurrenceId === stimulus.pendingId) {
-        store.setScheduledTurn?.(sessionId, stimulus.pendingId, turnId);
+      if (
+        metadata?.scheduled?.occurrenceId === stimulus.pendingId &&
+        !store.setScheduledTurn?.(sessionId, stimulus.pendingId, turnId)
+      ) {
+        terminalObservers.delete(turnId);
+        throw new Error("scheduled turn provenance could not be recorded");
       }
     }
     const entry = appendStimulus(stimulus, turnId);
@@ -1257,7 +1261,33 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   }
 
   function submitAndObserve(stimulus: Stimulus): Promise<TurnTerminalRecord> {
-    return new Promise((resolve) => submitInternal(stimulus, resolve));
+    return new Promise((resolve, reject) => {
+      if (disposed || revokedReason !== null) {
+        reject(new Error("session runtime cannot start an observed turn"));
+        return;
+      }
+      if (inFlight) {
+        reject(new Error("session runtime already has a turn in flight"));
+        return;
+      }
+      if (
+        stimulus.kind !== "conversational" ||
+        !stimulus.pendingId ||
+        store.getSession(sessionId)?.scheduled?.occurrenceId !== stimulus.pendingId
+      ) {
+        reject(new Error("observed turn requires matching scheduled provenance"));
+        return;
+      }
+      if (alreadyCommitted(stimulus)) {
+        reject(new Error("observed stimulus was already committed without a reconciled terminal record"));
+        return;
+      }
+      try {
+        submitInternal(stimulus, resolve);
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   /**

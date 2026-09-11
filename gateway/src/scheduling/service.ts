@@ -707,6 +707,23 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                 outbox.content.entryId,
                 outbox.availableAt,
               );
+            const saved = database
+              .query<
+                { outbox_id: string; owner_user_id: string; session_id: string; entry_id: string; available_at: string },
+                [string]
+              >(
+                "SELECT outbox_id,owner_user_id,session_id,entry_id,available_at FROM content_outbox WHERE occurrence_id=?",
+              )
+              .get(claim.occurrenceId);
+            if (
+              !saved ||
+              saved.outbox_id !== outbox.outboxId ||
+              saved.owner_user_id !== outbox.content.ownerUserId ||
+              saved.session_id !== outbox.content.sessionId ||
+              saved.entry_id !== outbox.content.entryId ||
+              saved.available_at !== outbox.availableAt
+            )
+              return fail("conflict");
           }
           const entryId = receipt.outcome === "completed" ? receipt.content.entryId : null;
           database
@@ -714,20 +731,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
               "UPDATE occurrences SET outcome=?,completed_at=?,entry_id=?,claimed_until=NULL WHERE occurrence_id=? AND outcome IS NULL",
             )
             .run(receipt.outcome, receipt.completedAt, entryId, claim.occurrenceId);
-          if (receipt.outcome !== "expired") {
-            database
-              .query(`INSERT OR REPLACE INTO scheduled_cards
-            (occurrence_id,session_id,schedule_id,intended_at,completed_at,status,preview)
-            VALUES (?,?,?,?,?,?,NULL)`)
-              .run(
-                claim.occurrenceId,
-                receipt.sessionId,
-                claim.scheduleId,
-                claim.intendedAt,
-                receipt.completedAt,
-                receipt.outcome,
-              );
-          }
+          // Session provenance is the authoritative card source. Do not mirror
+          // response state or content into the scheduling database.
           const schedule = database
             .query<Row, [string]>("SELECT * FROM schedules WHERE schedule_id=?")
             .get(claim.scheduleId);

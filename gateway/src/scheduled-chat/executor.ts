@@ -14,12 +14,11 @@ import type { ScheduledSessionExecution } from "../store/session-metadata.js";
 import { MintKeyConflictError, openSessionStore } from "../store/session-store.js";
 import type { UserStore } from "../user-auth/user-store.js";
 
-const SCHEDULE_HOUSEHOLD_ID = "scheduled-execution";
-
 export function createScheduledExecutionAuthorizer(deps: {
   users: Pick<UserStore, "get">;
   accessManager: AccessManager;
-  householdId?: string;
+  /** The gateway's configured household, not an identifier recovered from the schedule. */
+  householdId: string;
   authorizeCalendarReminder?: (execution: AuthorizedScheduledExecution, signal: AbortSignal) => Promise<boolean>;
 }): ScheduledExecutionAuthorizer {
   return {
@@ -27,12 +26,13 @@ export function createScheduledExecutionAuthorizer(deps: {
       if (signal.aborted) return unavailable();
       try {
         const user = await deps.users.get(claim.ownerUserId);
+        if (signal.aborted) return cancelled();
         if (!user.ok) return unavailable();
         if (!user.value) return forbidden();
         const principal = createUserPrincipal(
           claim.ownerUserId,
           user.value.role,
-          deps.householdId ?? SCHEDULE_HOUSEHOLD_ID,
+          deps.householdId,
         );
         const execution: AuthorizedScheduledExecution = {
           claim,
@@ -41,11 +41,11 @@ export function createScheduledExecutionAuthorizer(deps: {
         };
         if (claim.source.kind === "calendar-reminder") {
           if (!deps.authorizeCalendarReminder || !(await deps.authorizeCalendarReminder(execution, signal)))
-            return forbidden();
+            return signal.aborted ? cancelled() : forbidden();
         }
-        return { ok: true, value: execution };
+        return signal.aborted ? cancelled() : { ok: true, value: execution };
       } catch {
-        return forbidden();
+        return signal.aborted ? cancelled() : forbidden();
       }
     },
   };
@@ -56,6 +56,9 @@ function unavailable<T>(): SchedulingResult<T> {
 }
 function forbidden<T>(): SchedulingResult<T> {
   return { ok: false, error: { code: "forbidden", retryable: false } };
+}
+function cancelled<T>(): SchedulingResult<T> {
+  return { ok: false, error: { code: "closed", retryable: false } };
 }
 
 export interface ScheduledMessageSubmitterDeps {
@@ -106,6 +109,7 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
   return {
     async submit(execution, signal) {
       const { claim, principal } = execution;
+      if (signal.aborted) return cancelled();
       const mintKey = `scheduled:${claim.occurrenceId}`;
       let sessionId: string;
       let store: ReturnType<typeof openSessionStore> | undefined;
@@ -127,6 +131,7 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
         if (
           !store.setScheduledProvenance?.(
             sessionId,
+            claim.scheduleId,
             claim.occurrenceId,
             claim.intendedAt,
             (deps.now?.() ?? new Date()).toISOString(),
@@ -139,8 +144,10 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
         store?.close();
       }
 
+      if (signal.aborted) return cancelled();
       const associated = await deps.associateSession(claim, sessionId);
       if (!associated.ok) return associated;
+      if (signal.aborted) return cancelled();
 
       // Reconcile the separate durable session boundary before starting work.
       // A committed input without a terminal record means the old process died
@@ -155,19 +162,17 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
           if (terminal) return { ok: true, value: terminal };
           const input = recovery.findByPendingId(sessionId, claim.occurrenceId);
           if (input) {
-            const assistant = recovery
-              .readSession(sessionId)
-              .filter((entry) => entry.turnId === input.turnId && entry.kind === "assistant")
-              .at(-1);
-            const outcome = assistant?.cutoff ? "interrupted" : assistant ? "completed" : "interrupted";
+            // An assistant append is not a terminal marker: the process may have
+            // died between streaming chunks or before a later tool iteration.
+            // Without the explicit terminal record, never infer success or replay.
             const completedAt = (deps.now?.() ?? new Date()).toISOString();
             recovery.setScheduledTurn?.(sessionId, claim.occurrenceId, input.turnId);
             const terminalSaved = recovery.recordScheduledTerminal?.(
               sessionId,
               input.turnId,
-              outcome,
+              "interrupted",
               completedAt,
-              assistant ? String(assistant.seq) : null,
+              null,
             );
             const receipt = terminalSaved && receiptFromSaved(execution, sessionId, terminalSaved);
             return receipt ? { ok: true, value: receipt } : unavailable();
@@ -180,6 +185,7 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
       }
 
       try {
+        if (signal.aborted) return cancelled();
         const handles = deps.registry.ensure(sessionId, () =>
           deps.buildHandles(principal, sessionId, `scheduled:${claim.occurrenceId}`),
         );
