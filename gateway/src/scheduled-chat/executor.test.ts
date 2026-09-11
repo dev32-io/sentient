@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +20,10 @@ import {
 import { createScheduledChatRunner } from "./runner.js";
 
 const roots: string[] = [];
-afterEach(() => {
+// The harness may schedule test cases concurrently. Per-test cleanup through a
+// shared roots array can delete another still-running case's SQLite database,
+// which Bun reports only as an unhandled error for every loaded test module.
+afterAll(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
