@@ -44,6 +44,8 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     private var ownerFence: String?
     private var deviceToken: String?
     private var registrationTask: Task<Void, Never>?
+    private var accountTransitionTask: Task<Void, Never>?
+    private var pendingConfiguration: AppConfig?
     private let log = AppLog("push", "native")
 
     init(
@@ -59,28 +61,25 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     func configure(appConfig: AppConfig) {
         guard appConfig.isConfigured, let userId = appConfig.authenticatedUserId else {
             registrationTask?.cancel()
-            lifecycle?.close()
-            lifecycle = nil
-            ownerFence = nil
             binding = nil
             registrationPending = false
             permission = .unconfigured
+            // Do not close a lifecycle that may still be persisting/revoking the
+            // exact old binding after immediate local logout.
             return
         }
         let fence = "\(appConfig.gatewayWsUrl)|\(userId)"
-        if ownerFence != fence {
-            lifecycle?.close()
-            lifecycle = createIosPushLifecycle(
-                gatewayWsUrl: appConfig.gatewayWsUrl,
-                allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
-                token: { appConfig.tokenStore.load() ?? "" }
-            )
-            ownerFence = fence
+        guard ownerFence != fence else {
+            if let lifecycle { applyLifecycleState(lifecycle.coordinator.state.value) }
+            Task { await refreshPermission() }
+            return
         }
-        if let lifecycle {
-            applyLifecycleState(lifecycle.coordinator.state.value)
+        if lifecycle != nil, ownerFence != nil {
+            pendingConfiguration = appConfig
+            beginAccountTransition()
+            return
         }
-        Task { await refreshPermission() }
+        installLifecycle(appConfig, fence: fence)
     }
 
     func refreshPermission() async {
@@ -153,6 +152,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
                     applyLifecycleState(lifecycle.coordinator.state.value)
                     return
                 }
+                if pendingConfiguration != nil {
+                    finishAccountTransition(after: lifecycle)
+                    return
+                }
                 if let ownerFence {
                     _ = try await lifecycle.coordinator.reconcileActivation(ownerFence: ownerFence)
                 }
@@ -172,6 +175,47 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         await MainActor.run {
             if let destination { self.navigation.receive(destination) }
         }
+    }
+
+    private func installLifecycle(_ appConfig: AppConfig, fence: String) {
+        lifecycle = createIosPushLifecycle(
+            gatewayWsUrl: appConfig.gatewayWsUrl,
+            allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
+            token: { appConfig.tokenStore.load() ?? "" }
+        )
+        ownerFence = fence
+        if let lifecycle { applyLifecycleState(lifecycle.coordinator.state.value) }
+        Task { await refreshPermission() }
+    }
+
+    private func beginAccountTransition() {
+        guard accountTransitionTask == nil, let lifecycle, let ownerFence else { return }
+        registrationTask?.cancel()
+        registrationPending = false
+        binding = nil
+        lifecycleWarning = "Notification activation is waiting for the previous binding to be disabled."
+        accountTransitionTask = Task {
+            defer { accountTransitionTask = nil }
+            do {
+                let result = try await lifecycle.coordinator.unlink(ownerFence: ownerFence)
+                switch onEnum(of: result) {
+                case .success: finishAccountTransition(after: lifecycle)
+                case .failure: applyLifecycleState(lifecycle.coordinator.state.value)
+                }
+            } catch {
+                lifecycleWarning = "Notifications may continue until this device reconnects."
+            }
+        }
+    }
+
+    private func finishAccountTransition(after oldLifecycle: IosPushLifecycle) {
+        guard lifecycle === oldLifecycle, let next = pendingConfiguration,
+              let userId = next.authenticatedUserId else { return }
+        pendingConfiguration = nil
+        oldLifecycle.close()
+        lifecycle = nil
+        ownerFence = nil
+        installLifecycle(next, fence: "\(next.gatewayWsUrl)|\(userId)")
     }
 
     private func registerCurrentToken() {

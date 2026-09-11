@@ -1,7 +1,7 @@
 import type { ScheduleTimingInput } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
 import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
-import { createUserPrincipal } from "../identity/user-principal.js";
+import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import type { AuthorizedScheduledExecution, SchedulingResult } from "../scheduling/contracts.js";
 import { instantForScheduleLocal } from "../scheduling/recurrence.js";
 import type { ScheduleService } from "../scheduling/service.js";
@@ -88,28 +88,11 @@ function timingFor(
   if (!zone) return undefined;
   const local = localParts(first, zone);
   const localTime = `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`;
-  const frequency = event.recurrence.rule.freq;
-  if (frequency === "DAILY") return { kind: "recurring", frequency: "daily", localTime, timeZone: zone };
-  if (frequency === "WEEKLY") {
-    const names: Record<string, "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"> = {
-      MO: "monday",
-      TU: "tuesday",
-      WE: "wednesday",
-      TH: "thursday",
-      FR: "friday",
-      SA: "saturday",
-      SU: "sunday",
-    };
-    const weekdays = event.recurrence.rule.byDay
-      ?.map((day) => names[day])
-      .filter((day): day is NonNullable<typeof day> => Boolean(day)) ?? [
-      local.weekday as (typeof names)[keyof typeof names],
-    ];
-    return { kind: "recurring", frequency: "weekly", localTime, timeZone: zone, weekdays };
-  }
-  // Monthly is also used as a sparse wake-up for yearly events. Execution
-  // authorization below rejects months that are not real event occurrences.
-  return { kind: "recurring", frequency: "monthly", localTime, timeZone: zone, dayOfMonth: local.day };
+  // A calendar subscription is intentionally a daily sparse wake. Reusing the
+  // event rule is incorrect when a lead crosses a day/month boundary (and for
+  // monthly rules whose preceding day varies). Execution authorization expands
+  // the current event and admits only a wake matching a real occurrence.
+  return { kind: "recurring", frequency: "daily", localTime, timeZone: zone };
 }
 
 export interface CalendarReminderScheduler {
@@ -128,64 +111,86 @@ export function createCalendarReminderScheduler(deps: {
   calendarConfig: CalendarConfig;
 }): CalendarReminderScheduler {
   return {
-    async reconcile(persistence, eventId, _scope, now = new Date(), originalStart?: string) {
-      const owner = persistence.ownerUserId;
-      if (!owner) return { ok: false, error: { code: "forbidden", retryable: false } };
-      const principal = createUserPrincipal(owner as never, persistence.role ?? "adult", "home");
-      const resource = new PrivateScheduleResource(deps.accessManager.grant(principal, "schedule-private"));
+    async reconcile(persistence, eventId, scope, now = new Date(), originalStart?: string) {
+      const actor = persistence.ownerUserId;
+      if (!actor) return { ok: false, error: { code: "forbidden", retryable: false } };
       const found = persistence.read(eventId as CalendarEventId);
-      const baseReminderId = `${eventId}:${owner}`;
-      if (!found.ok)
-        return deps.schedules.reconcileCalendarReminder(
-          resource,
-          { eventId, reminderId: baseReminderId, enabled: false },
-          now,
-        );
-      if (originalStart !== undefined) {
-        const parsed = normalizeCalendarTime(originalStart, deps.calendarConfig);
-        if (!parsed.ok) return { ok: false, error: { code: "validation", retryable: false } };
-        const key = canonicalOriginalKey(parsed.value);
-        const reminderId = `${baseReminderId}:${key}`;
-        const exception = found.value.exceptions.find(
-          (candidate) => canonicalOriginalKey(candidate.occurrence) === key,
-        );
-        const excluded = found.value.exclusions.some((candidate) => canonicalOriginalKey(candidate) === key);
-        const notification =
-          exception?.notification === null ? undefined : (exception?.notification ?? found.value.notification);
-        const reminder = reminderFor({ notification }, owner);
-        const start = exception?.start === null ? undefined : (exception?.start ?? parsed.value);
-        const instant =
-          start && reminder && !exception?.cancelled && !excluded ? reminderInstant(start, reminder) : undefined;
-        const needsOverride = exception?.start !== undefined || exception?.notification !== undefined;
-        return deps.schedules.reconcileCalendarReminder(
-          resource,
-          needsOverride && instant !== undefined
-            ? {
-                eventId,
-                reminderId,
-                enabled: true,
-                message: `Remind me about my calendar event “${exception?.title ?? found.value.title}”.`,
-                timing: { kind: "once-at", at: new Date(instant).toISOString() },
-              }
-            : { eventId, reminderId, enabled: false },
-          now,
-        );
+      if (!found.ok && found.error !== "not-found")
+        return { ok: false, error: { code: "unavailable", retryable: true } };
+
+      const scheduledOwners = await deps.schedules.calendarReminderOwners(eventId);
+      if (!scheduledOwners.ok) return scheduledOwners;
+      const owners = new Set<string>(scope === "household" ? scheduledOwners.value : [actor]);
+      if (found.ok && scope === "household") {
+        const collect = (notification: CalendarPersistenceEvent["notification"] | null | undefined) => {
+          const map = notification && (notification as Record<string, unknown>)[REMINDERS_KEY];
+          if (map && typeof map === "object" && !Array.isArray(map))
+            for (const owner of Object.keys(map)) owners.add(owner);
+        };
+        collect(found.value.notification);
+        for (const exception of found.value.exceptions) collect(exception.notification);
       }
-      const reminder = reminderFor(found.value, owner);
-      const timing = reminder && timingFor(found.value, reminder);
-      return deps.schedules.reconcileCalendarReminder(
-        resource,
-        reminder && timing
-          ? {
-              eventId,
-              reminderId: baseReminderId,
-              enabled: true,
-              message: `Remind me about my calendar event “${found.value.title}”.`,
-              timing,
-            }
-          : { eventId, reminderId: baseReminderId, enabled: false },
-        now,
-      );
+
+      for (const owner of owners) {
+        let principal: UserPrincipal;
+        try {
+          principal = createUserPrincipal(
+            owner as never,
+            owner === actor ? (persistence.role ?? "adult") : "adult",
+            "home",
+          );
+        } catch {
+          continue;
+        }
+        const resource = new PrivateScheduleResource(deps.accessManager.grant(principal, "schedule-private"));
+        const baseReminderId = `${eventId}:${owner}`;
+        let input: Parameters<ScheduleService["reconcileCalendarReminder"]>[1];
+        if (!found.ok) {
+          input = { eventId, reminderId: baseReminderId, enabled: false };
+        } else if (originalStart !== undefined) {
+          const parsed = normalizeCalendarTime(originalStart, deps.calendarConfig);
+          if (!parsed.ok) return { ok: false, error: { code: "validation", retryable: false } };
+          const key = canonicalOriginalKey(parsed.value);
+          const reminderId = `${baseReminderId}:${key}`;
+          const exception = found.value.exceptions.find(
+            (candidate) => canonicalOriginalKey(candidate.occurrence) === key,
+          );
+          const excluded = found.value.exclusions.some((candidate) => canonicalOriginalKey(candidate) === key);
+          const notification =
+            exception?.notification === null ? undefined : (exception?.notification ?? found.value.notification);
+          const reminder = reminderFor({ notification }, owner);
+          const start = exception?.start === null ? undefined : (exception?.start ?? parsed.value);
+          const instant =
+            start && reminder && !exception?.cancelled && !excluded ? reminderInstant(start, reminder) : undefined;
+          const needsOverride = exception?.start !== undefined || exception?.notification !== undefined;
+          input =
+            needsOverride && instant !== undefined
+              ? {
+                  eventId,
+                  reminderId,
+                  enabled: true,
+                  message: `Remind me about my calendar event “${exception?.title ?? found.value.title}”.`,
+                  timing: { kind: "once-at", at: new Date(instant).toISOString() },
+                }
+              : { eventId, reminderId, enabled: false };
+        } else {
+          const reminder = reminderFor(found.value, owner);
+          const timing = reminder && timingFor(found.value, reminder);
+          input =
+            reminder && timing
+              ? {
+                  eventId,
+                  reminderId: baseReminderId,
+                  enabled: true,
+                  message: `Remind me about my calendar event “${found.value.title}”.`,
+                  timing,
+                }
+              : { eventId, reminderId: baseReminderId, enabled: false };
+        }
+        const reconciled = await deps.schedules.reconcileCalendarReminder(resource, input, now);
+        if (!reconciled.ok) return reconciled;
+      }
+      return { ok: true, value: undefined };
     },
   };
 }
@@ -194,21 +199,29 @@ export async function authorizeCalendarReminderExecution(
   execution: AuthorizedScheduledExecution,
   deps: { accessManager: AccessManager; calendarConfig: CalendarConfig },
   signal: AbortSignal,
-): Promise<boolean> {
-  if (signal.aborted || execution.claim.source.kind !== "calendar-reminder") return false;
+): Promise<SchedulingResult<void>> {
+  const denied = (): SchedulingResult<void> => ({ ok: false, error: { code: "forbidden", retryable: false } });
+  const unavailable = (): SchedulingResult<void> => ({ ok: false, error: { code: "unavailable", retryable: true } });
+  if (signal.aborted) return { ok: false, error: { code: "closed", retryable: false } };
+  if (execution.claim.source.kind !== "calendar-reminder") return denied();
+  let transientFailure = false;
   const source = execution.claim.source;
   for (const resource of ["calendar-private", "calendar-household"] as const) {
     let store: CalendarPersistence | undefined;
     try {
       store = openCalendarPersistence(deps.accessManager.grant(execution.principal, resource), deps.calendarConfig);
       const found = store.read(source.eventId as CalendarEventId);
-      if (!found.ok) continue;
+      if (!found.ok) {
+        if (found.error !== "not-found") transientFailure = true;
+        continue;
+      }
       const reminder = reminderFor(found.value, execution.principal.userId);
       const baseReminderId = `${source.eventId}:${execution.principal.userId}`;
-      if (!reminder || (source.reminderId !== baseReminderId && !source.reminderId.startsWith(`${baseReminderId}:`)))
-        return false;
+      if (!reminder || (source.reminderId !== baseReminderId && !source.reminderId.startsWith(`${baseReminderId}:`))) {
+        continue;
+      }
       const intended = Date.parse(execution.claim.intendedAt);
-      if (!Number.isFinite(intended)) return false;
+      if (!Number.isFinite(intended)) return denied();
       const event = {
         ...found.value,
         exdates: found.value.exclusions,
@@ -232,8 +245,8 @@ export async function authorizeCalendarReminderExecution(
         maxDays: deps.calendarConfig.recurrence.maxDays,
         timeZoneId: deps.calendarConfig.defaultEventTimeZoneId,
       });
-      if (!occurrences.ok) return false;
-      return occurrences.value.some((occurrence) => {
+      if (!occurrences.ok) return unavailable();
+      const allowed = occurrences.value.some((occurrence) => {
         if (occurrence.visibility === "adults" && execution.principal.role === "child") return false;
         const key = canonicalOriginalKey(occurrence.originalStart);
         const exception = found.value.exceptions.find(
@@ -246,11 +259,13 @@ export async function authorizeCalendarReminderExecution(
         const instant = effectiveReminder && reminderInstant(occurrence.start, effectiveReminder);
         return instant !== undefined && Math.abs(instant - intended) < 60_000;
       });
+      if (allowed) return { ok: true, value: undefined };
     } catch {
+      transientFailure = true;
       // Try the other capability scope without disclosing which store failed.
     } finally {
       store?.close();
     }
   }
-  return false;
+  return transientFailure ? unavailable() : denied();
 }

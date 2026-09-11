@@ -19,7 +19,10 @@ export function createScheduledExecutionAuthorizer(deps: {
   accessManager: AccessManager;
   /** The gateway's configured household, not an identifier recovered from the schedule. */
   householdId: string;
-  authorizeCalendarReminder?: (execution: AuthorizedScheduledExecution, signal: AbortSignal) => Promise<boolean>;
+  authorizeCalendarReminder?: (
+    execution: AuthorizedScheduledExecution,
+    signal: AbortSignal,
+  ) => Promise<SchedulingResult<void>>;
 }): ScheduledExecutionAuthorizer {
   return {
     async authorize(claim, signal) {
@@ -36,8 +39,9 @@ export function createScheduledExecutionAuthorizer(deps: {
           resource: new PrivateScheduleResource(deps.accessManager.grant(principal, "schedule-private")),
         };
         if (claim.source.kind === "calendar-reminder") {
-          if (!deps.authorizeCalendarReminder || !(await deps.authorizeCalendarReminder(execution, signal)))
-            return signal.aborted ? cancelled() : forbidden();
+          if (!deps.authorizeCalendarReminder) return forbidden();
+          const authorized = await deps.authorizeCalendarReminder(execution, signal);
+          if (!authorized.ok) return signal.aborted ? cancelled() : authorized;
         }
         return signal.aborted ? cancelled() : { ok: true, value: execution };
       } catch {

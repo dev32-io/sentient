@@ -137,6 +137,7 @@ export interface ScheduleService
     input: CalendarReminderScheduleInput,
     acceptedAt: Date,
   ): Promise<SchedulingResult<void>>;
+  calendarReminderOwners(eventId: string): Promise<SchedulingResult<readonly UserId[]>>;
   close(): void;
 }
 
@@ -695,6 +696,33 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     }
   };
 
+  const calendarReminderOwners: ScheduleService["calendarReminderOwners"] = async (eventId) => {
+    if (closed) return fail("closed");
+    if (!eventId) return fail("validation");
+    discover();
+    const owners: UserId[] = [];
+    try {
+      for (const [owner, root] of roots) {
+        const db = openRoot(root);
+        try {
+          const rows = db.query<{ source_json: string }, []>("SELECT source_json FROM schedules").all();
+          if (
+            rows.some((row) => {
+              const parsed = scheduleSourceSchema.safeParse(parseJson(row.source_json));
+              return parsed.success && parsed.data.kind === "calendar-reminder" && parsed.data.eventId === eventId;
+            })
+          )
+            owners.push(owner);
+        } finally {
+          db.close();
+        }
+      }
+      return { ok: true, value: owners };
+    } catch {
+      return fail("unavailable", true);
+    }
+  };
+
   const associateSession: ScheduleClaimTransactions["associateSession"] = async (claim, sessionId) => {
     const root =
       roots.get(claim.ownerUserId) ??
@@ -971,6 +999,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     create,
     createDetailed,
     reconcileCalendarReminder,
+    calendarReminderOwners,
     patch,
     delete: remove,
     list,
