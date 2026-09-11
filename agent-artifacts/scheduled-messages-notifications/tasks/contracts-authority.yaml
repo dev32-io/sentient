@@ -17,7 +17,11 @@ scope: >-
   reminder input/output shapes in `gateway/src/calendar/types.ts`; new private
   schedule/push resource classes in `gateway/src/access/`; and narrow interfaces
   in `gateway/src/scheduling/contracts.ts` and `gateway/src/push/contracts.ts`.
-  Own the initial scheduling/push config schemas, central config exports,
+  Add the scheduled provider's type-level product-group vocabulary in
+  `gateway/src/bootstrap/product-tool-providers.ts` and relevant shared config
+  types so the later provider factory can compile without activating it. Public
+  registry slots/mounting remain a later integration responsibility. Own the
+  initial scheduling/push config schemas, central config exports,
   `gateway/src/config/startup-config.ts` mapping, and default timing/limit knobs
   in `gateway/config.yaml`; no provider credentials. Add precise ignores for
   locally provisioned mobile/provider configuration if necessary so later
