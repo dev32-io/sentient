@@ -1,0 +1,72 @@
+schemaVersion: 1
+id: contracts-authority
+title: Define validated scheduling push and session-card boundaries
+dependsOn: []
+description: Establish executable public contracts and authority boundaries
+  before parallel service/client work. A scheduled message is a normal user
+  message submitted later in a fresh session. Support one-time absolute time or
+  positive relative delay and recurring daily/weekly/monthly local time. The
+  inbox is only bounded session-backed preview cards, not read/unread state.
+  Push preferences are per installation, hidden by default. Local logout may
+  complete while server unlink is pending, with a warning; new delivery binding
+  activation is fenced until the old binding is disabled.
+scope: >-
+  Own new schemas and golden JSON fixtures under `shared/protocol/src/` for
+  schedules, push registration/preferences/revocation, and scheduled-session
+  cards; their exports and source-level API documentation; additive calendar
+  reminder input/output shapes in `gateway/src/calendar/types.ts`; new private
+  schedule/push resource classes in `gateway/src/access/`; and narrow interfaces
+  in `gateway/src/scheduling/contracts.ts` and `gateway/src/push/contracts.ts`.
+  Own the initial scheduling/push config schemas, central config exports,
+  `gateway/src/config/startup-config.ts` mapping, and default timing/limit knobs
+  in `gateway/config.yaml`; no provider credentials. Add precise ignores for
+  locally provisioned mobile/provider configuration if necessary so later
+  platform tasks do not compete for `.gitignore`.
+
+
+  Endpoint spelling and persistence-neutral interface names are delegated
+  technical choices: pick one additive REST contract and freeze it in validated
+  fixtures/documented source for downstream consumers. Preserve existing
+  session-list and calendar clients. Do not implement stores, service startup,
+  runtime execution, UI, or crypto here. No edits to prototype/design token
+  values.
+delivery: >-
+  - Validate mutually exclusive once-at/once-after/recurring inputs, timezone
+  and positive bounds, optimistic mutation/idempotent-create semantics, bounded
+  card queries, actor-specific calendar reminder omission versus disable, and
+  typed errors. Relative delay is resolved once at gateway acceptance, not again
+  on retries.
+
+  - Fully specify registration issuance, exact binding generation, device
+  preference changes, narrow revoke-only credential response, revoke
+  request/acknowledgement, retryable failure, invalid/expired authority, pending
+  unlink, and replacement-binding activation. An installation ID is a
+  correlator, never authorization. Revocation credentials permit only disabling
+  their exact binding; no reads, delivery enablement, or account access. Define
+  idempotent retries and safe invalid/expired behavior without silently
+  declaring an active binding revoked.
+
+  - Define due-claim, terminal-receipt, atomic finalization extension,
+  content-reference outbox/drain, and authorized content-resolution interfaces.
+  Queue references identify saved session outcomes without copying response
+  text. Actual terminal/outbox transaction implementation has one later owner.
+
+  - Add capability confinement and cross-field/negative wire-validation tests,
+  not tests of trivial constants or export wiring. Include compatibility
+  fixtures for old clients, once/recurring, calendar reminder states,
+  hidden/content device modes, unlink/rebinding states, and bounded cards.
+
+  - Keep all new configuration optional/backward compatible; operator behavior
+  lives in YAML, not consumer fallbacks. Leave a clean, compiling committed
+  boundary that services and clients can consume independently.
+checks:
+  - source scripts/env.sh && bun run --filter @sentient/protocol test:unit &&
+    bun run --filter @sentient/config test:unit
+  - source scripts/env.sh && bun test gateway/src/access && bun run typecheck &&
+    git diff --check
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: Bounded cross-client validation and capability work benefits from a
+    single owner before concurrency; ordinary implementation with focused
+    contract/security tests fits medium.
