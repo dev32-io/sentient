@@ -1,55 +1,45 @@
-// ---------------------------------------------------------------------------
-// SecretsScreen — Admin "Secrets" category page. Per-provider masked key rows
-// (OpenRouter, Ollama Cloud, Custom + base URL): presence status, Update key,
-// Set active. After any successful change, an inline "Restart assistant to pick
-// up the new key" notice offers Apply now (bare apply → worker restart). Keys are
-// never echoed or logged.
-//
-// Owns the @Observable SecretsViewModel via @State; SecretsBody is stateless
-// (previewable with a fake SecretsStatus).
-// ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct SecretsScreen: View {
     @State private var vm: SecretsViewModel
-    private let onBack: () -> Void
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.onBack = onBack
-        _vm = State(initialValue: SecretsViewModel(
-            admin: settings.admin,
-            applyProfileChange: settings.applyProfileChange
-        ))
+        _vm = State(initialValue: SecretsViewModel(admin: settings.admin, applyProfileChange: settings.applyProfileChange))
     }
 
     var body: some View {
         SecretsBody(
             status: vm.status,
             isError: vm.isError,
+            isNotAdmin: vm.isNotAdmin,
+            mutationError: vm.mutationError,
             editing: vm.editing,
             isSaving: vm.isSavingKey,
             apply: vm.apply,
+            onRetryLoad: { Task { await vm.load() } },
             onSetActive: { provider in Task { await vm.setActive(provider) } },
-            onStartEditKey: { provider in vm.startEditKey(provider) },
-            onStartEditBaseUrl: { vm.startEditBaseUrl() },
-            onCancelEdit: { vm.cancelEdit() },
+            onStartEditKey: vm.startEditKey,
+            onStartEditBaseUrl: vm.startEditBaseUrl,
+            onCancelEdit: vm.cancelEdit,
             onSaveKey: { provider, value in Task { await vm.saveKey(provider, value: value) } },
             onSaveBaseUrl: { url in Task { await vm.saveBaseUrl(url) } },
             onApplyNow: { Task { await vm.applyNow() } },
-            onDismissNotice: { vm.dismissNotice() }
+            onDismissNotice: vm.dismissNotice
         )
         .task { await vm.load() }
     }
 }
 
-/// Stateless Secrets body: provider key card + restart-notice banner.
 private struct SecretsBody: View {
     let status: SecretsStatus?
     let isError: Bool
+    let isNotAdmin: Bool
+    let mutationError: String?
     let editing: SecretsViewModel.EditTarget
     let isSaving: Bool
     let apply: SecretsViewModel.ApplyPhase
+    let onRetryLoad: () -> Void
     let onSetActive: (SecretsViewModel.Provider) -> Void
     let onStartEditKey: (SecretsViewModel.Provider) -> Void
     let onStartEditBaseUrl: () -> Void
@@ -61,20 +51,41 @@ private struct SecretsBody: View {
 
     var body: some View {
         SettingsPageScaffold(title: "Secrets", screenId: "settings-secrets-screen") {
-            if apply != .hidden { RestartNotice(phase: apply, onApply: onApplyNow, onDismiss: onDismissNotice) }
+            if let mutationError {
+                AsyncNotice(kind: .error, title: "Secret change failed", detail: mutationError)
+            }
             content
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if let status {
-            SettingsCard(title: "Provider keys", sub: "Encrypted at rest. Shared by the household gateway.") {
+    @ViewBuilder private var content: some View {
+        if isNotAdmin {
+            AsyncNotice(
+                kind: .warning,
+                title: "Admin access required",
+                detail: "Your access may have changed. Secret controls are no longer available.",
+                retry: onRetryLoad
+            )
+        } else if let status {
+            providerSummary(status)
+            DesignCard(
+                title: "Provider keys",
+                detail: "Key presence only — not a check that credentials work. Saved values are never displayed.",
+                headerStyle: .quiet,
+                bodyStyle: .rows
+            ) {
                 keyRow(.openrouter, label: "OpenRouter", status: status, hasKey: status.llm.openrouter.hasKey)
-                Divider().overlay(DuskColors.lineSoft)
+                DesignDivider()
                 keyRow(.ollamaCloud, label: "Ollama Cloud", status: status, hasKey: status.llm.ollamaCloud.hasKey)
-                Divider().overlay(DuskColors.lineSoft)
+            }
+            DesignCard(
+                title: "Custom provider",
+                detail: "The Custom key and base URL belong together. Save each value here, then select Custom to save your provider selection.",
+                headerStyle: .quiet,
+                bodyStyle: .rows
+            ) {
                 keyRow(.custom, label: "Custom", status: status, hasKey: status.llm.custom.hasKey)
+                DesignDivider()
                 SecretUrlRow(
                     hasValue: status.llm.custom.hasBaseUrl,
                     isEditing: editing == .customBaseUrl,
@@ -84,13 +95,35 @@ private struct SecretsBody: View {
                     onSave: onSaveBaseUrl
                 )
             }
+            if apply != .hidden {
+                RestartNotice(phase: apply, onApply: onApplyNow, onDismiss: onDismissNotice)
+            }
         } else if isError {
-            Text("Couldn't load provider keys.")
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink3)
-                .padding(.vertical, Space.md)
+            AsyncNotice(kind: .error, title: "Couldn't load provider keys", detail: "Check your connection and try again.", retry: onRetryLoad)
         } else {
-            ProgressView().controlSize(.small).padding(.vertical, Space.md)
+            AsyncNotice(kind: .loading, title: "Loading provider keys")
+        }
+    }
+
+    private func providerSummary(_ status: SecretsStatus) -> some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Selected provider · \(providerLabel(status.llm.active))")
+                .designText(.label)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text("Provider selection is saved when selected; keys are saved with Save. Applying configuration does not test credentials or verify the running connection.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+        }
+    }
+
+    private func providerLabel(_ raw: String) -> String {
+        switch SecretsViewModel.Provider(rawValue: raw) {
+        case .openrouter: "OpenRouter"
+        case .ollamaCloud: "Ollama Cloud"
+        case .custom: "Custom"
+        case nil: raw
         }
     }
 
@@ -116,72 +149,65 @@ private struct SecretsBody: View {
     }
 }
 
-/// The restart-notice banner: raised after a key change; Apply now restarts the worker.
 private struct RestartNotice: View {
     let phase: SecretsViewModel.ApplyPhase
     let onApply: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            content
-            Spacer(minLength: Space.sm)
-            trailing
+        VStack(alignment: .leading, spacing: Space.md) {
+            AsyncNotice(kind: noticeKind, title: title, detail: detail)
+            if phase != .applying && phase != .applied {
+                HStack(spacing: Space.sm) {
+                    DesignActionButton(
+                        title: phase.isFailed ? "Retry apply" : "Apply now",
+                        accessibilityId: "settings-secrets-apply",
+                        action: onApply
+                    )
+                    DesignTextButton(
+                        title: "Dismiss",
+                        accessibilityId: "settings-secrets-notice-dismiss",
+                        action: onDismiss
+                    )
+                }
+            }
         }
-        .padding(Space.md)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.md))
-        .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft, lineWidth: 1))
         .accessibilityIdentifier("settings-secrets-restart-notice")
     }
 
-    @ViewBuilder
-    private var content: some View {
+    private var noticeKind: DesignNoticeKind {
         switch phase {
-        case .applying:
-            Label("Applying — assistant restarting…", systemImage: "arrow.triangle.2.circlepath")
-                .font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ink2)
-        case .applied:
-            Label("Assistant restarted", systemImage: "checkmark")
-                .font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ok)
-        case .alreadyApplying:
-            Text("Already applying — try again shortly.")
-                .font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.amber)
-        case .failed(let message):
-            Text(message).font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.stop)
-        case .notice, .hidden:
-            Text("Restart the assistant to pick up the new key.")
-                .font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ink2)
+        case .applying: .loading
+        case .applied: .success
+        case .alreadyApplying: .warning
+        case .failed: .error
+        case .notice, .hidden: .warning
         }
     }
-
-    @ViewBuilder
-    private var trailing: some View {
+    private var title: String {
         switch phase {
-        case .applying:
-            ProgressView().controlSize(.small)
-        case .applied:
-            EmptyView()
-        case .notice, .alreadyApplying, .failed, .hidden:
-            HStack(spacing: Space.sm) {
-                Button(phase.isFailed ? "Retry" : "Apply now", action: onApply)
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.accent)
-                    .accessibilityIdentifier("settings-secrets-apply")
-                Button(action: onDismiss) { Image(systemName: "xmark").font(.system(size: TypeScale.xs)) }
-                    .foregroundStyle(DuskColors.ink3)
-                    .accessibilityIdentifier("settings-secrets-notice-dismiss")
-            }
+        case .applying: "Applying configuration…"
+        case .applied: "Configuration applied"
+        case .alreadyApplying: "Already applying"
+        case .failed: "Couldn't apply configuration"
+        case .notice, .hidden: "Apply saved configuration"
+        }
+    }
+    private var detail: String? {
+        switch phase {
+        case .alreadyApplying: "Try again when the current apply finishes."
+        case .failed(let message): message
+        case .notice: "Your provider selection and key changes are saved. Applying configuration does not test credentials or verify the running connection; saved credentials remain hidden."
+        default: nil
         }
     }
 }
 
-private extension SecretsViewModel.ApplyPhase {
+extension SecretsViewModel.ApplyPhase {
     var isFailed: Bool { if case .failed = self { return true }; return false }
 }
 
-// ── Previews — Secrets states (no VM) ────────────────────────────────────────
-
-private func sampleStatus(active: String) -> SecretsStatus {
+private func secretPreviewStatus(active: String) -> SecretsStatus {
     SecretsStatus(
         llm: LlmSecretsStatus(
             active: active,
@@ -198,28 +224,25 @@ private func sampleStatus(active: String) -> SecretsStatus {
     )
 }
 
-#Preview("ready") {
+#Preview("Ready — large text") {
     NavigationStack {
         SecretsBody(
-            status: sampleStatus(active: "openrouter"), isError: false, editing: .none,
-            isSaving: false, apply: .hidden,
-            onSetActive: { _ in }, onStartEditKey: { _ in }, onStartEditBaseUrl: {},
-            onCancelEdit: {}, onSaveKey: { _, _ in }, onSaveBaseUrl: { _ in },
-            onApplyNow: {}, onDismissNotice: {}
+            status: secretPreviewStatus(active: "openrouter"), isError: false, isNotAdmin: false,
+            mutationError: nil, editing: .none, isSaving: false, apply: .notice,
+            onRetryLoad: {}, onSetActive: { _ in }, onStartEditKey: { _ in }, onStartEditBaseUrl: {},
+            onCancelEdit: {}, onSaveKey: { _, _ in }, onSaveBaseUrl: { _ in }, onApplyNow: {}, onDismissNotice: {}
         )
     }
-    .preferredColorScheme(.dark)
+    .environment(\.dynamicTypeSize, .accessibility3)
 }
 
-#Preview("restart-notice") {
+#Preview("Not admin") {
     NavigationStack {
         SecretsBody(
-            status: sampleStatus(active: "ollama-cloud"), isError: false, editing: .none,
-            isSaving: false, apply: .notice,
-            onSetActive: { _ in }, onStartEditKey: { _ in }, onStartEditBaseUrl: {},
-            onCancelEdit: {}, onSaveKey: { _, _ in }, onSaveBaseUrl: { _ in },
-            onApplyNow: {}, onDismissNotice: {}
+            status: nil, isError: false, isNotAdmin: true, mutationError: nil, editing: .none,
+            isSaving: false, apply: .hidden, onRetryLoad: {}, onSetActive: { _ in },
+            onStartEditKey: { _ in }, onStartEditBaseUrl: {}, onCancelEdit: {},
+            onSaveKey: { _, _ in }, onSaveBaseUrl: { _ in }, onApplyNow: {}, onDismissNotice: {}
         )
     }
-    .preferredColorScheme(.dark)
 }

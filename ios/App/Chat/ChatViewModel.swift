@@ -134,32 +134,18 @@ final class ChatViewModel: ObservableObject {
         component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
-    // Talk-mode intents (design spec §3) — thin passthroughs to the component. All mode
-    // semantics live in the SDK's TalkModeController; the VM never decides anything here.
-    // Fire-and-forget: the SDK flips voiceMode optimistically off the resulting talk mode.
-
-    /// Corner mic pressed (idle→hold) — press-to-talk begins.
-    func pressMic() {
-        log.info("mic.press")
-        component.pressMic()
-    }
-
-    /// Corner mic released below the lock threshold (hold→idle).
-    func releaseMic() {
-        log.info("mic.release")
-        component.releaseMic()
-    }
-
-    /// Corner mic slid to lock (hold→locked) — continuous/hands-free begins.
-    func lockMic() {
-        log.info("mic.lock")
-        component.lockMic()
-    }
-
-    /// Locked control released to stop (locked→idle) — hands-free ends.
-    func stopContinuous() {
-        log.info("mic.stop-continuous")
-        component.stopContinuous()
+    /// Composer capture intents are semantic UI commands. Capture IDs, terminals,
+    /// stale isolation, and wire frames remain entirely inside KMP.
+    func voiceIntent(_ intent: VoiceCaptureIntent) {
+        log.info("voice.intent type=\(String(describing: intent))")
+        switch intent {
+        case .holdStart: component.holdStart()
+        case .sendHeld: component.sendHeld()
+        case .cancelHeld: component.cancelHeld()
+        case .enterAuto: component.enterAuto()
+        case .exitAuto: component.exitAuto()
+        case .lifecycleCancel: component.lifecycleCancel()
+        }
     }
 
     /// Toggle TTS through the component passthrough (gateway echoes via prefs).
@@ -387,9 +373,8 @@ final class ChatViewModel: ObservableObject {
         permissionTimeoutTask?.cancel()
         if let next {
             pendingPermission = PermissionPromptFSM.reduce(current: current, event: .requested(next))
-            // toolName is a fixed MCP-route identifier, not user content. The rendered
-            // description and the raw args ARE user content and are never logged.
-            log.info("permission.request.shown requestId=\(next.requestId) toolName=\(next.toolName)")
+            // Prompt content and arguments never enter diagnostics.
+            log.info("permission.request.shown requestId=\(next.requestId) type=tool")
             armLocalTimeoutFallback(for: next)
         } else if let current {
             // The SDK dropped it — permission.resolved arrived (allowed / denied /

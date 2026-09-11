@@ -36,11 +36,13 @@ class VoiceUplinkPipeline(
 ) {
     private val log = createLogger("voice", "uplink")
     private var job: Job? = null
+    private var capturePacketSink: ((ByteArray) -> Unit)? = null
     private var framesIn = 0
     private var packetsOut = 0
 
-    suspend fun start() {
+    suspend fun start(packetSink: ((ByteArray) -> Unit)? = null) {
         if (job?.isActive == true) return
+        capturePacketSink = packetSink ?: sendPacket
         framer.reset(); onset.reset(); encoder.reset(); framesIn = 0; packetsOut = 0
         // No mic.start() — VoiceAudio.configure owns mic activation; micFrames is hot
         // ONLY while micActive, so the collect job simply forwards what the engine emits.
@@ -50,6 +52,9 @@ class VoiceUplinkPipeline(
     }
 
     suspend fun stop() {
+        // Close the sink before waiting: cancellation is normally prompt, but even a
+        // non-cooperative encoder cannot publish another packet once terminal teardown starts.
+        capturePacketSink = null
         // cancelAndJoin (not cancel): wait for any in-flight onPcm encode on the
         // dispatcher thread to finish before encoder.reset(), so reset() can never
         // race a concurrent encode of the non-thread-safe encoder/Framer.
@@ -58,12 +63,19 @@ class VoiceUplinkPipeline(
         // No mic.stop() — configure(mic=false) owns teardown.
     }
 
+    /** Timeout fallback: close the packet sink and request cancellation without joining. */
+    fun forceStop() {
+        capturePacketSink = null
+        job?.cancel()
+        job = null
+    }
+
     private fun onPcm(pcm: ShortArray) {
         for (frame in framer.push(pcm)) {
             framesIn += 1
             if (onset.observe(frame)) onOnset()
             for (packet in encoder.encode(frame)) {
-                sendPacket(packet)
+                capturePacketSink?.invoke(packet)
                 packetsOut += 1
             }
         }

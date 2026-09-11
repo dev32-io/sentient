@@ -1,0 +1,36 @@
+schemaVersion: 1
+evaluation: stage-integration-closure-review
+recordedAt: 2026-08-26T01:29:21.977Z
+entries:
+  - result: Inspected the complete bounded repair for F-002.
+    command: git diff 8099251e..250fc0b7 --
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SdkLifecycle.kt
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SentientSdk.kt
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/sdk/SentientSdkTest.kt
+  - result: BUILD SUCCESSFUL; all selected SDK tests were freshly rebuilt and
+      executed on Android/JVM and iOS simulator targets.
+    command: ./gradlew :shared:mobile-sdk:iosSimulatorArm64Test
+      :shared:mobile-sdk:testDebugUnitTest --rerun-tasks
+  - result: Passed; foundation projections/static boundaries and closed inventory
+      remain valid.
+    command: bun run design:foundation:check && bun run design:inventory:check
+  - result: Passed; no prohibited Android source/resource changes and no whitespace
+      errors.
+    command: Android baseline exclusion and git diff --check
+  - result: Lines 295-313 synchronously detach terminal transport and retain the
+      historical non-terminal teardown facade.
+    description: Transport detachment boundary.
+    path: files/003-5-SdkLifecycle.kt
+    checksum: sha256:4f9259e54b8493f9a9fb923b917d7b409ce3625f20f936ff2330ce7815e47e10
+  - result: Lines 487-558 serialize disconnect, perform capture teardown,
+      bound/cancel/join caller-owned transport close, then cancel/join the SDK
+      root.
+    description: Bounded terminal teardown ownership.
+    path: files/003-6-SentientSdk.kt
+    checksum: sha256:adc6eb64a58f59caf7493933421f562d99102246e55f7716471ec0b185ae6b6a
+  - result: Lines 171-228 cover normal ordering/root shutdown, hanging-cancellable
+      close cleanup with no surviving captures/children or late frames, and
+      idempotent repeated logout.
+    description: Terminal teardown regressions.
+    path: files/003-7-SentientSdkTest.kt
+    checksum: sha256:ec2f17494e7c53622cd35e6dbc622807c8bbc968b61271ba21002c6a8383b873

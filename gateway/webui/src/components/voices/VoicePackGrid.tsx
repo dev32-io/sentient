@@ -2,8 +2,7 @@
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import type { VoiceSummary } from "../../services/voices-api.ts";
-import { Btn } from "../settings/primitives/btn.tsx";
-import { Modal } from "../settings/primitives/modal.tsx";
+import { ActionButton, ActionRow, AsyncState, Dialog } from "../common/index.ts";
 import { VoicePackTile } from "./VoicePackTile.tsx";
 
 export interface VoicePackGridProps {
@@ -25,10 +24,10 @@ export interface VoicePackGridProps {
 export function VoicePackGrid(props: VoicePackGridProps): JSX.Element {
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
-  if (props.error) return <p class="pane-error">{props.error}</p>;
-  if (props.loading) return <div class="pane-skeleton" aria-hidden="true" />;
+  if (props.error) return <AsyncState state="error" title="Couldn't load voices" message={props.error} />;
+  if (props.loading) return <AsyncState state="loading" title="Loading voices" />;
   if (props.packs.length === 0) {
-    return <div class="empty-pad">No voices match — clear filters or add your own.</div>;
+    return <AsyncState state="empty" title="No voices match" message="Clear filters or add your own voice." />;
   }
 
   const confirmTarget = props.packs.find((p) => p.voiceId === confirmId) ?? null;
@@ -81,21 +80,11 @@ interface DeleteConfirmModalProps {
 
 function DeleteConfirmModal({ target, onCancel, onConfirm }: DeleteConfirmModalProps): JSX.Element {
   return (
-    <Modal
+    <Dialog
       title={`Delete "${target.name}"?`}
+      description="This voice will be permanently deleted."
       onClose={onCancel}
-      footer={
-        <>
-          <Btn kind="ghost" size="sm" onClick={onCancel}>
-            Cancel
-          </Btn>
-          <Btn kind="primary" size="sm" danger onClick={onConfirm}>
-            Delete
-          </Btn>
-        </>
-      }
-    >
-      <p class="modal-lead">This voice pack will be permanently deleted.</p>
-    </Modal>
+      footer={<ActionRow><ActionButton variant="quiet" onClick={onCancel}>Cancel</ActionButton><ActionButton variant="destructive" onClick={onConfirm}>Delete</ActionButton></ActionRow>}
+    />
   );
 }

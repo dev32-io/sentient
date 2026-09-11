@@ -1,9 +1,9 @@
-// gateway/webui/src/components/settings/primitives/text-field.tsx
 import type { JSX } from "preact";
+import { TextField as FoundationTextField } from "../../common/foundation.tsx";
 
 export interface TextFieldProps {
   value: string;
-  onChange: (e: Event) => void;
+  onChange: (event: Event) => void;
   placeholder?: string;
   prefix?: string;
   suffix?: string;
@@ -14,32 +14,20 @@ export interface TextFieldProps {
   disabled?: boolean;
 }
 
-export function TextField({
-  value,
-  onChange,
-  placeholder,
-  prefix,
-  suffix,
-  type = "text",
-  monospace,
-  fullWidth,
-  error,
-  disabled,
-}: TextFieldProps): JSX.Element {
-  const cls = ["tf", monospace ? "mono" : "", fullWidth ? "full" : "", error ? "err" : ""]
-    .filter(Boolean)
-    .join(" ");
+/** Compatibility wrapper; adornments and input semantics live in the common field. */
+export function TextField({ value, onChange, placeholder, prefix, suffix, type = "text", monospace, fullWidth, error, disabled }: TextFieldProps): JSX.Element {
   return (
-    <div class={cls}>
-      {prefix && <span class="tf-pre">{prefix}</span>}
-      <input
-        type={type}
-        value={value ?? ""}
-        onInput={onChange}
-        placeholder={placeholder}
-        disabled={disabled}
-      />
-      {suffix && <span class="tf-suf">{suffix}</span>}
-    </div>
+    <FoundationTextField
+      value={value ?? ""}
+      onInput={(event) => onChange(event as unknown as Event)}
+      placeholder={placeholder}
+      prefix={prefix}
+      suffix={suffix}
+      type={type}
+      monospace={monospace}
+      fullWidth={fullWidth}
+      invalid={error}
+      disabled={disabled}
+    />
   );
 }

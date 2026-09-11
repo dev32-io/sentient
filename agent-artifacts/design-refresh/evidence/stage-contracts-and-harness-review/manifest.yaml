@@ -1,0 +1,13 @@
+schemaVersion: 1
+evaluation: stage-contracts-and-harness-review
+recordedAt: 2026-08-25T22:19:29.645Z
+entries:
+  - result: "All passed; focused gateway suite: 42 tests."
+    command: bun run design:foundation:check; bun run design:inventory:check;
+      protocol/Web SDK unit tests; focused gateway tests; bun run typecheck; git
+      diff --check
+  - result: '{"submittedCount":1}'
+    command: End -> turn_started -> transcript ordering probe
+    description: Sanitized fresh probe confirming the committed transcript is preserved.
+    path: files/003-2-sentient-review-iteration2-stt-order.txt
+    checksum: sha256:34e15ab39233c5e80ac170aa784bc8cf5244c34f81d3829fb442b235e43239ad

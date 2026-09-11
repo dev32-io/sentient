@@ -20,6 +20,7 @@ struct VoiceScreen: View {
     let onOpen: (Route) -> Void
     let onBack: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var vm: VoiceViewModel
 
     init(settings: SettingsComponent, onOpen: @escaping (Route) -> Void, onBack: @escaping () -> Void) {
@@ -30,7 +31,10 @@ struct VoiceScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Voice", screenId: "settings-voice") {
+        SettingsPageScaffold(
+            title: "Voice", screenId: "settings-voice",
+            onBack: onBack, backAccessibilityId: "settings-voice-back"
+        ) {
             noticeBanner
             VoiceFilterBarView(
                 query: $vm.query,
@@ -43,7 +47,7 @@ struct VoiceScreen: View {
                 onToggleTag: { vm.toggleTag($0) },
                 onLanguage: { vm.language = $0 }
             )
-            entryButtons
+            libraryHeader
             content
         }
         .task { await vm.load() }
@@ -51,9 +55,9 @@ struct VoiceScreen: View {
             Task { await vm.onLibraryChanged() }
         }
         .onDisappear { vm.teardown() }
-        .alert(deleteTitle, isPresented: deleteAlertBinding) {
-            Button("Cancel", role: .cancel) { vm.pendingDelete = nil }
+        .confirmationDialog(deleteTitle, isPresented: deleteAlertBinding, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { vm.confirmDelete() }
+            Button("Cancel", role: .cancel) { vm.pendingDelete = nil }
         } message: {
             Text("This voice pack will be permanently deleted.")
         }
@@ -63,19 +67,13 @@ struct VoiceScreen: View {
     private var content: some View {
         switch vm.phase {
         case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, Space.xl)
+            AsyncNotice(kind: .loading, title: "Loading voices")
                 .accessibilityIdentifier("settings-voice-loading")
         case .failed:
             errorState
         case .loaded:
             if vm.shownVoices.isEmpty {
-                Text("No voices match — clear filters or add your own.")
-                    .font(Typo.ui(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink3)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, Space.xl)
+                AsyncNotice(kind: .empty, title: "No voices match", detail: "Clear filters or add your own.")
                     .accessibilityIdentifier("settings-voice-empty")
             } else {
                 voiceList
@@ -84,12 +82,12 @@ struct VoiceScreen: View {
     }
 
     private var voiceList: some View {
-        LazyVStack(spacing: Space.sm) {
+        LazyVStack(spacing: 0) {
             ForEach(vm.shownVoices, id: \.voiceId) { pack in
                 VoiceRowView(
                     name: pack.name,
                     lang: pack.language,
-                    source: pack.source == "builtin" ? "Built-in" : "Yours",
+                    source: pack.source == "builtin" ? "Built-in" : pack.source == "user" ? "Yours" : pack.source,
                     description: pack.description_,
                     tags: pack.tags,
                     isPlaying: vm.previewingId == pack.voiceId,
@@ -99,69 +97,89 @@ struct VoiceScreen: View {
                     accessibilityId: "settings-voice-row-\(pack.voiceId)",
                     onSelect: { vm.pick(pack) },
                     onPlay: { vm.togglePreview(pack) },
-                    onDelete: pack.source == "user" ? { vm.pendingDelete = pack } : nil
+                    onDelete: pack.source == "user" ? { vm.pendingDelete = pack } : nil,
+                    grouped: true, selectionTitle: "Use"
                 )
+                if pack.voiceId != vm.shownVoices.last?.voiceId {
+                    Divider().overlay(DuskColors.line).padding(.horizontal, Space.md)
+                }
             }
         }
+        .designPlate()
     }
 
-    private var entryButtons: some View {
-        VStack(spacing: Space.sm) {
-            entryButton(title: "Add voice", icon: "plus", id: "settings-voice-add-nav") {
-                onOpen(.settingsVoiceAdd)
+    @ViewBuilder
+    private var libraryHeader: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: Space.md) {
+                libraryHeading
+                addVoiceMenu
             }
-            if vm.fishBrowseEnabled {
-                entryButton(title: "Clone from Fish", icon: "square.and.arrow.down", id: "settings-voice-fish-nav") {
-                    onOpen(.settingsVoiceFish)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    libraryHeading
+                    Spacer(minLength: Space.sm)
+                    addVoiceMenu.fixedSize(horizontal: true, vertical: false)
+                }
+                VStack(alignment: .leading, spacing: Space.md) {
+                    libraryHeading
+                    addVoiceMenu
                 }
             }
         }
     }
 
-    private func entryButton(title: String, icon: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: Space.sm) {
-                Image(systemName: icon)
-                Text(title).font(Typo.ui(TypeScale.sm, .semibold))
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: TypeScale.xs)).foregroundStyle(DuskColors.ink3)
+    private var libraryHeading: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Library")
+                .font(DesignTextRole.body.font.weight(.semibold))
+                .foregroundStyle(DuskColors.ink)
+            if vm.phase == .loaded {
+                Text("\(vm.shownVoices.count) of \(vm.allVoices.count) voices")
+                    .font(DesignTextRole.supporting.font)
+                    .foregroundStyle(DuskColors.ink2)
             }
-            .foregroundStyle(DuskColors.ink)
-            .padding(Space.md)
-            .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft, lineWidth: 1))
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(id)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var addVoiceMenu: some View {
+        DesignMenuButton(
+            accessibilityLabel: "Add voice",
+            accessibilityId: "settings-voice-add-menu"
+        ) {
+            Button("Add voice") { onOpen(.settingsVoiceAdd) }
+                .accessibilityIdentifier("settings-voice-add-nav")
+            if vm.fishBrowseEnabled {
+                Button("Clone from Fish") { onOpen(.settingsVoiceFish) }
+                    .accessibilityIdentifier("settings-voice-fish-nav")
+            }
+        } label: {
+            VoiceLibraryMenuLabel(title: "Add voice")
+        }
+        .buttonStyle(DesignButtonStyle(role: .quiet, horizontalPadding: Space.sm))
     }
 
     private var errorState: some View {
-        VStack(spacing: Space.md) {
-            Text("Couldn't load voices.")
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink2)
-            Button("Retry") { Task { await vm.load() } }
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.accent)
-                .accessibilityIdentifier("settings-voice-retry")
+        VStack(spacing: Space.sm) {
+            AsyncNotice(kind: .error, title: "Couldn't load voices")
+            DesignActionButton(title: "Retry", role: .quiet, accessibilityId: "settings-voice-retry") {
+                Task { await vm.load() }
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, Space.xl)
     }
 
     @ViewBuilder
     private var noticeBanner: some View {
         if let notice = vm.notice {
-            Button { vm.notice = nil } label: {
-                Text(notice)
-                    .font(Typo.ui(TypeScale.xs, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Space.sm)
-                    .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings-voice-notice")
+            DesignDismissibleNotice(
+                kind: .warning,
+                title: notice,
+                accessibilityId: "settings-voice-notice",
+                onDismiss: { vm.notice = nil }
+            )
         }
     }
 

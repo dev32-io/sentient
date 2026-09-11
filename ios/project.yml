@@ -8,6 +8,12 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: "2.4.1"
+  RiveRuntime:
+    url: https://github.com/rive-app/rive-ios
+    exactVersion: "6.22.0"
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing
+    exactVersion: "1.19.4"
 targets:
   SentientApp:
     type: application
@@ -16,16 +22,14 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         CFBundleDisplayName: Sentient
-        # Version is the SPEC's source of truth (xcodegen regenerates Info.plist
-        # on every generate; a hand-edit there is clobbered). Bump together with
-        # the Android versionName + the mobile-sdk/data module versions on every
-        # mobile release. NOTE — since the 1.0.0 OTA-trigger bump this app-facing
-        # release version is its own track, no longer numerically equal to the
-        # mobile-sdk/data module source versions (those stayed on the 0.x line).
-        CFBundleShortVersionString: 1.4.0
-        CFBundleVersion: "11"
+        # This spec owns the app version; xcodegen regenerates Info.plist.
+        # App releases use their own track, separate from mobile-sdk/data source
+        # versions. An iOS-only release does not bump the deprecated Android app.
+        CFBundleShortVersionString: 1.5.0
+        CFBundleVersion: "12"
         # Register bundled custom fonts so UIKit can load them by family name.
         # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
         UIAppFonts:
@@ -64,6 +68,18 @@ targets:
       configs:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
+    preBuildScripts:
+      - name: Verify Sentient identity checksum
+        script: |
+          set -euo pipefail
+          asset="$SRCROOT/App/Resources/Identity/sentient-avatar.riv"
+          expected="3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7"
+          actual="$(shasum -a 256 "$asset" | awk '{print $1}')"
+          test "$actual" = "$expected" || {
+            echo "error: Sentient identity checksum mismatch: $actual"
+            exit 1
+          }
+        basedOnDependencyAnalysis: false
     dependencies:
       - framework: ../shared/mobile-data/build/XCFrameworks/MobileData.xcframework
         embed: false
@@ -71,6 +87,8 @@ targets:
       - sdk: libsqlite3.tbd
       - package: MarkdownUI
         product: MarkdownUI
+      - package: RiveRuntime
+        product: RiveRuntime
 
   SentientAppTests:
     type: bundle.unit-test
@@ -85,6 +103,8 @@ targets:
       - framework: ../shared/mobile-data/build/XCFrameworks/MobileData.xcframework
         embed: false
       - sdk: libsqlite3.tbd
+      - package: SnapshotTesting
+        product: SnapshotTesting
 
 schemes:
   SentientApp:

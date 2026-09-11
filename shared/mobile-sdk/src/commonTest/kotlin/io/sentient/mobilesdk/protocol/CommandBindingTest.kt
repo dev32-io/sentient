@@ -55,10 +55,8 @@ class CommandBindingTest {
 
     @Test
     fun stamps_every_command_form_including_the_payload_less_ones() {
-        // `interrupt` and `audio.end` are data objects with no fields of their
-        // own — the merge has to reach them too, or Stop and PTT-release stay
-        // unbound while text is bound.
-        for (msg in listOf(ClientMessage.Interrupt, ClientMessage.AudioEnd)) {
+        // Payload-less interrupt and capture-bearing audio.end both receive binding.
+        for (msg in listOf<ClientMessage>(ClientMessage.Interrupt, ClientMessage.AudioEnd("cap-1"))) {
             assertEquals("s_1", field(msg, BINDING, "sessionId")?.jsonPrimitive?.content)
         }
     }

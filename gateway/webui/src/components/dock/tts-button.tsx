@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { IconButton } from "../common/icon-button.tsx";
+import { ComposerGlyph } from "./composer-glyph.tsx";
 
 export interface TtsButtonProps {
   enabled: boolean;
@@ -7,13 +7,17 @@ export interface TtsButtonProps {
 }
 
 export function TtsButton({ enabled, onToggle }: TtsButtonProps): JSX.Element {
+  const label = enabled ? "Mute assistant voice" : "Unmute assistant voice";
   return (
-    <IconButton
-      iconName={enabled ? "volume-2" : "volume-x"}
-      title={enabled ? "Mute assistant voice" : "Unmute assistant voice"}
-      variant={enabled ? "tts-on" : "tts-off"}
-      active={enabled}
+    <button
+      type="button"
+      class={`dock-composer-control dock-composer__tts${enabled ? " dock-composer__tts--enabled" : ""}`}
+      aria-label={label}
+      aria-pressed={enabled}
+      title={label}
       onClick={onToggle}
-    />
+    >
+      <ComposerGlyph name={enabled ? "volume" : "volume-off"} />
+    </button>
   );
 }

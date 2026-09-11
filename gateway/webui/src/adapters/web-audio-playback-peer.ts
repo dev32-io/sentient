@@ -24,19 +24,36 @@ export function createAudioLoopbackPeer(): AudioLoopbackPeer {
   let sender: RTCRtpSender | null = null;
 
   async function setup(destinationNode: MediaStreamAudioDestinationNode): Promise<void> {
-    localPeer = new RTCPeerConnection();
-    remotePeer = new RTCPeerConnection();
+    const nextLocalPeer = new RTCPeerConnection();
+    const nextRemotePeer = new RTCPeerConnection();
+    localPeer = nextLocalPeer;
+    remotePeer = nextRemotePeer;
 
-    // Wire ICE candidates between the two local peers
-    localPeer.onicecandidate = (e) => {
-      if (e.candidate) remotePeer?.addIceCandidate(e.candidate);
+    function assertCurrent(): void {
+      if (localPeer === nextLocalPeer && remotePeer === nextRemotePeer) return;
+      nextLocalPeer.close();
+      nextRemotePeer.close();
+      const error = new Error("AEC loopback setup was cancelled.");
+      error.name = "AbortError";
+      throw error;
+    }
+
+    // Wire ICE candidates between the two local peers. Each callback closes
+    // over its own pair so a stale setup can never mutate a replacement pair.
+    nextLocalPeer.onicecandidate = (e) => {
+      if (e.candidate && remotePeer === nextRemotePeer) {
+        void nextRemotePeer.addIceCandidate(e.candidate).catch(() => undefined);
+      }
     };
-    remotePeer.onicecandidate = (e) => {
-      if (e.candidate) localPeer?.addIceCandidate(e.candidate);
+    nextRemotePeer.onicecandidate = (e) => {
+      if (e.candidate && localPeer === nextLocalPeer) {
+        void nextLocalPeer.addIceCandidate(e.candidate).catch(() => undefined);
+      }
     };
 
-    // When the remote peer receives the audio track, play it through <audio>
-    remotePeer.ontrack = (e) => {
+    // When the remote peer receives the audio track, play it through <audio>.
+    nextRemotePeer.ontrack = (e) => {
+      if (remotePeer !== nextRemotePeer) return;
       if (!audioElement) {
         audioElement = document.createElement("audio");
         audioElement.autoplay = true;
@@ -44,19 +61,27 @@ export function createAudioLoopbackPeer(): AudioLoopbackPeer {
       audioElement.srcObject = e.streams[0] ?? new MediaStream([e.track]);
     };
 
-    // Add the destination node's track to the local peer
+    // Add the destination node's track to the local peer.
     const track = destinationNode.stream.getAudioTracks()[0];
     if (!track) return;
-    sender = localPeer.addTrack(track, destinationNode.stream);
+    const nextSender = nextLocalPeer.addTrack(track, destinationNode.stream);
 
-    // SDP exchange — connect the two peers
-    const offer = await localPeer.createOffer();
-    await localPeer.setLocalDescription(offer);
-    await remotePeer.setRemoteDescription(offer);
+    // SDP exchange — connect the two peers. Check ownership after every
+    // asynchronous boundary so destroy() is a real cancellation fence.
+    const offer = await nextLocalPeer.createOffer();
+    assertCurrent();
+    await nextLocalPeer.setLocalDescription(offer);
+    assertCurrent();
+    await nextRemotePeer.setRemoteDescription(offer);
+    assertCurrent();
 
-    const answer = await remotePeer.createAnswer();
-    await remotePeer.setLocalDescription(answer);
-    await localPeer.setRemoteDescription(answer);
+    const answer = await nextRemotePeer.createAnswer();
+    assertCurrent();
+    await nextRemotePeer.setLocalDescription(answer);
+    assertCurrent();
+    await nextLocalPeer.setRemoteDescription(answer);
+    assertCurrent();
+    sender = nextSender;
 
     log.debug("setup: peer connections established");
   }

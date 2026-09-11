@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { FoundationIconButton } from "./foundation/buttons.tsx";
 import { XIcon } from "./icons/x.tsx";
 
 export type DialogCloseReason = "escape" | "backdrop" | "close-button";
@@ -13,10 +14,7 @@ export interface DialogProps {
   onClose(): void;
   width?: number;
   initialFocusRef?: { current: HTMLElement | null };
-  /**
-   * Opt-in background isolation. Existing Dialog consumers intentionally keep
-   * their historical behavior when this is omitted.
-   */
+  /** Background isolation is on by default; false is retained only as a compatibility escape hatch. */
   inertBackground?: boolean;
   /** Source-compatible spelling for callers that describe the backdrop. */
   backgroundInert?: boolean;
@@ -70,6 +68,43 @@ function inertProperty(element: HTMLElement): boolean | undefined {
   return Boolean((element as HTMLElement & { inert?: boolean }).inert);
 }
 
+function isInert(element: HTMLElement): boolean {
+  return element.hasAttribute("inert") || inertProperty(element) === true;
+}
+
+function isHidden(element: HTMLElement): boolean {
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (current.hidden || current.getAttribute("aria-hidden")?.toLowerCase() === "true" || isInert(current)) return true;
+    try {
+      const style = window.getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return true;
+    } catch {
+      // A detached or tearing-down document may not have computed styles.
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function isLiveDialogRoot(element: HTMLElement): boolean {
+  return element.isConnected && !isHidden(element);
+}
+
+function outsideTreeElements(root: HTMLElement): HTMLElement[] {
+  const targets = new Set<HTMLElement>();
+  let current: HTMLElement | null = root;
+  while (current && current !== document.body) {
+    const parent: HTMLElement | null = current.parentElement;
+    if (!parent) break;
+    for (const child of Array.from(parent.children)) {
+      if (child !== current && child instanceof HTMLElement) targets.add(child);
+    }
+    current = parent;
+  }
+  return [...targets];
+}
+
 function applyInert(element: HTMLElement, value: boolean): void {
   const target = element as HTMLElement & { inert?: boolean };
   if ("inert" in element || value) target.inert = value;
@@ -80,6 +115,9 @@ function applyInert(element: HTMLElement, value: boolean): void {
 function restoreInert(element: HTMLElement, snapshot: InertSnapshot): void {
   if (snapshot.inertProperty !== undefined) {
     (element as HTMLElement & { inert?: boolean }).inert = snapshot.inertProperty;
+  } else {
+    // Remove the fallback expando in environments without native inert support.
+    Reflect.deleteProperty(element, "inert");
   }
   if (snapshot.inertAttribute === null) element.removeAttribute("inert");
   else element.setAttribute("inert", snapshot.inertAttribute);
@@ -117,7 +155,7 @@ function isolateBackground(element: HTMLElement): () => void {
 }
 
 function focusElement(element: HTMLElement | null): void {
-  if (!element || !element.isConnected) return;
+  if (!element || !element.isConnected || isHidden(element) || element.matches(":disabled")) return;
   try {
     element.focus();
   } catch {
@@ -145,7 +183,7 @@ export function Dialog({
 }: DialogProps): JSX.Element {
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
+  const releaseIsolation = useRef<(() => void) | null>(null);
   const titleId = useRef(`app-dialog-title-${++nextDialogId}`);
   const descriptionId = useRef(`app-dialog-description-${nextDialogId}`);
   const requestClose = (reason: DialogCloseReason): void => {
@@ -161,15 +199,22 @@ export function Dialog({
   };
 
   useEffect(() => {
-    previousFocus.current = document.activeElement as HTMLElement | null;
-    return () => focusElement(previousFocus.current);
+    const previousFocus = document.activeElement as HTMLElement | null;
+    // One teardown boundary: a browser cannot focus a still-inert opener.
+    // Release only our isolation tokens, retaining any enclosing dialog's.
+    return () => {
+      releaseIsolation.current?.();
+      releaseIsolation.current = null;
+      focusElement(previousFocus);
+    };
   }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const root = dialogRef.current;
       if (!root) return;
-      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>("[role='dialog']"));
+      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>("[role='dialog']"))
+        .filter(isLiveDialogRoot);
       if (openDialogs[openDialogs.length - 1] !== root) return;
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -212,14 +257,15 @@ export function Dialog({
   }, [initialFocusRef]);
 
   useEffect(() => {
-    if (!(inertBackground ?? backgroundInert ?? false)) return;
+    // Update isolation policy without restoring focus while the dialog is open.
+    // The lifetime effect above owns both isolation teardown and focus return.
+    releaseIsolation.current?.();
+    releaseIsolation.current = null;
+    if (!(inertBackground ?? backgroundInert ?? true)) return;
     const scrim = scrimRef.current;
-    const parent = scrim?.parentElement;
-    if (!parent || !scrim) return;
-    const cleanups = Array.from(parent.children)
-      .filter((child): child is HTMLElement => child instanceof HTMLElement && child !== scrim)
-      .map((child) => isolateBackground(child));
-    return () => cleanups.forEach((cleanup) => cleanup());
+    if (!scrim) return;
+    const cleanups = outsideTreeElements(scrim).map((element) => isolateBackground(element));
+    releaseIsolation.current = () => cleanups.forEach((cleanup) => cleanup());
   }, [backgroundInert, inertBackground]);
 
   return (
@@ -244,14 +290,13 @@ export function Dialog({
       >
         <header class="app-dialog__head">
           <h2 id={titleId.current} class="app-dialog__title">{title}</h2>
-          <button
-            type="button"
-            class="app-dialog__close"
+          <FoundationIconButton
+            className="app-dialog__close"
             onClick={() => requestClose("close-button")}
-            aria-label="Close"
+            label="Close"
           >
-            <XIcon size={14} />
-          </button>
+            <XIcon size={18} />
+          </FoundationIconButton>
         </header>
         {(description || children) && (
           <div class="app-dialog__body">

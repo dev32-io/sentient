@@ -1,18 +1,15 @@
-// gateway/webui/src/components/settings/panes/personalities-pane.tsx
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { PersonalityList, ProfileApi } from "../../../services/profile-api.js";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Btn } from "../primitives/btn.tsx";
-import { Textarea } from "../primitives/textarea.tsx";
-import { TextField } from "../primitives/text-field.tsx";
+import { ActionButton, ActionRow, AsyncState, Disclosure, Field, PaneChrome, SettingsCard, TextArea } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 
-const log = createLogger(["sentient", "webui", "settings", "personalities-pane"]);
+import { useSettingsDraft } from "../navigation-state.ts";
 
+const log = createLogger(["sentient", "webui", "settings", "personalities-pane"]);
 const NEW_KEY = "__new__";
+const DESCRIPTION = "Switchable tone profiles. Activate one for the assistant to use.";
 
 export interface PersonalitiesPaneProps {
   api: ProfileApi;
@@ -23,213 +20,80 @@ export interface PersonalitiesPaneProps {
 export function PersonalitiesPane({ api, token, onMark }: PersonalitiesPaneProps): JSX.Element {
   const [list, setList] = useState<PersonalityList | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
   const [newName, setNewName] = useState("");
   const [newBody, setNewBody] = useState("");
 
-  useEffect(() => {
-    void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, token]);
-
-  async function reload() {
-    const r = await api.getPersonalities(token);
-    if (!r.ok) {
-      log.warn("list.failed", { code: r.error.code });
+  useEffect(() => { void reload(); }, [api, token, loadAttempt]);
+  async function reload(): Promise<void> {
+    setLoadError(null);
+    const result = await api.getPersonalities(token);
+    if (!result.ok) {
+      log.warn("list.failed", { code: result.error.code });
       setLoadError("Couldn't load personalities.");
       return;
     }
-    setList(r.value);
-    setLoadError(null);
-  }
-
-  if (loadError) {
-    return (
-      <>
-        <PaneHead title="Personalities" sub="Switchable tone profiles. Activate one for the assistant to wear." />
-        <p class="pane-error">{loadError}</p>
-      </>
-    );
-  }
-
-  if (!list) {
-    return (
-      <>
-        <PaneHead title="Personalities" sub="Switchable tone profiles. Activate one for the assistant to wear." />
-        <div class="pane-skeleton" aria-hidden="true" />
-      </>
-    );
+    setList(result.value);
   }
 
   const isNewOpen = openId === NEW_KEY;
-
+  useSettingsDraft(isNewOpen && Boolean(newName || newBody));
   return (
-    <>
-      <PaneHead title="Personalities" sub="Switchable tone profiles. Activate one for the assistant to wear." />
-
-      <Card
-        title="All personalities"
-        action={
-          <Btn
-            kind="ghost"
-            size="sm"
-            icon={<Icon name="plus" size={11} />}
-            onClick={() => {
-              setOpenId(isNewOpen ? null : NEW_KEY);
-              setNewName("");
-              setNewBody("");
-            }}
-          >
-            New
-          </Btn>
-        }
-        padding={false}
-      >
-        <div class="lst">
-          {isNewOpen && (
-            <div class="lst-row open lst-row-new">
-              <div class="lst-row-main">
-                <label class="lst-field">
-                  <span class="lst-field-l">Name</span>
-                  <TextField
-                    value={newName}
-                    onChange={(e) => setNewName((e.target as HTMLInputElement).value)}
-                    placeholder="e.g. friendly, terse, scientist"
-                    fullWidth
-                  />
-                </label>
-              </div>
-              <div class="lst-edit">
-                <label class="lst-field">
-                  <span class="lst-field-l">Instructions</span>
-                  <Textarea
-                    value={newBody}
-                    onChange={(e) => setNewBody((e.target as HTMLTextAreaElement).value)}
-                    rows={10}
-                    monospace
-                    placeholder="System-prompt-style instructions for this personality…"
-                  />
-                </label>
-                <div class="lst-edit-acts">
-                  <Btn
-                    kind="primary"
-                    size="sm"
-                    disabled={!validNewName(newName, list)}
-                    onClick={() => {
-                      onMark({
-                        key: "personalities.new",
-                        kind: "slow",
-                        payload: { name: newName.trim(), body: newBody },
-                      });
-                      setOpenId(null);
-                    }}
-                  >
-                    Create
-                  </Btn>
-                  <Btn kind="ghost" size="sm" onClick={() => setOpenId(null)}>Cancel</Btn>
+    <PaneChrome title="Personalities" subtitle={DESCRIPTION}>
+      {loadError ? (
+        <AsyncState state="error" title={loadError} message="Your profiles were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
+      ) : !list ? (
+        <AsyncState state="loading" title="Loading personalities" />
+      ) : (
+        <SettingsCard title="All personalities" padded={false} action={<ActionButton variant="quiet" onClick={() => { setOpenId(isNewOpen ? null : NEW_KEY); setNewName(""); setNewBody(""); }}><Icon name="plus" size={14} /> New personality</ActionButton>}>
+          <div class="lst">
+            {isNewOpen && (
+              <div class="lst-row lst-row-new">
+                <div class="lst-edit">
+                  <Field label="Name" value={newName} onInput={(event) => setNewName(event.currentTarget.value)} placeholder="For example: friendly or scientist" />
+                  <TextArea label="Instructions" value={newBody} onInput={(event) => setNewBody(event.currentTarget.value)} rows={10} monospace placeholder="Instructions for this personality…" />
+                  <ActionRow>
+                    <ActionButton variant="primary" disabled={!validNewName(newName, list)} onClick={() => { onMark({ key: "personalities.new", kind: "slow", payload: { name: newName.trim(), body: newBody } }); setOpenId(null); }}>Create</ActionButton>
+                    <ActionButton variant="quiet" onClick={() => setOpenId(null)}>Cancel</ActionButton>
+                  </ActionRow>
                 </div>
               </div>
-            </div>
-          )}
-
-          {!isNewOpen && list.personalities.length === 0 && (
-            <div class="empty-pad">
-              No personalities yet. Click <strong>+ New</strong> to add one.
-            </div>
-          )}
-
-          {list.personalities.map((p) => {
-            const isOpen = openId === p.name;
-            const isActive = p.name === list.activeName;
-            const draft = editDrafts[p.name] ?? p.body;
-            const isDirty = draft !== p.body;
-            const toggleOpen = () => setOpenId(isOpen ? null : p.name);
-
-            return (
-              <div key={p.name} class={["lst-row", isActive && "on", isOpen && "open"].filter(Boolean).join(" ")}>
-                <div
-                  class="lst-row-main lst-row-btn"
-                  role="button"
-                  tabIndex={0}
-                  onClick={toggleOpen}
-                  onKeyDown={(e: KeyboardEvent) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      toggleOpen();
-                    }
-                  }}
-                >
-                  <span class={["lst-chev", isOpen && "open"].filter(Boolean).join(" ")}>
-                    <Icon name="chevron" size={12} />
-                  </span>
-                  <div class="lst-body">
-                    <div class="lst-title">
-                      {p.name}
-                      {isActive && <span class="tag tag-active">active</span>}
-                    </div>
-                  </div>
-                  <div class="lst-acts" onClick={(e: MouseEvent) => e.stopPropagation()}>
-                    {!isActive && (
-                      <Btn
-                        kind="ghost"
-                        size="sm"
-                        onClick={() => onMark({
-                          key: "personalities.active",
-                          kind: "fast",
-                          payload: { name: p.name },
-                        })}
-                      >
-                        Activate
-                      </Btn>
-                    )}
-                    <Btn
-                      kind="ghost"
-                      size="sm"
-                      danger
-                      onClick={() => onMark({
-                        key: `personalities.delete:${p.name}`,
-                        kind: "slow",
-                        payload: { name: p.name },
-                      })}
+            )}
+            {!isNewOpen && list.personalities.length === 0 && <AsyncState state="empty" title="No personalities yet" message="Create one to give Sentient another tone or style." />}
+            {list.personalities.map((personality) => {
+              const isOpen = openId === personality.name;
+              const isActive = personality.name === list.activeName;
+              const draft = editDrafts[personality.name] ?? personality.body;
+              return (
+                <div key={personality.name} class={`lst-row${isActive ? " on" : ""}${isOpen ? " open" : ""}`}>
+                  <div class="lst-row-main">
+                    <Disclosure
+                      className="lst-disclosure"
+                      mode="button"
+                      title={<>{personality.name}{isActive && <span class="tag tag-active">Active</span>}</>}
+                      open={isOpen}
+                      onOpenChange={(nextOpen) => setOpenId(nextOpen ? personality.name : null)}
                     >
-                      Delete
-                    </Btn>
+                      <div class="lst-edit"><TextArea label={`${personality.name} instructions`} value={draft} rows={10} monospace dirty={draft !== personality.body} onInput={(event) => { const body = event.currentTarget.value; setEditDrafts((values) => ({ ...values, [personality.name]: body })); if (body !== personality.body) onMark({ key: `personalities.${personality.name}`, kind: "slow", payload: { body } }); }} /></div>
+                    </Disclosure>
+                    <ActionRow>
+                      {!isActive && <ActionButton variant="quiet" onClick={() => onMark({ key: "personalities.active", kind: "fast", payload: { name: personality.name } })}>Activate</ActionButton>}
+                      <ActionButton variant="destructive" onClick={() => onMark({ key: `personalities.delete:${personality.name}`, kind: "slow", payload: { name: personality.name } })}>Delete</ActionButton>
+                    </ActionRow>
                   </div>
                 </div>
-
-                {isOpen && (
-                  <div class="lst-edit">
-                    <Textarea
-                      value={draft}
-                      rows={10}
-                      monospace
-                      dirty={isDirty}
-                      onChange={(e: Event) => {
-                        const v = (e.target as HTMLTextAreaElement).value;
-                        setEditDrafts((d) => ({ ...d, [p.name]: v }));
-                        if (v !== p.body) {
-                          onMark({
-                            key: `personalities.${p.name}`,
-                            kind: "slow",
-                            payload: { body: v },
-                          });
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-    </>
+              );
+            })}
+          </div>
+        </SettingsCard>
+      )}
+    </PaneChrome>
   );
 }
 
 function validNewName(name: string, list: PersonalityList): boolean {
-  const t = name.trim();
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(t)) return false;
-  return !list.personalities.some((p) => p.name === t);
+  const trimmed = name.trim();
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(trimmed) && !list.personalities.some((personality) => personality.name === trimmed);
 }

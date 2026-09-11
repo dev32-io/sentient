@@ -1,39 +1,43 @@
 import type { JSX } from "preact";
-import { SentientMark, type SentientMarkMode } from "./sentient-mark.tsx";
+import { SentientIdentity, type SentientIdentityState } from "./sentient-identity.tsx";
 
 export type AvatarTint = "sage" | "terra" | "amber" | "clay";
-export type AvatarSize = "sm" | "lg";
+export type AvatarSize = "sm" | "lg" | "xl";
 
 export interface AvatarProps {
   kind: "user" | "assistant";
   initial?: string;
+  name?: string;
   tint?: AvatarTint;
   size?: AvatarSize;
-  mode?: SentientMarkMode;
+  mode?: SentientIdentityState;
+  selected?: boolean;
+  disabled?: boolean;
 }
 
-export function Avatar({
-  kind,
-  initial,
-  tint = "terra",
-  size = "sm",
-  mode = "idle",
-}: AvatarProps): JSX.Element {
-  const sizeClass = size === "lg" ? " avatar--lg" : "";
+const PIXELS: Record<AvatarSize, number> = { sm: 28, lg: 44, xl: 56 };
+
+export function Avatar({ kind, initial, name, tint = "terra", size = "sm", mode = "idle", selected, disabled }: AvatarProps): JSX.Element {
+  const foundationSize = `snt-avatar--${size}`;
   if (kind === "assistant") {
-    const px = size === "lg" ? 44 : 28;
-    // The active ripple lives on THIS avatar wrapper (.avatar--active) so it
-    // appears only at the chat avatar — the top bar / brand mark stays static.
-    const activeClass = mode !== "idle" ? " avatar--active" : "";
     return (
-      <span class={`avatar avatar--assistant${sizeClass}${activeClass}`} aria-hidden="true">
-        <SentientMark size={px} />
+      <span class={`snt-avatar snt-avatar--sentient ${foundationSize}`}>
+        <SentientIdentity size={PIXELS[size]} state={mode} label={name ?? "Sentient"} />
       </span>
     );
   }
+  const trimmedInitial = initial?.trim();
+  const isFallback = !trimmedInitial;
+  const displayedInitial = trimmedInitial?.slice(0, 2).toLocaleUpperCase() || "?";
+  const accessibleName = name ?? `User ${displayedInitial}`;
   return (
-    <span class={`avatar avatar--user avatar--${tint}${sizeClass}`} aria-hidden="true">
-      {initial ?? ""}
+    <span
+      role="img"
+      class={`snt-avatar snt-avatar--user snt-avatar--${isFallback ? "fallback" : tint} ${foundationSize}${selected ? " snt-avatar--selected" : ""}`}
+      aria-label={selected ? `${accessibleName}, selected` : accessibleName}
+      aria-disabled={disabled || undefined}
+    >
+      <span aria-hidden="true">{displayedInitial}</span>
     </span>
   );
 }

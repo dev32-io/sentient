@@ -4,16 +4,11 @@
 // canonical template into the draft, not saved until Save), and a SLOW save
 // (PUT soul → apply-with-restart) surfaced by the applying banner.
 //
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
-
-private let viewOptions: [SegmentOption] = [
-    SegmentOption(id: "edit", label: "Edit"),
-    SegmentOption(id: "preview", label: "Preview"),
-]
 
 struct SystemPromptScreen: View {
     let settings: SettingsComponent
@@ -23,6 +18,7 @@ struct SystemPromptScreen: View {
     @State private var viewMode = "edit"
     @State private var showDiscard = false
     @State private var showRestore = false
+    @State private var showAdvanced = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
         self.settings = settings
@@ -31,39 +27,36 @@ struct SystemPromptScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
+        SettingsPageScaffold(
+            title: "System Prompt", screenId: "settings-system-prompt-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-system-prompt-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load system instructions", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
-                saveBanner
-                soulCard
+                instructionWorkspace
             }
         }
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-system-prompt-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-system-prompt-save") {
-                        Task { await vm.save() }
-                    }
-                }
-            }
-        }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-system-prompt-discard",
+            applyAccessibilityId: "settings-system-prompt-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
             Button("Keep editing", role: .cancel) {}
         }
-        .confirmationDialog("Restore default Soul.md?", isPresented: $showRestore, titleVisibility: .visible) {
+        .confirmationDialog("Restore default instructions?", isPresented: $showRestore, titleVisibility: .visible) {
             Button("Restore", role: .destructive) { Task { await vm.restoreDefault() } }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -71,69 +64,85 @@ struct SystemPromptScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var saveBanner: some View {
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
-    private var soulCard: some View {
-        SettingsCard(title: "Soul.md", sub: "Markdown supported. Restart required after save.") {
+    private var instructionWorkspace: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
-                HStack {
-                    RowSegmented(
-                        options: viewOptions,
-                        selectedId: viewMode,
+                Text("Base instructions for the assistant. Markdown supported; Apply saves this draft and applies configuration.")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                    Text(viewMode == "edit" ? "Editing instructions" : "Preview")
+                        .designText(.label)
+                        .foregroundStyle(DuskColors.ink2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    DesignActionButton(
+                        title: viewMode == "edit" ? "Preview" : "Edit",
+                        role: .quiet,
                         accessibilityId: "settings-system-prompt-view",
-                        onSelect: { viewMode = $0 }
+                        fillsWidth: false,
+                        action: { viewMode = viewMode == "edit" ? "preview" : "edit" }
                     )
-                    Button("Restore default") { showRestore = true }
-                        .font(Typo.ui(TypeScale.xs, .semibold))
-                        .foregroundStyle(DuskColors.stop)
-                        .disabled(vm.isRestoring)
-                        .accessibilityIdentifier("settings-system-prompt-restore")
                 }
                 if viewMode == "edit" {
-                    MonoEditor(
-                        text: vm.draft,
+                    DesignMultilineEditor(
+                        text: $vm.draft,
                         placeholder: "The base personality and behavior contract…",
-                        accessibilityId: "settings-system-prompt-editor",
-                        onChange: { vm.draft = $0 }
+                        accessibilityId: "settings-system-prompt-editor"
                     )
                 } else {
                     Text(vm.draft.isEmpty ? "Nothing to preview." : vm.draft)
-                        .font(Typo.mono(TypeScale.sm))
-                        .foregroundStyle(vm.draft.isEmpty ? DuskColors.ink4 : DuskColors.ink)
+                        .designText(.body)
+                        .foregroundStyle(vm.draft.isEmpty ? DuskColors.ink2 : DuskColors.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("settings-system-prompt-preview")
                 }
             }
-            .padding(.vertical, Space.sm)
+            .padding(Space.md)
+            .designPlate()
+
+            DesignDisclosureGroup(isExpanded: showAdvanced) {
+                DesignDisclosureButton(
+                    isExpanded: showAdvanced,
+                    accessibilityLabel: "Advanced actions",
+                    accessibilityId: "settings-system-prompt-advanced",
+                    action: { showAdvanced.toggle() }
+                ) {
+                    Text("Advanced actions")
+                        .designText(.label)
+                        .foregroundStyle(DuskColors.ink2)
+                }
+            } content: {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("Restore the default instructions into this draft. Nothing changes until you apply.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                    DesignActionButton(
+                        title: "Restore default",
+                        role: .destructive,
+                        state: vm.isRestoring ? .disabled : .normal,
+                        accessibilityId: "settings-system-prompt-restore",
+                        fillsWidth: false,
+                        action: { showRestore = true }
+                    )
+                }
+                .padding(Space.sm)
+            }
         }
     }
 
     private func attemptBack() {
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
-}
-
-#Preview("edit") {
-    NavigationStack {
-        SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
-            SettingsCard(title: "Soul.md", sub: "Markdown supported. Restart required after save.") {
-                MonoEditor(
-                    text: "You are Sentient, a warm and capable family assistant…",
-                    accessibilityId: "settings-system-prompt-editor", onChange: { _ in }
-                )
-                .padding(.vertical, Space.sm)
-            }
-        }
-    }
-    .preferredColorScheme(.dark)
 }

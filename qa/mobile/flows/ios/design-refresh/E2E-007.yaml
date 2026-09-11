@@ -1,0 +1,21 @@
+appId: io.dev32.sentient.debug
+tags: [design-refresh-text-only]
+---
+- runFlow: ../_helpers/login.yaml
+- tapOn: { id: "new-chat" }
+- tapOn: { id: "composer-input" }
+- inputText: "Synthetic test request: reply with a short harmless acknowledgement."
+- tapOn: { id: "chat-send" }
+- tapOn: { id: "chat-message-list" }
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 60000
+- assertNotVisible: { id: "assistant-bubble", index: 1 }
+- tapOn: { id: "composer-input" }
+- inputText: "Synthetic test request: count slowly from one to twenty."
+- tapOn: { id: "chat-send" }
+- extendedWaitUntil:
+    visible: { id: "chat-interrupt" }
+    timeout: 30000
+- tapOn: { id: "chat-interrupt" }
+- assertVisible: { id: "composer-input" }

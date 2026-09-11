@@ -1,7 +1,6 @@
-/* gateway/webui/src/styles/tokens/index.css */
-@import "./colors.css";
-@import "./spacing.css";
-@import "./radius.css";
-@import "./typography.css";
-@import "./shadows.css";
-@import "./motion.css";
+/*
+ * Compatibility entry for evidence pages and older local imports.
+ * Production main.tsx imports the generated projection directly.
+ */
+@import "./design-foundation-v2.css";
+@import "./compatibility.css";

@@ -20,7 +20,7 @@
 // the DOM in full. Overflow is CSS's problem (the panel scrolls); a character
 // budget in JS is not allowed back.
 
-import { render, screen } from "@testing-library/preact";
+import { fireEvent, render, screen } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
 import { PermissionDialog } from "./permission-dialog.tsx";
 
@@ -59,5 +59,22 @@ describe("PermissionDialog", () => {
   it("says so plainly when a mediated call carries no arguments", () => {
     renderDelegation({});
     expect(screen.getByText(/no arguments/i)).toBeTruthy();
+  });
+
+  it("presents action, target, scope, and consequence and sends only Allow or Deny", () => {
+    const onRespond = vi.fn();
+    render(
+      <PermissionDialog
+        request={{ requestId: "req-authenticated", toolCallId: "call-1", toolName: "unlockDoor", args: { door: "front" }, description: "Unlock the front door", expiresAtMs: Date.now() + 60_000 }}
+        onRespond={onRespond}
+      />,
+    );
+    expect(screen.getByText("Action")).toBeTruthy();
+    expect(screen.getByText("Target")).toBeTruthy();
+    expect(screen.getByText("This request only")).toBeTruthy();
+    expect(screen.getByText(/perform this action now/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(onRespond.mock.calls).toEqual([[false], [true]]);
   });
 });

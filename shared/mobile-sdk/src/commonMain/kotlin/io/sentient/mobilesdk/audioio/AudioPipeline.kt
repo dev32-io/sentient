@@ -478,6 +478,13 @@ class AudioPipeline(
         transition(AudioInput.AudioStart, head?.turnId ?: "")
     }
 
+    /** Exit Hold while discarding all deferred assistant audio (user capture cancellation). */
+    fun discardHold() {
+        if (!holdDeferred && pendingFrames.isEmpty()) return
+        holdDeferred = false
+        onPlaybackStop(reason = "capture-cancel", turnId = lastTurnId)
+    }
+
     /** Local Stop (UI/escape): force-stop playback for the active turn without a server frame. */
     fun stopLocal() {
         if (queue.isEmpty && !isSpeaking) return

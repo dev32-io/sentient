@@ -4,9 +4,6 @@
 // animation (Motion.wave 3.4s). Lives BELOW the text content (z 0); the
 // bubble clips it. Reduced-motion degrades to nothing.
 //
-// AvatarRipple — two phased expanding ring strokes around the assistant
-// avatar while speaking/listening, porting the webui .avatar--running ripple
-// rings. Reduced-motion degrades to nothing.
 // ---------------------------------------------------------------------------
 import SwiftUI
 
@@ -51,43 +48,5 @@ struct BubbleSpeakingWave: View {
             }
             .allowsHitTesting(false)
         }
-    }
-}
-
-// MARK: - AvatarRipple
-
-/// Two phased expanding ring strokes around the assistant avatar while
-/// speaking or listening, porting the webui .avatar--running ripple rings.
-/// Reduced-motion or inactive: `Color.clear` (no rings).
-struct AvatarRipple: View {
-    let active: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        if !active || reduceMotion {
-            Color.clear
-        } else {
-            TimelineView(.animation) { tl in
-                let t = tl.date.timeIntervalSinceReferenceDate
-                ZStack {
-                    ring(t, delay: 0)
-                    ring(t, delay: 0.9)
-                }
-            }
-            .allowsHitTesting(false)
-        }
-    }
-
-    /// Ripple ring color — mark-`hi` #FFE1BD: brighter than terra, in the rim
-    /// family but distinct from the static shiny edge so the two read apart.
-    private static let ringColor = Color(.sRGB, red: 1.0, green: 0.882, blue: 0.741, opacity: 1)
-
-    private func ring(_ t: Double, delay: Double) -> some View {
-        let raw = (t - delay).truncatingRemainder(dividingBy: 1.8) / 1.8
-        let phase = max(0, raw)
-        return Circle()
-            .stroke(Self.ringColor, lineWidth: 1.5)
-            .scaleEffect(1 + 0.85 * phase)
-            .opacity(0.75 * (1 - phase))
     }
 }

@@ -83,6 +83,7 @@ export interface YearGridProps extends CalendarCanvasRendererProps {
 }
 
 export interface DayCellProps extends CalendarCanvasCallbacks {
+  readonly dayAccessOnly?: boolean;
   readonly cell: CalendarDateCell;
   readonly class?: string;
   readonly compact?: boolean;

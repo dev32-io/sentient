@@ -4,12 +4,13 @@ This is the maintainable local-stack recipe for CAL-UX web evidence. It is an ag
 
 ## Comparison authority
 
-- Handoff: `sentient-design/HANDOFF.md`
-- Brand: `sentient-design/brand-spec.md`
-- Exact web reference entry: `sentient-design/design/web/calendar.html`
-- Exact web reference runtime: `sentient-design/components/web/sentient-web.js`
-- Reference server: `python3 -m http.server 8799 --directory sentient-design`
-- Reference URL: `http://127.0.0.1:8799/design/web/calendar.html`
+- Durable authority: `DESIGN.MD`
+- Handoff: `design/prototype/calendar/handoff.md`
+- Exact reference entry: `design/prototype/calendar/index.html`
+- Reference styles: `design/prototype/calendar/calendar.css`
+- Reference behavior: `design/prototype/calendar/calendar.js`
+- Reference server: `python3 -m http.server 8799 --directory design/prototype/calendar`
+- Reference URL: `http://127.0.0.1:8799/index.html`
 - Production URL under observation: `https://localhost/`
 
 The reference runtime is comparison input only. Its in-memory events are never product evidence. Production mutations are prohibited.

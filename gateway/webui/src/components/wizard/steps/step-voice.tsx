@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { ActionButton } from "../../common/foundation.tsx";
 
 export interface StepVoiceProps {
   onAdvance: () => Promise<void>;
@@ -35,9 +36,7 @@ export function StepVoice({ onAdvance }: StepVoiceProps): JSX.Element {
         can record or upload your own voice later in Settings → Voices.
       </p>
       <footer>
-        <button type="button" disabled={busy} onClick={() => void continueStep()}>
-          {busy ? "Saving..." : "Continue"}
-        </button>
+        <ActionButton variant="primary" loading={busy} onClick={() => void continueStep()}>Continue</ActionButton>
       </footer>
     </section>
   );

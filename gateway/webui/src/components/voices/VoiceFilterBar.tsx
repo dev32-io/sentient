@@ -1,10 +1,7 @@
 // gateway/webui/src/components/voices/VoiceFilterBar.tsx
 import type { JSX } from "preact";
 import { LANGUAGE_DISPLAY } from "@sentient/config";
-import { Chip } from "../settings/primitives/chip.tsx";
-import { SearchField } from "../settings/primitives/search-field.tsx";
-import { Segmented, type SegmentedOption } from "../settings/primitives/segmented.tsx";
-import { Select, type SelectOption } from "../settings/primitives/select.tsx";
+import { ChipControl, SearchFilterBar, SegmentedControl, SelectMenu, type SegmentedOption, type SelectMenuOption } from "../common/index.ts";
 import type { VoiceSource } from "./voice-filter.ts";
 
 const SOURCE_OPTIONS: SegmentedOption[] = [
@@ -28,7 +25,7 @@ export interface VoiceFilterBarProps {
 
 /** Presentational voice-list filter bar: search + source segmented control + language select + tag chips. */
 export function VoiceFilterBar(props: VoiceFilterBarProps): JSX.Element {
-  const langOptions: SelectOption[] = [
+  const langOptions: SelectMenuOption[] = [
     { value: "", label: "All languages" },
     ...props.allLanguages.map((code) => ({
       value: code,
@@ -36,26 +33,24 @@ export function VoiceFilterBar(props: VoiceFilterBarProps): JSX.Element {
     })),
   ];
   return (
-    <div class="voice-filter">
-      <div class="voice-filter-row">
-        <SearchField
-          value={props.q}
-          onChange={(e) => props.onQ((e.target as HTMLInputElement).value)}
-          placeholder="Search voices"
-          fullWidth
-        />
-        <Select value={props.language} onChange={props.onLanguage} options={langOptions} />
-        <Segmented value={props.source} onChange={(v) => props.onSource(v as VoiceSource)} options={SOURCE_OPTIONS} />
-      </div>
-      {props.allTags.length > 0 && (
-        <div class="voice-filter-tags">
+    <SearchFilterBar
+      value={props.q}
+      onChange={props.onQ}
+      label="Search voices"
+      placeholder="Search voices"
+      filtersLabel="Voice filters"
+      filters={(
+        <>
+          <SegmentedControl label="Voice source" value={props.source} onChange={(value) => props.onSource(value as VoiceSource)} options={SOURCE_OPTIONS} />
           {props.allTags.map((tag) => (
-            <Chip key={tag} active={props.activeTags.includes(tag)} onClick={() => props.onToggleTag(tag)}>
+            <ChipControl key={tag} selected={props.activeTags.includes(tag)} onClick={() => props.onToggleTag(tag)}>
               {tag}
-            </Chip>
+            </ChipControl>
           ))}
-        </div>
+        </>
       )}
-    </div>
+    >
+      <SelectMenu className="snt-filter-bar__sort" placeholder="Language" value={props.language} onChange={props.onLanguage} options={langOptions} />
+    </SearchFilterBar>
   );
 }

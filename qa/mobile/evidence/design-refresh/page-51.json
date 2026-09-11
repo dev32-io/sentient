@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "ios",
+  "inventoryIds": [
+    "ios.settings.members.empty",
+    "ios.settings.members.dirty",
+    "ios.settings.members.applying"
+  ],
+  "captures": [
+    {
+      "configuration": "ios-iphone-standard",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-standard-page-51.png"
+    },
+    {
+      "configuration": "ios-iphone-ax3",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-ax3-page-51.png"
+    },
+    {
+      "configuration": "ios-reduced-motion",
+      "path": "qa/mobile/evidence/design-refresh/ios-reduced-motion-page-51.png"
+    }
+  ],
+  "measurements": {
+    "ios.settings.members.empty": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.settings.members.dirty": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.settings.members.applying": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    }
+  },
+  "observations": [
+    {
+      "inventoryId": "ios.settings.members.empty",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.members.empty",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.members.empty",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.members.dirty",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.members.dirty",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.members.dirty",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.members.applying",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.members.applying",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.members.applying",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    }
+  ]
+}

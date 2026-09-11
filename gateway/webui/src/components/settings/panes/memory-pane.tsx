@@ -1,39 +1,30 @@
-// gateway/webui/src/components/settings/panes/memory-pane.tsx
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { MEMORY_MD_CHAR_LIMIT, USER_MD_CHAR_LIMIT } from "../../../constants.ts";
 import type { MemoryDoc, MemorySlot, ProfileApi, ProfileV1 } from "../../../services/profile-api.js";
 import { renderMarkdown } from "../../../lib/render-markdown.ts";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Row } from "../primitives/row.tsx";
-import { Segmented } from "../primitives/segmented.tsx";
-import { Textarea } from "../primitives/textarea.tsx";
-import { Toggle } from "../primitives/toggle.tsx";
+import {
+  ActionButton,
+  AsyncState,
+  PaneChrome,
+  SegmentedControl,
+  SettingsCard,
+  SettingsEditor,
+  SettingsGroup,
+  SettingsRow,
+  TextArea,
+  ToggleControl,
+} from "../../common/index.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "memory-pane"]);
 
-const SLOT_LABEL: Record<MemorySlot, string> = {
-  memory: "MEMORY.md",
-  user: "USER.md",
-};
-
+const SLOT_LABEL: Record<MemorySlot, string> = { memory: "General memory", user: "About you" };
 const SLOT_EXPLAIN: Record<MemorySlot, string> = {
-  memory:
-    "Hermes-managed notes about the world: environment facts, conventions, " +
-    "things the agent has learned. The agent autonomously writes and prunes " +
-    "this. Hand-edit when you want to seed or correct a fact.",
-  user:
-    "Your user profile: preferences, communication style, recurring " +
-    "expectations. The agent infers this over time across conversations. " +
-    "Edit to seed or correct what the assistant believes about you.",
+  memory: "Notes about the world, including environment facts, conventions, and things the assistant has learned. The assistant writes and prunes these notes; edit them to seed or correct a fact.",
+  user: "Your preferences, communication style, and recurring expectations. The assistant infers these over time; edit them to seed or correct what it remembers about you.",
 };
-
-const SLOT_CAP: Record<MemorySlot, number> = {
-  memory: MEMORY_MD_CHAR_LIMIT,
-  user: USER_MD_CHAR_LIMIT,
-};
+const SLOT_CAP: Record<MemorySlot, number> = { memory: MEMORY_MD_CHAR_LIMIT, user: USER_MD_CHAR_LIMIT };
 
 export interface MemoryPaneProps {
   api: ProfileApi;
@@ -42,156 +33,89 @@ export interface MemoryPaneProps {
   originals: Record<MemorySlot, MemoryDoc | null>;
   setOriginal: (slot: MemorySlot, doc: MemoryDoc) => void;
   setDraft: (slot: MemorySlot, content: string) => void;
-  /** Current draft value of the two per-user memory toggles (S1: storage
-   *  only — the spark/dreamer consumers land in later slices). Sourced from
-   *  `profileDraft.memory`, same profile draft/apply flow as `AudioPane`. */
   memoryToggles: ProfileV1["memory"];
   onDraftMemoryToggles: (memory: ProfileV1["memory"]) => void;
 }
 
-export function MemoryPane({
-  api, token, drafts, originals, setOriginal, setDraft, memoryToggles, onDraftMemoryToggles,
-}: MemoryPaneProps): JSX.Element {
+export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraft, memoryToggles, onDraftMemoryToggles }: MemoryPaneProps): JSX.Element {
   const [slot, setSlot] = useState<MemorySlot>("memory");
   const [view, setView] = useState<"edit" | "preview">("edit");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
-  // Lazy-load each slot when it's first viewed.
   useEffect(() => {
     if (originals[slot] !== null) return;
     let cancelled = false;
-    (async () => {
-      const r = await api.getMemoryDoc(token, slot);
+    setLoadError(null);
+    void (async () => {
+      const result = await api.getMemoryDoc(token, slot);
       if (cancelled) return;
-      if (!r.ok) {
-        log.warn("getMemoryDoc.failed", { slot, code: r.error.code });
+      if (!result.ok) {
+        log.warn("getMemoryDoc.failed", { slot, code: result.error.code });
         setLoadError(`Couldn't load ${SLOT_LABEL[slot]}.`);
         return;
       }
-      setOriginal(slot, r.value);
-      setDraft(slot, r.value.content);
+      setOriginal(slot, result.value);
+      setDraft(slot, result.value.content);
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [api, token, slot, originals, setOriginal, setDraft]);
+    return () => { cancelled = true; };
+  }, [api, token, slot, originals, setOriginal, setDraft, loadAttempt]);
 
   const draft = drafts[slot];
   const original = originals[slot];
   const cap = SLOT_CAP[slot];
-
-  const handleEdit = (e: Event) => {
-    const v = (e.target as HTMLTextAreaElement).value;
-    // Browser maxLength clamps physically, but defensive trim on paste edge cases.
-    setDraft(slot, v.length > cap ? v.slice(0, cap) : v);
-  };
-
-  const handleSparkToggle = () => {
-    const next = !memoryToggles.spark;
-    log.debug("memory.spark.change", { spark: next });
-    onDraftMemoryToggles({ ...memoryToggles, spark: next });
-  };
-
-  const handleDreamingToggle = () => {
-    const next = !memoryToggles.dreaming;
-    log.debug("memory.dreaming.change", { dreaming: next });
-    onDraftMemoryToggles({ ...memoryToggles, dreaming: next });
-  };
-
-  const toggles = (
-    <Card title="Toggles" sub="Applies on the next Apply — no restart needed.">
-      <Row
-        label="Memory sparking"
-        hint="Bring up relevant past memories in conversation."
-      >
-        <Toggle on={memoryToggles.spark} onChange={handleSparkToggle} />
-      </Row>
-      <Row
-        label="Nightly dreaming"
-        hint="Let Sentient reflect on the day and update its notes."
-      >
-        <Toggle on={memoryToggles.dreaming} onChange={handleDreamingToggle} />
-      </Row>
-    </Card>
-  );
-
-  const headSub =
-    "Persistent context Hermes carries between conversations. The agent " +
-    "writes and prunes this autonomously; you can hand-edit. Apply saves " +
-    "your changes so the next chain reads the new content.";
-
-  if (loadError) {
-    return (
-      <>
-        <PaneHead title="Memory" sub={headSub} />
-        {toggles}
-        <p class="pane-error">{loadError}</p>
-      </>
-    );
-  }
-
   const charsUsed = draft?.length ?? original?.content.length ?? 0;
-  const overCap = charsUsed > cap;
 
   return (
-    <>
-      <PaneHead title="Memory" sub={headSub} />
+    <PaneChrome title="Memory" subtitle="Persistent context the assistant carries between conversations. Apply saves changes for the next conversation; a service restart may be needed before every active session sees them.">
+      <SettingsCard title="Memory features" subtitle="Changes take effect after Apply." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Memory sparking" hint="Bring up relevant past memories in conversation.">
+            <ToggleControl label="Memory sparking" checked={memoryToggles.spark} onChange={(spark) => onDraftMemoryToggles({ ...memoryToggles, spark })} />
+          </SettingsRow>
+          <SettingsRow label="Nightly reflection" hint="Let Sentient reflect on the day and update its notes.">
+            <ToggleControl label="Nightly reflection" checked={memoryToggles.dreaming} onChange={(dreaming) => onDraftMemoryToggles({ ...memoryToggles, dreaming })} />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsCard>
 
-      {toggles}
+      <SegmentedControl
+        label="Memory document"
+        value={slot}
+        onChange={(value) => { setSlot(value as MemorySlot); setView("edit"); }}
+        options={[{ value: "memory", label: "General memory" }, { value: "user", label: "About you" }]}
+      />
 
-      <div class="md-wrap">
-        <Segmented
-          value={slot}
-          onChange={(v) => {
-            log.debug("memory.slot.change", { slot: v });
-            setSlot(v as MemorySlot);
-            setView("edit");
-          }}
-          options={[
-            { value: "memory", label: "MEMORY.md" },
-            { value: "user",   label: "USER.md"   },
-          ]}
-        />
-      </div>
-
-      <Card
+      <SettingsEditor
         title={SLOT_LABEL[slot]}
-        sub={`${SLOT_EXPLAIN[slot]} Hard-capped at ${cap} characters per Hermes spec. Applies immediately.`}
-        action={
-          <span class={`memory-count${overCap ? " over" : ""}`}>
-            {charsUsed} / {cap}
-          </span>
-        }
+        subtitle={`${SLOT_EXPLAIN[slot]} Limited to ${cap} characters.`}
+        dirty={original !== null && draft !== null && draft !== original.content}
+        headerAction={<span class="memory-count" aria-live="polite">{charsUsed} / {cap}</span>}
       >
-        <div class="md-wrap">
-          <Segmented
-            value={view}
-            onChange={(v) => setView(v as "edit" | "preview")}
-            options={[
-              { value: "edit",    label: "Edit" },
-              { value: "preview", label: "Preview" },
-            ]}
-          />
-        </div>
-        {!original || draft === null ? (
-          <div class="pane-skeleton" aria-hidden="true" />
-        ) : view === "edit" ? (
-          <Textarea
-            value={draft}
-            monospace
-            rows={14}
-            maxLength={cap}
-            onChange={handleEdit}
-            placeholder={`No ${SLOT_LABEL[slot]} yet — Hermes will write here over time, or seed it now.`}
-          />
+        {loadError ? (
+          <AsyncState state="error" title={loadError} message="Your unsaved settings were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
+        ) : !original || draft === null ? (
+          <AsyncState state="loading" title={`Loading ${SLOT_LABEL[slot]}`} />
         ) : (
-          // renderMarkdown sanitizes via DOMPurify before returning HTML.
-          <div
-            class="md-prev"
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(draft) }}
-          />
+          <>
+            <SegmentedControl label={`${SLOT_LABEL[slot]} view`} value={view} onChange={(value) => setView(value as "edit" | "preview")} options={[{ value: "edit", label: "Edit" }, { value: "preview", label: "Preview" }]} />
+            {view === "edit" ? (
+              <TextArea
+                label={`Edit ${SLOT_LABEL[slot]}`}
+                value={draft}
+                monospace
+                dirty={draft !== original.content}
+                rows={14}
+                maxLength={cap}
+                onInput={(event) => setDraft(slot, event.currentTarget.value.slice(0, cap))}
+                placeholder={`No ${SLOT_LABEL[slot]} yet — the assistant can build it over time, or you can seed it now.`}
+              />
+            ) : (
+              <div class="md-prev" aria-label={`${SLOT_LABEL[slot]} preview`} dangerouslySetInnerHTML={{ __html: renderMarkdown(draft) }} />
+            )}
+          </>
         )}
-      </Card>
-    </>
+      </SettingsEditor>
+    </PaneChrome>
   );
 }

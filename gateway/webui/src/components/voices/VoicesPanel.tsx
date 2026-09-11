@@ -7,14 +7,15 @@ import { createUseVoicePreview } from "../../hooks/use-voice-preview.ts";
 import { useServiceVersions } from "../../hooks/use-service-versions.ts";
 import { useToast } from "../../hooks/use-toast.tsx";
 import { createFishApi } from "../../services/fish-api.ts";
-import { PaneHead } from "../settings/primitives/pane-head.tsx";
-import { Btn } from "../settings/primitives/btn.tsx";
+import { ActionButton, PaneChrome } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 import { VoiceFilterBar } from "./VoiceFilterBar.tsx";
 import { VoicePackGrid } from "./VoicePackGrid.tsx";
 import { AddVoiceModal } from "./AddVoiceModal.tsx";
 import { deriveLanguageOptions, deriveTagOptions, filterPacks, type VoiceSource } from "./voice-filter.ts";
 import { createVoicesPanelHandlers } from "./voices-panel-handlers.ts";
+
+import { useSettingsBusyState } from "../settings/navigation-state.ts";
 
 const fishApi = createFishApi();
 
@@ -34,7 +35,7 @@ export interface VoicesPanelProps {
 export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
   const { token, activeVoiceId, onActiveVoiceChanged, assistantSpeaking } = props;
   const toast = useToast();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useSettingsBusyState();
   const [addOpen, setAddOpen] = useState(false);
   const [q, setQ] = useState("");
   const [source, setSource] = useState<VoiceSource>("all");
@@ -87,16 +88,11 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
   }
 
   return (
-    <>
-      <PaneHead
-        title="Voices"
-        sub="Record or upload a clip to clone a voice for Sentient's replies."
-        action={
-          <Btn kind="ghost" size="sm" icon={<Icon name="plus" size={11} />} onClick={() => setAddOpen(true)}>
-            Add voice
-          </Btn>
-        }
-      />
+    <PaneChrome
+      title="Voices"
+      subtitle="Choose a reply voice, or create one from a recording or supported audio file."
+      action={<ActionButton variant="quiet" onClick={() => setAddOpen(true)}><Icon name="plus" size={14} /> Add voice</ActionButton>}
+    >
 
       <VoiceFilterBar
         q={q}
@@ -134,6 +130,6 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
         fishBrowseEnabled={fishBrowseEnabled}
         onCloneFromFish={handlers.handleCloneFromFish}
       />
-    </>
+    </PaneChrome>
   );
 }

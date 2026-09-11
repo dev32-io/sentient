@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import { Dialog } from "../common/dialog.tsx";
+import { ActionButton } from "../common/foundation.tsx";
 
 export interface ConfirmDeleteDialogProps {
   title: string;
@@ -20,23 +21,8 @@ export function ConfirmDeleteDialog({
       onClose={onClose}
       footer={
         <>
-          <button
-            type="button"
-            class="app-dialog__btn app-dialog__btn--ghost"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="app-dialog__btn app-dialog__btn--danger"
-            onClick={() => {
-              onConfirm();
-              onClose();
-            }}
-          >
-            Delete
-          </button>
+          <ActionButton variant="quiet" className="app-dialog__btn app-dialog__btn--ghost" onClick={onClose}>Cancel</ActionButton>
+          <ActionButton variant="destructive" className="app-dialog__btn app-dialog__btn--danger" onClick={() => { onConfirm(); onClose(); }}>Delete</ActionButton>
         </>
       }
     >

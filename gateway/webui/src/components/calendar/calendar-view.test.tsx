@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   CalendarApi,
@@ -82,6 +82,25 @@ afterEach(() => {
 });
 
 describe("CalendarView", () => {
+  it.each([{ search: "unmatched-fictional-term" }, { scopes: [] }])("distinguishes filtered no-match from empty data and recovers without refetching (%j)", async (initialFilters) => {
+    const api = apiFor();
+    render(<CalendarView api={api} {...routeOptions} initialFilters={initialFilters} />);
+    await screen.findByText(/No events match these filters/);
+    expect(screen.queryByText("No events this month.")).toBeNull();
+    const calls = vi.mocked(api.list).mock.calls.length;
+    const recovery = screen.getByText(/No events match these filters/).parentElement!;
+    fireEvent.click(within(recovery).getByRole("button", { name: "Clear filters" }));
+    await screen.findByRole("button", { name: /Morning school/i });
+    expect(screen.queryByText(/No events match these filters/)).toBeNull();
+    expect(api.list).toHaveBeenCalledTimes(calls);
+  });
+
+  it("retains true empty-period copy even with active filters when complete data is empty", async () => {
+    render(<CalendarView api={apiFor([])} {...routeOptions} initialFilters={{ search: "unmatched" }} />);
+    await screen.findByText("No events this month.");
+    expect(screen.queryByText(/No events match these filters/)).toBeNull();
+  });
+
   it("assembles the controller, complete paged data, and all four canvases", async () => {
     const api = apiFor();
     const { container } = render(<CalendarView api={api} {...routeOptions} />);
@@ -92,9 +111,57 @@ describe("CalendarView", () => {
     expect(api.list).toHaveBeenCalledWith("token", expect.objectContaining({ cursor: "page-2", scope: "all" }));
 
     for (const view of ["Day", "Week", "Year"] as const) {
-      fireEvent.click(screen.getByRole("button", { name: `${view} view` }));
+      fireEvent.click(screen.getByRole("button", { name: view }));
       await waitFor(() => expect(container.querySelector(`[data-calendar-canvas-view="${view.toLowerCase()}"]`)).toBeTruthy());
     }
+  });
+
+  it("keeps the workspace mounted through initial loading and deferred refresh, with explicit recovery", async () => {
+    let resolve!: (value: Awaited<ReturnType<CalendarApi["list"]>>) => void;
+    const pending = () => new Promise<Awaited<ReturnType<CalendarApi["list"]>>>((done) => { resolve = done; });
+    const api = { ...apiFor(), list: vi.fn<CalendarApi["list"]>(pending) };
+    const { container } = render(<CalendarView api={api} {...routeOptions} />);
+    const workspace = container.querySelector("[data-calendar-workspace]");
+    const canvas = container.querySelector("[data-calendar-canvas-slot]");
+    expect(workspace?.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("Loading calendar…")).toBeTruthy();
+    expect(screen.queryByText("No events this month.")).toBeNull();
+    await act(async () => resolve({ ok: true, value: { events: fixtureEvents } }));
+    await screen.findByRole("button", { name: /Morning school/i });
+    expect(container.querySelector("[data-calendar-workspace]")).toBe(workspace);
+    expect(container.querySelector("[data-calendar-canvas-slot]")).toBe(canvas);
+
+    fireEvent.click(screen.getByRole("button", { name: "Week" }));
+    await waitFor(() => expect(workspace?.getAttribute("aria-busy")).toBe("true"));
+    expect(screen.getByRole("button", { name: /Morning school/i })).toBeTruthy();
+    expect(container.querySelector(".calendar-route-notices")).toBeNull();
+    expect(container.querySelector(".calendar-canvas__loading")).toBeNull();
+    await act(async () => resolve({ ok: false, error: { status: 503, code: "io_error" } }));
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(screen.getByRole("button", { name: /Morning school/i })).toBeTruthy();
+    api.list.mockResolvedValue({ ok: true, value: { events: fixtureEvents } });
+    fireEvent.click(retry);
+    await waitFor(() => expect(workspace?.getAttribute("aria-busy")).toBe("false"));
+    expect(container.querySelector(".calendar-route-notices")).toBeNull();
+    expect(container.querySelector("[data-calendar-canvas-slot]")).toBe(canvas);
+  });
+
+  it("never inserts a transient notice for a fast response", async () => {
+    const api = apiFor();
+    const { container } = render(<CalendarView api={api} {...routeOptions} />);
+    await screen.findByRole("button", { name: /Morning school/i });
+    const insertedNotices: Node[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) {
+        if (node instanceof Element && (node.matches(".calendar-route-notices") || node.querySelector(".calendar-route-notices"))) insertedNotices.push(node);
+      }
+    });
+    observer.observe(container, { childList: true, subtree: true });
+    fireEvent.click(screen.getByRole("button", { name: "Week" }));
+    await waitFor(() => expect(container.querySelector("[data-calendar-workspace]")?.getAttribute("aria-busy")).toBe("false"));
+    observer.disconnect();
+    expect(insertedNotices).toEqual([]);
+    expect(screen.getByRole("button", { name: /Morning school/i })).toBeTruthy();
   });
 
   it("keeps filters and view navigation on one controller state", async () => {
@@ -102,7 +169,7 @@ describe("CalendarView", () => {
     const { container } = render(<CalendarView api={api} {...routeOptions} />);
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Private" })[0]!);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Household" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("events in Month view"));
     expect(screen.queryByRole("button", { name: /Household dinner/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Next period" }));
@@ -116,7 +183,7 @@ describe("CalendarView", () => {
     const addOrigin = screen.getAllByRole("button", { name: "Add event" })[0] as HTMLButtonElement;
     addOrigin.focus();
     fireEvent.click(addOrigin);
-    const editor = screen.getByRole("dialog", { name: "Add to the family calendar" });
+    const editor = screen.getByRole("dialog", { name: "Add event" });
     fireEvent.input(within(editor).getByLabelText("Event title"), { target: { value: "New household event" } });
     fireEvent.click(within(editor).getByRole("button", { name: "Add event" }));
     await waitFor(() => expect(screen.getByText("Event added.")).toBeTruthy());
@@ -129,7 +196,7 @@ describe("CalendarView", () => {
     }));
     const submitted = (api.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as Record<string, unknown>;
     expect(submitted.description).toBeUndefined();
-    expect(screen.queryByRole("dialog", { name: "Add to the family calendar" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add event" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(addOrigin));
   });
 
@@ -147,7 +214,7 @@ describe("CalendarView", () => {
     expect(document.activeElement).toBe(preview.querySelector("button"));
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.getByRole("dialog", { name: "Edit calendar event" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Edit event" })).toBeTruthy();
     fireEvent.input(screen.getByLabelText("Event title"), { target: { value: "Updated school" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.getByText("Event saved.")).toBeTruthy());
@@ -211,7 +278,7 @@ describe("CalendarView", () => {
     const { container } = render(<CalendarView api={api} {...routeOptions} />);
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole("button", { name: "Year view" }));
+    fireEvent.click(screen.getByRole("button", { name: "Year" }));
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="year"]')).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Select August 2026" }));
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());

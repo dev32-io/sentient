@@ -1,89 +1,125 @@
-// ---------------------------------------------------------------------------
-// UserAudioInputConnector — captures mic audio and streams it to the gateway.
-//
-// Mirrors web-sdk's user-audio-input-connector.ts VERBATIM:
-//   capability = "audio.input"  (input-only on the control path; emits a binary
-//                                uplink)
-//   startStreaming() → send audio.start  (latched: no-op if already streaming)
-//   sendAudioFrame(bytes) → sendBinary(bytes)  (dropped unless streaming)
-//   stopStreaming() → send audio.end  (latched: no-op if not streaming)
-//   connector.transcript.final → onTranscript(text)
-//
-// web-sdk reaches the wire via sdk.send (control) + sdk.sendBinary (PCM uplink);
-// mobile-sdk injects BOTH lambdas so the orchestrator owns the transport. The
-// E3 pipeline drives startStreaming → sendAudioFrame(frame)* → stopStreaming
-// off the AudioCaptureAdapter + SpeechGate; this connector owns ONLY the
-// isStreaming latch and the wire frames. No coroutines here — the pipeline owns
-// the Flow plumbing (.claude/rules/mobile-sdk/coroutines-flow-surface.md).
-//
-// Threading: single-threaded; the orchestrator drives the public methods on its
-// own dispatcher. The only mutable state is the isStreaming latch.
-// ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.voice.talk.TurnMode
+import kotlin.concurrent.Volatile
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
+internal data class CaptureToken(val id: String, val generation: Long)
+internal enum class CaptureTerminal { Commit, Cancel }
+
+/** Capture-aware audio uplink. All calls are made on SdkVoice's serialized lane. */
 class UserAudioInputConnector(
     private val send: (ClientMessage) -> Unit,
     private val sendBinary: (ByteArray) -> Unit,
     private val onTranscript: ((String) -> Unit)? = null,
+    private val createCaptureId: () -> String = { randomCaptureId() },
 ) : Connector {
     override val capability: String = CAPABILITY
-
     private val log = createLogger("connector", "user-audio-input")
 
-    /** True while streaming uplink frames. Latch ported from web-sdk isStreaming. */
-    private var isStreaming = false
+    private enum class Phase { Streaming, Terminating }
+    private data class Active(val token: CaptureToken, var phase: Phase)
+
+    @Volatile private var active: Active? = null
+    @Volatile private var forceClosedThroughGeneration = 0L
+    internal val hasActiveCapture: Boolean get() = active != null
+    private var nextGeneration = 0L
+    private val usedIds = mutableSetOf<String>()
+
+    /** Allocates an identity for a serialized future start without opening the wire capture. */
+    internal fun newCaptureToken(): CaptureToken? {
+        val id = createCaptureId()
+        if (id.isBlank() || id in usedIds) return null
+        return CaptureToken(id, ++nextGeneration)
+    }
+
+    /** Emits start only when terminal cleanup of the previous capture has completed. */
+    internal fun startStreaming(token: CaptureToken, turnMode: TurnMode): Boolean {
+        if (token.generation <= forceClosedThroughGeneration || active != null || token.id.isBlank() || !usedIds.add(token.id)) return false
+        active = Active(token, Phase.Streaming)
+        send(ClientMessage.AudioStart(token.id, turnMode.wireValue))
+        log.info("transition", mapOf("from" to "idle", "to" to "streaming", "generation" to token.generation, "turnMode" to turnMode.wireValue))
+        return true
+    }
+
+    /** Compatibility entry used by existing shared callers: starts one semantic capture. */
+    fun startStreaming(turnMode: TurnMode? = null): String? {
+        if (active != null) return null
+        val token = newCaptureToken() ?: return null
+        return if (startStreaming(token, turnMode ?: TurnMode.Semantic)) token.id else null
+    }
+
+    /** Invalidates frame callbacks before pipeline stop/join begins. */
+    internal fun beginTerminal(token: CaptureToken): Boolean {
+        val record = active ?: return false
+        if (record.token != token || record.phase != Phase.Streaming) return false
+        record.phase = Phase.Terminating
+        return true
+    }
+
+    /** Emits exactly one matching terminal after the producer has stopped. */
+    internal fun completeTerminal(token: CaptureToken, terminal: CaptureTerminal) {
+        val record = active ?: return
+        if (record.token != token || record.phase != Phase.Terminating) return
+        active = null
+        when (terminal) {
+            CaptureTerminal.Commit -> send(ClientMessage.AudioEnd(token.id))
+            CaptureTerminal.Cancel -> send(ClientMessage.AudioCancel(token.id))
+        }
+        log.info("transition", mapOf("from" to "terminating", "to" to "idle", "generation" to token.generation, "terminal" to terminal.name))
+    }
 
     /**
-     * Begin streaming audio to the gateway. Call after mic capture is started. [turnMode]
-     * (design spec §4) rides the `audio.start` frame: null ⇒ field omitted ⇒ gateway defaults
-     * to semantic (the continuous path + web parity, unchanged). Hold entry passes Manual,
-     * Continuous entry passes Semantic.
+     * Timeout fallback for terminal SDK teardown. The serialized lane normally emits the
+     * terminal before clearing this record. If an audio adapter never returns, clearing the
+     * local generation still closes the frame gate immediately; a late lane completion then
+     * observes no matching record and cannot emit a second terminal.
      */
-    fun startStreaming(turnMode: TurnMode? = null) {
-        if (isStreaming) return
-        isStreaming = true
-        log.info(
-            "transition",
-            mapOf("from" to "idle", "to" to "streaming", "trigger" to "startStreaming", "turnMode" to (turnMode?.wireValue ?: "absent")),
-        )
-        send(ClientMessage.AudioStart(turnMode = turnMode?.wireValue))
+    internal fun forceLocalTerminalCleanup(throughGeneration: Long) {
+        forceClosedThroughGeneration = maxOf(forceClosedThroughGeneration, throughGeneration)
+        active = null
     }
 
-    /** Stop streaming audio to the gateway. */
+    /** Existing release behavior remains a commit. */
     fun stopStreaming() {
-        if (!isStreaming) return
-        isStreaming = false
-        log.info("transition", mapOf("from" to "streaming", "to" to "idle", "trigger" to "stopStreaming"))
-        send(ClientMessage.AudioEnd)
+        val token = active?.token ?: return
+        if (beginTerminal(token)) completeTerminal(token, CaptureTerminal.Commit)
     }
 
-    /** Send a raw PCM16 LE frame to the gateway. Dropped silently unless streaming. */
+    fun cancelStreaming() {
+        val token = active?.token ?: return
+        if (beginTerminal(token)) completeTerminal(token, CaptureTerminal.Cancel)
+    }
+
+    internal fun frameSender(token: CaptureToken): (ByteArray) -> Unit = { frame -> sendAudioFrame(frame, token) }
+
+    internal fun sendAudioFrame(frame: ByteArray, token: CaptureToken) {
+        val record = active
+        if (record?.token != token || record.phase != Phase.Streaming) {
+            log.debug("frame-dropped", mapOf("reason" to "stale-generation", "bytes" to frame.size))
+        } else {
+            sendBinary(frame)
+        }
+    }
+
+    /** Compatibility frame path targets only the currently streaming generation. */
     fun sendAudioFrame(frame: ByteArray) {
-        if (!isStreaming) {
-            log.debug("frame-dropped", mapOf("reason" to "not-streaming", "bytes" to frame.size))
-            return
-        }
-        log.debug("uplink-frame", mapOf("bytes" to frame.size))
-        sendBinary(frame)
+        val token = active?.takeIf { it.phase == Phase.Streaming }?.token ?: return
+        sendAudioFrame(frame, token)
     }
 
-    /** Handles the inbound transcript frame; ignores every other type. */
     override fun handle(msg: ServerMessage) {
-        when (msg) {
-            is ServerMessage.ConnectorTranscriptFinal -> {
-                log.info("transcript-final", mapOf("len" to msg.text.length, "language" to msg.language))
-                onTranscript?.invoke(msg.text)
-            }
-            else -> Unit // not owned by this connector
-        }
+        if (msg is ServerMessage.ConnectorTranscriptFinal) onTranscript?.invoke(msg.text)
     }
 
     companion object {
         const val CAPABILITY: String = "audio.input"
+
+        @OptIn(ExperimentalUuidApi::class)
+        private fun randomCaptureId(): String = Uuid.random().toString()
     }
 }

@@ -58,6 +58,7 @@ __pycache__/
 
 # Worktrees
 .worktrees/
+.worktree/
 .claude/worktrees/
 
 # Playwright MCP browser session artifacts
@@ -83,6 +84,16 @@ qa/*/results/
 !**/public/**/*.png
 !**/icons/*.png
 !**/Assets.xcassets/**/*.png
+# Reviewed design prototypes are durable implementation inputs.
+!design/prototype/**
+# Repository security and machine-junk exclusions still apply inside prototypes.
+design/prototype/**/.DS_Store
+design/prototype/**/.env
+design/prototype/**/.env.local
+design/prototype/**/.env.*.local
+design/prototype/**/secrets.enc
+design/prototype/**/*.jks
+design/prototype/**/*.keystore
 
 # iOS per-machine debug backend (see ios/App/Local.xcconfig.example)
 ios/App/Local.xcconfig

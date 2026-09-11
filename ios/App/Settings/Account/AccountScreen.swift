@@ -1,22 +1,10 @@
-// ---------------------------------------------------------------------------
-// AccountScreen — User-group "Account" category page. Identity card (display
-// name + inline Save; the usecase rolls the token so the drawer header updates)
-// and Security card (Change PIN → masked sheet). NO sign-out here — logout stays
-// the root danger row.
-//
-// Owns the @Observable AccountViewModel via @State; the stateless AccountBody
-// takes bindings + closures so previews render every state with no VM. `onBack`
-// is accepted (host contract) but the pushed page uses the system back button.
-// ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct AccountScreen: View {
     @State private var vm: AccountViewModel
-    private let onBack: () -> Void
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.onBack = onBack
         _vm = State(initialValue: AccountViewModel(account: settings.account))
     }
 
@@ -24,11 +12,14 @@ struct AccountScreen: View {
         @Bindable var bindable = vm
         AccountBody(
             name: $bindable.draftName,
+            savedName: vm.savedName,
+            loadState: vm.loadState,
             isDirty: vm.isDirty,
             nameSave: vm.nameSave,
             pinError: vm.pinError,
             pinSaving: vm.pinSaving,
             pinSheetOpen: $bindable.isPinSheetOpen,
+            onLoad: { Task { await vm.load() } },
             onSaveName: { await vm.saveName() },
             onOpenPin: { vm.openPinSheet() },
             onClosePin: { vm.closePinSheet() },
@@ -38,14 +29,16 @@ struct AccountScreen: View {
     }
 }
 
-/// Stateless Account body: identity + security cards. Bindings + closures only.
 private struct AccountBody: View {
     @Binding var name: String
+    let savedName: String
+    let loadState: AccountViewModel.LoadState
     let isDirty: Bool
     let nameSave: AccountViewModel.SaveState
     let pinError: String?
     let pinSaving: Bool
     @Binding var pinSheetOpen: Bool
+    let onLoad: () -> Void
     let onSaveName: () async -> Void
     let onOpenPin: () -> Void
     let onClosePin: () -> Void
@@ -53,130 +46,103 @@ private struct AccountBody: View {
 
     var body: some View {
         SettingsPageScaffold(title: "Account", screenId: "settings-account-screen") {
-            SettingsCard(title: "Identity", sub: "How Sentient knows it's you.") {
-                nameRow
-                Divider().overlay(DuskColors.lineSoft)
-                voicePrintRow
-            }
-            SettingsCard(title: "Security", sub: "Used for sensitive actions like unlocking doors or spending money.") {
-                pinRow
+            loadNotice
+            if loadState == .ready {
+                HStack(alignment: .top, spacing: Space.md) {
+                    ElevatedUserAvatar(name: savedName)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(savedName)
+                            .designText(.title)
+                            .foregroundStyle(DuskColors.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Your household account")
+                            .designText(.supporting)
+                            .foregroundStyle(DuskColors.ink2)
+                    }
+                }
+                DesignPane(title: "Profile", detail: "The name shown for your account.") {
+                    DesignField(
+                        title: "Display name",
+                        prompt: "Your name",
+                        text: $name,
+                        error: saveError,
+                        accessibilityId: "settings-account-name"
+                    )
+                    .disabled(nameSave == .saving)
+                    saveFeedback
+                }
+
+                DesignPane(title: "Security", detail: "Your four-digit PIN protects sensitive household actions.") {
+                    DesignTextButton(
+                        title: "Change PIN",
+                        accessibilityId: "settings-account-changepin",
+                        action: onOpenPin
+                    )
+                }
             }
         }
         .sheet(isPresented: $pinSheetOpen, onDismiss: onClosePin) {
             ChangePinSheet(saving: pinSaving, error: pinError, onSubmit: onChangePin)
+                .presentationDetents([.medium, .large])
         }
     }
 
-    private var nameRow: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Display name")
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink)
-            HStack(spacing: Space.sm) {
-                TextField("Your name", text: $name)
-                    .font(Typo.ui(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink)
-                    .padding(.horizontal, Space.md)
-                    .padding(.vertical, Space.sm)
-                    .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-                    .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-                    .accessibilityIdentifier("settings-account-name")
-                saveButton
-            }
+    @ViewBuilder private var loadNotice: some View {
+        switch loadState {
+        case .loading:
+            AsyncNotice(kind: .loading, title: "Loading account")
+        case .failed(let message):
+            AsyncNotice(kind: .error, title: "Couldn't load account", detail: message, retry: onLoad)
+        case .ready:
+            EmptyView()
         }
-        .padding(.vertical, Space.sm)
     }
 
-    @ViewBuilder
-    private var saveButton: some View {
+    private var saveError: String? {
+        if case .failed(let message) = nameSave { return message }
+        return nil
+    }
+
+    @ViewBuilder private var saveFeedback: some View {
         switch nameSave {
-        case .saving:
-            ProgressView()
-                .controlSize(.small)
-                .frame(minWidth: 64)
-        case .saved:
-            Label("Saved", systemImage: "checkmark")
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.ok)
-                .frame(minWidth: 64)
-        case .idle, .failed:
-            Button("Save") { Task { await onSaveName() } }
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(isDirty ? DuskColors.accent : DuskColors.ink4)
-                .disabled(!isDirty)
-                .accessibilityIdentifier("settings-account-save")
+        case .saved where !isDirty:
+            AsyncNotice(kind: .success, title: "Display name saved")
+        case .failed:
+            DesignActionButton(
+                title: "Try saving again",
+                state: isDirty ? .normal : .disabled,
+                accessibilityId: "settings-account-save",
+                action: { Task { await onSaveName() } }
+            )
+        case .idle, .saving, .saved:
+            DesignActionButton(
+                title: "Save display name",
+                state: nameSave == .saving ? .loading : isDirty ? .normal : .disabled,
+                accessibilityId: "settings-account-save",
+                action: { Task { await onSaveName() } }
+            )
         }
-    }
-
-    private var voicePrintRow: some View {
-        HStack(spacing: Space.lg) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text("Voice print")
-                    .font(Typo.ui(TypeScale.sm, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                Text("Used to recognize you when you speak.")
-                    .font(Typo.ui(TypeScale.xs))
-                    .foregroundStyle(DuskColors.ink3)
-            }
-            Spacer(minLength: Space.sm)
-            ComingSoonBadge()
-        }
-        .padding(.vertical, Space.sm)
-    }
-
-    private var pinRow: some View {
-        HStack(spacing: Space.lg) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text("PIN")
-                    .font(Typo.ui(TypeScale.sm, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                Text("4 digits. Required for sensitive actions.")
-                    .font(Typo.ui(TypeScale.xs))
-                    .foregroundStyle(DuskColors.ink3)
-            }
-            Spacer(minLength: Space.sm)
-            Button("Change PIN") { onOpenPin() }
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.accent)
-                .accessibilityIdentifier("settings-account-changepin")
-        }
-        .padding(.vertical, Space.sm)
     }
 }
 
-/// Small "Coming soon" pill for not-yet-shipped rows.
-private struct ComingSoonBadge: View {
-    var body: some View {
-        Text("Coming soon")
-            .font(Typo.ui(TypeScale.xs, .semibold))
-            .foregroundStyle(DuskColors.ink3)
-            .padding(.horizontal, Space.sm)
-            .padding(.vertical, Space.xs)
-            .background(DuskColors.bgElev, in: Capsule())
-            .overlay(Capsule().stroke(DuskColors.lineSoft, lineWidth: 1))
-    }
-}
-
-// ── Previews — Account body states (no VM / no SettingsComponent) ─────────────
-
-#Preview("idle-clean") {
+#Preview("Ready — large text") {
     NavigationStack {
         AccountBody(
-            name: .constant("Kevin"), isDirty: false, nameSave: .idle,
+            name: .constant("Kevin"), savedName: "Kevin", loadState: .ready, isDirty: true, nameSave: .idle,
             pinError: nil, pinSaving: false, pinSheetOpen: .constant(false),
-            onSaveName: {}, onOpenPin: {}, onClosePin: {}, onChangePin: { _, _ in true }
+            onLoad: {}, onSaveName: {}, onOpenPin: {}, onClosePin: {}, onChangePin: { _, _ in true }
         )
     }
-    .preferredColorScheme(.dark)
+    .environment(\.dynamicTypeSize, .accessibility3)
 }
 
-#Preview("dirty-saving") {
+#Preview("Load failed") {
     NavigationStack {
         AccountBody(
-            name: .constant("Kevin Ye"), isDirty: true, nameSave: .saving,
+            name: .constant(""), savedName: "", loadState: .failed("Check your connection."), isDirty: false, nameSave: .idle,
             pinError: nil, pinSaving: false, pinSheetOpen: .constant(false),
-            onSaveName: {}, onOpenPin: {}, onClosePin: {}, onChangePin: { _, _ in true }
+            onLoad: {}, onSaveName: {}, onOpenPin: {}, onClosePin: {}, onChangePin: { _, _ in false }
         )
     }
-    .preferredColorScheme(.dark)
 }

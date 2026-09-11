@@ -46,6 +46,7 @@ function fakeWs(): FakeWs {
     attachment: null,
     runtime: null,
     stt: null,
+    audioCapture: null,
     journal: null,
     epoch: 0,
   };

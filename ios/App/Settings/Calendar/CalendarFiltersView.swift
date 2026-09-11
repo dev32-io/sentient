@@ -39,12 +39,31 @@ enum CalendarFilterMapping {
         return result
     }
 
+    static let visibleScopes: [CalendarScope] = [.private, .household]
+
     static func scopeLabel(_ scope: CalendarScope) -> String {
         switch scope {
         case .private: "Private"
         case .household: "Household"
         case .all: "All"
         }
+    }
+
+    static func isScopeSelected(_ scope: CalendarScope, in filters: CalendarFilters) -> Bool {
+        filters.scope == .all || filters.scope == scope
+    }
+
+    /// Shared CalendarFilters currently models scope as private, household, or
+    /// both (`all`). The native checkbox composition therefore keeps the last
+    /// scope selected rather than manufacturing an iOS-only no-match state.
+    static func togglingScope(_ scope: CalendarScope, in filters: CalendarFilters) -> CalendarFilters {
+        var selected = Set(visibleScopes.filter { isScopeSelected($0, in: filters) })
+        if selected.contains(scope) { selected.remove(scope) } else { selected.insert(scope) }
+        let mapped: CalendarScope
+        if selected == Set(visibleScopes) { mapped = .all }
+        else if let remaining = selected.first { mapped = remaining }
+        else { mapped = filters.scope }
+        return replacing(filters, scope: mapped)
     }
 
     static func importanceLabel(_ importance: Importance) -> String {
@@ -54,6 +73,29 @@ enum CalendarFilterMapping {
         case .pinned: "Pinned"
         }
     }
+
+    static func togglingImportance(_ importance: Importance, in filters: CalendarFilters) -> CalendarFilters {
+        replacing(filters, importance: .some(filters.importance == importance ? nil : importance))
+    }
+
+    static func activeCount(in filters: CalendarFilters) -> Int {
+        (filters.scope == .all ? 0 : 1)
+            + filters.groups.count
+            + filters.tags.count
+            + (filters.importance == nil ? 0 : 1)
+            + (filters.text.isEmpty ? 0 : 1)
+    }
+
+    static func resetting(_ filters: CalendarFilters) -> CalendarFilters {
+        replacing(
+            filters,
+            scope: .all,
+            groups: Set<String>(),
+            tags: Set<String>(),
+            importance: .some(nil),
+            text: ""
+        )
+    }
 }
 
 struct CalendarFiltersView: View {
@@ -62,140 +104,140 @@ struct CalendarFiltersView: View {
     let onChange: (CalendarFilters) -> Void
     let onSearch: (String) -> Void
 
+    @State private var groupsExpanded = false
+    @State private var tagsExpanded = false
+
+    private var activeCount: Int { CalendarFilterMapping.activeCount(in: filters) }
+
     var body: some View {
-        VStack(spacing: Space.sm) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Space.sm) {
-                    ForEach(CalendarScope.allCases, id: \.self) { scope in
-                        CalendarFilterChip(
-                            label: CalendarFilterMapping.scopeLabel(scope),
-                            selected: filters.scope == scope,
-                            accessibilityPrefix: "Scope",
-                            identifier: "calendar-filter-scope-\(scope.name.lowercased())"
-                        ) {
-                            onChange(CalendarFilterMapping.replacing(filters, scope: scope))
-                        }
-                    }
-                    ForEach(Array(CalendarFilterMapping.groups(filters: filters, facets: facets).enumerated()), id: \.element) { index, group in
-                        CalendarFilterChip(
-                            label: group,
-                            selected: filters.groups.contains(group),
-                            accessibilityPrefix: "Group",
-                            identifier: "calendar-filter-group-\(index)"
-                        ) {
-                            onChange(CalendarFilterMapping.replacing(
-                                filters,
-                                groups: CalendarFilterMapping.toggling(group, in: filters.groups)
-                            ))
-                        }
+        VStack(alignment: .leading, spacing: Space.md) {
+            CalendarSearchField(text: filters.text, onSearch: onSearch)
+            scopes
+            importance
+            disclosures
+            clearButton
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Calendar filters")
+    }
+
+    private var scopes: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            DesignGroupHeader(title: "Calendars")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(CalendarFilterMapping.visibleScopes, id: \.self) { scope in
+                    CalendarScopeCheckbox(
+                        label: CalendarFilterMapping.scopeLabel(scope),
+                        selected: CalendarFilterMapping.isScopeSelected(scope, in: filters),
+                        identifier: "calendar-filter-scope-\(scope.name.lowercased())"
+                    ) {
+                        onChange(CalendarFilterMapping.togglingScope(scope, in: filters))
                     }
                 }
-                .padding(.horizontal, CalendarSurfaceLayout.contentInset)
             }
-            .padding(.horizontal, -CalendarSurfaceLayout.contentInset)
-            .accessibilityLabel("Calendar scope and group filters")
+        }
+    }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Space.sm) {
-                    ForEach(Array(CalendarFilterMapping.tags(filters: filters, facets: facets).enumerated()), id: \.element) { index, tag in
-                        CalendarTagChip(label: tag, selected: filters.tags.contains(tag), identifier: "calendar-filter-tag-\(index)") {
-                            onChange(CalendarFilterMapping.replacing(
-                                filters,
-                                tags: CalendarFilterMapping.toggling(tag, in: filters.tags)
-                            ))
-                        }
-                    }
-                    CalendarTagChip(label: "Any importance", selected: filters.importance == nil,
-                                    identifier: "calendar-filter-importance-any") {
-                        onChange(CalendarFilterMapping.replacing(filters, importance: .some(nil)))
-                    }
-                    ForEach(CalendarFilterMapping.importances(filters: filters, facets: facets), id: \.self) { importance in
-                        CalendarTagChip(
-                            label: CalendarFilterMapping.importanceLabel(importance),
-                            selected: filters.importance == importance,
-                            identifier: "calendar-filter-importance-\(importance.name.lowercased())"
-                        ) {
-                            onChange(CalendarFilterMapping.replacing(filters, importance: .some(importance)))
-                        }
+    private var importance: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            DesignGroupHeader(title: "Importance")
+            CenteredFlowLayout(spacing: Space.xs, alignment: .leading) {
+                ForEach(CalendarFilterMapping.importances(filters: filters, facets: facets), id: \.self) { value in
+                    CalendarFilterChip(
+                        label: CalendarFilterMapping.importanceLabel(value),
+                        selected: filters.importance == value,
+                        identifier: "calendar-filter-importance-\(value.name.lowercased())"
+                    ) {
+                        onChange(CalendarFilterMapping.togglingImportance(value, in: filters))
                     }
                 }
-                .padding(.horizontal, CalendarSurfaceLayout.contentInset)
             }
-            .padding(.horizontal, -CalendarSurfaceLayout.contentInset)
-            .accessibilityLabel("Calendar tag and importance filters")
+        }
+    }
 
-            HStack(spacing: Space.sm) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(DuskColors.ink3)
-                    .accessibilityHidden(true)
-                TextField("Search events", text: Binding(get: { filters.text }, set: onSearch))
-                    .font(CalendarFont.ui(TypeScale.sm))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityLabel("Search calendar events")
-                    .accessibilityIdentifier("calendar-filter-search")
-                if !filters.text.isEmpty {
-                    Button("Clear search", systemImage: "xmark.circle.fill") { onSearch("") }
-                        .labelStyle(.iconOnly)
+    private var disclosures: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            facetDisclosure(
+                title: "Groups",
+                values: CalendarFilterMapping.groups(filters: filters, facets: facets),
+                selected: filters.groups,
+                isExpanded: groupsExpanded,
+                identifier: "calendar-filter-groups"
+            ) {
+                groupsExpanded.toggle()
+            } onSelect: { group in
+                onChange(CalendarFilterMapping.replacing(
+                    filters,
+                    groups: CalendarFilterMapping.toggling(group, in: filters.groups)
+                ))
+            }
+
+            facetDisclosure(
+                title: "Tags",
+                values: CalendarFilterMapping.tags(filters: filters, facets: facets),
+                selected: filters.tags,
+                isExpanded: tagsExpanded,
+                identifier: "calendar-filter-tags"
+            ) {
+                tagsExpanded.toggle()
+            } onSelect: { tag in
+                onChange(CalendarFilterMapping.replacing(
+                    filters,
+                    tags: CalendarFilterMapping.toggling(tag, in: filters.tags)
+                ))
+            }
+        }
+    }
+
+    private func facetDisclosure(
+        title: String,
+        values: [String],
+        selected: Set<String>,
+        isExpanded: Bool,
+        identifier: String,
+        onToggle: @escaping () -> Void,
+        onSelect: @escaping (String) -> Void
+    ) -> some View {
+        DesignDisclosureGroup(isExpanded: isExpanded) {
+            DesignDisclosureButton(
+                isExpanded: isExpanded,
+                accessibilityLabel: "\(isExpanded ? "Collapse" : "Expand") \(title)",
+                accessibilityId: identifier,
+                action: onToggle
+            ) {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text(title)
+                        .font(Typo.ui(TypeScale.base, .medium))
+                        .foregroundStyle(DuskColors.ink2)
+                    Text(selected.isEmpty ? "None selected" : "\(selected.count) selected")
+                        .font(Typo.ui(TypeScale.xs))
                         .foregroundStyle(DuskColors.ink3)
-                        .frame(minWidth: CalendarSurfaceLayout.minimumTarget, minHeight: CalendarSurfaceLayout.minimumTarget)
                 }
             }
-            .padding(.leading, Space.md)
-            .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-            .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft))
+        } content: {
+            CenteredFlowLayout(spacing: Space.xs, alignment: .leading) {
+                ForEach(Array(values.enumerated()), id: \.element) { index, value in
+                    CalendarFilterChip(
+                        label: value,
+                        selected: selected.contains(value),
+                        identifier: "calendar-filter-\(title == "Groups" ? "group" : "tag")-\(index)"
+                    ) {
+                        onSelect(value)
+                    }
+                }
+            }
         }
     }
-}
 
-private struct CalendarFilterChip: View {
-    let label: String
-    let selected: Bool
-    let accessibilityPrefix: String
-    let identifier: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(CalendarFont.mono(TypeScale.xs))
-                .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
-                .padding(.horizontal, 13)
-                .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-                .background(selected ? DuskColors.paper : .clear, in: Capsule())
-                .overlay(Capsule().stroke(selected ? DuskColors.line : DuskColors.lineSoft))
+    private var clearButton: some View {
+        DesignTextButton(
+            title: "Clear filters",
+            state: activeCount == 0 ? .disabled : .normal,
+            accessibilityId: "calendar-filter-clear"
+        ) {
+            onChange(CalendarFilterMapping.resetting(filters))
         }
-        .buttonStyle(CalendarPressButtonStyle())
-        .accessibilityLabel("\(accessibilityPrefix), \(label)")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier(identifier)
-    }
-}
-
-private struct CalendarTagChip: View {
-    let label: String
-    let selected: Bool
-    let identifier: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(CalendarFont.mono(TypeScale.xs))
-                .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
-                .padding(.horizontal, 10)
-                .frame(height: CalendarSurfaceLayout.tagVisualHeight)
-                .background(selected ? DuskColors.bgSunk : .clear, in: Capsule())
-                .overlay(Capsule().stroke(DuskColors.lineSoft))
-                .contentShape(Rectangle().inset(by: -5))
-        }
-        .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-        .buttonStyle(CalendarPressButtonStyle())
-        .accessibilityLabel("Tag or importance, \(label)")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier(identifier)
+        .frame(maxWidth: .infinity)
     }
 }

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qa/design-refresh/inventory.schema.json",
+  "title": "Closed WebUI and iOS design refresh inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "roots", "configurations", "owners", "rows"],
+  "properties": {
+    "version": { "const": 1 },
+    "roots": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "configurations": { "type": "object", "additionalProperties": { "$ref": "#/$defs/configuration" } },
+    "owners": { "type": "object", "propertyNames": { "pattern": "^refresh-[a-z0-9-]+$" }, "additionalProperties": { "type": "string", "minLength": 1 } },
+    "rows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/row" } }
+  },
+  "$defs": {
+    "configuration": {
+      "type": "object", "additionalProperties": false, "required": ["platform", "description"],
+      "properties": { "platform": { "enum": ["web", "ios"] }, "description": { "type": "string", "minLength": 1 } }
+    },
+    "row": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "platform", "reachability", "surfaceType", "state", "designAuthority", "implementationPath", "taskOwner", "functionalProof", "requiredConfigurations", "visualEvidenceIds", "intentionalNativeAdaptation", "status", "exclusionReason", "reachabilityEvidence", "assetCopies"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^(web|ios)\\.[a-z0-9][a-z0-9.-]*$" },
+        "platform": { "enum": ["web", "ios"] },
+        "reachability": { "type": "object", "additionalProperties": false, "required": ["root", "path"], "properties": { "root": { "type": "string" }, "path": { "type": "string", "minLength": 1 } } },
+        "surfaceType": { "enum": ["gate", "route", "pane", "drawer", "dialog", "sheet", "menu", "control", "banner", "overlay", "state"] },
+        "state": { "type": "string", "minLength": 1 },
+        "designAuthority": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "implementationPath": { "type": "string" },
+        "taskOwner": { "type": "string", "pattern": "^refresh-[a-z0-9-]+$" },
+        "functionalProof": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "requiredConfigurations": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "visualEvidenceIds": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^VE-(WEB|IOS)-[A-Z0-9-]+$" } },
+        "intentionalNativeAdaptation": { "type": "string" },
+        "status": { "enum": ["planned", "in-progress", "reviewed", "excluded", "unreachable"] },
+        "exclusionReason": { "type": "string" },
+        "reachabilityEvidence": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "assetCopies": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["canonicalPath", "productionPath", "canonicalSha256"], "properties": { "canonicalPath": { "type": "string" }, "productionPath": { "type": "string" }, "canonicalSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } } }
+      }
+    }
+  }
+}

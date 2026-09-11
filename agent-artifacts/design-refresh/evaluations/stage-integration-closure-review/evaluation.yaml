@@ -1,0 +1,71 @@
+schemaVersion: 1
+id: stage-integration-closure-review
+type: combined-review
+checkpoint: stage-review
+stageId: integration-closure
+scope:
+  workItem: design-refresh
+status: passed
+required: true
+attempt: 3
+methods:
+  - bun run design:foundation:check
+  - bun run design:avatar:verify
+  - bun run design:inventory:check
+  - bun run ci
+  - bun run test:int
+  - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    :android:assembleDebug :android:testDebugUnitTest
+  - ./scripts/ios-setup.sh
+  - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+    -destination 'platform=iOS Simulator,name=iPhone 16'
+  - test -z "$(git diff --name-only 653f6cee3bd06491b547c63ec04d88f21f4f147f --
+    android/src/main/kotlin android/src/main/res | grep . || true)"
+  - git diff --check
+criteria:
+  - Whole-feature reachable-state completeness and removal of parallel legacy
+    visuals
+  - Static token/component boundaries, byte-identical platform-owned Rive
+    assets, and exact identity mapping
+  - Trust/privacy/no-op/task/Interrupt/session ownership contracts
+  - No Android UI changes, no production/audio/network-disruption verification,
+    and readiness for E2E-001..009
+loop:
+  iteration: 2
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: f2b0cea4-efc7-4116-b8d8-7f2d2f82926f
+  reviewedCommit: 3fac56ca83b99dc53beb321de556c099dd7e500e
+  managerPrompt: "Fix F-002 by making timeout ownership real rather than timing
+    out only the waiter. Do not launch transport close into an SDK-owned scope
+    that survives logout. Run teardown as a caller-owned structured child (or
+    expose a suspending close boundary); on timeout explicitly cancel/join that
+    child and cancel the SDK root job/scope so no teardown coroutine remains
+    live. Preserve ordering: terminalize/cancel the active capture first, then
+    close transport, then cancel scope; make repeated close/logout idempotent.
+    Add a hanging cancellable transport regression that asserts bounded return,
+    zero surviving SDK child jobs/active captures, and no post-terminal frames,
+    alongside the normal ordered path."
+  fixerAgentId: db78f57d-deca-434e-8830-81fcc048fc61
+findings:
+  - id: F-001
+    severity: high
+    status: resolved
+    criterion: Android logout callback responsiveness
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/di/ChatComponent.kt:208-247
+    summary: Unbounded UI-path runBlocking was removed and capture teardown was made
+      bounded and asynchronous.
+    blocking: false
+  - id: F-002
+    severity: high
+    status: resolved
+    criterion: Bounded hanging transport teardown and scope shutdown
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SentientSdk.kt:487-558
+    summary: Transport close is caller-owned and bounded; timeout cancels/joins the
+      child and terminal logout cancels/joins the SDK root with regression
+      coverage.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-integration-closure-review/manifest.yaml

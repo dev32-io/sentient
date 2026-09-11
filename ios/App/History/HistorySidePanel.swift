@@ -14,13 +14,13 @@
 import SwiftUI
 import MobileData
 
-/// Dark-terra text used on the terra-50/accent background surfaces (avatar
-/// initial + FAB icon). Sourced from HistoryAccountHeader.swift where the
-/// constant is declared at module scope; aliased here to stay DRY.
-private let fabIconColor = terraOnAccentText
-
 private let fabSize: CGFloat = 52
 private let fabCorner: CGFloat = 16
+
+enum HistorySurfaceLayout {
+    static let searchMinimumHeight = DesignMetrics.minimumTarget
+    static let searchTextRole: DesignTextRole = .body
+}
 
 struct HistorySidePanel: View {
     /// The host (Task 8.2 parent view) owns the model via @StateObject and
@@ -31,6 +31,7 @@ struct HistorySidePanel: View {
     let nowMs: Int64
     let userName: String
     let household: String
+    let activeSessionId: String?
     let onSelect: (String) -> Void
     let onNewChat: () -> Void
     let onSettings: () -> Void
@@ -45,10 +46,11 @@ struct HistorySidePanel: View {
         model.error != nil && model.visible.isEmpty && !model.loading
     }
 
-    /// True when a re-fetch failed but rows are still loaded — a thin stale
-    /// banner sits above the (stale) list. Mirrors drawer.tsx showStaleErrorBanner.
+    /// True when saved rows remain visible during a refresh or after that
+    /// refresh fails. `loading` and `error` are the existing HistoryViewModel
+    /// signals; the panel does not create a second freshness owner.
     private var showsStaleBanner: Bool {
-        model.error != nil && !model.visible.isEmpty
+        !model.visible.isEmpty && (model.error != nil || model.loading)
     }
 
     /// Spinner while the first load is still pending (the open slide + initial
@@ -70,13 +72,21 @@ struct HistorySidePanel: View {
                 searchField
                 pastChatsTitle
                 if showsStaleBanner {
-                    SessionsStaleBanner(onRetry: { Task { await model.refresh() } })
+                    SessionsStaleBanner(
+                        onRetry: { Task { await model.refresh() } },
+                        checking: model.loading
+                    )
+                    .padding(.horizontal, Space.md)
+                    .padding(.bottom, Space.xs)
                 }
                 if showsErrorEmpty {
                     SessionsErrorEmpty(onRetry: { Task { await model.refresh() } })
                     Spacer(minLength: 0)
                 } else if showsLoadingSpinner {
                     historyLoadingSpinner
+                    Spacer(minLength: 0)
+                } else if model.visible.isEmpty {
+                    historyEmptyState
                     Spacer(minLength: 0)
                 } else {
                     sessionList
@@ -90,20 +100,20 @@ struct HistorySidePanel: View {
     // ── Search pill ──────────────────────────────────────────────────────────
 
     private var searchField: some View {
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(DuskColors.ink3)
-            TextField("Search past chats", text: $model.query)
-                .font(Typo.ui(14))
-                .foregroundStyle(DuskColors.ink)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .accessibilityIdentifier("history-search")
-        }
-        .padding(.horizontal, Space.lg)
-        .frame(height: 40)
-        .background(DuskColors.bgElev, in: Capsule())
-        .overlay(Capsule().stroke(DuskColors.lineSoft, lineWidth: 1))
+        DesignSearchField(
+            prompt: "Search past chats",
+            query: $model.query,
+            accessibilityId: "history-search",
+            onClear: model.query.isEmpty ? nil : { model.query = "" },
+            textFont: Typo.ui(HistorySurfaceLayout.searchTextRole.baseSize),
+            leadingPadding: Space.lg,
+            trailingPadding: Space.lg,
+            title: "Search past chats",
+            showsTitle: false,
+            showsSearchIcon: true
+        )
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
     }
@@ -128,6 +138,7 @@ struct HistorySidePanel: View {
                     HistoryRow(
                         row: row,
                         nowMs: nowMs,
+                        isSelected: row.sessionId == activeSessionId,
                         onSwitch: { onSelect(row.sessionId) },
                         onAskRename: { onAskRename(row) },
                         onAskDelete: { onAskDelete(row) }
@@ -137,6 +148,21 @@ struct HistorySidePanel: View {
             .padding(.horizontal, Space.md)
             // Bottom padding ensures content is not occluded by the FAB.
             .padding(.bottom, fabSize + Space.lg * 2)
+        }
+    }
+
+    @ViewBuilder
+    private var historyEmptyState: some View {
+        if model.isSearching {
+            HistorySearchNoMatchState()
+                .accessibilityIdentifier("history-no-match")
+        } else {
+            ContentUnavailableView {
+                Label("No past chats", systemImage: "bubble.left.and.bubble.right")
+            } description: {
+                Text("Start a new chat to see it here.")
+            }
+            .accessibilityIdentifier("history-empty")
         }
     }
 
@@ -156,18 +182,103 @@ struct HistorySidePanel: View {
         Button(action: onNewChat) {
             Image(systemName: "plus")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(fabIconColor)
+                .foregroundStyle(DuskColors.ink)
                 .frame(width: fabSize, height: fabSize)
-                .background(
-                    DuskColors.accent,
-                    in: RoundedRectangle(cornerRadius: fabCorner)
-                )
-                .shadow(color: .black.opacity(0.4), radius: 10, y: 6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HistoryFABButtonStyle())
         .padding(Space.lg)
+        .accessibilityLabel("New chat")
         .accessibilityIdentifier("history-new-chat")
     }
+}
+
+/// The History FAB keeps its established 52pt face and 16pt corner while the
+/// shared Canvas kernel supplies the raised material and native press response.
+private struct HistoryFABButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var focused
+
+    func makeBody(configuration: Configuration) -> some View {
+        let projection = DesignRaisedButtonKernelProjection.make(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            isFocused: focused,
+            isHovered: false,
+            increasedContrast: contrast == .increased,
+            reduceMotion: reduceMotion
+        )
+
+        configuration.label
+            .background {
+                DesignCanvasKernel(
+                    shape: .roundedRectangle(cornerRadius: fabCorner),
+                    role: .action,
+                    state: projection.state,
+                    increasedContrast: projection.increasedContrast,
+                    reduceMotion: projection.reduceMotion
+                )
+            }
+            .offset(y: projection.yOffset)
+            .animation(
+                DesignCanvasKernel.transitionAnimation(for: .press, reduceMotion: reduceMotion),
+                value: projection.state.isPressed
+            )
+            .contentShape(Rectangle())
+    }
+}
+
+/// Product-owned no-match state for the searchable History panel. It stays
+/// separate from the genuine empty-history branch so loading, error, and
+/// new-chat behavior remain unchanged.
+struct HistorySearchNoMatchState: View {
+    var body: some View {
+        HStack(alignment: .center, spacing: HistoryNoMatchLayout.contentGap) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: HistoryNoMatchLayout.iconSize, weight: .regular))
+                .foregroundStyle(DuskColors.ink3)
+                .frame(width: HistoryNoMatchLayout.markSize, height: HistoryNoMatchLayout.markSize)
+                .background {
+                    DesignCanvasWellKernel(
+                        shape: .circle,
+                        state: .rest
+                    )
+                }
+                .clipShape(Circle())
+            .frame(width: HistoryNoMatchLayout.markSlotSize, height: HistoryNoMatchLayout.markSlotSize)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("No matching chats")
+                    .font(Typo.ui(HistoryNoMatchLayout.titleSize, .semibold))
+                    .foregroundStyle(DuskColors.ink)
+                Text("Try another search.")
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(HistoryNoMatchLayout.contentPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .designWell(cornerRadius: Radii.sm)
+        .padding(.horizontal, HistoryNoMatchLayout.outerMargin)
+        .padding(.bottom, HistoryNoMatchLayout.outerMargin)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("No matching chats")
+        .accessibilityValue("Try another search.")
+    }
+}
+
+private enum HistoryNoMatchLayout {
+    static let contentGap: CGFloat = 12
+    static let contentPadding: CGFloat = 12
+    static let outerMargin: CGFloat = 14
+    static let markSize: CGFloat = 34
+    static let markSlotSize: CGFloat = 38
+    static let iconSize: CGFloat = 20
+    static let titleSize: CGFloat = 14
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +329,7 @@ private struct PanelPreviewHost: View {
             nowMs: previewNowMs,
             userName: "Kevin",
             household: "Ye Family",
+            activeSessionId: "s1",
             onSelect: { _ in },
             onNewChat: {},
             onSettings: {},

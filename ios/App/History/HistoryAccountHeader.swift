@@ -11,13 +11,7 @@
 // ---------------------------------------------------------------------------
 import SwiftUI
 
-/// Dark-terra text used on top of the terra-50/accent background (avatar
-/// initial and FAB plus icon). No `onAccent` token exists in DuskColors —
-/// extracted here as a single shared constant rather than duplicating the
-/// literal across files.
-let terraOnAccentText = Color(red: 0.17, green: 0.10, blue: 0.06)
-
-private let avatarSize: CGFloat = 38
+private let avatarSize = DesignMetrics.minimumTarget
 
 struct HistoryAccountHeader: View {
     let name: String
@@ -35,11 +29,11 @@ struct HistoryAccountHeader: View {
     }
 
     private var avatar: some View {
-        Text(String(name.prefix(1)))
-            .font(Typo.ui(15, .bold))
-            .foregroundStyle(terraOnAccentText)
-            .frame(width: avatarSize, height: avatarSize)
-            .background(DuskColors.accent, in: Circle())
+        ElevatedUserAvatar(
+            name: name,
+            size: avatarSize,
+            tint: .terra
+        )
     }
 
     private var identity: some View {
@@ -59,13 +53,12 @@ struct HistoryAccountHeader: View {
     }
 
     private var gearButton: some View {
-        Button(action: onSettings) {
-            Image(systemName: "gearshape")
-                .font(.system(size: 19))
-                .foregroundStyle(DuskColors.ink2)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-open")
+        DesignIconButton(
+            systemName: "gearshape",
+            label: "Settings",
+            accessibilityId: "settings-open",
+            action: onSettings
+        )
     }
 }
 

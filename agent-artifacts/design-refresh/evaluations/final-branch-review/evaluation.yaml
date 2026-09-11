@@ -1,0 +1,72 @@
+schemaVersion: 1
+id: final-branch-review
+type: combined-review
+checkpoint: final-review
+scope:
+  workItem: design-refresh
+status: failed
+required: true
+attempt: 4
+methods:
+  - Review the complete executionStartCommit..reviewedCommit feature diff as one
+    integrated change for specification fit, cross-stage correctness,
+    regressions, maintainability, and test coverage.
+loop:
+  iteration: 3
+  maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: aa5ea261-8c8c-4975-a0cc-a50d00e36eef
+  reviewedCommit: 899eba80fe1e643d8bbddf6a17847e71b536adc9
+  managerPrompt: "FINAL-003 remains blocking because the prior repair explicitly
+    substituted generic specimens. Remove the synthetic Web
+    `StateSpecimen`/fixture controls and iOS `QAVisualReviewSpecimen` catalog,
+    plus all state-name/regex-derived measurements and mass-reviewed statuses.
+    Build a fixture registry at real screen/container boundaries: each inventory
+    ID must launch the actual production route, screen, overlay, dialog, sheet,
+    menu, message/composer, Calendar, Settings, setup/auth, or reusable
+    production component with deterministic fake repositories/ViewModels/props
+    supplying that state. Web capture must measure the rendered production DOM
+    at each required viewport/zoom/motion configuration. iOS capture must launch
+    the actual SwiftUI destination/component in the signed simulator and derive
+    target/focus/overflow observations from its accessibility/layout hierarchy,
+    not the inventory name. Require evidence metadata to identify the concrete
+    production component and fixture state used; reject generic fallback
+    renderers. Resolve the 105 `needs-review` outcomes through production fixes
+    and recapture, not by relabeling. Only then mark entries reviewed and pass
+    `bun qa/design-refresh/check.ts --require-closed`. Preserve FINAL-001/002
+    and all production/audio/network restrictions."
+  fixerAgentId: b0622fe4-2893-4827-b82a-d988939b31f0
+findings:
+  - id: FINAL-001
+    severity: high
+    status: resolved
+    criterion: AC-009 / manual Send commits only after successful final flush
+    location: gateway/src/session-handlers/stt-session.ts:404-448
+    summary: Manual finalization remains resolved and was untouched by this
+      metadata-only iteration.
+    blocking: false
+  - id: FINAL-002
+    severity: high
+    status: resolved
+    criterion: Content-free sanitized diagnostics
+    location: shared/protocol/src/messages.ts:177-207;
+      gateway/src/session-handlers/capture-diagnostics.ts:1-14
+    summary: Capture-ID bounds and sanitized diagnostics remain resolved and were
+      untouched by this metadata-only iteration.
+    blocking: false
+  - id: FINAL-003
+    severity: high
+    status: open
+    criterion: AC-004 / AC-012
+    location: gateway/webui/src/qa/visual-review.tsx:20-64;
+      ios/App/QAVisualReviewCatalog.swift:43-79;
+      qa/design-refresh/capture-ios-visual-review.sh:36-51;
+      qa/design-refresh/visual-review.json
+    summary: No bounded repair was submitted; generic specimens, heuristic
+      measurements, mass-reviewed statuses, and 105 unresolved review outcomes
+      remain unchanged.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/final-branch-review/manifest.yaml

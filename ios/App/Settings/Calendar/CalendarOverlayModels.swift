@@ -26,14 +26,24 @@ struct CalendarOverlayActions {
 enum CalendarOverlaySemantics {
     static let maximumHeightFraction = 0.84
     static let topRadius: CGFloat = 26
-    static let handleSize = CGSize(width: 42, height: 4)
     static let actionHeight: CGFloat = 48
+    static let headerDisplaySize: CGFloat = 29
+    static let metadataLabelWidth: CGFloat = 82
+    static let noticeBackgroundOpacity = 0.10
+    static let pressedScale = 0.97
+    static let normalScale = 1.0
 
     static func isOpen(_ state: CalendarUiState) -> Bool { isOpen(state.mutation) }
 
     static func isOpen(_ mutation: CalendarMutationState) -> Bool {
         mutation.preview != nil || mutation.editor != nil || mutation.deleteConfirmation != nil ||
             mutation.conflict != nil || mutation.outcome != nil
+    }
+
+    static func allowsInteractiveDismiss(_ state: CalendarUiState) -> Bool {
+        if state.outcome != nil || state.conflict != nil || state.deleteConfirmation != nil { return false }
+        if state.editor != nil { return !state.mutation.isSubmitting }
+        return state.preview != nil
     }
 
     static func canSave(_ state: CalendarUiState, draft: CalendarMutationDraft) -> Bool {
@@ -88,7 +98,11 @@ enum CalendarOverlaySemantics {
         "Calendar error: \(errorMessage(error))"
     }
 
-    static func recurrenceSummary(_ recurrence: StructuredRecurrence?) -> String? {
+    static func recurrenceSummary(
+        _ recurrence: StructuredRecurrence?,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String? {
         guard let recurrence else { return nil }
         let interval = recurrence.interval?.intValue ?? 1
         let unit: String
@@ -100,50 +114,13 @@ enum CalendarOverlaySemantics {
         }
         var summary = interval == 1 ? "Every \(unit)" : "Every \(interval) \(unit)"
         if let count = recurrence.count?.intValue { summary += ", \(count) times" }
-        if let until = recurrence.until { summary += ", until \(until)" }
+        if let until = recurrence.until {
+            let displayUntil = CalendarOverlayDateCodec.displayRecurrenceUntil(
+                until, locale: locale, fallbackTimeZone: timeZone
+            )
+            summary += ", until \(displayUntil)"
+        }
         return summary
-    }
-}
-
-/// DatePicker adapter. Existing wire values remain byte-for-byte unchanged until
-/// the user changes that control; changed values retain the draft's IANA zone or
-/// original numeric offset rather than silently becoming UTC.
-enum CalendarOverlayDateCodec {
-    static func date(from wireValue: String, allDay: Bool, timeZone: TimeZone) -> Date? {
-        if allDay {
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = timeZone
-            let parts = wireValue.split(separator: "-").compactMap { Int($0) }
-            guard parts.count == 3 else { return nil }
-            return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
-        }
-        return ISO8601DateFormatter().date(from: wireValue)
-    }
-
-    static func wireValue(from date: Date, allDay: Bool, timeZone: TimeZone) -> String {
-        if allDay {
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = timeZone
-            return CalendarNativeDateConversion.allDayValue(date, calendar: calendar)
-        }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
-        formatter.timeZone = timeZone
-        return formatter.string(from: date)
-    }
-
-    static func timeZone(for draft: CalendarMutationDraft) -> TimeZone {
-        if let id = draft.inputTimeZoneId, let zone = TimeZone(identifier: id) { return zone }
-        if let zone = numericOffsetTimeZone(in: draft.start) { return zone }
-        return .current
-    }
-
-    private static func numericOffsetTimeZone(in value: String) -> TimeZone? {
-        guard let match = value.range(of: #"[+-]\d{2}:\d{2}$"#, options: .regularExpression) else { return nil }
-        let pieces = value[match].split(separator: ":")
-        guard pieces.count == 2, let hours = Int(pieces[0]), let minutes = Int(pieces[1]) else { return nil }
-        let sign = hours < 0 ? -1 : 1
-        return TimeZone(secondsFromGMT: (hours * 60 + sign * minutes) * 60)
     }
 }
 

@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "web",
+  "inventoryIds": [
+    "web.calendar.route",
+    "web.calendar.loading"
+  ],
+  "captures": [
+    {
+      "configuration": "web-desktop-1280x900",
+      "path": "qa/web/evidence/design-refresh/web-desktop-1280x900-page-64.png"
+    },
+    {
+      "configuration": "web-narrow-390x844",
+      "path": "qa/web/evidence/design-refresh/web-narrow-390x844-page-64.png"
+    },
+    {
+      "configuration": "web-zoom-200",
+      "path": "qa/web/evidence/design-refresh/web-zoom-200-page-64.png"
+    },
+    {
+      "configuration": "web-reduced-motion",
+      "path": "qa/web/evidence/design-refresh/web-reduced-motion-page-64.png"
+    }
+  ],
+  "measurements": {
+    "web-desktop-1280x900": [
+      {
+        "inventoryId": "web.calendar.route",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ],
+    "web-narrow-390x844": [
+      {
+        "inventoryId": "web.calendar.route",
+        "overflowPx": 26,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ],
+    "web-zoom-200": [
+      {
+        "inventoryId": "web.calendar.route",
+        "overflowPx": 153,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ],
+    "web-reduced-motion": [
+      {
+        "inventoryId": "web.calendar.route",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ]
+  },
+  "observations": [
+    {
+      "inventoryId": "web.calendar.route",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.loading",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.calendar.route",
+      "configuration": "web-narrow-390x844",
+      "overflow": 26,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.loading",
+      "configuration": "web-narrow-390x844",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.calendar.route",
+      "configuration": "web-zoom-200",
+      "overflow": 153,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.loading",
+      "configuration": "web-zoom-200",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.calendar.route",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.loading",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+schemaVersion: 1
+id: stage-contracts-and-harness-review
+type: combined-review
+checkpoint: stage-review
+stageId: contracts-and-harness
+scope:
+  workItem: design-refresh
+status: passed
+required: true
+attempt: 3
+methods:
+  - bun run design:foundation:check
+  - bun run design:inventory:check
+  - bun run --filter '@sentient/protocol' test:unit
+  - bun run --filter '@sentient/web-sdk' test:unit
+  - cd gateway && bun test src/session-handlers/ws-handlers-audio.test.ts
+    src/session-handlers/stt-session.test.ts
+    src/session-handlers/command-mediator.test.ts
+  - bun run typecheck
+  - git diff --check
+criteria:
+  - Exact v2 values/projection determinism and Android v1 compatibility
+  - Capture commit/cancel security, terminal races, legacy wire compatibility,
+    and content-free logs
+  - Closed inventory, loopback-only fixtures, prototype-reference-only
+    enforcement, and text-only E2E safety
+loop:
+  iteration: 2
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
+  reviewedCommit: 297a95523b7fb02f0f1017e1a8f72ed0daf58cc1
+  managerPrompt: "Fix STAGE-006 without regressing STAGE-001. `turn_started` is
+    non-terminal: after semantic `End`, it must not terminalize or clear the
+    committing capture. Keep the capture eligible for the later committed
+    transcript/true terminal event, while stream failure and genuine terminal
+    events must still release it so later captures cannot wedge. Add focused
+    regressions for `End -> turn_started -> committed transcript` producing
+    exactly one committed turn, plus failure/terminal interleavings proving no
+    duplicate turn and no blocked successor capture."
+  fixerAgentId: d7dddfc4-97ac-4681-b2d1-ed939194f760
+findings:
+  - id: STAGE-001
+    severity: high
+    status: resolved
+    criterion: STT terminal failure recovery
+    location: gateway/src/session-handlers/stt-session.ts
+    summary: Original semantic stream-failure wedge remains resolved.
+    blocking: false
+  - id: STAGE-002
+    severity: high
+    status: resolved
+    criterion: Prototype runtime-reference enforcement
+    location: qa/design-refresh/check.ts
+    summary: Content-aware prototype reference enforcement remains resolved.
+    blocking: false
+  - id: STAGE-003
+    severity: high
+    status: resolved
+    criterion: Closed source reachability inventory
+    location: qa/design-refresh/check.ts
+    summary: Platform-owned source registry inventory closure remains resolved.
+    blocking: false
+  - id: STAGE-004
+    severity: high
+    status: resolved
+    criterion: E2E-009 Calendar filter action
+    location: qa/mobile/flows/ios/design-refresh/E2E-009.yaml
+    summary: Representative persisted filter action remains resolved.
+    blocking: false
+  - id: STAGE-005
+    severity: medium
+    status: resolved
+    criterion: Committed JSON Schema validation
+    location: scripts/design/design-foundation-v2.test.ts
+    summary: Committed schema validation proof remains resolved.
+    blocking: false
+  - id: STAGE-006
+    severity: high
+    status: resolved
+    criterion: Capture commit correctness and terminal races
+    location: gateway/src/session-handlers/stt-session.ts:280-294
+    summary: Non-terminal turn_started now preserves committing capture;
+      transcript/drop and stream failure terminalize safely.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-contracts-and-harness-review/manifest.yaml

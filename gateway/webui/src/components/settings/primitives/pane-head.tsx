@@ -1,20 +1,8 @@
-// gateway/webui/src/components/settings/primitives/pane-head.tsx
 import type { JSX } from "preact";
+import { PaneHeader } from "../../common/composites.tsx";
 
-export interface PaneHeadProps {
-  title: string;
-  sub?: string;
-  action?: JSX.Element;
-}
+export interface PaneHeadProps { title: string; sub?: string; action?: JSX.Element; eyebrow?: string; }
 
-export function PaneHead({ title, sub, action }: PaneHeadProps): JSX.Element {
-  return (
-    <div class="pane-head">
-      <div>
-        <h2>{title}</h2>
-        {sub && <p class="pane-sub">{sub}</p>}
-      </div>
-      {action && <div class="pane-action">{action}</div>}
-    </div>
-  );
+export function PaneHead({ title, sub, action, eyebrow }: PaneHeadProps): JSX.Element {
+  return <PaneHeader eyebrow={eyebrow} title={title} subtitle={sub} action={action} />;
 }

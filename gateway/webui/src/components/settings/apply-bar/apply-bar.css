@@ -1,82 +1,107 @@
-/* gateway/webui/src/components/settings/apply-bar/apply-bar.css */
-
 .settings-v2 .apply-bar {
   position: fixed;
   left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px 14px 24px;
-  border-radius: 12px;
-  /* Light cream pill in dusk (ink token = light here) — matches v2 design
-     where the apply-bar inverts surface contrast vs the page. */
-  background: var(--color-ink);
-  border: 1px solid color-mix(in oklab, var(--color-paper) 18%, transparent);
-  box-shadow:
-    0 18px 48px -12px rgba(0, 0, 0, .55),
-    0 1px 0 rgba(255, 255, 255, .35) inset;
+  bottom: var(--space-xl);
   z-index: 50;
-  animation: apply-bar-in .25s ease-out;
+  width: min(42.5rem, calc(100vw - var(--space-xl)));
+  /* The approved 72px composition sits inside a 1px plate edge. This fixed
+     production float owns both layers, so its outer minimum includes that edge. */
+  min-height: 4.625rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: var(--space-md) 0.875rem;
+  transform: translateX(-50%);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+  box-shadow: var(--float-shadow);
+  transition: background-color var(--motion-state), box-shadow var(--motion-state);
 }
-
-@keyframes apply-bar-in {
-  from { transform: translate(-50%, 12px); opacity: 0; }
-  to   { transform: translate(-50%, 0); opacity: 1; }
+.settings-v2 .apply-bar[data-state="applying"] {
+  background: color-mix(in oklab, var(--color-accent-50) 24%, var(--color-paper));
 }
-
-.settings-v2 .apply-bar .ab-text {
-  display: inline-flex;
-  flex-direction: column;
-  padding-right: 18px;
-  margin-right: 6px;
-  border-right: 1px solid color-mix(in oklab, var(--color-paper) 22%, transparent);
-  line-height: 1.25;
+.settings-v2 .apply-bar[data-state="done"] {
+  background: color-mix(in oklab, var(--color-ok) 7%, var(--color-paper));
 }
-
-.settings-v2 .apply-bar .ab-count {
-  color: var(--color-paper);
-  font-weight: 600;
-  font-size: 13.5px;
+.settings-v2 .apply-bar[data-state="error"] {
+  background: color-mix(in oklab, var(--color-stop) 7%, var(--color-paper));
 }
-
-.settings-v2 .apply-bar .ab-sub {
-  color: color-mix(in oklab, var(--color-paper) 65%, var(--color-ink));
-  font-family: var(--font-mono);
-  font-size: 11px;
-  margin-top: 3px;
+.settings-v2 .apply-bar .ab-copy {
+  position: relative;
+  min-width: 0;
+  padding-left: 1.0625rem;
 }
-
-/* Buttons inside the light-cream apply-bar override their default
-   on-dark-surface palette so they read against the inverted background. */
-.settings-v2 .apply-bar .btn.b-ghost {
-  color: color-mix(in oklab, var(--color-paper) 60%, var(--color-ink));
-}
-.settings-v2 .apply-bar .btn.b-ghost:hover {
-  background: color-mix(in oklab, var(--color-paper) 8%, transparent);
-  color: var(--color-paper);
-}
-.settings-v2 .apply-bar .btn.b-primary {
-  background: var(--color-accent);
-  color: var(--color-paper);
-}
-.settings-v2 .apply-bar .btn.b-primary:hover {
-  background: color-mix(in oklab, var(--color-accent) 88%, var(--color-paper));
-}
-
-.settings-v2 .spin-mini {
-  display: inline-block;
-  width: 11px;
-  height: 11px;
-  border: 1.5px solid currentColor;
-  border-right-color: transparent;
+.settings-v2 .apply-bar .ab-marker {
+  position: absolute;
+  top: 0.5rem;
+  left: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
   border-radius: 50%;
-  animation: ab-spin 0.8s linear infinite;
-  margin-right: 6px;
-  vertical-align: -1px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0.5rem var(--color-accent);
+  transition: background-color var(--motion-state), box-shadow var(--motion-state), transform var(--motion-state);
+}
+.settings-v2 .apply-bar[data-state="applying"] .ab-marker {
+  animation: apply-bar-live 900ms ease-in-out infinite;
+}
+.settings-v2 .apply-bar[data-state="done"] .ab-marker {
+  background: var(--color-ok);
+  box-shadow: none;
+  transform: scale(1.08);
+}
+.settings-v2 .apply-bar[data-state="error"] .ab-marker {
+  background: var(--color-stop);
+  box-shadow: none;
+}
+.settings-v2 .apply-bar .ab-text {
+  display: grid;
+  min-width: 0;
+}
+.settings-v2 .apply-bar .ab-count {
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.settings-v2 .apply-bar .ab-sub {
+  overflow-wrap: anywhere;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+.settings-v2 .apply-bar .ab-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-sm);
 }
 
-@keyframes ab-spin {
-  to { transform: rotate(360deg); }
+@keyframes apply-bar-live {
+  50% { transform: scale(0.72); opacity: 0.65; }
+}
+
+@media (max-width: 38.75rem) {
+  .settings-v2 .apply-bar {
+    right: var(--space-sm);
+    bottom: var(--space-sm);
+    left: var(--space-sm);
+    width: auto;
+    max-width: none;
+    align-items: stretch;
+    flex-direction: column;
+    transform: none;
+  }
+  .settings-v2 .apply-bar .ab-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-v2 .apply-bar[data-state="applying"] .ab-marker { animation: none; }
+}
+
+@media (prefers-contrast: more) {
+  .settings-v2 .apply-bar { border-color: var(--color-ink-3); }
 }

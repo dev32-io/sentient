@@ -18,7 +18,7 @@
 // pinned because a UI that offers a member a door that only errors is a
 // usability defect and reads, wrongly, as an escalation.
 
-import { render, screen } from "@testing-library/preact";
+import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthState } from "../../types.js";
 
@@ -90,5 +90,17 @@ describe("SettingsView — the Admin nav gate", () => {
     authState.current = { status: "unauthenticated" } as unknown as AuthState;
     const { container } = render(<SettingsView />);
     expect(container.textContent).toBe("");
+  });
+
+  it("exposes a narrow overview-to-pane transition and restores focus from its Settings back action", async () => {
+    signedInAs(false);
+    const { container } = render(<SettingsView />);
+    const shell = container.querySelector(".settings-v2");
+    expect(shell?.getAttribute("data-narrow-pane-open")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Get the app" }));
+    expect(shell?.getAttribute("data-narrow-pane-open")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    expect(shell?.getAttribute("data-narrow-pane-open")).toBe("false");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Get the app" })));
   });
 });

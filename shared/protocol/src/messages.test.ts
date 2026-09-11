@@ -6,6 +6,8 @@ import {
   conversationFeedUserItemSchema,
 } from "./conversation.ts";
 import {
+  audioCancelSchema,
+  audioEndSchema,
   audioStartSchema,
   clientMessageSchema,
   conversationEntrySchema,
@@ -214,11 +216,31 @@ describe("session.ready", () => {
   });
 });
 
-describe("audio.start turnMode (hold/toggle-talk split design §4)", () => {
-  it("defaults turnMode to semantic when absent", () => {
-    const result = audioStartSchema.safeParse({ type: "audio.start" });
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.turnMode).toBe("semantic");
+describe("capture-aware audio controls", () => {
+  it("keeps legacy start/end valid and defaults start to semantic", () => {
+    const start = audioStartSchema.safeParse({ type: "audio.start" });
+    const end = audioEndSchema.safeParse({ type: "audio.end" });
+    expect(start.success).toBe(true);
+    expect(start.success && start.data.turnMode).toBe("semantic");
+    expect(start.success && start.data.captureId).toBeUndefined();
+    expect(end.success).toBe(true);
+  });
+
+  it("parses capture-aware start/end/cancel", () => {
+    expect(audioStartSchema.safeParse({ type: "audio.start", captureId: "cap-1", turnMode: "manual" }).success).toBe(
+      true,
+    );
+    expect(audioEndSchema.safeParse({ type: "audio.end", captureId: "cap-1" }).success).toBe(true);
+    expect(audioCancelSchema.safeParse({ type: "audio.cancel", captureId: "cap-1" }).success).toBe(true);
+  });
+
+  it("requires a non-empty, bounded captureId without breaking legacy omission", () => {
+    expect(audioCancelSchema.safeParse({ type: "audio.cancel" }).success).toBe(false);
+    expect(audioCancelSchema.safeParse({ type: "audio.cancel", captureId: "" }).success).toBe(false);
+    expect(audioStartSchema.safeParse({ type: "audio.start", captureId: "x".repeat(128) }).success).toBe(true);
+    expect(audioStartSchema.safeParse({ type: "audio.start", captureId: "x".repeat(129) }).success).toBe(false);
+    expect(audioEndSchema.safeParse({ type: "audio.end", captureId: "x".repeat(129) }).success).toBe(false);
+    expect(audioCancelSchema.safeParse({ type: "audio.cancel", captureId: "x".repeat(129) }).success).toBe(false);
   });
 
   it("parses explicit turnMode=manual", () => {
@@ -228,7 +250,7 @@ describe("audio.start turnMode (hold/toggle-talk split design §4)", () => {
   });
 
   it("parses explicit turnMode=semantic", () => {
-    const result = audioStartSchema.safeParse({ type: "audio.start", turnMode: "semantic" });
+    const result = audioStartSchema.safeParse({ type: "audio.start", captureId: "cap-2", turnMode: "semantic" });
     expect(result.success).toBe(true);
     expect(result.success && result.data.turnMode).toBe("semantic");
   });

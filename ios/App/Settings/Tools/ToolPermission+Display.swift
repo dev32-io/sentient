@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // ToolPermission+Display — wire-value / label mapping for the Tools screen's
-// per-tool RowSelect. Mirrors the webui's PERMISSION_OPTION_BY_VALUE
+// per-tool DesignSelect. Mirrors the webui's PERMISSION_OPTION_BY_VALUE
 // (tools-pane.tsx) and the shared ToolPermission.kt header's reasoning: this
 // is a REAL Kotlin enum (unlike model.provider/voice.provider/audio.channel/
 // advanced.reasoningEffort, which stay Strings for forward-compat), so
@@ -8,11 +8,26 @@
 // future fifth permission (`auto`, once a classifier exists — plan
 // 2026-08-07-tool-permissions) must fail to COMPILE here, not fall through.
 // ---------------------------------------------------------------------------
+import Foundation
 import MobileData
 
+/// Turns catalog identifiers into readable capability labels without changing
+/// the wire value used for persistence or accessibility identifiers.
+func capabilityName(_ raw: String) -> String {
+    let separatedCamelCase = raw.reduce(into: "") { result, character in
+        if character.isUppercase, let last = result.last, last.isLowercase { result.append(" ") }
+        result.append(character == "_" || character == "-" ? " " : character)
+    }
+    return separatedCamelCase
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+        .joined(separator: " ")
+        .capitalized
+}
+
 extension ToolPermission {
-    /// The `SelectOption.id` this permission round-trips as through the Tools
-    /// screen's RowSelect. Matches the gateway wire value (`toolPermissionSchema`).
+    /// The option id this permission round-trips as through the Tools
+    /// screen's DesignSelect. Matches the gateway wire value (`toolPermissionSchema`).
     var wireValue: String {
         switch self {
         case .allow: return "allow"
@@ -29,6 +44,15 @@ extension ToolPermission {
         case .ask: return "Ask"
         case .deny: return "Deny"
         case .off: return "Off"
+        }
+    }
+
+    var meaning: String {
+        switch self {
+        case .allow: return "No permission prompt."
+        case .ask: return "Ask you before proceeding."
+        case .deny: return "Reject requests; Sentient can explain the restriction."
+        case .off: return "Remove from the model’s available tools."
         }
     }
 

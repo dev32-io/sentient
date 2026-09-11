@@ -4,7 +4,7 @@ import SwiftUI
 struct CalendarCanvasView: View {
     let state: CalendarUiState
     let onSelectDate: (String) -> Void
-    let onSelectMonth: (Int32, Int32) -> Void
+    @ScaledMetric(relativeTo: .body) private var minimumDateWidth = DesignMetrics.minimumTarget
 
     var body: some View {
         Group {
@@ -13,188 +13,176 @@ struct CalendarCanvasView: View {
                 EmptyView()
             case .week:
                 if let week = state.week {
-                    CalendarWeekCanvas(week: week, onSelectDate: onSelectDate)
+                    ScrollView(.horizontal) {
+                        CalendarWeekCanvas(week: week, onSelectDate: onSelectDate)
+                            .containerRelativeFrame(.horizontal) { width, _ in
+                                max(width, minimumDateWidth * 7 + Space.sm * 2 + Space.xs * 6)
+                            }
+                    }
                 }
-            case .month:
-                if let month = state.month {
-                    CalendarMonthCanvas(month: month, onSelectDate: onSelectDate)
-                }
-            case .year:
-                if let year = state.year {
-                    CalendarYearCanvas(year: year, onSelectMonth: onSelectMonth)
-                }
+            case .month, .year:
+                // The scaffold owns their fixed stage, never a nested canvas.
+                EmptyView()
             }
         }
         .frame(maxWidth: .infinity)
-        .background(DuskColors.bgSunk)
-        .clipShape(RoundedRectangle(cornerRadius: Radii.lg))
-        .overlay(RoundedRectangle(cornerRadius: Radii.lg).stroke(DuskColors.lineSoft))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(state.view.displayName) calendar")
     }
 }
 
+/// Content-free dates, shared by pending and projected Week rows. No event or
+/// authorization state is cached here. Week bounds match shared weekStart.
+struct CalendarCivilDay: Equatable {
+    let date: String
+    let number: Int
+    let weekday: String
+    let label: String
+
+    static func dates(for period: CalendarAdjacentPageID, locale: CalendarLocale) -> [CalendarNativeMonthGeometry.CivilDate] {
+        let month = CalendarViewportMonth(date: period.anchor.date)
+        let day = Int(period.anchor.date.suffix(2))!
+        let firstWeekday = CalendarCivilMonth.firstWeekday(locale)
+        let leading = CalendarNativeMonthGeometry.leadingSlot(index: month.index, firstWeekday: firstWeekday)
+        let offset = period.view == .week ? -((leading + day - 1) % 7) : 0
+        return (0..<(period.view == .week ? 7 : 1)).map { index in
+            CalendarNativeMonthGeometry.civilDate(
+                year: Int(month.year), month: Int(month.month), day: day, offset: offset + index
+            )
+        }
+    }
+
+    static func days(for period: CalendarAdjacentPageID, locale: CalendarLocale) -> [Self] {
+        let calendar = CalendarCivilMonth.calendar(locale)
+        return dates(for: period, locale: locale).enumerated().map { index, value in
+            let weekday: Int
+            if period.view == .week {
+                weekday = (calendar.firstWeekday - 1 + index) % 7
+            } else {
+                let month = CalendarViewportMonth(year: Int32(value.year), month: Int32(value.month))
+                weekday = (CalendarNativeMonthGeometry.daysBeforeMonth(index: month.index) + value.day) % 7
+            }
+            return Self(date: value.string, number: value.day,
+                        weekday: calendar.shortStandaloneWeekdaySymbols[weekday],
+                        label: value.year < 1 ? value.string : CalendarSurfaceText.fullDate(value.string, locale: locale))
+        }
+    }
+
+}
+
 struct CalendarWeekCanvas: View {
-    let week: CalendarWeekProjection
+    let days: [CalendarCivilDay]
+    let week: CalendarWeekProjection?
+    let selectedDate: String
+    let todayDate: String
     let onSelectDate: (String) -> Void
+
+    init(week: CalendarWeekProjection, onSelectDate: @escaping (String) -> Void) {
+        self.init(days: week.days.enumerated().map { index, day in
+            CalendarCivilDay(date: day.date, number: Int(day.dayOfMonth),
+                             weekday: week.weekdayLabels[index].shortLabel, label: day.accessibilityLabel)
+        }, week: week, selectedDate: week.days.first(where: \.isSelected)?.date ?? "",
+           todayDate: week.days.first(where: \.isToday)?.date ?? "", onSelectDate: onSelectDate)
+    }
+
+    init(days: [CalendarCivilDay], week: CalendarWeekProjection?, selectedDate: String,
+         todayDate: String, onSelectDate: @escaping (String) -> Void) {
+        self.days = days
+        self.week = week
+        self.selectedDate = selectedDate
+        self.todayDate = todayDate
+        self.onSelectDate = onSelectDate
+    }
 
     var body: some View {
         HStack(spacing: Space.xs) {
-            ForEach(Array(week.days.enumerated()), id: \.element.date) { index, day in
+            ForEach(days, id: \.date) { day in
+                let projected = week?.days.first { $0.date == day.date }
+                let selected = day.date == selectedDate || (selectedDate.isEmpty && projected?.isSelected == true)
                 Button { onSelectDate(day.date) } label: {
                     VStack(spacing: 5) {
-                        Text(week.weekdayLabels[index].shortLabel)
-                            .font(CalendarFont.mono(TypeScale.xs))
-                            .foregroundStyle(day.isSelected ? DuskColors.ink : DuskColors.ink3)
-                        Text("\(day.dayOfMonth)")
-                            .font(CalendarFont.display(TypeScale.xl, .medium))
+                        Text(day.weekday)
+                            .font(Typo.mono(TypeScale.xs))
+                            .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
+                        Text("\(day.number)")
+                            .font(Typo.display(TypeScale.xl, .medium))
                             .foregroundStyle(DuskColors.ink)
-                        CalendarIndicatorRow(indicators: day.indicators, overflow: day.overflow)
+                        Group {
+                            if let projected {
+                                CalendarIndicatorRow(events: projected.events, indicators: projected.indicators, overflow: projected.overflow)
+                            } else {
+                                Color.clear.frame(height: CalendarSurfaceLayout.indicatorRowHeight)
+                            }
+                        }
+                        .accessibilityHidden(true)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 70)
-                    .background(day.isSelected ? DuskColors.paper : .clear, in: RoundedRectangle(cornerRadius: Radii.md))
+                    .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.weekDayHeight)
+                    .background(selected ? DuskColors.accent50.opacity(0.46) : .clear)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(CalendarPressButtonStyle())
-                .accessibilityLabel(CalendarSurfaceText.dateCellLabel(day))
-                .accessibilityValue(day.isSelected ? "Selected, week view remains active" : "Week view remains active")
-                .accessibilityAddTraits(day.isSelected ? .isSelected : [])
+                .accessibilityLabel(projected.map(CalendarSurfaceText.dateCellLabel) ??
+                    (day.label + (day.date == todayDate ? ", Today" : "") + ", Event data not loaded"))
+                .accessibilityValue(selected ? "Selected, week view remains active" : "Week view remains active")
+                .accessibilityAddTraits(selected ? .isSelected : [])
                 .accessibilityIdentifier("calendar-date-\(day.date)")
             }
         }
         .padding(Space.sm)
+        .designPlate()
     }
 }
 
-struct CalendarMonthCanvas: View {
-    let month: CalendarMonthProjection
-    let onSelectDate: (String) -> Void
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
-
-    var body: some View {
-        VStack(spacing: 0) {
-            LazyVGrid(columns: columns, spacing: 0) {
-                ForEach(month.weekdayLabels, id: \.weekday) { label in
-                    Text(label.shortLabel)
-                        .font(CalendarFont.mono(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .accessibilityLabel(label.accessibilityLabel)
-                }
-            }
-            Divider().overlay(DuskColors.lineSoft)
-            LazyVGrid(columns: columns, spacing: 0) {
-                ForEach(month.cells, id: \.date) { cell in
-                    Button { onSelectDate(cell.date) } label: {
-                        VStack(spacing: Space.xs) {
-                            Text("\(cell.dayOfMonth)")
-                                .font(CalendarFont.mono(TypeScale.xs))
-                                .foregroundStyle(cell.isOutsideMonth ? DuskColors.ink4 : DuskColors.ink2)
-                                .frame(width: 25, height: 25)
-                                .background(cell.isSelected ? DuskColors.paper : .clear, in: Circle())
-                                .overlay(Circle().stroke(cell.isToday ? DuskColors.ink : .clear))
-                            CalendarIndicatorRow(indicators: cell.indicators, overflow: cell.overflow)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 53, alignment: .top)
-                        .padding(.top, Space.xs)
-                        .background(cell.isOutsideMonth ? DuskColors.bg.opacity(0.7) : .clear)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(CalendarPressButtonStyle())
-                    .overlay(alignment: .topLeading) {
-                        Rectangle().fill(DuskColors.lineSoft).frame(width: 0.5)
-                    }
-                    .overlay(alignment: .top) {
-                        Rectangle().fill(DuskColors.lineSoft).frame(height: 0.5)
-                    }
-                    .accessibilityLabel(CalendarSurfaceText.dateCellLabel(cell))
-                    .accessibilityHint("Opens day view")
-                    .accessibilityAddTraits(cell.isSelected ? .isSelected : [])
-                    .accessibilityIdentifier("calendar-date-\(cell.date)")
-                }
-            }
-        }
-        .accessibilityIdentifier("calendar-month-42-cells")
-    }
-}
-
-struct CalendarYearCanvas: View {
-    let year: CalendarYearProjection
-    let onSelectMonth: (Int32, Int32) -> Void
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 1) {
-            ForEach(year.months, id: \.month) { month in
-                Button { onSelectMonth(month.year, month.month) } label: {
-                    VStack(alignment: .leading, spacing: Space.sm) {
-                        Text(monthName(month.month))
-                            .font(CalendarFont.display(TypeScale.sm, .medium))
-                            .foregroundStyle(DuskColors.ink)
-                        CalendarYearDays(days: month.days)
-                    }
-                    .padding(Space.sm)
-                    .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-                    .background(DuskColors.bgSunk)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(CalendarPressButtonStyle())
-                .accessibilityLabel(month.accessibilityLabel)
-                .accessibilityValue("\(month.days.count) complete dates, \(month.eventDayCount) event days")
-                .accessibilityHint("Opens month view")
-                .accessibilityIdentifier("calendar-year-month-\(month.month)")
-            }
-        }
-        .background(DuskColors.lineSoft)
-    }
-
-    private func monthName(_ month: Int32) -> String {
-        let symbols = Calendar.current.shortMonthSymbols
-        let index = Int(month) - 1
-        return symbols.indices.contains(index) ? symbols[index] : "\(month)"
-    }
-}
-
-private struct CalendarYearDays: View {
-    let days: [CalendarDateCell]
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(days, id: \.date) { day in
-                Circle()
-                    .fill(day.hasEvents ? DuskColors.sage : DuskColors.ink3.opacity(0.12))
-                    .aspectRatio(1, contentMode: .fit)
-                    .accessibilityHidden(true)
-            }
-        }
-    }
-}
-
-private struct CalendarIndicatorRow: View {
+struct CalendarIndicatorRow: View {
+    let events: [CalendarProjectedEvent]
     let indicators: [CalendarEventIndicator]
     let overflow: CalendarOverflow?
 
+    private var visibleIndicators: [CalendarEventIndicator] { Array(indicators.prefix(2)) }
+    private var hiddenCount: Int { Int(overflow?.count ?? 0) + max(0, indicators.count - visibleIndicators.count) }
+
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(Array(indicators.prefix(3).enumerated()), id: \.offset) { _, indicator in
-                Circle()
-                    .fill(indicatorColor(indicator))
-                    .frame(width: 5, height: 5)
-                    .accessibilityHidden(true)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.xs) {
+                ForEach(Array(visibleIndicators.enumerated()), id: \.offset) { _, indicator in
+                    Circle()
+                        .fill(indicatorColor(indicator))
+                        .frame(width: CalendarSurfaceLayout.indicatorSize, height: CalendarSurfaceLayout.indicatorSize)
+                        .accessibilityHidden(true)
+                }
+                if hiddenCount > 0 {
+                    Text("+\(hiddenCount)")
+                        .font(Typo.mono(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink2)
+                        .accessibilityLabel("\(hiddenCount) additional events")
+                        .accessibilityIdentifier("calendar-overflow")
+                }
             }
-            if let overflow {
-                Text("+\(overflow.count)")
-                    .font(CalendarFont.mono(8))
-                    .foregroundStyle(DuskColors.ink2)
-                    .accessibilityLabel(overflow.accessibilityLabel)
-                    .accessibilityIdentifier("calendar-overflow")
-            }
+            .fixedSize(horizontal: true, vertical: false)
+
+            // A dense date remains one native target opening the complete Day
+            // agenda. Prefer a count over colliding dots on very narrow cells.
+            Text("\(events.count)")
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+                .accessibilityLabel("\(events.count) events")
+                .accessibilityIdentifier(hiddenCount > 0 ? "calendar-overflow" : "")
         }
-        .frame(minHeight: 8)
+        .frame(minHeight: CalendarSurfaceLayout.indicatorRowHeight)
     }
 
     private func indicatorColor(_ indicator: CalendarEventIndicator) -> Color {
-        indicator.kind == .allDay ? DuskColors.amber : DuskColors.sage
+        if let event = events.first(where: { $0.actionIdentity.stableKey == indicator.actionIdentity.stableKey }) {
+            return importanceColor(event.importance)
+        }
+        return indicator.kind == .allDay ? DuskColors.amber : DuskColors.sage
+    }
+}
+
+private func importanceColor(_ importance: Importance) -> Color {
+    switch importance {
+    case .normal: DuskColors.sage
+    case .important: DuskColors.amber
+    case .pinned: DuskColors.accent
     }
 }

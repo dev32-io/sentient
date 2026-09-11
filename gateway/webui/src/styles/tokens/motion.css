@@ -1,7 +1,0 @@
-/* gateway/webui/src/styles/tokens/motion.css */
-:root {
-  --motion-fast:     150ms ease;
-  --motion-normal:   250ms ease;
-  --motion-wave:     3.4s ease-in-out infinite;
-  --motion-cursor:   1s steps(2) infinite;
-}

@@ -1,0 +1,35 @@
+schemaVersion: 1
+id: ios-voice-library
+title: Refresh the iOS voice library, add/record/upload, and Fish clone surfaces
+status: merged
+dependsOn:
+  - ios-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Voice management is a cohesive native product domain with many visual
+      states but strict fake-only automated proof.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/ios-voice-library
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/ios-voice-library
+  baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
+  lastRunId: ab8e0288-f5b2-4984-ba8c-6058a671fce7
+  completedCommit: 5e3b9835b3be30a64765cebf3a265b65ba8a52f6
+  mergedCommit: dcfdd3ca02ea8897ee9fe41fbfd5182b083b5615

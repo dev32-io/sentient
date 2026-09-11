@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "web",
+  "inventoryIds": [
+    "web.calendar.editor.edit.success",
+    "web.calendar.editor.discard"
+  ],
+  "captures": [
+    {
+      "configuration": "web-desktop-1280x900",
+      "path": "qa/web/evidence/design-refresh/web-desktop-1280x900-page-76.png"
+    },
+    {
+      "configuration": "web-narrow-390x844",
+      "path": "qa/web/evidence/design-refresh/web-narrow-390x844-page-76.png"
+    },
+    {
+      "configuration": "web-zoom-200",
+      "path": "qa/web/evidence/design-refresh/web-zoom-200-page-76.png"
+    },
+    {
+      "configuration": "web-reduced-motion",
+      "path": "qa/web/evidence/design-refresh/web-reduced-motion-page-76.png"
+    }
+  ],
+  "measurements": {
+    "web-desktop-1280x900": [
+      {
+        "inventoryId": "web.calendar.editor.edit.success",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.editor.discard",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      }
+    ],
+    "web-narrow-390x844": [
+      {
+        "inventoryId": "web.calendar.editor.edit.success",
+        "overflowPx": 26,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.editor.discard",
+        "overflowPx": 26,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      }
+    ],
+    "web-zoom-200": [
+      {
+        "inventoryId": "web.calendar.editor.edit.success",
+        "overflowPx": 153,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.editor.discard",
+        "overflowPx": 153,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      }
+    ],
+    "web-reduced-motion": [
+      {
+        "inventoryId": "web.calendar.editor.edit.success",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      },
+      {
+        "inventoryId": "web.calendar.editor.discard",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 3
+      }
+    ]
+  },
+  "observations": [
+    {
+      "inventoryId": "web.calendar.editor.edit.success",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.discard",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.edit.success",
+      "configuration": "web-narrow-390x844",
+      "overflow": 26,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.discard",
+      "configuration": "web-narrow-390x844",
+      "overflow": 26,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.edit.success",
+      "configuration": "web-zoom-200",
+      "overflow": 153,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.discard",
+      "configuration": "web-zoom-200",
+      "overflow": 153,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.edit.success",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    },
+    {
+      "inventoryId": "web.calendar.editor.discard",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 3
+    }
+  ]
+}

@@ -14,6 +14,12 @@ import Foundation
 import MobileData
 
 /// Terminal upload outcome surfaced on a row, or nil while idle / in-flight.
+enum DiagnosticsLoadPhase: Equatable {
+    case loading
+    case ready
+    case failed
+}
+
 enum UploadOutcome: Equatable {
     /// Uploaded; `ref` is the server ref ("" when the upload succeeded but no ref parsed).
     case sent(ref: String)
@@ -25,6 +31,7 @@ enum UploadOutcome: Equatable {
 final class SendLogsViewModel: ObservableObject {
     /// Newest-first vitals sessions; empty until `load()` runs.
     @Published private(set) var sessions: [VitalsSessionInfo] = []
+    @Published private(set) var loadPhase: DiagnosticsLoadPhase = .loading
     /// The path being uploaded, or nil when idle. Drives which row morphs.
     @Published private(set) var uploadingPath: String?
     /// Upload progress in 0...1; nil = idle / done. The row shows a bar while non-nil.
@@ -36,17 +43,21 @@ final class SendLogsViewModel: ObservableObject {
     private let log = AppLog("settings", "send-logs-vm")
     private var uploadTask: Task<Void, Never>?
 
-    init(holder: VitalsHolder = .shared) {
+    init(holder: VitalsHolder = .shared, initialLoadPhase: DiagnosticsLoadPhase = .loading) {
         self.holder = holder
+        loadPhase = initialLoadPhase
     }
 
     /// Load the session list (newest-first). Idempotent; safe to call on each appear.
     /// Runs the flush + file reads off the main thread; assigns back on MainActor.
     func load() async {
+        loadPhase = .loading
         let result = await Task.detached(priority: .utility) { [holder] in
             holder.listSessions()
         }.value
+        guard !Task.isCancelled else { return }
         sessions = result // back on MainActor after await
+        loadPhase = .ready
         log.info("load count=\(result.count)")
     }
 
@@ -85,7 +96,7 @@ final class SendLogsViewModel: ObservableObject {
             self.log.info("upload.done file=\(fileName) ok=\(ref != nil)")
             // `try? await … -> String?` yields String??; flatten then map to the outcome.
             let parsed: String? = ref.flatMap { $0 }
-            self.finish(parsed.map { UploadOutcome.sent(ref: $0) } ?? .failed)
+            self.finish(parsed.map { UploadOutcome.sent(ref: sanitizedDiagnosticsReference($0)) } ?? .failed)
         }
     }
 
@@ -93,4 +104,12 @@ final class SendLogsViewModel: ObservableObject {
         progress = nil
         outcome = result
     }
+}
+
+/// Recovery references are identifiers, not free-form server copy. Keep only a
+/// short, conservative identifier alphabet before presenting them in Diagnostics.
+func sanitizedDiagnosticsReference(_ reference: String) -> String {
+    String(reference.unicodeScalars.lazy.filter {
+        CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_"
+    }.prefix(32).map(Character.init))
 }

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Sentient calendar prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&amp;family=Fraunces:opsz,wght@9..144,400;9..144,500&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./vendor/foundation-components.css">
+  <link rel="stylesheet" href="./calendar.css">
+  <script src="./vendor/foundation-components.js" defer></script>
+  <script src="./calendar.js" defer></script>
+</head>
+<body class="snt-surface">
+  <svg class="svg-defs" aria-hidden="true">
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-6v-6h-4v6H4z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M8 10v8M12 10v8M16 10v8M6 7l1 14h10l1-14"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20l4-1 10-10-3-3L5 16zM13 8l3 3"/></symbol>
+  </svg>
+
+  <header class="prototype-header">
+    <div><span class="snt-kicker">Calendar workspace</span><h1>Household time, clearly under control</h1></div>
+    <p>Source-true day, week, month, and year behavior with responsive filters, event density, preview, and editing.</p>
+  </header>
+
+  <main class="calendar-prototype" data-calendar-app>
+    <aside class="calendar-filters snt-plate" id="calendar-filters" aria-label="Calendar filters" data-calendar-filters>
+      <header class="calendar-filters__head"><div><strong>Filters</strong><span data-filter-count>No active filters</span></div><button class="snt-icon-button snt-button--quiet calendar-filter-close" type="button" aria-label="Close filters" data-filter-close><svg><use href="#i-close"/></svg></button></header>
+      <div class="calendar-filter-body">
+        <label class="calendar-search"><svg aria-hidden="true"><use href="#i-search"/></svg><input class="snt-input" type="search" placeholder="Search events" aria-label="Search events" data-calendar-search></label>
+
+        <fieldset class="calendar-filter-group"><legend>Calendars</legend>
+          <div class="calendar-scope-options">
+            <label class="snt-checkbox calendar-scope-check"><input type="checkbox" value="private" checked data-scope><span class="snt-checkbox__box" aria-hidden="true"></span><span><svg><use href="#i-lock"/></svg>Private</span><small data-scope-count="private">0</small></label>
+            <label class="snt-checkbox calendar-scope-check"><input type="checkbox" value="household" checked data-scope><span class="snt-checkbox__box" aria-hidden="true"></span><span><svg><use href="#i-home"/></svg>Household</span><small data-scope-count="household">0</small></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="calendar-filter-group"><legend>Importance</legend><div class="calendar-chip-cloud" data-importance-options></div></fieldset>
+        <div class="calendar-filter-disclosures">
+          <details class="calendar-filter-disclosure"><summary><span><strong>Groups</strong><small data-group-filter-count>None selected</small></span><svg aria-hidden="true"><use href="#i-chevron-right"/></svg></summary><div class="calendar-filter-disclosure__body"><div class="calendar-chip-cloud" data-group-options></div></div></details>
+          <details class="calendar-filter-disclosure"><summary><span><strong>Tags</strong><small data-tag-filter-count>None selected</small></span><svg aria-hidden="true"><use href="#i-chevron-right"/></svg></summary><div class="calendar-filter-disclosure__body"><div class="calendar-chip-cloud" data-tag-options></div></div></details>
+        </div>
+        <button class="snt-button snt-button--quiet calendar-clear" type="button" data-clear-filters disabled>Clear filters</button>
+      </div>
+    </aside>
+
+    <section class="calendar-workspace snt-plate">
+      <header class="calendar-toolbar">
+        <div class="calendar-period"><span class="snt-kicker" data-view-description>Your household calendar in one place.</span><h2 data-calendar-period>April 2026</h2></div>
+        <div class="calendar-toolbar__actions">
+          <button class="snt-button calendar-filter-open" type="button" aria-controls="calendar-filters" aria-expanded="false" data-filter-open><svg><use href="#i-filter"/></svg><span>Filters</span><i data-active-filter-badge hidden></i></button>
+          <div class="calendar-navigation" aria-label="Date navigation">
+            <button class="snt-icon-button snt-button--quiet" type="button" aria-label="Previous period" data-calendar-previous><svg><use href="#i-chevron-left"/></svg></button>
+            <button class="snt-button snt-button--quiet" type="button" data-calendar-today>Today</button>
+            <button class="snt-icon-button snt-button--quiet" type="button" aria-label="Next period" data-calendar-next><svg><use href="#i-chevron-right"/></svg></button>
+          </div>
+          <button class="snt-button snt-button--primary" type="button" data-add-event><svg><use href="#i-plus"/></svg>Add event</button>
+        </div>
+      </header>
+
+      <div class="calendar-notice" role="status" data-calendar-notice hidden></div>
+      <div class="calendar-stage" data-calendar-stage></div>
+
+      <nav class="calendar-view-switch snt-segmented" data-snt-segmented aria-label="Calendar view">
+        <button class="snt-segment" aria-pressed="false" data-calendar-view="day">Day</button>
+        <button class="snt-segment" aria-pressed="false" data-calendar-view="week">Week</button>
+        <button class="snt-segment" aria-pressed="true" data-calendar-view="month">Month</button>
+        <button class="snt-segment" aria-pressed="false" data-calendar-view="year">Year</button>
+      </nav>
+    </section>
+  </main>
+
+  <div class="calendar-scrim" data-calendar-scrim hidden></div>
+  <aside class="event-preview" role="dialog" aria-modal="false" aria-labelledby="event-preview-title" hidden data-event-preview>
+    <header><div><span class="snt-kicker">Event details</span><h2 id="event-preview-title" data-preview-title></h2><p data-preview-time></p></div><button class="snt-icon-button snt-button--quiet" type="button" aria-label="Close event details" data-preview-close><svg><use href="#i-close"/></svg></button></header>
+    <div class="event-preview__body"><p class="event-preview__description" data-preview-description></p><dl data-preview-details></dl></div>
+    <footer><button class="snt-button snt-button--destructive" type="button" data-preview-delete><svg><use href="#i-trash"/></svg>Delete</button><span></span><button class="snt-button" type="button" data-preview-edit><svg><use href="#i-edit"/></svg>Edit</button></footer>
+  </aside>
+
+  <dialog class="calendar-dialog overflow-dialog" data-overflow-dialog aria-labelledby="overflow-title">
+    <header class="dialog-head"><div><span class="snt-kicker">All events</span><h2 id="overflow-title" data-overflow-title></h2></div><button class="snt-icon-button snt-button--quiet" type="button" aria-label="Close event list" data-dialog-close><svg><use href="#i-close"/></svg></button></header>
+    <div class="overflow-event-list" data-overflow-list></div>
+  </dialog>
+
+  <dialog class="calendar-dialog event-editor" data-event-editor aria-labelledby="editor-title">
+    <form method="dialog" data-event-form>
+      <header class="dialog-head"><div><h2 id="editor-title" data-editor-title>Add event</h2><p>Add the details needed to place this event on the right calendar.</p></div><button class="snt-icon-button snt-button--quiet" type="button" aria-label="Close event editor" data-editor-close><svg><use href="#i-close"/></svg></button></header>
+      <div class="event-editor__body">
+        <label class="snt-field"><span class="snt-field__label">Event title</span><input class="snt-input" name="title" required></label>
+        <label class="snt-field"><span class="snt-field__label">Description</span><textarea class="snt-textarea" name="description" rows="3"></textarea></label>
+        <section class="event-time-fields" aria-labelledby="event-time-heading">
+          <header><strong id="event-time-heading">Date and time</strong><label class="snt-checkbox"><input type="checkbox" name="allDay"><span class="snt-checkbox__box" aria-hidden="true"></span><span>All day</span></label></header>
+          <div class="editor-grid">
+            <label class="snt-field"><span class="snt-field__label">Start</span><input class="snt-input" type="datetime-local" name="start" required></label>
+            <label class="snt-field"><span class="snt-field__label">End</span><input class="snt-input" type="datetime-local" name="end"></label>
+          </div>
+        </section>
+        <div class="editor-grid">
+          <label class="snt-field"><span class="snt-field__label">Calendar</span><select class="snt-input" name="scope"><option value="private">Private</option><option value="household">Household</option></select></label>
+          <label class="snt-field"><span class="snt-field__label">Visibility</span><select class="snt-input" name="visibility"><option value="everyone">Everyone</option><option value="adults">Adults only</option></select></label>
+          <label class="snt-field"><span class="snt-field__label">Importance</span><select class="snt-input" name="importance"><option value="normal">Normal</option><option value="important">Important</option><option value="pinned">Pinned</option></select></label>
+          <label class="snt-field"><span class="snt-field__label">Group</span><input class="snt-input" name="group" placeholder="Optional group"></label>
+        </div>
+        <label class="snt-field"><span class="snt-field__label">Tags</span><input class="snt-input" name="tags" placeholder="school, pickup"><span class="snt-field__hint">Separate tags with commas.</span></label>
+        <div class="editor-grid">
+          <label class="snt-field"><span class="snt-field__label">Repeat</span><select class="snt-input" name="recurrence"><option value="none">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
+          <label class="snt-field mutation-scope" hidden data-mutation-scope><span class="snt-field__label">Apply changes to</span><select class="snt-input" name="applyTo"><option value="this_occurrence">This occurrence</option><option value="this_and_following">This and following</option><option value="entire_series">Entire series</option></select></label>
+        </div>
+      </div>
+      <footer class="dialog-actions"><button class="snt-button snt-button--quiet" type="button" data-editor-cancel>Cancel</button><button class="snt-button snt-button--primary" type="submit" data-editor-save>Save event</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="calendar-dialog delete-dialog" data-delete-dialog aria-labelledby="delete-title">
+    <header class="dialog-head"><div><span class="snt-kicker">Confirm change</span><h2 id="delete-title">Delete event?</h2><p>The selected scope and consequence are shown before commitment.</p></div></header>
+    <div class="delete-dialog__body"><label class="snt-field"><span class="snt-field__label">Delete from</span><select class="snt-input" data-delete-scope><option value="this_occurrence">This occurrence</option><option value="this_and_following">This and following</option><option value="entire_series">Entire series</option></select></label></div>
+    <footer class="dialog-actions"><button class="snt-button snt-button--quiet" type="button" data-delete-cancel>Cancel</button><button class="snt-button snt-button--destructive" type="button" data-delete-confirm>Delete event</button></footer>
+  </dialog>
+
+  <div class="calendar-toast" role="status" aria-live="polite" hidden data-calendar-toast></div>
+</body>
+</html>

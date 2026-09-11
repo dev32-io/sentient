@@ -4,10 +4,9 @@
 // audio-only diff takes ApplyProfileChangeUseCase's fast path (live WS patch, NO
 // Hermes restart), so there is no "restarting…" copy.
 //
-// Chrome: a Save toolbar button appears iff the draft is dirty (disabled while a
-// save runs); the leading back button routes through a discard confirmation when
-// dirty (the `onBack` seam). Nav wiring lives in UserSessionHost — this file only
-// fills the page body + owns its VM.
+// Chrome: the shared apply bar appears for the existing draft/save lifecycle;
+// its Discard action routes through the native confirmation. The leading back
+// button keeps the same dirty-navigation guard through the `onBack` seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -31,33 +30,30 @@ struct AudioScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
+        SettingsPageScaffold(
+            title: "Audio", screenId: "settings-audio-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-audio-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load audio settings", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
-                saveBanner
                 outputCard
             }
         }
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-audio-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-audio-save") {
-                        Task { await vm.save() }
-                    }
-                }
-            }
-        }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-audio-discard",
+            applyAccessibilityId: "settings-audio-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -65,39 +61,21 @@ struct AudioScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var saveBanner: some View {
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving, .restarting: SoulApplyingBanner(text: "Saving…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving, .restarting: .saving
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     private var outputCard: some View {
-        SettingsCard(title: "Output", sub: "Takes effect on the next reply.") {
-            RowToggle(
-                label: "Speak responses (TTS)",
-                sub: "When off, replies are silent — text still streams to chat.",
-                isOn: vm.ttsEnabled,
-                accessibilityId: "settings-audio-tts",
-                onChange: { vm.ttsEnabled = $0 }
-            )
-            Divider().background(DuskColors.lineSoft)
-            VStack(alignment: .leading, spacing: Space.sm) {
-                Text("Reply channel")
-                    .font(Typo.ui(TypeScale.sm, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                RowSegmented(
-                    options: audioChannelOptions,
-                    selectedId: vm.channel,
-                    accessibilityId: "settings-audio-channel",
-                    onSelect: { vm.channel = $0 }
-                )
-            }
-            .padding(.vertical, Space.sm)
-        }
+        AudioPreferenceBlock(
+            ttsEnabled: Binding(get: { vm.ttsEnabled }, set: { vm.ttsEnabled = $0 }),
+            channel: Binding(get: { vm.channel }, set: { vm.channel = $0 })
+        )
     }
 
     private func attemptBack() {
@@ -105,25 +83,53 @@ struct AudioScreen: View {
     }
 }
 
+/// Speaking is the primary decision; the channel remains an independent preference.
+private struct AudioPreferenceBlock: View {
+    @Binding var ttsEnabled: Bool
+    @Binding var channel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Text("Response behavior")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+                .accessibilityAddTraits(.isHeader)
+            DesignCard(bodyStyle: .padded) {
+                DesignToggleRow(
+                    title: "Speak responses",
+                    detail: "When off, replies are silent — text still streams to chat.",
+                    isOn: $ttsEnabled,
+                    accessibilityId: "settings-audio-tts"
+                )
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("Reply channel")
+                        .designText(.label)
+                        .fontWeight(.medium)
+                        .foregroundStyle(DuskColors.ink)
+                    Text("Voice allows spoken replies when Speak responses is on. Text only keeps replies silent.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                    DesignSegmentedPicker(
+                        title: "Reply channel",
+                        options: audioChannelOptions.map { (value: $0.id, label: $0.label) },
+                        selection: $channel,
+                        accessibilityId: "settings-audio-channel"
+                    )
+                }
+                .padding(Space.md)
+                .designWell()
+            }
+            Text("Changes take effect on the next reply.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+        }
+    }
+}
+
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
-            SettingsCard(title: "Output", sub: "Takes effect on the next reply.") {
-                RowToggle(
-                    label: "Speak responses (TTS)",
-                    sub: "When off, replies are silent — text still streams to chat.",
-                    isOn: true, accessibilityId: "settings-audio-tts", onChange: { _ in }
-                )
-                Divider().background(DuskColors.lineSoft)
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Reply channel").font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ink)
-                    RowSegmented(
-                        options: audioChannelOptions, selectedId: "voice",
-                        accessibilityId: "settings-audio-channel", onSelect: { _ in }
-                    )
-                }
-                .padding(.vertical, Space.sm)
-            }
+            AudioPreferenceBlock(ttsEnabled: .constant(true), channel: .constant("voice"))
         }
     }
     .preferredColorScheme(.dark)

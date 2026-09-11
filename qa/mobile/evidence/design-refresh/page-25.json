@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "ios",
+  "inventoryIds": [
+    "ios.settings.calendar-entry.loading",
+    "ios.settings.calendar-entry.empty",
+    "ios.settings.calendar-entry.dirty"
+  ],
+  "captures": [
+    {
+      "configuration": "ios-iphone-standard",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-standard-page-25.png"
+    },
+    {
+      "configuration": "ios-iphone-ax3",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-ax3-page-25.png"
+    },
+    {
+      "configuration": "ios-reduced-motion",
+      "path": "qa/mobile/evidence/design-refresh/ios-reduced-motion-page-25.png"
+    }
+  ],
+  "measurements": {
+    "ios.settings.calendar-entry.loading": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.settings.calendar-entry.empty": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.settings.calendar-entry.dirty": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    }
+  },
+  "observations": [
+    {
+      "inventoryId": "ios.settings.calendar-entry.loading",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.loading",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.loading",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.empty",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.empty",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.empty",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.dirty",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.dirty",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.calendar-entry.dirty",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    }
+  ]
+}

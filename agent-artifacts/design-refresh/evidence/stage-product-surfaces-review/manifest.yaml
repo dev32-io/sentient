@@ -1,0 +1,33 @@
+schemaVersion: 1
+evaluation: stage-product-surfaces-review
+recordedAt: 2026-08-26T00:17:03.630Z
+entries:
+  - result: PASS — 3 tests
+    command: bun run --filter '@sentient/webui' test:unit --
+      src/components/sessions/drawer.test.tsx
+    description: Proves closed inert state, open focus, dismissal, and focus restoration.
+    path: files/002-1-drawer.test.tsx
+    checksum: sha256:35f58b76641d6105fdafd1cbd499cfdb4a203945631f409d6b3999c91de9465c
+  - result: PASS
+    command: bun run --filter '@sentient/webui' typecheck
+    description: Native inert JSX repair typechecks.
+    path: files/002-2-drawer.tsx
+    checksum: sha256:8360765f5e0c89ea095ad259ea4adc3c150fa90a6b65630f6e062aadabb0d5c3
+  - result: PASS — 3 tests
+    command: xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+      -only-testing:SentientAppTests/HistoryInteractionTests
+    description: Focused iOS History target and semantic-type regression passes.
+    path: files/002-3-HistoryInteractionTests.swift
+    checksum: sha256:4dfad54d4fb8e3ded0347d81a7085567d7e82e365eec90e69af212c823cae8b1
+  - result: PASS
+    command: bun run design:inventory:check
+    description: Inventory contracts remain valid.
+    path: files/002-4-inventory.json
+    checksum: sha256:678b881093d05486e9d26bfada0caa2d6c4211cfad734224ab0d658765aa9cde
+  - result: PASS
+    command: git diff --check
+      bc5f663fb06b205b069af12d784e3a1df890ffd4..d8c7b954ad7a38c620de73d333bb3e6e8cb430b0
+    description: Bounded repair has no whitespace errors.
+    path: files/002-5-HistorySidePanel.swift
+    checksum: sha256:d5f5b18ebe632320aefcc4b402c23fa50bd58571781d3039dcef2ce4e025a31b

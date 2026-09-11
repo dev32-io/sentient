@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "ios",
+  "inventoryIds": [
+    "ios.settings.voice-fish.dirty",
+    "ios.settings.voice-fish.applying",
+    "ios.settings.voice-fish.success"
+  ],
+  "captures": [
+    {
+      "configuration": "ios-iphone-standard",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-standard-page-35.png"
+    },
+    {
+      "configuration": "ios-iphone-ax3",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-ax3-page-35.png"
+    },
+    {
+      "configuration": "ios-reduced-motion",
+      "path": "qa/mobile/evidence/design-refresh/ios-reduced-motion-page-35.png"
+    }
+  ],
+  "measurements": {
+    "ios.settings.voice-fish.dirty": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.settings.voice-fish.applying": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.settings.voice-fish.success": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    }
+  },
+  "observations": [
+    {
+      "inventoryId": "ios.settings.voice-fish.dirty",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.dirty",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.dirty",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.applying",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.applying",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.applying",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.success",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.success",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.settings.voice-fish.success",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    }
+  ]
+}

@@ -57,8 +57,11 @@ describe("ToolsPane product groups", () => {
     fireEvent.click(screen.getByText("skills"));
     const row = screen.getByText("skill_create").closest(".tool-row");
     if (!row) throw new Error("missing row");
-    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: /ask/i }));
-    fireEvent.click(screen.getByRole("button", { name: /deny/i }));
-    expect(onDraftTools).toHaveBeenCalledWith(expect.objectContaining({ permissions: { skills: { skill_create: "deny" } } }));
+    const permission = within(row as HTMLElement).getByRole("combobox", { name: "skill_create permission" });
+    for (const value of ["allow", "ask", "deny", "off"] as const) {
+      fireEvent.change(permission, { target: { value } });
+      expect(onDraftTools).toHaveBeenLastCalledWith(expect.objectContaining({ permissions: { skills: { skill_create: value } } }));
+    }
+    expect(screen.queryByText(/Hermes/i)).toBeNull();
   });
 });

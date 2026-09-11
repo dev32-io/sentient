@@ -4,25 +4,20 @@
 // toggle, and a char-capped mono editor with a live counter. SLOW save (PUT
 // memory → apply-with-restart) puts every dirty slot.
 //
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 private let slotOptions: [SegmentOption] = [
-    SegmentOption(id: "memory", label: "MEMORY.md"),
-    SegmentOption(id: "user", label: "USER.md"),
-]
-
-private let viewOptions: [SegmentOption] = [
-    SegmentOption(id: "edit", label: "Edit"),
-    SegmentOption(id: "preview", label: "Preview"),
+    SegmentOption(id: "memory", label: "Shared notes"),
+    SegmentOption(id: "user", label: "About you"),
 ]
 
 private let slotExplain: [MemoryViewModel.Slot: String] = [
-    .memory: "Hermes-managed notes about the world. The agent writes and prunes this; hand-edit to seed or correct a fact.",
-    .user: "Your profile: preferences and expectations the agent infers over time. Edit to seed or correct what it believes about you.",
+    .memory: "Notes the assistant can maintain over time. Edit them to seed or correct a fact.",
+    .user: "Preferences and expectations the assistant has learned about you. Edit them to seed or correct a detail.",
 ]
 
 struct MemoryScreen: View {
@@ -41,32 +36,34 @@ struct MemoryScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
-            saveBanner
-            RowSegmented(
-                options: slotOptions,
-                selectedId: slot.rawValue,
-                accessibilityId: "settings-memory-slot",
-                onSelect: { selectSlot($0) }
-            )
-            slotCard
-        }
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-memory-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-memory-save") {
-                        Task { await vm.save() }
-                    }
-                }
+        SettingsPageScaffold(
+            title: "Memory", screenId: "settings-memory-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-memory-back"
+        ) {
+            VStack(alignment: .leading, spacing: Space.md) {
+                DesignSegmentedPicker(
+                    title: "Memory file",
+                    options: slotOptions.map { (value: $0.id, label: $0.label) },
+                    selection: Binding(get: { slot.rawValue }, set: selectSlot),
+                    accessibilityId: "settings-memory-slot"
+                )
+                Text(slotExplain[slot] ?? "")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                slotContent
             }
+            .padding(Space.md)
+            .designPlate()
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-memory-discard",
+            applyAccessibilityId: "settings-memory-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         .task(id: slot) { await vm.loadIfNeeded(slot) }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -74,58 +71,66 @@ struct MemoryScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var saveBanner: some View {
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     @ViewBuilder
-    private var slotCard: some View {
+    private var slotContent: some View {
         let state = vm.state(for: slot)
-        SettingsCard(title: slot.label, sub: slotExplain[slot]) {
-            if !state.loaded {
-                SoulLoadingRow()
-            } else if let loadError = state.loadError {
-                SoulInlineError(message: loadError)
-            } else {
-                editor(state)
+        if !state.loaded {
+            SoulLoadingRow()
+        } else if let loadError = state.loadError {
+            AsyncNotice(kind: .error, title: "Couldn't load this memory", detail: loadError) {
+                Task { await vm.retry(slot) }
             }
+        } else {
+            editor(state)
         }
     }
 
     @ViewBuilder
     private func editor(_ state: MemoryViewModel.SlotState) -> some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            RowSegmented(
-                options: viewOptions,
-                selectedId: viewMode,
-                accessibilityId: "settings-memory-view",
-                onSelect: { viewMode = $0 }
-            )
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                Text(viewMode == "edit" ? "Editing" : "Preview")
+                    .designText(.label)
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                DesignActionButton(
+                    title: viewMode == "edit" ? "Preview" : "Edit",
+                    role: .quiet,
+                    accessibilityId: "settings-memory-view",
+                    fillsWidth: false,
+                    action: { viewMode = viewMode == "edit" ? "preview" : "edit" }
+                )
+            }
             if viewMode == "edit" {
-                MonoEditor(
-                    text: state.draft,
-                    placeholder: "No \(slot.label) yet — Hermes will write here over time, or seed it now.",
+                DesignMultilineEditor(
+                    text: Binding(
+                        get: { state.draft },
+                        set: { vm.setDraft($0, for: slot) }
+                    ),
+                    placeholder: "Nothing here yet. Add a note now or let the assistant build this over time.",
                     maxLength: state.charLimit > 0 ? state.charLimit : nil,
-                    accessibilityId: "settings-memory-editor",
-                    onChange: { vm.setDraft($0, for: slot) }
+                    accessibilityId: "settings-memory-editor"
                 )
             } else {
                 Text(state.draft.isEmpty ? "Nothing to preview." : state.draft)
-                    .font(Typo.mono(TypeScale.sm))
-                    .foregroundStyle(state.draft.isEmpty ? DuskColors.ink4 : DuskColors.ink)
+                    .designText(.body)
+                    .foregroundStyle(state.draft.isEmpty ? DuskColors.ink2 : DuskColors.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("settings-memory-preview")
             }
         }
-        .padding(.vertical, Space.sm)
     }
 
     private func selectSlot(_ id: String) {
@@ -136,24 +141,4 @@ struct MemoryScreen: View {
     private func attemptBack() {
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
-}
-
-#Preview("edit") {
-    NavigationStack {
-        SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
-            RowSegmented(
-                options: slotOptions, selectedId: "memory",
-                accessibilityId: "settings-memory-slot", onSelect: { _ in }
-            )
-            SettingsCard(title: "MEMORY.md", sub: slotExplain[.memory]) {
-                MonoEditor(
-                    text: "The kitchen light is on circuit 3.",
-                    maxLength: 4000,
-                    accessibilityId: "settings-memory-editor", onChange: { _ in }
-                )
-                .padding(.vertical, Space.sm)
-            }
-        }
-    }
-    .preferredColorScheme(.dark)
 }

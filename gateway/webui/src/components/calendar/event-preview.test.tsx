@@ -179,6 +179,24 @@ describe("EventPreview", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("keeps the complete supported title and time in the scroll body, separate from persistent controls", async () => {
+    const title = "Synthetic calendar planning title ".repeat(16).slice(0, 512);
+    const description = "Synthetic description. ".repeat(200);
+    render(<EventPreview occurrence={{ ...projected, title, description }} open onClose={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} viewport={{ width: 640, height: 450 }} />);
+    const dialog = await screen.findByRole("dialog", { name: title });
+    const body = dialog.querySelector("[data-scrollable='true']")!;
+    const heading = screen.getByRole("heading", { name: title });
+    expect(heading.textContent).toBe(title);
+    expect(heading.id).toBe(dialog.getAttribute("aria-labelledby"));
+    expect(body.contains(heading)).toBe(true);
+    expect(body.querySelector("[aria-label^='When:']")).toBeTruthy();
+    expect(body.querySelector("#" + dialog.getAttribute("aria-describedby"))?.textContent).toBe(description);
+    for (const name of ["Close event details", "Edit", "Delete"]) {
+      expect(body.contains(screen.getByRole("button", { name }))).toBe(false);
+    }
+    expect(dialog.style.maxHeight).toBe("426px");
+  });
+
   it("marks reduced motion without suppressing the open state", async () => {
     const originalMatchMedia = window.matchMedia;
     const matchMedia = vi.fn().mockImplementation((query: string) => ({

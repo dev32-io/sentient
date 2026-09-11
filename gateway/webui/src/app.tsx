@@ -1,7 +1,7 @@
 import { createContext } from "preact";
 import type { ComponentChildren } from "preact";
 import { useComputed } from "@preact/signals";
-import { useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { AuthProvider, useAuth } from "./hooks/use-auth.tsx";
 import { ToastProvider, useToast } from "./hooks/use-toast.tsx";
@@ -10,9 +10,10 @@ import { createAuthApi } from "./services/auth-api.js";
 import { createProfileApi } from "./services/profile-api.js";
 import { ChatView } from "./components/chat/chat-view.tsx";
 import type { AvatarTint } from "./components/common/avatar.tsx";
-import type { SentientMarkMode } from "./components/common/sentient-mark.tsx";
-import { Composer } from "./components/dock/composer.tsx";
+import type { SentientIdentityState } from "./components/common/sentient-identity.tsx";
+import { ChatComposer } from "./components/dock/composer.tsx";
 import { LoginScreen } from "./components/auth/login-screen.tsx";
+import { markAuthExpired, takeAuthExpired } from "./components/auth/auth-expiry.ts";
 import { SetupScreen } from "./components/auth/setup-screen.tsx";
 import { PermissionDialog } from "./components/permission/permission-dialog.tsx";
 import { Drawer } from "./components/sessions/drawer.tsx";
@@ -20,6 +21,10 @@ import { SettingsView } from "./components/settings/settings-view.tsx";
 import { CalendarView } from "./components/calendar/calendar-view.tsx";
 import { AppShell } from "./components/shell/app-shell.tsx";
 import { ToastHost } from "./components/common/toast.tsx";
+import { GateState } from "./components/common/gate-state.tsx";
+import { ConnectionBanner } from "./components/shell/connection-banner.tsx";
+import { loadStoredRoute, storeRoute } from "./components/shell/route-state.ts";
+import { useSettingsDeparture } from "./components/shell/settings-departure.tsx";
 import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
 import { SessionsProvider } from "./context/sessions.tsx";
 import { createUseSessions, type UseSessions } from "./hooks/use-sessions.ts";
@@ -35,19 +40,11 @@ const SUGGESTIONS: readonly string[] = [
   "Lower the kitchen lights 30%",
 ];
 
-const ROUTE_STORAGE_KEY = "sentient:route";
 const ROUTE_LABELS: Record<TopbarRoute, string> = {
   chat: "Conversation",
   settings: "Household",
   calendar: "Calendar",
 };
-const DEVICE_COUNT = 14; // fixture; wire to real telemetry once available
-
-function loadInitialRoute(): TopbarRoute {
-  if (typeof sessionStorage === "undefined") return "chat";
-  const saved = sessionStorage.getItem(ROUTE_STORAGE_KEY);
-  return saved === "settings" || saved === "calendar" ? saved : "chat";
-}
 
 // ---------------------------------------------------------------------------
 // Api context — provides AuthApi to child components (testable injection)
@@ -66,7 +63,7 @@ function useApi(): AuthApi {
 function AppInner() {
   const auth = useAuth();
   const api = useApi();
-  const [route, setRoute] = useState<TopbarRoute>(loadInitialRoute);
+  const [route, setRoute] = useState<TopbarRoute>(loadStoredRoute);
   // Tracks the prior auth status so we can detect a fresh interactive login
   // (anonymous|authenticating → authenticated) vs a silent hydrate from stored
   // token on page load (boot → authenticated). Fresh logins always land on chat;
@@ -80,11 +77,7 @@ function AppInner() {
 
   const onRouteChange = (r: TopbarRoute) => {
     setRoute(r);
-    try {
-      sessionStorage.setItem(ROUTE_STORAGE_KEY, r);
-    } catch {
-      /* storage disabled */
-    }
+    storeRoute(r);
   };
 
   const onOpenAccount = () => {
@@ -102,19 +95,16 @@ function AppInner() {
     // onRouteChange is stable (closure over setRoute), safe to omit from deps
   }, [auth.status]);
 
+  const freshLogin = auth.status === "authenticated" &&
+    (prevAuthStatusRef.current === "anonymous" || prevAuthStatusRef.current === "authenticating");
+
   // ── Boot: show loading while we hydrate the token from sessionStorage ──
   // NOTE: do NOT include "authenticating" here. Login/setup screens drive
   // their own per-action loading state; unmounting them during the auth
   // call destroys their stage + error state, which makes wrong-PIN handling
   // kick the user back to the avatar grid.
   if (auth.status === "boot") {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Restoring your session" message="Preparing Sentient…" />;
   }
 
   // ── Anonymous OR authenticating: route to login/setup screens; the
@@ -130,20 +120,53 @@ function AppInner() {
   // ── Failed: show error with retry ──
   if (auth.status === "failed") {
     return (
-      <div class="login-screen">
-        <div class="login-screen__card">
-          <div class="login-screen__title">Authentication Failed</div>
-          <p class="login-screen__error">{auth.reason}</p>
-          <button class="login-screen__back" onClick={() => window.location.reload()}>
-            Try Again
-          </button>
-        </div>
-      </div>
+      <GateState
+        state="error"
+        title="Authentication failed"
+        message={auth.reason}
+        actionLabel="Try again"
+        onAction={() => window.location.reload()}
+      />
     );
   }
 
-  // ── Authenticated: show main app ──
+  return <AuthenticatedApp
+    key={auth.user.userId}
+    auth={auth}
+    route={freshLogin ? "chat" : route}
+    freshLogin={freshLogin}
+    settingsTab={settingsTab}
+    settingsNonce={settingsNonce}
+    onRouteChange={onRouteChange}
+    onOpenAccount={onOpenAccount}
+    onOpenSettings={() => {
+      setSettingsTab("memory");
+      setSettingsNonce((n) => n + 1);
+      onRouteChange("settings");
+    }}
+  />;
+}
+
+interface AuthenticatedAppProps {
+  auth: Extract<ReturnType<typeof useAuth>, { status: "authenticated" }>;
+  route: TopbarRoute;
+  freshLogin: boolean;
+  settingsTab: "memory" | "account";
+  settingsNonce: number;
+  onRouteChange(route: TopbarRoute): void;
+  onOpenAccount(): void;
+  onOpenSettings(): void;
+}
+
+// Keep authenticated effects in their own mounted lifetime. In particular,
+// login feedback never creates a voice/session client or waits on its readiness.
+function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce, onRouteChange, onOpenAccount, onOpenSettings }: AuthenticatedAppProps) {
   const { token, user } = auth;
+  const [arriving] = useState(freshLogin);
+  const departure = useSettingsDeparture();
+  const leaveSettings = async (action: () => void) => {
+    if (await departure.request()) action();
+  };
   const toast = useToast();
   const client = useVoiceClient({
     token,
@@ -163,7 +186,7 @@ function AppInner() {
       hook: createUseSessions(client.sessionsConnector),
     };
   }
-  useEffect(() => () => {
+  useLayoutEffect(() => () => {
     sessionsRef.current?.hook.dispose();
     sessionsRef.current = null;
   }, []);
@@ -175,21 +198,24 @@ function AppInner() {
   // settings pane's voice-preview gate can subscribe without SettingsView
   // itself re-rendering on every cycle-status change.
   const assistantSpeaking = useComputed(() => client.cycleStatus.value === "speaking");
-  const voiceMode = client.voiceMode.value;
   const tasks = client.tasks.value;
   const runningTasks = tasks.filter((t) => t.status === "running").length;
   const canInterrupt = cycleStatus !== "idle" || runningTasks > 0;
-  // Avatar mode for the active cycle's bubble: speaking when audio is
-  // playing, thinking during cognition/awaiting-response, idle otherwise.
-  // The "..." pulse-dot era falls under streaming since the cycle starts
-  // with empty text until the first delta lands.
-  const activeCycleMode: SentientMarkMode =
-    cycleStatus === "speaking" ? "speaking" : cycleStatus === "streaming" ? "thinking" : "idle";
-  // Topbar mark: listening takes priority (mic open), then speaking, then
-  // thinking. Static (idle) when nothing is happening — per design intent
-  // the brand mark must not animate at rest.
-  const topbarMarkMode: SentientMarkMode =
-    voiceMode === "active" ? "listening" : activeCycleMode;
+  const messages = client.messages.value;
+  const currentTurnId = client.currentTurnId.value;
+  const latestActiveAssistant = [...messages].reverse().find((message) =>
+    message.role === "assistant" && message.turnId === currentTurnId
+  );
+  // Cognition/action waits are thinking. The first visible assistant text and
+  // active playback are responding. Background tasks and listening do not
+  // activate a message identity; those remain composer-owned.
+  const activeCycleState: SentientIdentityState =
+    cycleStatus === "speaking" || (cycleStatus === "streaming" && Boolean(latestActiveAssistant?.text))
+      ? "responding"
+      : cycleStatus === "streaming"
+        ? "thinking"
+        : "idle";
+  const topbarMarkMode: SentientIdentityState = activeCycleState;
   const sdkStatus = client.sdkStatus.value;
   const connectionLost = client.connectionLost.value;
   const authExpired = client.authExpired.value;
@@ -247,6 +273,7 @@ function AppInner() {
   useEffect(() => {
     if (!authExpired) return;
     log.warn("auth-expired → forcing logout");
+    try { markAuthExpired(sessionStorage); } catch { /* storage disabled */ }
     void auth.logout();
   }, [authExpired, auth]);
 
@@ -264,37 +291,31 @@ function AppInner() {
   return (
     <SessionsProvider value={sessions}>
       <AppShell
+        arriving={arriving}
         topbar={
           <Topbar
             householdName="My Home"
             routeLabel={ROUTE_LABELS[route]}
-            deviceCount={DEVICE_COUNT}
             activeRoute={route}
             markMode={topbarMarkMode}
-            onChatClick={() => onRouteChange("chat")}
-            onSettingsClick={() => {
-              setSettingsTab("memory");
-              setSettingsNonce((n) => n + 1);
-              onRouteChange("settings");
-            }}
-            onCalendarClick={() => onRouteChange("calendar")}
-            onNotificationsClick={() => {
-              /* WIP no-op */
-            }}
+            onChatClick={() => void leaveSettings(() => onRouteChange("chat"))}
+            onSettingsClick={() => void leaveSettings(onOpenSettings)}
+            onCalendarClick={() => void leaveSettings(() => onRouteChange("calendar"))}
             onMenuClick={() => setDrawerOpen(true)}
             user={user}
-            onLogout={() => auth.logout()}
-            onOpenAccount={onOpenAccount}
+            onLogout={() => void leaveSettings(() => { void auth.logout(); })}
+            onOpenAccount={() => void leaveSettings(onOpenAccount)}
           />
         }
         main={
           route === "chat" ? (
             <ChatView
-              messages={client.messages.value}
+              messages={messages}
               transcript={client.transcript.value}
-              currentTurnId={client.currentTurnId.value}
-              activeCycleMode={activeCycleMode}
+              currentTurnId={currentTurnId}
+              activeCycleState={activeCycleState}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
+              status={connectionLost ? "error" : connectionReady ? "ready" : "loading"}
             />
           ) : route === "calendar" ? (
             <CalendarView token={token} />
@@ -304,32 +325,32 @@ function AppInner() {
               key={settingsNonce}
               onAudioApplied={client.patchPreferences}
               assistantSpeaking={assistantSpeaking}
+              onNavigationStateChange={departure.onStateChange}
+              onRequestLogout={() => void leaveSettings(() => { void auth.logout(); })}
             />
           )
         }
         dock={
           route === "chat" ? (
-            <Composer
+            <ChatComposer
               cycleStatus={cycleStatus}
-              voiceMode={client.voiceMode.value}
-              canInterrupt={canInterrupt}
               connectionReady={connectionReady}
+              captureActive={client.voiceMode.value === "active"}
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
               tasks={client.tasks.value}
               onSendText={client.sendText}
-              onMicStart={async () => {
+              onCaptureStart={async (mode) => {
                 try {
-                  await client.startVoiceMode();
+                  return await client.startCapture(mode);
                 } catch (err) {
-                  // Surface the reason (old browser, mic failure) and rethrow so
-                  // the corner mic control resets itself to idle.
                   const message = err instanceof Error ? err.message : "Couldn't start the microphone.";
                   toast.show(message, "error");
                   throw err;
                 }
               }}
-              onMicStop={() => client.stopVoiceMode()}
+              onCaptureCommit={client.commitCapture}
+              onCaptureCancel={client.cancelCapture}
               onTtsToggle={() => {
                 if (togglingRef.current) return;
                 togglingRef.current = true;
@@ -366,28 +387,19 @@ function AppInner() {
           ) : undefined
         }
       />
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
-      {connectionLost && <ConnectionLostBanner onReconnect={client.reconnect} />}
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onBeforeSessionChange={departure.request}
+        onSessionSelected={() => onRouteChange("chat")}
+      />
+      {departure.dialog}
+      {connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}
       {client.permissionRequest.value && (
         <PermissionDialog request={client.permissionRequest.value} onRespond={client.respondToPermission} />
       )}
       <ToastHost />
     </SessionsProvider>
-  );
-}
-
-interface ConnectionLostBannerProps {
-  onReconnect: () => void;
-}
-
-function ConnectionLostBanner({ onReconnect }: ConnectionLostBannerProps) {
-  return (
-    <div class="connection-lost-banner" role="alert">
-      <span class="connection-lost-banner__text">Connection lost.</span>
-      <button class="connection-lost-banner__btn" type="button" onClick={onReconnect}>
-        Tap to reconnect
-      </button>
-    </div>
   );
 }
 
@@ -402,31 +414,35 @@ interface AnonymousGateProps {
 
 function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
   const [hasAnyUser, setHasAnyUser] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [checkNonce, setCheckNonce] = useState(0);
+  const [expiredNotice] = useState(() => {
+    try { return takeAuthExpired(sessionStorage); } catch { return false; }
+  });
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoadError(false);
       const result = await apiRef.listUsers();
       if (cancelled) return;
       if (!result.ok) {
         log.warn("list-users-failed", { code: result.error.code });
-        setHasAnyUser(null);
+        setLoadError(true);
         return;
       }
       setHasAnyUser(result.value.length > 0);
     })();
     return () => { cancelled = true; };
-  }, [apiRef]);
+  }, [apiRef, checkNonce]);
+
+  if (loadError) {
+    return <GateState state="error" title="Could not check profiles" message="Check your connection and try again." actionLabel="Try again" onAction={() => setCheckNonce((value) => value + 1)} />;
+  }
 
   // Still loading
   if (hasAnyUser === null) {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Finding your household" message="Checking available profiles…" />;
   }
 
   // No users -> first-time setup
@@ -435,7 +451,7 @@ function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
   }
 
   // Users exist -> login
-  return <LoginScreen api={apiRef} auth={auth} />;
+  return <LoginScreen api={apiRef} auth={auth} notice={expiredNotice ? "Your session expired. Enter your PIN to continue." : undefined} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,15 +459,12 @@ function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
 // ---------------------------------------------------------------------------
 
 function InstallGate({ children }: { children: ComponentChildren }) {
-  const { state, loading, refresh } = useInstallState();
+  const { state, loading, error, refresh } = useInstallState();
   if (loading) {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Starting setup" message="Checking this installation…" />;
+  }
+  if (error) {
+    return <GateState state="error" title="Could not check setup" message="Check your connection and try again." actionLabel="Try again" onAction={() => void refresh()} />;
   }
   if (state && !state.bootstrap_complete) {
     return <WizardShell state={state} onChange={refresh} />;

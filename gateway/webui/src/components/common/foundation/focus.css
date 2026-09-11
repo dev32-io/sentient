@@ -1,0 +1,9 @@
+:is(.snt-button, .snt-icon-button, .snt-toggle, .snt-segment, .snt-chip):focus-visible,
+.snt-checkbox > input:focus-visible + .snt-checkbox__box {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+@media (hover: none), (pointer: coarse) {
+  .snt-button, .snt-icon-button, .snt-chip, .snt-toggle, .snt-segment { min-height: 44px; }
+  .snt-icon-button { width: 44px; }
+}

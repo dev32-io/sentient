@@ -27,7 +27,7 @@ export function DayView({
       data-calendar-view="day"
       data-calendar-canvas-view="day"
       aria-label={`Day view for ${dateLabel}`}
-      aria-busy={loading}
+      aria-busy={loading || refreshing}
     >
       <header class="calendar-day-view__header">
         <button

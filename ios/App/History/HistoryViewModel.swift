@@ -40,11 +40,7 @@ final class HistoryViewModel: ObservableObject {
 
     // ── Rows after client-side search filter ─────────────────────────────────
 
-    var visible: [SessionRow] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return sessions }
-        return sessions.filter { $0.title.range(of: trimmed, options: .caseInsensitive) != nil }
-    }
+    var visible: [SessionRow] { historySessions(sessions, matching: query) }
 
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -101,6 +97,12 @@ final class HistoryViewModel: ObservableObject {
         }
         await refresh()
     }
+}
+
+func historySessions(_ sessions: [SessionRow], matching query: String) -> [SessionRow] {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return sessions }
+    return sessions.filter { $0.title.range(of: trimmed, options: .caseInsensitive) != nil }
 }
 
 // ── SessionSummary → SessionRow mapping ──────────────────────────────────────

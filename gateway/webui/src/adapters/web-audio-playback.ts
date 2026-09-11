@@ -1,5 +1,6 @@
 import { type AudioPlaybackAdapter, createLogger } from "@sentient/web-sdk";
 import { AUDIO_SAMPLE_RATE, IDLE_SUSPEND_MS, PLAYBACK_GAIN_DESKTOP, PLAYBACK_GAIN_MOBILE } from "../constants.ts";
+import { type BrowserAudioPolicy, currentBrowserAudioPolicy } from "./browser-audio-policy.ts";
 import { createAudioLoopbackPeer } from "./web-audio-playback-peer.ts";
 
 /**
@@ -53,10 +54,12 @@ const log = createLogger(["sentient", "webui", "audio-playback"]);
 
 export interface WebAudioPlaybackOptions {
   sampleRate?: number;
+  audioPolicy?: BrowserAudioPolicy;
 }
 
 export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): FadeablePlaybackAdapter {
   const sampleRate = options?.sampleRate ?? AUDIO_SAMPLE_RATE;
+  const audioPolicy = options?.audioPolicy ?? currentBrowserAudioPolicy();
   const peer = createAudioLoopbackPeer();
 
   let audioContext: AudioContext | null = null;
@@ -64,6 +67,8 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
   let gainNode: GainNode | null = null;
   let aecEnabled = false;
   let peerReady = false;
+  let peerGeneration = 0;
+  let peerSetup: Promise<void> | null = null;
   let generation = 0;
   let isPlaying = false;
   let nextStartTime = 0;
@@ -122,11 +127,16 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
    * during long pauses saves battery. The peer is rebuilt on next enqueue if
    * AEC is enabled.
    */
+  function invalidatePeer(): void {
+    ++peerGeneration;
+    peer.destroy();
+    peerReady = false;
+  }
+
   function teardownPeerForIdle(): void {
     if (!peerReady) return;
     log.info("idle-teardown: destroying AEC peer", { aecEnabled });
-    peer.destroy();
-    peerReady = false;
+    invalidatePeer();
   }
 
   function scheduleIdleSuspend(): void {
@@ -205,17 +215,33 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
    * the result by checking `peerReady` before scheduling.
    */
   function ensurePeerReady(): void {
-    if (!aecEnabled || peerReady) return;
+    if (!aecEnabled || peerReady || peerSetup !== null) return;
     if (!audioContext || !destinationNode) return;
-    peer
-      .setup(destinationNode)
+    const setupGeneration = peerGeneration;
+    const setup = peer.setup(destinationNode);
+    peerSetup = setup;
+    void setup
       .then(() => {
+        if (setupGeneration !== peerGeneration || !aecEnabled) return;
         peerReady = true;
         warmPipeline();
         flushPreResume();
       })
       .catch((err) => {
-        log.error("ensurePeerReady: peer.setup failed", { err });
+        // Teardown deliberately invalidates an in-flight setup. Its rejected
+        // continuation is expected and must not be presented as an AEC fault.
+        if (setupGeneration === peerGeneration && aecEnabled) {
+          peer.destroy();
+          peerReady = false;
+          log.error("ensurePeerReady: peer.setup failed", { err });
+        }
+      })
+      .finally(() => {
+        if (peerSetup !== setup) return;
+        peerSetup = null;
+        // A rapid Hold -> Auto transition may have re-enabled AEC while the
+        // cancelled setup was unwinding. Start exactly one replacement now.
+        if (setupGeneration !== peerGeneration && aecEnabled) ensurePeerReady();
       });
   }
 
@@ -283,9 +309,9 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
       // looks "running" after gesture-resume but routes audio to nowhere
       // and never fires `onended`. We defer to the first unlock() call,
       // which is wired ONLY to TTS-expecting actions in use-voice-client
-      // (`sendText`, `startVoiceMode`). Both run inside `click` event
-      // handlers — the only DOM events that grant transient activation on
-      // iOS. Frames that arrive before unlock are buffered.
+      // (`sendText`, `startCapture`). Both run directly in their activating
+      // click/pointer handler so iOS grants transient activation. Frames that
+      // arrive before unlock are buffered.
       return true;
     },
 
@@ -348,12 +374,9 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
       pendingSourceCount = 0;
       preResumeBuffer = [];
 
-      // Tear down the loopback peer (if any) so its receiver buffer can't
-      // replay already-delivered audio after barge-in.
-      if (peerReady) {
-        peer.destroy();
-        peerReady = false;
-      }
+      // Tear down the loopback peer (including an in-flight setup) so its
+      // receiver buffer cannot replay already-delivered audio after barge-in.
+      invalidatePeer();
 
       const rate = audioContext.sampleRate;
       audioContext.close().catch(() => {});
@@ -374,10 +397,7 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
     destroy() {
       cancelDrainTimer();
       cancelIdleSuspendTimer();
-      if (peerReady) {
-        peer.destroy();
-        peerReady = false;
-      }
+      invalidatePeer();
       audioContext?.close().catch(() => {});
       audioContext = null;
       destinationNode = null;
@@ -408,7 +428,8 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
       this.clear();
     },
 
-    setAecEnabled(on: boolean): void {
+    setAecEnabled(requested: boolean): void {
+      const on = requested && audioPolicy.webRtcAecLoopback;
       if (aecEnabled === on) return;
       log.info("setAecEnabled", { from: aecEnabled, to: on });
       aecEnabled = on;
@@ -421,18 +442,18 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
         connectGainSink();
         ensurePeerReady();
       } else {
-        if (peerReady) {
-          peer.destroy();
-          peerReady = false;
-        }
+        // setup() is asynchronous. Cancelling only a ready peer lets a quick
+        // Hold -> Auto transition create a second pair while the first still
+        // mutates the same peer owner, which is unsafe in Firefox's audio path.
+        invalidatePeer();
         connectGainSink();
       }
     },
 
     unlock(): void {
-      // Caller MUST be a TTS-expecting onClick handler (`sendText`,
-      // `startVoiceMode`). iOS Safari refuses to route audio through a
-      // context constructed outside an activation-granting event, and once
+      // Caller MUST be a TTS-expecting activating handler (`sendText`,
+      // `startCapture`). iOS Safari refuses to route audio through a context
+      // constructed outside an activation-granting event, and once
       // a context is ghosted that way it cannot be revived by a later
       // resume(). Calling unlock() from any non-`click` path (passive
       // touchstart, document-wide listeners) corrupts the context for the

@@ -28,6 +28,59 @@ struct ChatRowsTests {
         #expect(chatRows([], calendar: cal).isEmpty)
     }
 
+    @Test func chronologyAppendsPendingRowsAfterHistoryWithoutASecondDivider() {
+        let day: Int64 = 1_700_000_000_000
+        let pending = PendingMessage(id: "p1", text: "queued", status: .queued, sentAtMs: nil)
+        let chronology = messageChronology(
+            messages: [msg(day, entryId: "u1")],
+            pending: [pending],
+            calendar: cal
+        )
+
+        #expect(chronology.messageCount == 2)
+        #expect(chronology.rows.count == 3) // divider + committed + pending
+        #expect(chronology.rows[1].id == "ent-u1")
+        #expect(chronology.rows[2].id == "send-p1")
+        if case let .pending(row, index) = chronology.rows[2] {
+            #expect(row.id == "p1")
+            #expect(index == 1)
+        } else {
+            #expect(Bool(false), "pending outbox entry must be a typed chronology row")
+        }
+    }
+
+    @Test func chronologySuppressesPendingEntryOnceItsCommittedEchoIsPresent() {
+        let echoed = ChatMessage(
+            ts: 1_700_000_000_000,
+            role: "user",
+            content: "hello",
+            streaming: false,
+            cutoffKind: nil,
+            turnId: nil,
+            replyId: nil,
+            pendingId: "p1",
+            entryId: "e1"
+        )
+        let pending = PendingMessage(id: "p1", text: "hello", status: .queued, sentAtMs: nil)
+        let chronology = messageChronology(messages: [echoed], pending: [pending], calendar: cal)
+
+        #expect(chronology.messageCount == 1)
+        #expect(chronology.rows.filter { if case .pending = $0 { return true } else { return false } }.isEmpty)
+    }
+
+    @Test func streamingRowsDoNotCreateAnEpochDivider() {
+        let committed = assistantMsg(1_700_000_000_000, turnId: "T1", replyId: "R1")
+        let streaming = assistantMsg(0, turnId: "T1", replyId: "R1", streaming: true)
+        let rows = messageChronology(messages: [committed, streaming], calendar: cal).rows
+
+        #expect(rows.filter { if case .divider = $0 { return true } else { return false } }.count == 1)
+        let continuations = rows.compactMap { row -> Bool? in
+            if case let .message(_, _, continuation) = row { return continuation }
+            return nil
+        }
+        #expect(continuations == [false, true])
+    }
+
     // MARK: — replyId render-key guard tests (steered-turn regression)
 
     private func assistantMsg(_ ts: Int64, turnId: String?, replyId: String? = nil,
@@ -85,6 +138,28 @@ struct ChatRowsTests {
         // share replyId — must yield the SAME row id so the handoff never remounts.
         let streaming = assistantMsg(0, turnId: nil, replyId: "R9", entryId: "", streaming: true)
         let committed = assistantMsg(1_700_000_000_000, turnId: nil, replyId: "R9", entryId: "R9")
-        #expect(ChatRow.message(streaming, index: 0).id == ChatRow.message(committed, index: 1).id)
+        #expect(ChatRow.message(streaming, index: 0, continuation: false).id == ChatRow.message(committed, index: 1, continuation: false).id)
+    }
+
+    @Test func adjacentSameSpeakerGroupsWithoutLosingRows() {
+        let first = assistantMsg(1_700_000_001_000, turnId: "T1", replyId: "R1")
+        let second = assistantMsg(1_700_000_002_000, turnId: "T2", replyId: "R2")
+        let rows = chatRows([first, second], calendar: cal)
+        let continuations = rows.compactMap { row -> Bool? in
+            if case let .message(_, _, continuation) = row { return continuation }
+            return nil
+        }
+        #expect(continuations == [false, true])
+    }
+
+    @Test func roleChangeAndDayDividerBreakGrouping() {
+        let first = assistantMsg(1_700_000_001_000, turnId: "T1")
+        let user = msg(1_700_000_002_000)
+        let nextDay = assistantMsg(1_700_086_401_000, turnId: "T2")
+        let continuations = chatRows([first, user, nextDay], calendar: cal).compactMap { row -> Bool? in
+            if case let .message(_, _, continuation) = row { return continuation }
+            return nil
+        }
+        #expect(continuations == [false, false, false])
     }
 }

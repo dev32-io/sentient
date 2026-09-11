@@ -1,6 +1,8 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { createLogger } from "@sentient/web-sdk";
+import { ActionButton, Field, Plate } from "../../common/foundation.tsx";
+import { Notice } from "../../common/composites.tsx";
 
 const log = createLogger(["sentient", "webui", "wizard", "step-secrets"]);
 
@@ -57,80 +59,25 @@ export function StepSecrets({ onAdvance }: StepSecretsProps): JSX.Element {
       <h2>Connect smart-home services (optional)</h2>
       <p>If you use Home Assistant or Music Assistant, give Sentient access here. Skip any field you don't use.</p>
 
-      <fieldset>
-        <legend>Home Assistant</legend>
-        <label>
-          URL
-          <input
-            type="text"
-            placeholder="https://homeassistant.local:8123"
-            value={haUrl}
-            onInput={(e) => setHaUrl((e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          LAN IP <span>(only if URL hostname is mDNS / not routable from docker)</span>
-          <input
-            type="text"
-            placeholder="192.168.1.50"
-            value={haLocalIp}
-            onInput={(e) => setHaLocalIp((e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          Observer token <span>(read-only)</span>
-          <input
-            type="password"
-            value={haObserve}
-            onInput={(e) => setHaObserve((e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          MCP token <span>(write access for tools)</span>
-          <input
-            type="password"
-            value={haMcp}
-            onInput={(e) => setHaMcp((e.target as HTMLInputElement).value)}
-          />
-        </label>
-      </fieldset>
+      <Plate className="wizard-fieldset">
+        <h3>Home Assistant</h3>
+        <Field label="URL" placeholder="https://homeassistant.local:8123" value={haUrl} onInput={(event) => setHaUrl(event.currentTarget.value)} />
+        <Field label="LAN IP" hint="Only needed when the hostname is not reachable from the assistant." placeholder="192.168.1.50" value={haLocalIp} onInput={(event) => setHaLocalIp(event.currentTarget.value)} />
+        <Field label="Observer token" hint="Read-only access" type="password" value={haObserve} onInput={(event) => setHaObserve(event.currentTarget.value)} />
+        <Field label="Tool access token" hint="Write access for approved actions" type="password" value={haMcp} onInput={(event) => setHaMcp(event.currentTarget.value)} />
+      </Plate>
 
-      <fieldset>
-        <legend>Music Assistant</legend>
-        <label>
-          URL
-          <input
-            type="text"
-            placeholder="http://mass.local:8095"
-            value={maUrl}
-            onInput={(e) => setMaUrl((e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          LAN IP <span>(required if URL hostname is mDNS / not routable from docker)</span>
-          <input
-            type="text"
-            placeholder="192.168.1.50"
-            value={maLocalIp}
-            onInput={(e) => setMaLocalIp((e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          Token
-          <input
-            type="password"
-            value={maToken}
-            onInput={(e) => setMaToken((e.target as HTMLInputElement).value)}
-          />
-        </label>
-      </fieldset>
+      <Plate className="wizard-fieldset">
+        <h3>Music Assistant</h3>
+        <Field label="URL" placeholder="http://mass.local:8095" value={maUrl} onInput={(event) => setMaUrl(event.currentTarget.value)} />
+        <Field label="LAN IP" hint="Required when the hostname is not reachable from the assistant." placeholder="192.168.1.50" value={maLocalIp} onInput={(event) => setMaLocalIp(event.currentTarget.value)} />
+        <Field label="Token" type="password" value={maToken} onInput={(event) => setMaToken(event.currentTarget.value)} />
+      </Plate>
 
-      {err && <p class="step-secrets__error">{err}</p>}
+      {err && <Notice tone="error">{err}</Notice>}
 
       <footer>
-        <button type="button" disabled={busy} onClick={next}>
-          {busy ? "Saving…" : "Continue"}
-        </button>
+        <ActionButton variant="primary" loading={busy} onClick={() => void next()}>Continue</ActionButton>
       </footer>
     </section>
   );

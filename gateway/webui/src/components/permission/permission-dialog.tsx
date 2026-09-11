@@ -1,6 +1,7 @@
 import type { PermissionRequestItem } from "@sentient/web-sdk";
 import type { JSX } from "preact";
 import { Dialog } from "../common/dialog.tsx";
+import { ActionButton, Well } from "../common/foundation.tsx";
 
 export interface PermissionDialogProps {
   request: PermissionRequestItem;
@@ -38,18 +39,21 @@ export function PermissionDialog({ request, onRespond }: PermissionDialogProps):
       onClose={deny}
       footer={
         <>
-          <button type="button" class="app-dialog__btn app-dialog__btn--ghost" onClick={deny}>
-            Deny
-          </button>
-          <button type="button" class="app-dialog__btn app-dialog__btn--danger" onClick={() => onRespond(true)}>
-            Allow
-          </button>
+          <ActionButton variant="quiet" className="app-dialog__btn app-dialog__btn--ghost" onClick={deny}>Deny</ActionButton>
+          <ActionButton variant="destructive" className="app-dialog__btn app-dialog__btn--danger" onClick={() => onRespond(true)}>Allow</ActionButton>
         </>
       }
     >
+      <Well className="permission-dialog__summary">
+        <dl>
+          <div><dt>Action</dt><dd>{request.toolName}</dd></div>
+          <div><dt>Target</dt><dd>{request.description}</dd></div>
+          <div><dt>Scope</dt><dd>This request only</dd></div>
+          <div><dt>Consequence</dt><dd>Allowing lets Sentient perform this action now.</dd></div>
+        </dl>
+      </Well>
       <div class="permission-dialog__tool">
-        <span class="permission-dialog__tool-label">Tool</span>
-        <span class="permission-dialog__tool-name">{request.toolName}</span>
+        <span class="permission-dialog__tool-label">Request details</span>
       </div>
       {Object.entries(request.args).length === 0 ? (
         <p class="permission-dialog__args permission-dialog__args--empty">(no arguments)</p>

@@ -1,0 +1,6 @@
+Review iteration 3 head: 899eba80fe1e643d8bbddf6a17847e71b536adc9
+Prior reviewed commit: 6891b1e0966a4122c397086ff1304b1abd5dc148
+`git diff 6891b1e0..899eba80 -- :!agent-artifacts/**` has no output: this iteration contains no product, QA catalog, capture, checker, or visual-manifest repair. All six changed files are evaluation/harness records under agent-artifacts/.
+The relevant source diff is empty for gateway/webui/src/qa, ios/App/QAVisualReviewCatalog.swift, qa/design-refresh/capture-ios-visual-review.sh, qa/design-refresh/visual-review.json, and qa/design-refresh/check.ts.
+Current `bun qa/design-refresh/check.ts --require-closed` passes, but the unchanged manifest still has 373 reviewed entries and 105 entries with at least one needs-review result. The generic Web StateSpecimen, generic iOS QAVisualReviewSpecimen, and state-name/regex-derived iOS measurements identified in FINAL-003 remain present and unchanged.
+FINAL-001 and FINAL-002 remain resolved; their source is also untouched by this metadata-only iteration.

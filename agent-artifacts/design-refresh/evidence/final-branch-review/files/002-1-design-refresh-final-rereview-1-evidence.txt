@@ -1,0 +1,5 @@
+Boundary repair: ed78cfb880978aa0e86950a12f5efd7af73db049..5c2df1a8b2172951c9a79d9343f39f5cb079e06d
+FINAL-001: resolved. Deterministic partial-before-End/final-after-End probe submitted exactly ["final words"]. Focused gateway suite passed 49 tests, including empty finalization, duplicate callback, flush failure, and cancel/end races.
+FINAL-002: resolved. Capture IDs are bounded to 128 characters, legacy omission remains accepted, and gateway/STT diagnostics use a 12-hex SHA-256 fingerprint. Protocol tests (117) and gateway content-shaped-ID log tests passed.
+FINAL-003: open. visual-review.json contains 373 pending, 0 reviewed entries and 0 evidence paths. `bun qa/design-refresh/check.ts --require-closed` fails with 373 open entries.
+Additional repair checks: QA checker tests 10 passed; ordinary inventory check passed; Web SDK tests 246 passed; repository typecheck passed; mobile-sdk Android/JVM tests freshly rerun and passed; bounded diff check passed; worktree clean.

@@ -1,0 +1,21 @@
+@media (hover: none), (max-width: 620px) {
+  .snt-button, .snt-icon-button { min-height: 44px; }
+  .snt-icon-button { width: 44px; }
+  .snt-chip { min-height: 38px; }
+  .snt-segmented { min-height: 44px; }
+  .snt-segment { min-height: 34px; }
+}
+
+@media (max-width: 620px) {
+  .snt-plate { border-radius: var(--radius-md); }
+  .snt-plate__head, .snt-plate__body { padding-inline: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snt-surface *, .snt-surface *::before, .snt-surface *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+@media (prefers-contrast: more) {
+  .snt-button, .snt-icon-button, .snt-input, .snt-textarea, .snt-toggle, .snt-segmented, .snt-chip, .snt-checkbox__box, .snt-plate, .snt-avatar--user { border-color: var(--color-ink-3); }
+  .snt-button:focus-visible, .snt-input:focus-visible, .snt-textarea:focus-visible { outline-width: 3px; }
+}

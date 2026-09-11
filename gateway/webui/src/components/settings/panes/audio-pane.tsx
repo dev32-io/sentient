@@ -1,19 +1,10 @@
-// gateway/webui/src/components/settings/panes/audio-pane.tsx
 import type { JSX } from "preact";
 import { createLogger } from "@sentient/web-sdk";
 import type { ProfileV1 } from "../../../services/profile-api.js";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Row } from "../primitives/row.tsx";
-import { Segmented } from "../primitives/segmented.tsx";
-import { Toggle } from "../primitives/toggle.tsx";
+import { PaneChrome, SegmentedControl, SettingsCard, SettingsGroup, SettingsRow, ToggleControl } from "../../common/index.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "audio-pane"]);
-
-const CHANNEL_OPTIONS = [
-  { value: "voice", label: "Voice (audio + chat)" },
-  { value: "text", label: "Text only" },
-];
+const CHANNEL_OPTIONS = [{ value: "voice", label: "Voice and chat" }, { value: "text", label: "Text only" }];
 
 export interface AudioPaneProps {
   draft: ProfileV1;
@@ -21,43 +12,34 @@ export interface AudioPaneProps {
 }
 
 export function AudioPane({ draft, onDraftAudio }: AudioPaneProps): JSX.Element {
-  const handleTtsToggle = () => {
-    const next = !draft.audio.ttsEnabled;
-    log.debug("audio.ttsEnabled.change", { ttsEnabled: next });
-    onDraftAudio({ ...draft.audio, ttsEnabled: next });
-  };
-
-  const handleChannelChange = (v: string) => {
-    const channel = v === "text" ? "text" : "voice";
-    log.debug("audio.channel.change", { channel });
-    onDraftAudio({ ...draft.audio, channel });
-  };
-
   return (
-    <>
-      <PaneHead
-        title="Audio"
-        sub="How Sentient delivers replies. Both settings persist across sessions and devices, and take effect on the next reply."
-      />
-
-      <Card title="Output">
-        <Row
-          label="Speak responses (TTS)"
-          hint="When off, replies are silent — text still streams to chat."
-        >
-          <Toggle on={draft.audio.ttsEnabled} onChange={handleTtsToggle} />
-        </Row>
-        <Row
-          label="Reply channel"
-          hint="Voice plays audio alongside chat. Text suppresses audio entirely."
-        >
-          <Segmented
-            value={draft.audio.channel}
-            onChange={handleChannelChange}
-            options={CHANNEL_OPTIONS}
-          />
-        </Row>
-      </Card>
-    </>
+    <PaneChrome title="Audio" subtitle="Choose how Sentient delivers replies. Changes apply across sessions and devices after you save settings.">
+      <SettingsCard title="Reply output" padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Speak responses" hint="When off, replies stay silent while text continues to stream to chat.">
+            <ToggleControl
+              label="Speak responses"
+              checked={draft.audio.ttsEnabled}
+              onChange={(ttsEnabled) => {
+                log.debug("audio.ttsEnabled.change", { ttsEnabled });
+                onDraftAudio({ ...draft.audio, ttsEnabled });
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow label="Reply channel" hint="Voice plays audio alongside chat. Text suppresses audio entirely.">
+            <SegmentedControl
+              label="Reply channel"
+              value={draft.audio.channel}
+              onChange={(value) => {
+                const channel = value === "text" ? "text" : "voice";
+                log.debug("audio.channel.change", { channel });
+                onDraftAudio({ ...draft.audio, channel });
+              }}
+              options={CHANNEL_OPTIONS}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsCard>
+    </PaneChrome>
   );
 }

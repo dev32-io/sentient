@@ -1,0 +1,4 @@
+.snt-select-wrap { position: relative; min-width: 0; }
+.snt-select { width: 100%; min-height: 40px; appearance: none; padding: 9px 36px 9px 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); outline: 0; background: var(--well-face); color: var(--color-ink); box-shadow: var(--well-shadow); }
+.snt-select-wrap::after { content: "⌄"; position: absolute; right: 12px; top: 50%; color: var(--color-ink-2); pointer-events: none; transform: translateY(-55%); }
+.snt-select:focus-visible { border-color: color-mix(in oklab, var(--color-accent) 56%, var(--color-line)); box-shadow: var(--well-shadow-focus); }

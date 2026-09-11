@@ -4,10 +4,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { ModelEntry, ProvidersApi } from "../../../services/providers-api.ts";
 import type { ProfileV1 } from "../../../services/profile-api.js";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Segmented } from "../primitives/segmented.tsx";
-import { SearchField } from "../primitives/search-field.tsx";
+import { ActionButton, AsyncState, Field, PaneChrome, SegmentedControl, SettingsCard } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "model-pane"]);
@@ -56,6 +53,7 @@ export function ModelPane({
 }: ModelPaneProps): JSX.Element {
   const [models, setModels] = useState<ModelEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   // Ephemeral browse state — independent of the saved/draft provider so the
   // user can browse the other catalog without losing their current pick.
   // When lockedProvider is set, initialise from it and never allow mutation.
@@ -65,6 +63,7 @@ export function ModelPane({
   const [q, setQ] = useState("");
 
   useEffect(() => {
+    setLoadError(null);
     void (async () => {
       const r = await api.listModels(token);
       if (!r.ok) {
@@ -74,7 +73,7 @@ export function ModelPane({
       }
       setModels(r.value.models);
     })();
-  }, [api, token]);
+  }, [api, token, loadAttempt]);
 
   const list = useMemo(() => {
     if (!models) return [];
@@ -85,23 +84,17 @@ export function ModelPane({
 
   if (loadError) {
     return (
-      <>
-        {!hideHead && (
-          <PaneHead title="Model" sub="The LLM that powers Sentient's reasoning and tool calls." />
-        )}
-        <p class="pane-error">{loadError}</p>
-      </>
+      <PaneChrome title={hideHead ? undefined : "Model"} subtitle={hideHead ? undefined : "Choose the model that powers reasoning and tool use."}>
+        <AsyncState state="error" title={loadError} action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
+      </PaneChrome>
     );
   }
 
   if (!models) {
     return (
-      <>
-        {!hideHead && (
-          <PaneHead title="Model" sub="The LLM that powers Sentient's reasoning and tool calls." />
-        )}
-        <div class="pane-skeleton" aria-hidden="true" />
-      </>
+      <PaneChrome title={hideHead ? undefined : "Model"} subtitle={hideHead ? undefined : "Choose the model that powers reasoning and tool use."}>
+        <AsyncState state="loading" title="Loading models" />
+      </PaneChrome>
     );
   }
 
@@ -116,7 +109,8 @@ export function ModelPane({
     <div class="prov-body">
           <div class="prov-row">
             {!lockedProvider && (
-              <Segmented
+              <SegmentedControl
+                label="Model provider"
                 value={provider}
                 onChange={(v) => setProvider(v as Provider)}
                 options={[
@@ -130,20 +124,16 @@ export function ModelPane({
             </span>
           </div>
           <div class="prov-search">
-            <SearchField
-              value={q}
-              onChange={(e) => setQ((e.target as HTMLInputElement).value)}
-              placeholder={`Search ${list.length} models…`}
-              fullWidth
-            />
+            <Field label="Search models" type="search" value={q} onInput={(event) => setQ(event.currentTarget.value)} placeholder={`Search ${list.length} models…`} />
           </div>
           <div class="model-grid">
             {list.map((m) => {
               const sel = draft.model?.id === m.id;
               return (
-                <div
+                <ActionButton
                   key={m.id}
-                  class={["mod", sel && "is-sel"].filter(Boolean).join(" ")}
+                  className={["mod", sel && "is-sel"].filter(Boolean).join(" ")}
+                  aria-pressed={sel}
                   onClick={() => handleSelect(m)}
                 >
                   <div class="mod-top">
@@ -169,33 +159,30 @@ export function ModelPane({
                       <Icon name="check" size={11} />
                     </div>
                   )}
-                </div>
+                </ActionButton>
               );
             })}
-            {list.length === 0 && <div class="empty-pad">No models match.</div>}
+            {list.length === 0 && <AsyncState state="empty" title="No models match" message="Try another search or provider." />}
           </div>
         </div>
   );
 
   return (
-    <>
-      {!hideHead && (
-        <PaneHead title="Model" sub="The LLM that powers Sentient's reasoning and tool calls." />
-      )}
+    <PaneChrome title={hideHead ? undefined : "Model"} subtitle={hideHead ? undefined : "Choose the model that powers reasoning and tool use."}>
 
       {hideSavedTile ? (
         body
       ) : (
         <>
-          <Card title="Current selection">
+          <SettingsCard title="Current selection">
             <div class="m-current">{savedModelTile}</div>
-          </Card>
-          <Card title="Browse models" padding={false}>
+          </SettingsCard>
+          <SettingsCard title="Browse models" padded={false}>
             {body}
-          </Card>
+          </SettingsCard>
         </>
       )}
-    </>
+    </PaneChrome>
   );
 }
 

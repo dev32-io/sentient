@@ -1,0 +1,36 @@
+schemaVersion: 1
+id: web-settings-shell-trust
+title: Refresh the Web Settings shell, account/admin panes, and Diagnostics
+  trust boundary
+status: merged
+dependsOn:
+  - web-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Settings persistence and authorization presentation must be preserved
+      across a bounded set of related panes and shell state.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run --filter '@sentient/webui' test:unit
+    - bun run --filter '@sentient/webui' typecheck
+    - bun run --filter '@sentient/webui' build
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/web-settings-shell-trust
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/web-settings-shell-trust
+  baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
+  lastRunId: 5f40fdc9-918b-4efb-882b-891b5a286cfb
+  completedCommit: 1229b5271473a45aa5c9004c00f0aa3abfc3b0e4
+  mergedCommit: dcfdd3ca02ea8897ee9fe41fbfd5182b083b5615

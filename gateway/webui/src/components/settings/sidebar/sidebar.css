@@ -1,139 +1,144 @@
-/* gateway/webui/src/components/settings/sidebar/sidebar.css */
-/* Ported from sentient-webui-design-v2/styles.css; namespaced under .settings-v2 */
-
-.settings-v2 .s-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 28px 14px 18px;
-  background: var(--color-bg);
+.s-nav {
+  position: relative;
+  display: grid;
+  gap: var(--space-lg);
+  padding: var(--space-sm);
 }
-
-.settings-v2 .s-nav-group {
-  display: flex;
-  flex-direction: column;
+.s-nav-current {
+  position: absolute;
+  z-index: 0;
+  top: var(--nav-current-top, var(--space-sm));
+  right: var(--nav-current-inset, var(--space-sm));
+  left: var(--nav-current-inset, var(--space-sm));
+  height: var(--nav-current-height, 2.75rem);
+  border-radius: var(--radius-sm);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  pointer-events: none;
+  transition: top var(--motion-state), height var(--motion-state);
+}
+.s-nav-group {
+  position: relative;
+  z-index: 1;
+  display: grid;
   gap: 2px;
 }
-
-.settings-v2 .s-nav-h {
-  font-size: var(--font-size-xs);
-  letter-spacing: 0.12em;
-  color: var(--color-ink-4);
-  padding: 0 10px 6px;
-}
-
-.settings-v2 .s-nav-i {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-md);
-  color: var(--color-ink-2);
-  text-align: left;
-  position: relative;
-}
-
-.settings-v2 .s-nav-i:hover {
-  background: var(--color-bg-sunk);
-  color: var(--color-ink);
-}
-
-.settings-v2 .s-nav-i.active {
-  background: var(--color-accent-50);
-  color: var(--color-accent);
-}
-
-.settings-v2 .s-nav-i .dot-dirty {
-  position: absolute;
-  right: 12px;
-  top: 14px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-amber);
-}
-
-.settings-v2 .s-side-foot {
-  margin-top: auto;
-  padding: 22px 22px 28px;
-  background: var(--color-bg);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settings-v2 .s-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
-}
-
-.settings-v2 .s-side-meta {
-  list-style: none;
+.s-nav-h {
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.settings-v2 .s-side-meta li {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 11px;
-  color: var(--color-ink-4);
-}
-.settings-v2 .s-side-meta li > span {
-  letter-spacing: 0.02em;
-}
-.settings-v2 .s-side-meta code {
-  background: transparent;
-  padding: 0;
+  padding: 0 var(--space-sm) var(--space-xs);
   color: var(--color-ink-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.02em;
+  font: 500 var(--font-size-xs) / var(--line-height-normal) var(--font-mono);
 }
-
-.settings-v2 .ok-dot,
-.settings-v2 .status-dot-unavailable {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.s-nav-i {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-height: 2.75rem;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink-2);
+  box-shadow: none;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: inherit;
+  line-height: inherit;
+  text-align: left;
+  white-space: normal;
+  transform: none;
+  transition: color var(--motion-feedback), background-color var(--motion-feedback), box-shadow var(--motion-feedback);
 }
-
-.settings-v2 .ok-dot {
-  background: var(--color-ok);
-  box-shadow: 0 0 0 3px rgba(95, 138, 91, 0.18);
+.s-nav-i--described { min-height: 58px; }
+.s-nav-icon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
 }
-
-.settings-v2 .status-dot-unavailable {
-  background: var(--color-warn);
+.s-nav-copy {
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.s-nav-copy > small {
+  overflow: hidden;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.s-nav-i[aria-current="page"] { color: var(--color-accent); }
+.s-nav-i[aria-current="page"] .s-nav-copy > small { color: var(--color-ink-2); }
+.s-nav-i > svg:last-child { color: var(--color-ink-3); }
+.s-nav-i .dot-dirty {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  box-shadow: 0 0 7px color-mix(in oklab, var(--color-accent) 70%, transparent);
+}
+.s-nav-i:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+.s-nav-i:active:not(:disabled) {
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  transform: none;
+}
+.s-nav-i[aria-current="page"]:active {
+  box-shadow: var(--slate-shadow-pressed);
+}
+.settings-v2 .s-nav--settings {
+  --nav-current-inset: var(--space-md);
+  padding: var(--space-xl) var(--space-md);
+}
+.settings-v2 .s-side-foot {
+  flex-shrink: 0;
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: auto;
+  padding: var(--space-lg);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+}
+.settings-v2 .s-side-foot .status-chip {
+  height: auto;
+  min-height: 28px;
+  padding-block: var(--space-xs);
+}
+.settings-v2 .s-side-foot p { margin: 0; line-height: var(--line-height-normal); }
 
-@media (max-width: 880px) {
-  .settings-v2 .s-nav {
-    flex-direction: row;
-    flex-wrap: nowrap;
-    gap: 6px;
-    padding: 10px 12px;
-    min-width: 0; /* allow the strip to shrink to the column so overflow-x clips, not expands */
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+@media (hover: hover) and (pointer: fine) {
+  .s-nav-i:not([aria-current="page"]):hover:not(:active) {
+    border-color: transparent;
+    background: color-mix(in oklab, var(--color-bg-elev) 78%, var(--color-paper));
+    box-shadow: none;
+    transform: none;
   }
-  /* groups flatten into one scroll row; hide the "User"/"Admin" headers */
-  .settings-v2 .s-nav-group { flex-direction: row; gap: 6px; }
-  .settings-v2 .s-nav-h { display: none; }
-  .settings-v2 .s-nav-i {
-    flex: 0 0 auto;
-    white-space: nowrap;
-    padding: 8px 12px;
-    border: 1px solid var(--color-line-soft);
-  }
-  /* dirty dot would overlap the chip edge — re-anchor it */
-  .settings-v2 .s-nav-i .dot-dirty { right: 6px; top: 6px; }
-  /* the side footer/status block is desktop-only chrome */
+}
+
+@media (max-width: 55rem) {
+  .settings-v2 .s-nav--settings { padding: var(--space-md); }
+  .settings-v2 .s-nav-i { min-height: 3rem; }
   .settings-v2 .s-side-foot { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .s-nav-current, .s-nav-i { transition: none; }
+}
+
+@media (prefers-contrast: more) {
+  .s-nav-i:focus-visible { outline-width: 3px; }
 }

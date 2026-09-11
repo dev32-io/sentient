@@ -1,0 +1,133 @@
+/* All standalone action variants retain the elevated-slate construction. */
+.snt-button,
+.snt-icon-button {
+  position: relative;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 15px;
+  /* Preserve figure-ground separation when the control sits on a paper plate. */
+  --slate-base: color-mix(in oklab, var(--color-paper) 91%, var(--color-ink-2));
+  --slate-border: var(--color-line);
+  --slate-glow: var(--color-accent);
+  border: 1px solid var(--slate-border);
+  border-radius: 7px;
+  background: var(--slate-face);
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: var(--slate-shadow);
+  transform: translateY(0);
+  transition: background var(--motion-feedback), border-color var(--motion-feedback), color var(--motion-feedback), box-shadow var(--motion-state), transform 90ms ease;
+}
+.snt-icon-button { width: 40px; padding: 0; }
+@media (hover: hover) and (pointer: fine) {
+  .snt-button:hover:not(:disabled),
+  .snt-icon-button:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--slate-face-hover);
+    box-shadow: var(--slate-shadow-hover);
+    transform: translateY(-1px);
+  }
+}
+.snt-button:active:not(:disabled),
+.snt-icon-button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--slate-shadow-pressed);
+  transition-duration: 70ms;
+}
+/* Legacy Dialog classes are variant aliases on ActionButton, not a second key recipe. */
+.snt-button--primary,
+.app-dialog__btn--primary {
+  --slate-base: var(--color-accent);
+  --slate-border: color-mix(in oklab, var(--color-accent) 64%, var(--color-bg-sunk));
+  color: var(--color-bg-sunk);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 24%, transparent),
+    0 2px 0 -1px color-mix(in oklab, var(--color-accent) 22%, var(--color-bg-sunk)),
+    0 9px 15px -10px rgba(0, 0, 0, .92),
+    0 13px 22px -13px color-mix(in oklab, var(--color-accent) 58%, transparent);
+}
+.snt-button--quiet,
+.app-dialog__btn--ghost {
+  /* Quiet changes contrast, not construction. It is still a slate key. */
+  --slate-base: var(--color-bg-elev);
+  --slate-border: color-mix(in oklab, var(--color-line-soft) 84%, var(--color-bg));
+  color: var(--color-ink-2);
+}
+.snt-button--destructive,
+.app-dialog__btn--danger {
+  --slate-base: color-mix(in oklab, var(--color-paper) 62%, var(--color-stop));
+  --slate-border: color-mix(in oklab, var(--color-stop) 76%, var(--color-line));
+  --slate-glow: var(--color-stop);
+  color: color-mix(in oklab, var(--color-ink) 94%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 13%, transparent),
+    0 2px 0 -1px color-mix(in oklab, var(--color-stop) 38%, var(--color-bg-sunk)),
+    var(--slate-cast),
+    0 13px 22px -14px color-mix(in oklab, var(--color-stop) 72%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .snt-button--destructive:hover:not(:active):not(:disabled),
+  .app-dialog__btn--danger:hover:not(:active):not(:disabled),
+  .snt-icon-button.snt-button--destructive:hover:not(:active):not(:disabled) {
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 16%, transparent),
+      0 2px 0 -1px color-mix(in oklab, var(--color-stop) 46%, var(--color-bg-sunk)),
+      0 11px 18px -10px rgba(0, 0, 0, .94),
+      0 14px 24px -13px color-mix(in oklab, var(--color-stop) 78%, transparent);
+  }
+}
+.snt-button:disabled,
+.snt-icon-button:disabled {
+  --slate-base: color-mix(in oklab, var(--color-bg-elev) 92%, var(--color-ink-4));
+  --slate-border: color-mix(in oklab, var(--color-line-soft) 74%, var(--color-bg));
+  border-color: var(--slate-border);
+  background: var(--slate-face-muted);
+  color: var(--color-ink-4);
+  box-shadow: var(--slate-shadow-disabled);
+  cursor: not-allowed;
+  opacity: 1;
+  transform: none;
+}
+
+/* Content-hosted actions are not standalone keys. Leave layout, resting face
+   and persistent selection to the containing surface. Tone/occlusion provide
+   feedback without moving broad-row text, adding a rim, or raising date keys. */
+:where(.snt-surface-action) {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--motion-feedback), box-shadow var(--motion-feedback), color var(--motion-feedback);
+}
+@media (hover: hover) and (pointer: fine) {
+  :where(.snt-surface-action:hover:not(:disabled)) {
+    background: color-mix(in oklab, var(--color-bg-elev) 78%, var(--color-paper));
+  }
+}
+.snt-surface-action:active:not(:disabled) {
+  box-shadow: var(--slate-shadow-pressed);
+}
+.snt-surface-action:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+.snt-surface-action:disabled {
+  background: var(--slate-face-muted);
+  color: var(--color-ink-4);
+  box-shadow: var(--slate-shadow-disabled);
+  cursor: not-allowed;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .snt-surface-action { transition: none; }
+}
+@media (prefers-contrast: more) {
+  .snt-surface-action:focus-visible { outline-width: 3px; }
+}

@@ -1,0 +1,29 @@
+schemaVersion: 1
+evaluation: stage-platform-foundations-review
+recordedAt: 2026-08-25T23:18:56.346Z
+entries:
+  - result: All declared stage checks passed; worktree clean.
+    description: Sanitized fresh verification summary for re-review iteration 1.
+    path: files/002-1-stage-platform-foundations-rereview-1.txt
+    checksum: sha256:b3cdffb3f2e74cf424b3389e96801dbaef4a0d74b8779006bf8c783775beeb49
+  - result: F1 resolved by source inspection and passing iOS tests.
+    description: Bounded F1 repair implementing native material layers and state variants.
+    path: files/002-2-DesignControls.swift
+    checksum: sha256:766d9ad437ac1c2737925b9857e495f40a3eada366bdd40290b0d3c2803fea07
+  - result: F2 resolved by source inspection and mobile tests.
+    description: Serialized teardown barrier and capture request gate.
+    path: files/002-3-SdkVoice.kt
+    checksum: sha256:86fd70945e63b99e612a1daa9732f6aaba89aff0e92b5ac35232faf6670ac4b7
+  - result: F2 proof passed.
+    description: Teardown race regression proving matching cancel, no active
+      capture, no late frames, and no restart.
+    path: files/002-4-SdkVoiceTest.kt
+    checksum: sha256:d13e388e8b9430afacad066360f6a18c8658c1b2ccc9d03f017403223af939b8
+  - result: F3 resolved.
+    description: Default registry-backed inert and aria-hidden background isolation.
+    path: files/002-5-dialog.tsx
+    checksum: sha256:2ea92875c9b1b3eddabd815796fd25c31e97ee0d089d91ae82f11e8771de2cad
+  - result: F4 and F5 proof passed.
+    description: Textarea compatibility and complete Select keyboard regressions.
+    path: files/002-6-compatibility-accessibility.test.tsx
+    checksum: sha256:32f3a62430b8303eafea1920c1c55299f90a212d26f1e6de8923ed83cde2d865

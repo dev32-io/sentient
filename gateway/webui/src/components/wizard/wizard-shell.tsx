@@ -6,6 +6,7 @@ import type { InstallState } from "../../hooks/use-install-state.ts";
 import { WizardStepper } from "./wizard-stepper.tsx";
 import { UnlockGate } from "./unlock-gate.tsx";
 import { STEP_COMPONENTS } from "./step-registry.tsx";
+import { Plate, Surface } from "../common/foundation.tsx";
 
 const log = createLogger(["sentient", "webui", "wizard", "shell"]);
 
@@ -26,11 +27,11 @@ async function postBack(from: WizardStepId): Promise<boolean> {
 export function WizardShell({ state, onChange }: WizardShellProps): JSX.Element {
   if (!state.unlock_verified) {
     return (
-      <div class="wizard-page">
-        <div class="wizard-box">
+      <Surface className="wizard-page">
+        <Plate className="wizard-box">
           <UnlockGate onUnlocked={onChange} />
-        </div>
-      </div>
+        </Plate>
+      </Surface>
     );
   }
 
@@ -45,8 +46,8 @@ export function WizardShell({ state, onChange }: WizardShellProps): JSX.Element 
   }
 
   return (
-    <div class="wizard-page">
-      <div class="wizard-box">
+    <Surface className="wizard-page">
+      <Plate className="wizard-box">
         <header class="wizard-box__header">
           <h1>Welcome to Sentient</h1>
           <WizardStepper current={state.wizard_cursor} />
@@ -57,7 +58,7 @@ export function WizardShell({ state, onChange }: WizardShellProps): JSX.Element 
             {...(def?.backTo ? { onBack: handleBack } : {})}
           />
         </div>
-      </div>
-    </div>
+      </Plate>
+    </Surface>
   );
 }

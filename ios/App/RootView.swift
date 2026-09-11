@@ -29,14 +29,24 @@
 import SwiftUI
 import MobileData
 
+@MainActor
 struct RootView: View {
     @EnvironmentObject private var appConfig: AppConfig
     @State private var showSetupOverride = false
-    @State private var showSplash = true
+    @State private var loginRevealed = false
+    @StateObject private var startup: StartupReadinessCoordinator
     private let log = AppLog("root")
 
+    init() {
+        _startup = StateObject(wrappedValue: StartupReadinessCoordinator())
+    }
+
+    init(startup: StartupReadinessCoordinator) {
+        _startup = StateObject(wrappedValue: startup)
+    }
+
     var body: some View {
-        Group {
+        ZStack {
             if !appConfig.isConfigured || showSetupOverride {
                 BackendSetupView(
                     model: BackendSetupViewModel(
@@ -47,26 +57,55 @@ struct RootView: View {
                 )
             } else if appConfig.hasToken {
                 UpdateGate(appConfig: appConfig)
+                    .transition(.opacity)
+                    .zIndex(1)
             } else {
                 LoginView(
-                    onAuthenticatedUser: { appConfig.didLogin(authenticatedUserId: $0) },
+                    onAuthenticatedUser: { userId in
+                        // PIN feedback has already completed. Start the shell now;
+                        // the opacity handoff adds no extra pre-login hold.
+                        withAnimation(.easeInOut(duration: DesignV2.Motion.state)) {
+                            appConfig.didLogin(authenticatedUserId: userId)
+                        }
+                    },
                     onConnect: {},
-                    onOpenBackendSetup: { showSetupOverride = true }
+                    onInitialUsersResolved: { startup.rootDidResolve() },
+                    onOpenBackendSetup: { showSetupOverride = true },
+                    isRevealed: loginRevealed
                 )
+                .allowsHitTesting(!appConfig.hasToken)
+                .transition(.opacity)
+                .zIndex(2)
             }
         }
         .overlay {
-            if showSplash {
+            if startup.isCovering {
                 SplashOverlay()
                     .transition(.opacity)
             }
         }
         .task(id: appConfig.configGeneration) {
-            showSplash = true
-            log.info("splash.show generation=\(appConfig.configGeneration)")
-            try? await Task.sleep(for: .seconds(SplashLayout.minDisplay))
-            withAnimation(.easeOut(duration: SplashLayout.fadeOut)) { showSplash = false }
-            log.info("splash.hide")
+            startup.begin()
+            log.info("startup.begin generation=\(appConfig.configGeneration)")
+            // Setup is immediately actionable. An authenticated shell is also
+            // usable while its connection resolves because it owns recovery UI.
+            // Login resolves separately after its initial user-list terminal result.
+            if !appConfig.isConfigured || appConfig.hasToken {
+                startup.rootDidResolve()
+            }
+        }
+        .task(id: startup.isCovering) {
+            loginRevealed = false
+            guard !startup.isCovering else { return }
+            do {
+                // Don't spend the landing animation underneath the splash fade.
+                try await Task.sleep(for: .seconds(SplashLayout.fadeOut))
+                try Task.checkCancellation()
+                loginRevealed = true
+            } catch { /* The next startup generation owns its own reveal. */ }
+        }
+        .onChange(of: startup.isCovering) { _, covering in
+            if !covering { log.info("startup.reveal") }
         }
     }
 }

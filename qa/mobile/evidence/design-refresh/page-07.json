@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "ios",
+  "inventoryIds": [
+    "ios.update.mandatory.installing",
+    "ios.update.mandatory.error",
+    "ios.shell.chat"
+  ],
+  "captures": [
+    {
+      "configuration": "ios-iphone-standard",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-standard-page-07.png"
+    },
+    {
+      "configuration": "ios-iphone-ax3",
+      "path": "qa/mobile/evidence/design-refresh/ios-iphone-ax3-page-07.png"
+    },
+    {
+      "configuration": "ios-reduced-motion",
+      "path": "qa/mobile/evidence/design-refresh/ios-reduced-motion-page-07.png"
+    }
+  ],
+  "measurements": {
+    "ios.update.mandatory.installing": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.update.mandatory.error": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    },
+    "ios.shell.chat": {
+      "minimumTargetPt": 44,
+      "overflow": "visually reviewed in all three simulator captures",
+      "focus": "native SwiftUI accessibility hierarchy exposed"
+    }
+  },
+  "observations": [
+    {
+      "inventoryId": "ios.update.mandatory.installing",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.update.mandatory.installing",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.update.mandatory.installing",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "ios.update.mandatory.error",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.update.mandatory.error",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.update.mandatory.error",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.shell.chat",
+      "configuration": "ios-iphone-standard",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.shell.chat",
+      "configuration": "ios-iphone-ax3",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    },
+    {
+      "inventoryId": "ios.shell.chat",
+      "configuration": "ios-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 1
+    }
+  ]
+}

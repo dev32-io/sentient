@@ -4,6 +4,7 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import { scopePendingId } from "../store/pending-id-scope.js";
+import { captureDiagnosticRef } from "./capture-diagnostics.js";
 import { type CommandKind, claimInputFloor, mediateCommand } from "./command-mediator.js";
 import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
@@ -130,7 +131,17 @@ export async function handleWebSocketMessage(
       });
       return;
     }
-    ws.data.stt?.pushFrame(message);
+    const capture = ws.data.audioCapture;
+    if (capture === null) {
+      log.debug("audio.frame-dropped", {
+        connectionId: ws.data.sessionId,
+        byteSize: message.byteLength,
+        reason: "no open capture",
+      });
+      return;
+    }
+    capture.bytes += message.byteLength;
+    ws.data.stt?.pushFrame(capture.id, message);
     return;
   }
 
@@ -266,18 +277,107 @@ export async function handleWebSocketMessage(
       ws.data.runtime?.interrupt();
       return;
 
-    case "audio.start":
+    case "audio.start": {
       if (!mediate(ws, services, msg, "audio.start")) return;
-      // The mic opened. Lazily dial STT (a text-only session never does) and
-      // relay the client's turn authority (manual = hold-to-talk).
-      ensureSttSession(ws, services)?.start(msg.turnMode);
+      if (ws.data.audioCapture !== null) {
+        log.info("audio.transition-ignored", {
+          connectionId: ws.data.sessionId,
+          captureRef: captureDiagnosticRef(msg.captureId),
+          mode: msg.turnMode,
+          byteCount: ws.data.audioCapture.bytes,
+          transition: "active->active",
+          reason: "a capture is already active on this connection",
+        });
+        return;
+      }
+      const captureId = msg.captureId ?? `legacy-${crypto.randomUUID()}`;
+      const stt = ensureSttSession(ws, services);
+      if (stt !== null && !stt.start(captureId, msg.turnMode)) {
+        log.info("audio.transition-ignored", {
+          connectionId: ws.data.sessionId,
+          captureRef: captureDiagnosticRef(captureId),
+          mode: msg.turnMode,
+          byteCount: 0,
+          transition: "closed->closed",
+          reason: "the prior capture finalization is not safe yet",
+        });
+        return;
+      }
+      const diagnosticRef = captureDiagnosticRef(captureId);
+      ws.data.audioCapture = {
+        id: captureId,
+        diagnosticRef,
+        mode: msg.turnMode,
+        legacy: msg.captureId === undefined,
+        bytes: 0,
+      };
+      log.info("audio.transition", {
+        connectionId: ws.data.sessionId,
+        captureRef: diagnosticRef,
+        mode: msg.turnMode,
+        byteCount: 0,
+        transition: "closed->active",
+        reason: msg.captureId === undefined ? "legacy implicit capture" : "capture-aware start",
+      });
       return;
+    }
 
-    case "audio.end":
+    case "audio.end": {
       if (!mediate(ws, services, msg, "audio.end")) return;
-      // PTT release / mic off — force-finalize any open STT turn now.
-      ws.data.stt?.end();
+      const capture = ws.data.audioCapture;
+      const matches =
+        capture !== null && (msg.captureId === capture.id || (msg.captureId === undefined && capture.legacy));
+      if (!matches || capture === null) {
+        log.info("audio.transition-ignored", {
+          connectionId: ws.data.sessionId,
+          captureRef: captureDiagnosticRef(msg.captureId),
+          mode: capture?.mode ?? null,
+          byteCount: capture?.bytes ?? 0,
+          transition: "unchanged",
+          reason: "end did not match the active capture",
+        });
+        return;
+      }
+      // Close the frame gate before flushing. First matching terminal wins.
+      ws.data.audioCapture = null;
+      ws.data.stt?.end(capture.id);
+      log.info("audio.transition", {
+        connectionId: ws.data.sessionId,
+        captureRef: capture.diagnosticRef,
+        mode: capture.mode,
+        byteCount: capture.bytes,
+        transition: "active->committed",
+        reason: "matching end won the terminal race",
+      });
       return;
+    }
+
+    case "audio.cancel": {
+      if (!mediate(ws, services, msg, "audio.cancel")) return;
+      const capture = ws.data.audioCapture;
+      if (capture === null || capture.id !== msg.captureId) {
+        log.info("audio.transition-ignored", {
+          connectionId: ws.data.sessionId,
+          captureRef: captureDiagnosticRef(msg.captureId),
+          mode: capture?.mode ?? null,
+          byteCount: capture?.bytes ?? 0,
+          transition: "unchanged",
+          reason: "cancel did not match the active capture",
+        });
+        return;
+      }
+      ws.data.audioCapture = null;
+      ws.data.stt?.cancel(capture.id);
+      log.info("audio.transition", {
+        connectionId: ws.data.sessionId,
+        captureRef: capture.diagnosticRef,
+        mode: capture.mode,
+        byteCount: capture.bytes,
+        transition: "active->canceled",
+        reason: "matching cancel won the terminal race",
+      });
+      return;
+    }
 
     case "permission.response":
       if (!mediate(ws, services, msg, "permission.response")) return;
@@ -769,6 +869,7 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
   // handles' own `dispose`, if this is the detach that triggers it.
   detachSession(ws, services);
 
+  ws.data.audioCapture = null;
   ws.data.stt?.close();
   ws.data.stt = null;
 

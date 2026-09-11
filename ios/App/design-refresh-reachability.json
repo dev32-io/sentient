@@ -1,0 +1,1086 @@
+{
+  "version": 1,
+  "platform": "ios",
+  "entries": [
+    {
+      "id": "ios.setup",
+      "implementationPath": "ios/App/SDK/BackendSetupView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.setup.saving",
+      "implementationPath": "ios/App/SDK/BackendSetupView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.setup.error",
+      "implementationPath": "ios/App/SDK/BackendSetupView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.setup.success",
+      "implementationPath": "ios/App/SDK/BackendSetupView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.picker",
+      "implementationPath": "ios/App/Auth/LoginView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.picker.empty",
+      "implementationPath": "ios/App/Auth/LoginView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.picker.populated",
+      "implementationPath": "ios/App/Auth/LoginView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.picker.error",
+      "implementationPath": "ios/App/Auth/LoginView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.pin",
+      "implementationPath": "ios/App/Auth/PinPad.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.pin.submitting",
+      "implementationPath": "ios/App/Auth/PinPad.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.login.pin.error",
+      "implementationPath": "ios/App/Auth/PinPad.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.splash.thinking",
+      "implementationPath": "ios/App/SplashOverlay.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.checking",
+      "implementationPath": "ios/App/Update/UpdateGate.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.optional",
+      "implementationPath": "ios/App/Update/UpdateBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.optional.dismissed",
+      "implementationPath": "ios/App/Update/UpdateBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.optional.installing",
+      "implementationPath": "ios/App/Update/UpdateBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.optional.error",
+      "implementationPath": "ios/App/Update/UpdateBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.mandatory",
+      "implementationPath": "ios/App/Update/ForceUpdateView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.mandatory.installing",
+      "implementationPath": "ios/App/Update/ForceUpdateView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.update.mandatory.error",
+      "implementationPath": "ios/App/Update/ForceUpdateView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.shell.chat",
+      "implementationPath": "ios/App/Chat/ChatView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.shell.navigation",
+      "implementationPath": "ios/App/Nav/UserSessionHost.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.closed",
+      "implementationPath": "ios/App/Chat/drawer/SideDrawer.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.loading",
+      "implementationPath": "ios/App/History/HistorySidePanel.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.list",
+      "implementationPath": "ios/App/History/HistorySidePanel.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.empty",
+      "implementationPath": "ios/App/History/HistorySidePanel.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.error",
+      "implementationPath": "ios/App/History/HistorySessionsError.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.row-menu",
+      "implementationPath": "ios/App/History/HistoryRow.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.rename",
+      "implementationPath": "ios/App/Chat/banner/ChatPanelAlerts.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.delete",
+      "implementationPath": "ios/App/Chat/banner/ChatPanelAlerts.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.history.typed-route",
+      "implementationPath": "ios/App/Nav/UserSessionHost.swift",
+      "reachable": false
+    },
+    {
+      "id": "ios.chat.empty",
+      "implementationPath": "ios/App/Chat/message/MessageList.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.loading",
+      "implementationPath": "ios/App/Chat/message/ChatLoadingView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.pending",
+      "implementationPath": "ios/App/Chat/message/PendingBubble.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.user-message",
+      "implementationPath": "ios/App/Chat/message/MessageBubble.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.assistant-thinking",
+      "implementationPath": "ios/App/Chat/message/MessageBubble.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.assistant-responding",
+      "implementationPath": "ios/App/Chat/message/MessageBubble.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.assistant-complete",
+      "implementationPath": "ios/App/Chat/message/MessageBubble.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.error",
+      "implementationPath": "ios/App/Chat/ChatView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.error.retry",
+      "implementationPath": "ios/App/Chat/ChatView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.error.reopen-failure",
+      "implementationPath": "ios/App/Chat/ChatView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.cycle-error",
+      "implementationPath": "ios/App/Chat/banner/CycleErrorBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.cycle-error.error-without-retry",
+      "implementationPath": "ios/App/Chat/banner/CycleErrorBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.cycle-error.dismissed",
+      "implementationPath": "ios/App/Chat/banner/CycleErrorBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.connection",
+      "implementationPath": "ios/App/Chat/banner/ConnectionBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.connection.lost",
+      "implementationPath": "ios/App/Chat/banner/ConnectionBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.connection.reconnecting",
+      "implementationPath": "ios/App/Chat/banner/ConnectionBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.connection.authentication-expired",
+      "implementationPath": "ios/App/Chat/banner/ConnectionBanner.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.permission",
+      "implementationPath": "ios/App/Chat/banner/ChatPermissionAlert.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.tasks",
+      "implementationPath": "ios/App/Chat/composer/ComposerTaskStrip.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.tasks.done",
+      "implementationPath": "ios/App/Chat/composer/ComposerTaskStrip.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.chat.tasks.error",
+      "implementationPath": "ios/App/Chat/composer/ComposerTaskStrip.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.idle",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.draft",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.interrupt",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.tts",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.tts.disabled",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.mic",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.mic.hold",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.mic.locked",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.composer.mic.error",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.root",
+      "implementationPath": "ios/App/Settings/SettingsView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.root.non-admin",
+      "implementationPath": "ios/App/Settings/SettingsView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.root.loading",
+      "implementationPath": "ios/App/Settings/SettingsView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory.loading",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory.empty",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory.dirty",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory.applying",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory.success",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.memory.error",
+      "implementationPath": "ios/App/Settings/Memory/MemoryScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry.loading",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry.empty",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry.dirty",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry.applying",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry.success",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.calendar-entry.error",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities.loading",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities.empty",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities.dirty",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities.applying",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities.success",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personalities.error",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalitiesScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice.loading",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice.empty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice.dirty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice.applying",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice.success",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice.error",
+      "implementationPath": "ios/App/Settings/Voice/VoiceScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add.loading",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add.empty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add.dirty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add.applying",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add.success",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-add.error",
+      "implementationPath": "ios/App/Settings/Voice/VoiceAddScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish.loading",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish.empty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish.dirty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish.applying",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish.success",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-fish.error",
+      "implementationPath": "ios/App/Settings/Voice/VoiceFishScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio.loading",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio.empty",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio.dirty",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio.applying",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio.success",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.audio.error",
+      "implementationPath": "ios/App/Settings/Audio/AudioScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model.loading",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model.empty",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model.dirty",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model.applying",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model.success",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.model.error",
+      "implementationPath": "ios/App/Settings/Model/ModelScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools.loading",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools.empty",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools.dirty",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools.applying",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools.success",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.tools.error",
+      "implementationPath": "ios/App/Settings/Tools/ToolsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt.loading",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt.empty",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt.dirty",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt.applying",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt.success",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.system-prompt.error",
+      "implementationPath": "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced.loading",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced.empty",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced.dirty",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced.applying",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced.success",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.advanced.error",
+      "implementationPath": "ios/App/Settings/Advanced/AdvancedScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account.loading",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account.empty",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account.dirty",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account.applying",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account.success",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.account.error",
+      "implementationPath": "ios/App/Settings/Account/AccountScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members.loading",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members.empty",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members.dirty",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members.applying",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members.success",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.members.error",
+      "implementationPath": "ios/App/Settings/Members/MembersScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets.loading",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets.empty",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets.dirty",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets.applying",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets.success",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.secrets.error",
+      "implementationPath": "ios/App/Settings/Secrets/SecretsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics.loading",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics.empty",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics.dirty",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics.applying",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics.success",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.diagnostics.error",
+      "implementationPath": "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.change-pin",
+      "implementationPath": "ios/App/Settings/Account/ChangePinSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.change-pin.invalid",
+      "implementationPath": "ios/App/Settings/Account/ChangePinSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.change-pin.saving",
+      "implementationPath": "ios/App/Settings/Account/ChangePinSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.change-pin.error",
+      "implementationPath": "ios/App/Settings/Account/ChangePinSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.change-pin.success",
+      "implementationPath": "ios/App/Settings/Account/ChangePinSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.member-add",
+      "implementationPath": "ios/App/Settings/Members/AddMemberSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.member-add.invalid",
+      "implementationPath": "ios/App/Settings/Members/AddMemberSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.member-add.saving",
+      "implementationPath": "ios/App/Settings/Members/AddMemberSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.member-add.error",
+      "implementationPath": "ios/App/Settings/Members/AddMemberSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.member-add.success",
+      "implementationPath": "ios/App/Settings/Members/AddMemberSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create.loading",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create.empty",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create.dirty",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create.applying",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create.success",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.personality-create.error",
+      "implementationPath": "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record.loading",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record.empty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record.dirty",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record.applying",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record.success",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.settings.voice-record.error",
+      "implementationPath": "ios/App/Settings/Voice/VoiceRecordSection.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.route",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.loading",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.empty",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarSurfaceSupport.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.error",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.error.mutation-error",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarScreen.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.day",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarCanvasViews.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.week",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarCanvasViews.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.month",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarCanvasViews.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.year",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarCanvasViews.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.filters",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarFiltersView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.filters.no-match",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarFiltersView.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.preview",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayPreview.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.editor",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.editor.edit-clean",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.editor.dirty",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.editor.saving",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.editor.error",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.editor.success",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.delete",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.delete.applying",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.delete.error",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.delete.success",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift",
+      "reachable": true
+    },
+    {
+      "id": "ios.calendar.recurrence-scope",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayRecurrence.swift",
+      "reachable": true
+    }
+  ]
+}

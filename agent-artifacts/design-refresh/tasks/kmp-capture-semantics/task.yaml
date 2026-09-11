@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: kmp-capture-semantics
+title: Implement capture-aware KMP voice uplink and talk-state semantics
+status: merged
+dependsOn:
+  - capture-protocol-gateway
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Serialized lifecycle and shared mobile compatibility require
+      state-machine reasoning, but the work is isolated to established KMP seams
+      with strong tests.
+assembly:
+  stageId: platform-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    - ./gradlew :android:assembleDebug :android:testDebugUnitTest
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/kmp-capture-semantics
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/kmp-capture-semantics
+  baseCommit: fa449dc5d0016d2f38101dfb95310472823aed3d
+  lastRunId: 7aa7888e-34d0-4c31-996d-4b055680dffe
+  completedCommit: d56311ac9b9ec6b135e81296bc4c692611059bb2
+  mergedCommit: 21e53024d93412a0610c3e68ee20a793790523fd

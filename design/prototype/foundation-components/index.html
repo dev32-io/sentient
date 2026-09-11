@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2B2621">
+  <link rel="icon" href="data:,">
+  <title>Sentient · Foundation components</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./sentient-components.css">
+  <link rel="stylesheet" href="./showcase.css">
+  <script src="./assets/avatars/sentient-avatar.js" defer></script>
+  <script src="./sentient-components.js" defer></script>
+</head>
+<body class="snt-surface">
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <span class="showcase-mark"><sentient-avatar state="idle" label="Sentient"></sentient-avatar></span>
+      <span><strong class="showcase-brand-name">Sentient</strong><span class="showcase-brand-meta">Foundation components</span></span>
+    </div>
+    <span class="showcase-badge">Dusk · elevated slate</span>
+  </header>
+
+  <main class="showcase-main">
+    <header class="showcase-intro">
+      <div class="showcase-intro-copy">
+        <h1 class="snt-page-title">Foundation component library</h1>
+        <p class="snt-page-subtitle">One responsive review library for web and mobile composition, using the production Dusk palette and the existing codebase typography hierarchy.</p>
+      </div>
+      <div class="showcase-lock"><i></i><span>Dusk tokens and type scale locked</span></div>
+    </header>
+
+    <section class="showcase-section" aria-labelledby="tokens-title">
+      <header class="showcase-section-head">
+        <h2 id="tokens-title" class="showcase-section-title">Locked foundations</h2>
+        <p class="showcase-section-description">The mockup no longer compares palettes or invents a second type hierarchy. These values mirror the current web and shared mobile tokens.</p>
+      </header>
+      <div class="showcase-grid">
+        <article class="snt-plate showcase-pad span-7">
+          <div class="token-grid">
+            <div class="token token--bg"><strong>Canvas</strong><code>#2B2621</code></div>
+            <div class="token token--elev"><strong>Elevated</strong><code>#332D28</code></div>
+            <div class="token token--sunk"><strong>Recessed</strong><code>#241F1B</code></div>
+            <div class="token token--paper"><strong>Slate face</strong><code>#39322C</code></div>
+            <div class="token token--ink"><strong>Primary ink</strong><code>#F2E8D6</code></div>
+            <div class="token token--ink2"><strong>Secondary ink</strong><code>#D7C6AB</code></div>
+            <div class="token token--line"><strong>Strong line</strong><code>#4A4138</code></div>
+            <div class="token token--accent"><strong>Ember</strong><code>#F2A06A</code></div>
+          </div>
+        </article>
+        <article class="snt-plate showcase-pad span-5">
+          <div class="type-row"><div class="type-caption">Display · 44 · Fraunces</div><div class="type-display">Sentient</div></div>
+          <div class="type-row"><div class="type-caption">Pane title · 22 · Fraunces</div><div class="type-pane">Memory</div></div>
+          <div class="type-row"><div class="type-caption">Body · 15 · Interface sans</div><div class="type-body">Bring up relevant past memories when they can help.</div></div>
+          <div class="type-row"><div class="type-caption">Metadata · 12.5 · JetBrains Mono</div><div class="type-meta">Calendar update · 6:42 pm</div></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="showcase-section" aria-labelledby="material-title">
+      <header class="showcase-section-head">
+        <h2 id="material-title" class="showcase-section-title">Elevated slate anatomy</h2>
+        <p class="showcase-section-description">Actionable faces rise above the canvas while bending subtly inward toward a darker center; receiving surfaces recess into it. Both use compact directional depth rather than pale outlines or broad decorative blur.</p>
+      </header>
+      <article class="snt-plate showcase-pad">
+        <div class="material-anatomy">
+          <div>
+            <div class="material-demo"><button class="snt-button">Raised slate</button></div>
+            <p class="material-copy">Cut edge · darker concave center · contact shadow · downward cast</p>
+          </div>
+          <div>
+            <div class="material-demo"><div class="demo-well"><input class="snt-input" aria-label="Recessed example" value="Recessed well"></div></div>
+            <p class="material-copy">Dark receiver · upper occlusion · lower reflected inner edge</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="showcase-section" aria-labelledby="identity-title">
+      <header class="showcase-section-head">
+        <h2 id="identity-title" class="showcase-section-title">Identity and avatar surfaces</h2>
+        <p class="showcase-section-description">Identity is a foundation primitive, independent of chat composition. User avatars use the established Dusk tint surfaces; Sentient uses the canonical vector artwork and state transitions.</p>
+      </header>
+      <div class="showcase-grid">
+        <article class="snt-plate span-7">
+          <header class="snt-plate__head"><div><h3 class="snt-card-title">Sentient avatar</h3><p class="snt-card-subtitle">Canonical idle, thinking, and responding artwork.</p></div></header>
+          <div class="snt-plate__body">
+            <div class="avatar-state-grid">
+              <div class="avatar-specimen"><span class="snt-avatar snt-avatar--sentient snt-avatar--xl"><sentient-avatar state="idle"></sentient-avatar></span><span>Idle</span></div>
+              <div class="avatar-specimen"><span class="snt-avatar snt-avatar--sentient snt-avatar--xl"><sentient-avatar state="thinking"></sentient-avatar></span><span>Thinking</span></div>
+              <div class="avatar-specimen"><span class="snt-avatar snt-avatar--sentient snt-avatar--xl"><sentient-avatar state="responding"></sentient-avatar></span><span>Responding</span></div>
+            </div>
+            <div class="avatar-transition-lab">
+              <div><span class="snt-kicker">State transition</span><p>Change state to review the supplied crossfade, scale, and rotation choreography.</p></div>
+              <span class="snt-avatar snt-avatar--sentient snt-avatar--xl"><sentient-avatar id="sentient-avatar-transition-demo" state="idle"></sentient-avatar></span>
+              <div class="snt-segmented" data-snt-segmented data-snt-avatar-control="sentient-avatar-transition-demo" aria-label="Sentient avatar state">
+                <button class="snt-segment" aria-pressed="true" data-avatar-state="idle">Idle</button>
+                <button class="snt-segment" aria-pressed="false" data-avatar-state="thinking">Thinking</button>
+                <button class="snt-segment" aria-pressed="false" data-avatar-state="responding">Responding</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="snt-plate span-5">
+          <header class="snt-plate__head"><div><h3 class="snt-card-title">User avatar</h3><p class="snt-card-subtitle">Initial, tint, size, fallback, and selected surface states.</p></div></header>
+          <div class="snt-plate__body">
+            <div class="avatar-showcase-group">
+              <span class="snt-kicker">Locked sizes</span>
+              <div class="avatar-size-row">
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--sm" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span><span>28</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span><span>44</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--xl" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span><span>56</span></div>
+              </div>
+            </div>
+            <div class="avatar-showcase-group">
+              <span class="snt-kicker">Dusk identity tints</span>
+              <div class="avatar-size-row">
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--terra" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span><span>Terra</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--sage" role="img" aria-label="Alex Chen"><span aria-hidden="true">A</span></span><span>Sage</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--amber" role="img" aria-label="Jordan Chen"><span aria-hidden="true">J</span></span><span>Amber</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--clay" role="img" aria-label="Riley Chen"><span aria-hidden="true">R</span></span><span>Clay</span></div>
+              </div>
+            </div>
+            <div class="avatar-showcase-group">
+              <span class="snt-kicker">Fallback and selection</span>
+              <div class="avatar-size-row">
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--fallback" role="img" aria-label="Unknown user"><span aria-hidden="true">?</span></span><span>Fallback</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--selected" role="img" aria-label="Maya Chen, selected"><span aria-hidden="true">M</span></span><span>Selected</span></div>
+                <div class="avatar-specimen"><span class="snt-avatar snt-avatar--user snt-avatar--lg" role="img" aria-label="Unavailable user" aria-disabled="true"><span aria-hidden="true">M</span></span><span>Disabled</span></div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="showcase-section" aria-labelledby="controls-title">
+      <header class="showcase-section-head">
+        <h2 id="controls-title" class="showcase-section-title">Actions and controls</h2>
+        <p class="showcase-section-description">Primary, secondary, quiet, destructive, and disabled actions all remain slate keys. Hover uses motion, deeper face tension, and glow—not an outline. Inputs, toggle tracks, and segmented beds share the same recessed-well construction.</p>
+      </header>
+      <div class="showcase-grid">
+        <article class="snt-plate span-7">
+          <header class="snt-plate__head"><div><h3 class="snt-card-title">Buttons</h3><p class="snt-card-subtitle">Semantic treatment with a clearly visible destructive face.</p></div></header>
+          <div class="snt-plate__body">
+            <div class="showcase-row">
+              <button class="snt-button snt-button--primary">Allow once</button>
+              <button class="snt-button">Always allow</button>
+              <button class="snt-button snt-button--quiet">Not now</button>
+              <button class="snt-button snt-button--destructive">Stop</button>
+              <button class="snt-button" disabled>Unavailable</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="snt-plate span-5">
+          <header class="snt-plate__head"><div><h3 class="snt-card-title">Compact actions</h3><p class="snt-card-subtitle">Generic icon and touch-target states retain full semantic color.</p></div></header>
+          <div class="snt-plate__body">
+            <div class="showcase-row">
+              <button class="snt-icon-button" aria-label="Add item">＋</button>
+              <button class="snt-icon-button snt-button--quiet" aria-label="More options">•••</button>
+              <button class="snt-icon-button snt-button--destructive" aria-label="Delete item">×</button>
+              <button class="snt-icon-button" aria-label="Unavailable action" disabled>−</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="snt-plate span-8">
+          <header class="snt-plate__head"><div><h3 class="snt-card-title">Inputs and selection</h3><p class="snt-card-subtitle">Selection uses wells, compact slates, and continuous motion without pale native chrome.</p></div></header>
+          <div class="snt-plate__body">
+            <div class="showcase-field-grid">
+              <label class="snt-field"><span class="snt-field__label">Display name</span><input class="snt-input" value="Maya Chen"></label>
+              <label class="snt-field"><span class="snt-field__label">Search</span><input class="snt-input" placeholder="Search conversations"></label>
+            </div>
+            <div class="showcase-row showcase-spaced">
+              <button class="snt-toggle" type="button" role="switch" aria-label="Automatic updates" aria-checked="true" data-snt-toggle></button>
+              <div class="snt-segmented" data-snt-segmented aria-label="View density">
+                <button class="snt-segment" aria-pressed="true">Comfortable</button>
+                <button class="snt-segment" aria-pressed="false">Compact</button>
+              </div>
+              <button class="snt-chip" aria-pressed="true" data-snt-chip>Family</button>
+              <button class="snt-chip" aria-pressed="false" data-snt-chip>School</button>
+            </div>
+            <div class="showcase-row showcase-spaced">
+              <label class="snt-checkbox"><input type="checkbox" checked><span class="snt-checkbox__box" aria-hidden="true"></span><span>Selected</span></label>
+              <label class="snt-checkbox"><input type="checkbox"><span class="snt-checkbox__box" aria-hidden="true"></span><span>Not selected</span></label>
+              <label class="snt-checkbox"><input type="checkbox" data-snt-indeterminate><span class="snt-checkbox__box" aria-hidden="true"></span><span>Mixed</span></label>
+              <label class="snt-checkbox"><input type="checkbox" disabled><span class="snt-checkbox__box" aria-hidden="true"></span><span>Unavailable</span></label>
+            </div>
+            <label class="snt-field showcase-spaced"><span class="snt-field__label">Interface scale</span><span class="snt-range-row"><input class="snt-range" type="range" min="0" max="100" value="62" aria-label="Interface scale"><output>62%</output></span></label>
+          </div>
+        </article>
+
+        <article class="snt-plate span-4">
+          <header class="snt-plate__head"><div><h3 class="snt-card-title">Text area</h3><p class="snt-card-subtitle">The deeper well scales to multiline input.</p></div></header>
+          <div class="snt-plate__body"><label class="snt-field"><span class="snt-field__label">Description</span><textarea class="snt-textarea">Add supporting details.</textarea></label></div>
+        </article>
+      </div>
+    </section>
+
+    <p class="showcase-footer">Review artifact · Components: <code>sentient-components.css</code> + <code>sentient-components.js</code>. Showcase layout remains separate in <code>showcase.css</code>.</p>
+  </main>
+</body>
+</html>

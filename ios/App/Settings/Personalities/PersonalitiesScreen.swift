@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// PersonalitiesScreen — Soul-group "Personalities" category page. Expandable
-// personality cards (body preview + Activate + Delete-with-confirm) and a Create
+// PersonalitiesScreen — Soul-group "Personalities" category page. A grouped
+// personality disclosure list (body preview + Activate + Delete-with-confirm) and a Create
 // sheet (name + instructions; the name is immutable after create). Every action
 // is imperative — its own apply-with-restart FSM run, surfaced by the banner —
 // so there is no page-level Save. No dirty draft on the list, so the page keeps
@@ -32,23 +32,33 @@ struct PersonalitiesScreen: View {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load personalities", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
                 opBanner
-                createButton
-                ForEach(vm.personalities, id: \.name) { personality in
-                    card(personality)
+                activeIdentity
+                if vm.personalities.isEmpty {
+                    AsyncNotice(
+                        kind: .empty,
+                        title: "No personalities yet",
+                        detail: "Create one to give the assistant a different style."
+                    )
+                    .accessibilityIdentifier("settings-personalities-empty")
+                } else {
+                    personalitiesCard
                 }
+                createButton
             }
         }
         .task { await vm.load() }
         .sheet(isPresented: $showCreate) {
-            PersonalityCreateSheet(isBusy: vm.isBusy) { name, body in
+            PersonalityCreateSheet(isBusy: vm.isBusy, error: vm.operationError) { name, body in
                 if await vm.create(name: name, body: body) { showCreate = false }
             }
         }
         .confirmationDialog(
-            "Delete this personality?",
+            deleteTarget.map { "Delete \($0)?" } ?? "Delete this personality?",
             isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
             titleVisibility: .visible
         ) {
@@ -60,90 +70,128 @@ struct PersonalitiesScreen: View {
         }
     }
 
-    @ViewBuilder
     private var opBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.op {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
+    }
+
+    private var activeIdentity: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Active personality")
+                .designText(.label)
+                .foregroundStyle(DuskColors.ink2)
+            Text(vm.activeName ?? "No active personality")
+                .designText(.title)
+                .foregroundStyle(DuskColors.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Compare instructions below. Creating, activating, or deleting a personality saves the change and applies configuration.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var createButton: some View {
-        Button(action: { showCreate = true }) {
-            HStack(spacing: Space.sm) {
-                Image(systemName: "plus")
-                Text("New personality").font(Typo.ui(TypeScale.sm, .semibold))
-            }
-            .foregroundStyle(DuskColors.accent)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Space.sm)
-            .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.accent, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .disabled(vm.isBusy)
-        .accessibilityIdentifier("settings-personalities-create")
+        DesignActionButton(
+            title: "New personality",
+            role: .quiet,
+            state: vm.isBusy ? .disabled : .normal,
+            accessibilityId: "settings-personalities-create",
+            action: { showCreate = true }
+        )
     }
 
-    private func card(_ personality: Personality) -> some View {
+    private var personalitiesCard: some View {
+        DesignCard(
+            title: "Available personalities",
+            detail: "Open a personality for full instructions and actions.",
+            headerStyle: .quiet
+        ) {
+            ForEach(Array(vm.personalities.enumerated()), id: \.element.name) { index, personality in
+                personalityRow(personality)
+                if index < vm.personalities.count - 1 { DesignDivider() }
+            }
+        }
+    }
+
+    private func personalityRow(_ personality: Personality) -> some View {
         let isActive = personality.name == vm.activeName
         let isOpen = expanded.contains(personality.name)
-        return SettingsCard {
-            Button(action: { toggle(personality.name) }) {
-                HStack {
-                    Text(personality.name)
-                        .font(Typo.ui(TypeScale.sm, .semibold))
-                        .foregroundStyle(DuskColors.ink)
+        return DesignDisclosureGroup(isExpanded: isOpen) {
+            DesignDisclosureButton(
+                isExpanded: isOpen,
+                accessibilityLabel: "\(isOpen ? "Collapse" : "Expand") \(personality.name)\(isActive ? ", active" : "")",
+                accessibilityId: "settings-personalities-card-\(personality.name)",
+                action: { toggle(personality.name) }
+            ) {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    personalityName(personality.name)
                     if isActive { activeBadge }
-                    Spacer()
-                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                        .font(.system(size: TypeScale.xs, weight: .semibold))
-                        .foregroundStyle(DuskColors.ink3)
+                    Text(personality.body.isEmpty ? "No instructions." : personality.body)
+                        .designText(.body)
+                        .foregroundStyle(DuskColors.ink2)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                 }
                 .padding(.vertical, Space.sm)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings-personalities-card-\(personality.name)")
-            if isOpen { cardBody(personality, isActive: isActive) }
+        } content: {
+            cardBody(personality, isActive: isActive)
         }
+    }
+
+    private func personalityName(_ name: String) -> some View {
+        Text(name)
+            .designText(.label)
+            .fontWeight(.semibold)
+            .foregroundStyle(DuskColors.ink)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
     private func cardBody(_ personality: Personality, isActive: Bool) -> some View {
-        Divider().background(DuskColors.lineSoft)
+        DesignDivider()
         Text(personality.body.isEmpty ? "No instructions." : personality.body)
-            .font(Typo.mono(TypeScale.xs))
-            .foregroundStyle(personality.body.isEmpty ? DuskColors.ink4 : DuskColors.ink2)
+            .designText(.body)
+            .foregroundStyle(DuskColors.ink2)
+            .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, Space.sm)
         HStack(spacing: Space.md) {
             if !isActive {
-                Button("Activate") { Task { await vm.activate(personality.name) } }
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.accent)
-                    .disabled(vm.isBusy)
-                    .accessibilityIdentifier("settings-personalities-activate-\(personality.name)")
+                DesignTextButton(
+                    title: "Activate",
+                    role: .action,
+                    state: vm.isBusy ? .disabled : .normal,
+                    accessibilityId: "settings-personalities-activate-\(personality.name)",
+                    action: { Task { await vm.activate(personality.name) } }
+                )
             }
             Spacer()
-            Button("Delete") { deleteTarget = personality.name }
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.stop)
-                .disabled(vm.isBusy)
-                .accessibilityIdentifier("settings-personalities-delete-\(personality.name)")
+            DesignTextButton(
+                title: "Delete",
+                role: .destructive,
+                state: vm.isBusy ? .disabled : .normal,
+                accessibilityId: "settings-personalities-delete-\(personality.name)",
+                action: { deleteTarget = personality.name }
+            )
         }
         .padding(.bottom, Space.sm)
     }
 
     private var activeBadge: some View {
-        Text("Active")
-            .font(Typo.ui(TypeScale.xs, .semibold))
-            .foregroundStyle(DuskColors.bg)
-            .padding(.horizontal, Space.sm)
-            .padding(.vertical, 2)
-            .background(DuskColors.accent, in: RoundedRectangle(cornerRadius: Radii.pill))
+        DesignStatusBadge(title: "Active")
     }
 
     private func toggle(_ name: String) {
@@ -154,17 +202,18 @@ struct PersonalitiesScreen: View {
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Personalities", screenId: "settings-personalities-screen") {
-            SettingsCard {
-                HStack {
-                    Text("Default").font(Typo.ui(TypeScale.sm, .semibold)).foregroundStyle(DuskColors.ink)
-                    Text("Active")
-                        .font(Typo.ui(TypeScale.xs, .semibold)).foregroundStyle(DuskColors.bg)
-                        .padding(.horizontal, Space.sm).padding(.vertical, 2)
-                        .background(DuskColors.accent, in: RoundedRectangle(cornerRadius: Radii.pill))
-                    Spacer()
-                    Image(systemName: "chevron.right").foregroundStyle(DuskColors.ink3)
+            DesignCard {
+                DesignDisclosureButton(
+                    isExpanded: false,
+                    accessibilityLabel: "Expand Default",
+                    accessibilityId: "settings-personalities-preview-card",
+                    action: {}
+                ) {
+                    HStack(spacing: Space.sm) {
+                        Text("Default").designText(.label).fontWeight(.semibold).foregroundStyle(DuskColors.ink)
+                        DesignStatusBadge(title: "Active")
+                    }
                 }
-                .padding(.vertical, Space.sm)
             }
         }
     }

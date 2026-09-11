@@ -25,6 +25,7 @@ final class ModelViewModel {
         case saving
         case restarting
         case alreadyApplying
+        case applied
         case failed(String)
     }
 
@@ -86,7 +87,10 @@ final class ModelViewModel {
             case .loading:
                 return
             }
-            await loadModels()
+            if let catalogError = await loadModels() {
+                phase = .failed(catalogError)
+                return
+            }
             phase = .ready
             log.info("load.ready count=\(models.count)")
         } catch is CancellationError {
@@ -96,17 +100,25 @@ final class ModelViewModel {
         }
     }
 
-    private func loadModels() async {
+    private func loadModels() async -> String? {
         do {
             let result = try await settings.profileRepository.listModels()
-            if case .success(let s) = onEnum(of: result) {
+            switch onEnum(of: result) {
+            case .success(let s):
                 models = s.data.models
                 if browseProvider.isEmpty { browseProvider = models.first?.provider ?? "" }
-            } else if case .failure(let f) = onEnum(of: result) {
+                return nil
+            case .failure(let f):
                 log.warn("load.models.failed kind=\(f.error.kind)")
+                return f.error.userMessage
+            case .loading:
+                return "Models are still loading. Try again."
             }
+        } catch is CancellationError {
+            return nil
         } catch {
             log.warn("load.models.threw")
+            return "Couldn't load models."
         }
     }
 
@@ -125,9 +137,9 @@ final class ModelViewModel {
             case .saving: save = .saving
             case .restarting: save = .restarting
             case .ready:
-                save = .idle
                 log.info("save.ready")
                 await load()
+                save = .applied
             case .alreadyApplying:
                 save = .alreadyApplying
                 log.warn("save.already-applying")

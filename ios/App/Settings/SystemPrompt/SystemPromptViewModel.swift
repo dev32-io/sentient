@@ -24,6 +24,7 @@ final class SystemPromptViewModel {
         case saving
         case restarting
         case alreadyApplying
+        case applied
         case failed(String)
     }
 
@@ -64,7 +65,7 @@ final class SystemPromptViewModel {
             }
         } catch is CancellationError {
         } catch {
-            phase = .failed("Couldn't load Soul.md.")
+            phase = .failed("Couldn't load system instructions.")
             log.warn("load.threw")
         }
     }
@@ -88,7 +89,7 @@ final class SystemPromptViewModel {
             }
         } catch is CancellationError {
         } catch {
-            save = .failed("Couldn't load the default Soul.md.")
+            save = .failed("Couldn't load the default instructions.")
             log.warn("restore-default.threw")
         }
     }
@@ -102,9 +103,9 @@ final class SystemPromptViewModel {
             case .saving: save = .saving
             case .restarting: save = .restarting
             case .ready:
-                save = .idle
                 log.info("save.ready")
                 await load()
+                save = .applied
             case .alreadyApplying:
                 save = .alreadyApplying
                 log.warn("save.already-applying")

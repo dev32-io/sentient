@@ -1,0 +1,62 @@
+schemaVersion: 1
+id: stage-ios-final-products-review
+type: combined-review
+checkpoint: stage-review
+stageId: ios-final-products
+scope:
+  workItem: design-refresh
+status: passed
+required: true
+attempt: 2
+methods:
+  - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+  - ./scripts/ios-setup.sh
+  - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+    -destination 'platform=iOS Simulator,name=iPhone 16'
+  - bun run design:inventory:check
+  - git diff --check
+criteria:
+  - Native iOS chat projection/outbox/task/permission/composer capture
+    invariants with fake-only audio proof
+  - Setup/login/update/account/admin/secret privacy and authorization
+  - Startup readiness integration, native NavigationStack/sheets/alerts, and
+    larger Dynamic Type
+loop:
+  iteration: 1
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: c3a92723-65db-48a1-a32d-e1c9ea5c117c
+  reviewedCommit: 5568f8e9f0c66926209b4053b9529edfddebc688
+  managerPrompt: Fix both capture-state violations with fake-only tests. Keep
+    `VoiceCaptureControl` mounted and operable whenever capture is active,
+    including Auto, even if the user types or an error/draft appears; draft
+    presence may change idle composer actions but must not implicitly cancel
+    Auto. Preserve the draft, and ensure the explicit second Auto activation is
+    what finalizes/exits semantic capture. Rework sustained-hold gesture
+    handling so only a confirmed normal release can emit `sendHeld`; system
+    gesture cancellation, interruption, scene/lifecycle loss, or disappearance
+    must emit exactly one capture cancel and zero send/end. Add deterministic
+    state-machine regressions for Auto + typed draft + explicit Auto exit,
+    normal held release, and held system cancellation/interruption. Do not use
+    microphone/STT/TTS/audio in proof.
+  fixerAgentId: 521880fc-1b68-4709-930d-f6e16b971157
+findings:
+  - id: IOS-FINAL-001
+    severity: high
+    status: resolved
+    criterion: Preserve draft through voice/errors and Auto exit semantics
+    location: ios/App/Chat/composer/Composer.swift:91-97,132-143
+    summary: Active capture now remains mounted and operable with a typed draft.
+    blocking: false
+  - id: IOS-FINAL-002
+    severity: high
+    status: resolved
+    criterion: AC-009/system cancellation must discard without submission
+    location: ios/App/Chat/voice/VoiceCaptureGesture.swift:17-42
+    summary: Physical cancellation is distinguished from normal release and cannot
+      emit sendHeld.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-ios-final-products-review/manifest.yaml

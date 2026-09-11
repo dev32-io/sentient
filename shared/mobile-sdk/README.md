@@ -78,6 +78,20 @@ appears in an `expect` signature (`ByteArray`/`FloatArray`/`String`/`Flow`, neve
 logic runs without a device. See `.claude/rules/mobile-shared.md` and
 `agents/docs/mobile-sdk/expect-actual-contract-details.md`.
 
+## Design foundation v2
+
+`design-foundation-v2.json` is the versioned source for the additive
+`io.sentient.mobilesdk.design.v2` declarations and Web projections under
+`gateway/webui/src/styles/tokens/`. Its design values and identity/material descriptors are
+protocol/implementation constants: they are changed by versioning this contract, not by page
+code or operator configuration. Runtime product behavior that operators may tune continues to
+belong in the relevant YAML/config surface.
+
+From the repository root, use `bun run design:foundation:generate` after an intentional
+contract update and `bun run design:foundation:check` to validate locked values, Rive checksums,
+and generated-file freshness. The existing unversioned `DesignTokens.kt` remains the Android
+v1 compatibility surface and is not generated.
+
 ## Build
 
 KMP targets: `androidTarget`, `iosArm64`, `iosSimulatorArm64`. The apps consume it via the

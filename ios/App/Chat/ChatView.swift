@@ -45,6 +45,8 @@ struct ChatView: View {
 
     /// User's display name for bubble avatars and drawer header.
     let userName: String
+    /// Selected route identity used to highlight the active History row.
+    let activeSessionId: String?
 
     /// History select → host flips activeSessionId (rebuilds the VM).
     let onSelectSession: (String) -> Void
@@ -87,6 +89,7 @@ struct ChatView: View {
         makeVM: @escaping () -> ChatViewModel,
         makeHistoryVM: @escaping () -> HistoryViewModel,
         userName: String,
+        activeSessionId: String?,
         onSelectSession: @escaping (String) -> Void,
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
@@ -96,6 +99,7 @@ struct ChatView: View {
         _vm = StateObject(wrappedValue: makeVM())
         _historyModel = StateObject(wrappedValue: makeHistoryVM())
         self.userName = userName
+        self.activeSessionId = activeSessionId
         self.onSelectSession = onSelectSession
         self.onNewChat = onNewChat
         self.onOpenSettings = onOpenSettings
@@ -115,7 +119,14 @@ struct ChatView: View {
         connection.cognition != .idle || connection.isSpeaking
     }
 
-    private var currentMarkMode: MarkMode { markModeOfConnection(connection) }
+    private var currentSentientIdentityState: SentientIdentityState {
+        identityState(
+            for: connection,
+            hasStreamingAssistantText: displayMessages.contains {
+                $0.role == "assistant" && $0.streaming && !$0.content.isEmpty
+            }
+        )
+    }
 
     private var voiceActive: Bool { connection.voiceMode == .active }
 
@@ -252,7 +263,7 @@ struct ChatView: View {
             titleBar
             MessageList(
                 messages: displayMessages,
-                activeMarkMode: currentMarkMode,
+                activeMarkMode: currentSentientIdentityState,
                 userName: userName,
                 pending: pending,
                 onRetry: { vm.retry($0) },
@@ -290,16 +301,13 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom) {
             Composer(
                 tasks: tasks,
-                canSend: true,
                 ttsEnabled: connection.prefs.ttsEnabled,
                 talkMode: vm.talkMode,
                 micLevels: vm.micLevels,
+                voiceDisabled: connection.status != .ready,
                 canInterrupt: canInterrupt,
                 onSend: { vm.send($0) },
-                onMicPress: { vm.pressMic() },
-                onMicRelease: { vm.releaseMic() },
-                onMicLock: { vm.lockMic() },
-                onMicStopContinuous: { vm.stopContinuous() },
+                onVoiceIntent: { vm.voiceIntent($0) },
                 onTtsToggle: { vm.toggleTts() },
                 onInterrupt: { vm.interrupt() },
                 onFocusGained: { vm.onComposerFocus() }
@@ -317,6 +325,7 @@ struct ChatView: View {
             nowMs: panelNowMs,
             userName: userName,
             household: "",
+            activeSessionId: activeSessionId,
             onSelect: { sessionId in
                 drawerOpen = false
                 onSelectSession(sessionId)
@@ -343,7 +352,7 @@ struct ChatView: View {
 
     private var titleBar: some View {
         ChatTitleBar(
-            markMode: currentMarkMode,
+            markMode: currentSentientIdentityState,
             onOpenPanel: { drawerOpen = true },
             onNewChat: { onNewChat() }
         )
@@ -404,10 +413,7 @@ private struct ContentErrorBanner: View {
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
         .background {
-            ZStack {
-                Rectangle().fill(DuskColors.bgElev)
-                Rectangle().fill(DuskColors.warn.opacity(0.12))
-            }
+            DuskColors.warnSoft
         }
         .accessibilityIdentifier("banner-chat")
     }

@@ -1,0 +1,27 @@
+schemaVersion: 1
+evaluation: stage-ios-final-products-review
+recordedAt: 2026-08-26T00:43:22.994Z
+entries:
+  - result: Both prior findings resolved; all required checks passed.
+    description: Sanitized re-review and check summary.
+    path: files/002-1-stage-ios-final-products-rereview-1-summary.txt
+    checksum: sha256:309d1555b017c12bc699871c9bff3ebd70dc6a51af9b2d7e8ade9989d1559526
+  - result: VoiceCaptureControl is shown whenever talkMode is non-idle, even with a
+      draft.
+    description: Active capture/draft action projection.
+    path: files/002-2-Composer.swift
+    checksum: sha256:e965134556c4d17055d5163c9bfcd1165bd813dcab913047de152fbf4f32859f
+  - result: Recognizer ended maps to released; cancelled/failed map to cancelled.
+    description: Physical gesture release/cancellation distinction.
+    path: files/002-3-VoiceCaptureGesture.swift
+    checksum: sha256:942eb06940cb807263d777237b992d622d4f993759c7fe0dbda69a937bf55d16
+  - result: Normal release, system cancellation, Auto exit, scene interruption,
+      disabled state, and teardown route through distinct bounded paths.
+    description: Control terminal and lifecycle wiring.
+    path: files/002-4-VoiceCaptureControl.swift
+    checksum: sha256:dc5f82eb8e158e5069aa744a2dc3725e5e7d567b52810010831093641ed585a3
+  - result: Covers normal held release, system cancellation, lifecycle interruption,
+      Auto with typed draft, and explicit Auto exit without audio.
+    description: Deterministic fake-only state-machine regressions.
+    path: files/002-5-VoiceCaptureControlTests.swift
+    checksum: sha256:49475fde0e96db1f84b69620e539437b72fc995b53f56808c1aad6df0a55fd7f

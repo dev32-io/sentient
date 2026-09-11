@@ -1,18 +1,9 @@
-// ---------------------------------------------------------------------------
-// VoiceFilterBarView — the Voice list filter row: search field + language select
-// + source segmented control + tag chips. Mirrors the webui `VoiceFilterBar`
-// (search / language Select / source Segmented / tag Chips). Reuses the settings
-// `RowSegmented` + `RowSelect` primitives; the search field and tag chips are
-// small local controls (no shared SearchField/Chip primitive exists on iOS yet).
-//
-// Stateless-ish leaf: a `query` Binding plus values + closures in, no VM, no I/O.
-// ---------------------------------------------------------------------------
 import SwiftUI
 
-private let sourceOptions: [SegmentOption] = [
-    SegmentOption(id: "all", label: "All"),
-    SegmentOption(id: "builtin", label: "Built-in"),
-    SegmentOption(id: "user", label: "Yours"),
+private let sourceOptions: [(value: String, label: String)] = [
+    ("all", "All"),
+    ("builtin", "Built-in"),
+    ("user", "Yours"),
 ]
 
 struct VoiceFilterBarView: View {
@@ -27,79 +18,121 @@ struct VoiceFilterBarView: View {
     let onLanguage: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            searchField
-            RowSelect(
-                label: "Language",
-                options: languageOptions.map { SelectOption(id: $0.code, label: $0.label) },
-                selectedId: language,
-                accessibilityId: "settings-voice-language",
-                onSelect: onLanguage
+        VStack(alignment: .leading, spacing: Space.sm) {
+            DesignSearchField(
+                prompt: "Search voices", query: $query,
+                accessibilityId: "settings-voice-search",
+                onClear: { query = "" }, showsTitle: false, showsSearchIcon: true
             )
-            RowSegmented(
-                options: sourceOptions,
-                selectedId: source,
-                accessibilityId: "settings-voice-source",
-                onSelect: onSource
-            )
-            if !tagOptions.isEmpty {
-                tagChips
-            }
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: TypeScale.sm))
-                .foregroundStyle(DuskColors.ink3)
-            TextField("Search voices", text: $query)
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("settings-voice-search")
-        }
-        .padding(.horizontal, Space.md)
-        .padding(.vertical, Space.sm)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-    }
-
-    private var tagChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Space.xs) {
-                ForEach(tagOptions, id: \.self) { tag in
-                    let isOn = selectedTags.contains(tag)
-                    Button { onToggleTag(tag) } label: {
-                        Text(tag)
-                            .font(Typo.ui(TypeScale.xs, .medium))
-                            .foregroundStyle(isOn ? DuskColors.bg : DuskColors.ink2)
-                            .padding(.horizontal, Space.sm)
-                            .padding(.vertical, Space.xs)
-                            .background(isOn ? DuskColors.accent : DuskColors.bgElev, in: Capsule())
+            CenteredFlowLayout(spacing: Space.sm, alignment: .leading) {
+                DesignMenuButton(
+                    accessibilityLabel: source == "all" ? "Source" : "Source: \(sourceLabel)",
+                    accessibilityId: "settings-voice-source"
+                ) {
+                    ForEach(visibleSources, id: \.value) { option in
+                        Button { onSource(option.value) } label: {
+                            menuOption(option.label, selected: source == option.value)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("settings-voice-tag-\(tag)")
+                } label: {
+                    VoiceLibraryMenuLabel(title: source == "all" ? "Source" : "Source: \(sourceLabel)", selected: source != "all")
+                }
+
+                DesignMenuButton(
+                    accessibilityLabel: language.isEmpty ? "Language" : "Language: \(VoiceLanguages.label(for: language))",
+                    accessibilityId: "settings-voice-language"
+                ) {
+                    ForEach(visibleLanguages, id: \.code) { option in
+                        Button { onLanguage(option.code) } label: {
+                            menuOption(option.label, selected: language == option.code)
+                        }
+                    }
+                } label: {
+                    VoiceLibraryMenuLabel(title: language.isEmpty ? "Language" : "Language: \(VoiceLanguages.label(for: language))", selected: !language.isEmpty)
+                }
+
+                DesignMenuButton(
+                    accessibilityLabel: selectedTags.isEmpty ? "Tags" : "Tags: \(selectedTags.count)",
+                    accessibilityId: "settings-voice-tags"
+                ) {
+                    ForEach(visibleTags, id: \.self) { tag in
+                        Button { onToggleTag(tag) } label: {
+                            menuOption(tag.replacingOccurrences(of: "-", with: " "), selected: selectedTags.contains(tag))
+                        }
+                        .accessibilityIdentifier("settings-voice-tag-\(tag)")
+                    }
+                } label: {
+                    VoiceLibraryMenuLabel(title: selectedTags.isEmpty ? "Tags" : "Tags: \(selectedTags.count)", selected: !selectedTags.isEmpty)
+                }
+                .disabled(visibleTags.isEmpty)
+            }
+            .buttonStyle(DesignButtonStyle(role: .quiet, horizontalPadding: Space.sm))
+
+            if selectedCount > 0 || !query.isEmpty {
+                HStack(spacing: Space.sm) {
+                    Text(selectedCount == 0 ? "Search applied" : "\(selectedCount) filters selected")
+                        .font(DesignTextRole.supporting.font)
+                        .foregroundStyle(DuskColors.ink2)
+                    Spacer(minLength: Space.sm)
+                    DesignActionButton(
+                        title: "Clear all", role: .quiet,
+                        accessibilityId: "settings-voice-clear-filters",
+                        fillsWidth: false, action: clearAll
+                    )
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func menuOption(_ title: String, selected: Bool) -> some View {
+        if selected { Label(title, systemImage: "checkmark") }
+        else { Text(title) }
+    }
+
+    private var visibleSources: [(value: String, label: String)] {
+        guard !sourceOptions.contains(where: { $0.value == source }) else { return sourceOptions }
+        return sourceOptions + [(value: source, label: source)]
+    }
+
+    private var sourceLabel: String {
+        sourceOptions.first { $0.value == source }?.label ?? source
+    }
+
+    private var selectedCount: Int {
+        selectedTags.count + (source == "all" ? 0 : 1) + (language.isEmpty ? 0 : 1)
+    }
+
+    private var visibleLanguages: [(code: String, label: String)] {
+        guard !language.isEmpty, !languageOptions.contains(where: { $0.code == language }) else { return languageOptions }
+        return languageOptions + [(code: language, label: VoiceLanguages.label(for: language))]
+    }
+
+    private func clearAll() {
+        query = ""
+        onSource("all")
+        onLanguage("")
+        for tag in selectedTags { onToggleTag(tag) }
+    }
+
+    private var visibleTags: [String] {
+        Array(Set(tagOptions).union(selectedTags)).sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
         }
     }
 }
 
-#Preview {
+#Preview("Voice filters — accessibility size") {
     VoiceFilterBarView(
-        query: .constant(""),
-        source: "all",
-        selectedTags: ["male"],
-        tagOptions: ["male", "female", "calm", "bright"],
-        language: "en",
-        languageOptions: [("", "All languages"), ("en", "🇺🇸 English"), ("zh", "🇨🇳 Chinese")],
-        onSource: { _ in },
-        onToggleTag: { _ in },
-        onLanguage: { _ in }
+        query: .constant(""), source: "all", selectedTags: ["calm"],
+        tagOptions: ["calm", "bright", "a deliberately long descriptive voice tag"],
+        language: "en", languageOptions: [("", "All languages"), ("en", "🇺🇸 English")],
+        onSource: { _ in }, onToggleTag: { _ in }, onLanguage: { _ in }
     )
     .padding(Space.lg)
     .background(DuskColors.bg)
+    .environment(\.dynamicTypeSize, .accessibility3)
+    .transaction { $0.disablesAnimations = true }
     .preferredColorScheme(.dark)
 }

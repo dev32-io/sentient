@@ -1,102 +1,46 @@
-// ---------------------------------------------------------------------------
-// Colors — the Dusk palette projected from the shared SDK tokens into SwiftUI.
-//
-// The single source of truth is `MobileSdk`'s `Colors` Kotlin object (const
-// ARGB Longs, 0xFFRRGGBB). SKIE exposes that object to Swift as the class
-// `Colors` whose constants read back as `Int64` (the bridged Kotlin `Long`),
-// accessed via the companion: `Colors.shared.bg`. This file converts each
-// packed-ARGB Int64 into a SwiftUI `Color` ONCE so views read typed values and
-// never touch the raw SDK constants. Dusk is a dark-only brand palette — there
-// is no light variant.
-// ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
-/// The Dusk palette as SwiftUI `Color`s, mapped from the SDK's `Colors` tokens.
-///
-/// Mirrors the Android `DuskColorScheme` mapping (theme/Theme.kt): same token →
-/// role intent, just expressed as a flat namespace instead of a Material
-/// `ColorScheme`. SwiftUI has no Material slot model, so the raw token names are
-/// preserved and views pick the role they need.
+/// Compatibility namespace for existing iOS call sites. Every locked role now
+/// projects the additive KMP v2 palette; aliases retain the old Swift API only.
 enum DuskColors {
-    // Surfaces — layered bg depth.
-    static let bg = color(Colors.shared.bg)
-    static let bgElev = color(Colors.shared.bgElev)
-    static let bgSunk = color(Colors.shared.bgSunk)
-    static let paper = color(Colors.shared.paper)
+    static let bg = DesignV2.ColorToken.bg.color
+    static let bgElev = DesignV2.ColorToken.elevated.color
+    static let bgSunk = DesignV2.ColorToken.sunk.color
+    static let paper = DesignV2.ColorToken.paper.color
+    static let line = DesignV2.ColorToken.line.color
+    static let lineSoft = DesignV2.ColorToken.lineSoft.color
+    static let ink = DesignV2.ColorToken.ink.color
+    static let ink2 = DesignV2.ColorToken.inkSecondary.color
+    static let ink3 = DesignV2.ColorToken.inkTertiary.color
+    static let ink4 = DesignV2.ColorToken.inkMuted.color
+    static let accent = DesignV2.ColorToken.ember.color
+    static let accentSoft = DesignV2.ColorToken.emberSoft.color
+    static let accent50 = DesignV2.ColorToken.emberDeep.color
+    static let amber = DesignV2.ColorToken.amber.color
+    static let sage = DesignV2.ColorToken.sage.color
+    static let sageSoft = DesignV2.ColorToken.sageSoft.color
+    static let clay = DesignV2.ColorToken.clay.color
+    static let ok = DesignV2.ColorToken.ok.color
+    static let warn = DesignV2.ColorToken.warn.color
+    static let warnSoft = lerpColor(MobileData.Colors_.shared.elevated, MobileData.Colors_.shared.warn, 0.12)
+    static let stop = DesignV2.ColorToken.stop.color
 
-    // Lines.
-    static let line = color(Colors.shared.line)
-    static let lineSoft = color(Colors.shared.lineSoft)
-
-    // Ink (text).
-    static let ink = color(Colors.shared.ink)
-    static let ink2 = color(Colors.shared.ink2)
-    static let ink3 = color(Colors.shared.ink3)
-    static let ink4 = color(Colors.shared.ink4)
-
-    // Accents.
-    static let accent = color(Colors.shared.accent)
-    static let accentSoft = color(Colors.shared.accentSoft)
-    static let accent50 = color(Colors.shared.accent50)
-    static let amber = color(Colors.shared.amber)
-    static let sage = color(Colors.shared.sage)
-    static let sageSoft = color(Colors.shared.sageSoft)
-    static let clay = color(Colors.shared.clay)
-
-    // Status.
-    static let ok = color(Colors.shared.ok)
-    static let warn = color(Colors.shared.warn)
-    static let stop = color(Colors.shared.stop)
-
-    // Derived. User chat-bubble fill = sage mixed 16% into paper, approximating
-    // the webui color-mix(in oklab, sage 16%, paper) and matching the Android
-    // `lerp(paper, sage, 0.16)`. Lerped on the raw ARGB tokens so the iOS-17
-    // deployment target holds (Color.mix is iOS 18+).
-    static let userBubble = lerpColor(Colors.shared.paper, Colors.shared.sage, 0.16)
-
-    // MicCorner ember colorway (webui components.css "MicCorner" section) —
-    // color-mix values lerped on the raw ARGB tokens, like userBubble above.
-    /// Live control border: color-mix(accent 45%, line).
-    static let micLiveBorder = lerpColor(Colors.shared.line, Colors.shared.accent, 0.45)
-    /// Locked body gradient stops: color-mix(accent 45% / 20%, bg-sunk).
-    static let micLockedHi = lerpColor(Colors.shared.bgSunk, Colors.shared.accent, 0.45)
-    static let micLockedLo = lerpColor(Colors.shared.bgSunk, Colors.shared.accent, 0.20)
-    /// PTT takeover wave bars: color-mix(accent 70%, ink).
-    static let waveBar = lerpColor(Colors.shared.ink, Colors.shared.accent, 0.70)
+    static let userBubble = lerpColor(MobileData.Colors_.shared.paper, MobileData.Colors_.shared.sage, 0.16)
+    static let micLiveBorder = lerpColor(MobileData.Colors_.shared.line, MobileData.Colors_.shared.ember, 0.45)
+    static let micLockedHi = lerpColor(MobileData.Colors_.shared.sunk, MobileData.Colors_.shared.ember, 0.45)
+    static let micLockedLo = lerpColor(MobileData.Colors_.shared.sunk, MobileData.Colors_.shared.ember, 0.20)
+    static let waveBar = lerpColor(MobileData.Colors_.shared.ink, MobileData.Colors_.shared.ember, 0.70)
 }
 
-private let argbByteMask: Int64 = 0xFF
-private let argbMaxChannel = 255.0
-private let argbAlphaShift: Int64 = 24
-private let argbRedShift: Int64 = 16
-private let argbGreenShift: Int64 = 8
-
-/// Convert a packed-ARGB SDK token (`Int64`, 0xFFRRGGBB) into a SwiftUI `Color`.
-/// Channels are normalised to the 0...1 range the sRGB initializer expects.
-private func color(_ argb: Int64) -> Color {
-    let alpha = Double((argb >> argbAlphaShift) & argbByteMask) / argbMaxChannel
-    let red = Double((argb >> argbRedShift) & argbByteMask) / argbMaxChannel
-    let green = Double((argb >> argbGreenShift) & argbByteMask) / argbMaxChannel
-    let blue = Double(argb & argbByteMask) / argbMaxChannel
-    return Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
-}
-
-/// Linear-interpolate between two packed-ARGB tokens at fraction `t` (0 = `from`,
-/// 1 = `to`), per channel, returning a SwiftUI `Color`. Mirrors the Android
-/// `lerp(from, to, t)` used for the user-bubble fill.
-private func lerpColor(_ from: Int64, _ to: Int64, _ t: Double) -> Color {
-    func channel(_ argb: Int64, _ shift: Int64) -> Double {
-        Double((argb >> shift) & argbByteMask) / argbMaxChannel
+private func lerpColor(_ from: Int64, _ to: Int64, _ fraction: Double) -> Color {
+    let mask: Int64 = 0xFF
+    let maximum = 255.0
+    func channel(_ value: Int64, _ shift: Int64) -> Double {
+        Double((value >> shift) & mask) / maximum
     }
     func mix(_ shift: Int64) -> Double {
-        channel(from, shift) + (channel(to, shift) - channel(from, shift)) * t
+        channel(from, shift) + (channel(to, shift) - channel(from, shift)) * fraction
     }
-    return Color(
-        .sRGB,
-        red: mix(argbRedShift),
-        green: mix(argbGreenShift),
-        blue: mix(0),
-        opacity: mix(argbAlphaShift)
-    )
+    return Color(.sRGB, red: mix(16), green: mix(8), blue: mix(0), opacity: mix(24))
 }

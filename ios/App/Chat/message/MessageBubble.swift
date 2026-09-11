@@ -1,24 +1,16 @@
-// MessageBubble — one rendered chat message, mirroring the Android MessageBubble
-// (android/.../chat/MessageBubble.kt) and the webui MessageBubble
-// (gateway/webui/src/components/chat/message-bubble.tsx + components.css).
+// MessageBubble — the committed/live message content composite.
 //
-// Layout per role:
-//  - assistant: avatar (SentientMark) leading, bubble flush-top-LEADING (6pt),
-//    other corners Radii.lg (18pt); paper background.
-//  - user: avatar (tinted initial circle) trailing, bubble flush-top-TRAILING
-//    (6pt), other corners Radii.lg; sage-mixed-into-paper background (webui
-//    color-mix(sage 16%, paper), approximated by interpolation).
-// Both: 1pt lineSoft border, padMsg (18pt) text padding, ink text, capped at
-// msgMax width. A streaming assistant message with no text yet shows the
-// three-dot pulse; once text arrives it renders the already-revealed substring
-// from the data layer (no view-side typewriter — mobile-data Reveal ticker drives
-// content growth; growing text is the streaming affordance, webui parity);
-// a cut-short reply shows an interrupted marker.
+// MessageBubble owns role-specific content only. MessageBubbleShell owns the
+// shared row geometry, avatar, material, metadata, grouping, and accessibility
+// contract used by both committed and pending user bubbles.
 //
-// Markdown: GFM via MarkdownUI (swift-markdown-ui), themed to Dusk
-// (Theme.dusk) — mirrors the webui `marked` render path.
-//
-// accessibilityIdentifier `message-bubble-<index>` mirrors the Android testTag.
+// Layout and behavior remain the established chat contract:
+//  - assistant content uses the Sentient mark on the leading edge and paper;
+//  - user content uses the user avatar on the trailing edge and sage-mixed paper;
+//  - streaming assistant content shows the thinking pulse until revealed text
+//    arrives, then renders the data-layer substring directly;
+//  - committed content remains GFM Markdown with the Dusk theme and cutoff
+//    markers.
 import SwiftUI
 import MarkdownUI
 import MobileData
@@ -26,80 +18,40 @@ import MobileData
 struct MessageBubble: View {
     let message: ChatMessage
     let index: Int
+    var total: Int = 1
+    var continuation = false
     /// Avatar animation mode — only the live streaming assistant bubble animates;
-    /// committed bubbles pass `.idle` (static), mirroring the Android avatarMode.
-    var avatarMode: MarkMode = .idle
+    /// committed bubbles pass `.idle`, mirroring the Android avatarMode.
+    var avatarMode: SentientIdentityState = .idle
     /// Display name shown in the meta row above the bubble.
     var userName: String = "You"
 
-    /// Bubble width cap, injected by MessageList from the live viewport width so a
-    /// non-wrapping tool-pill strip can't drag the bubble off the screen edge.
-    @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
-
     private var isUser: Bool { message.role == "user" }
-    private var isSpeaking: Bool { !isUser && avatarMode == .speaking }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            if isUser {
-                Spacer(minLength: BubbleLayout.edgeMin)
-                VStack(alignment: .trailing, spacing: Space.xs) {
-                    MessageMeta(message: message, userName: userName)
-                    bubbleBody
-                }
-                userAvatar
-            } else {
-                SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
-                    .overlay(AvatarRipple(active: avatarMode != .idle))
-                    .padding(.trailing, Space.md)
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    MessageMeta(message: message, userName: userName)
-                    bubbleBody
-                }
-                Spacer(minLength: BubbleLayout.edgeMin)
-            }
+        MessageBubbleShell(
+            role: isUser ? .user : .assistant,
+            name: isUser ? userName : "Sentient",
+            timestamp: message.ts,
+            isStreaming: message.streaming,
+            cutoffLabel: messageCutoffLabel(for: message.cutoffKind),
+            index: index,
+            total: total,
+            continuation: continuation,
+            avatarMode: avatarMode,
+            accessibilityIdentifier: isUser ? "message-bubble-\(index)" : "assistant-bubble"
+        ) {
+            bubbleContent
         }
-        .frame(maxWidth: .infinity)
-        // Index-based id for all bubbles; assistant rows additionally get
-        // "assistant-bubble" so Maestro can assert any assistant reply appeared.
-        .accessibilityIdentifier(isUser ? "message-bubble-\(index)" : "assistant-bubble")
-    }
-
-    // ── Avatar ────────────────────────────────────────────────────────────────
-
-    /// User → initial on terra/amber accent circle (webui parity).
-    private var userAvatar: some View {
-        UserAvatar(name: userName, size: BubbleLayout.avatarSize)
-            .padding(.leading, Space.md)
-    }
-
-    // ── Body ──────────────────────────────────────────────────────────────────
-
-    private var bubbleBody: some View {
-        bubbleContent
-            .padding(Space.padMsg)
-            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
-            .background {
-                ZStack {
-                    isUser ? BubbleLayout.userBg : DuskColors.paper
-                    // Terra sweep composited ON TOP of the opaque fill but under the
-                    // text; a plain second `.background` would sit behind the fill and
-                    // be occluded (paper is opaque).
-                    if isSpeaking { BubbleSpeakingWave() }
-                }
-            }
-            .clipShape(bubbleShape)
-            .overlay(bubbleShape.stroke(DuskColors.lineSoft, lineWidth: 1))
-            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
     private var bubbleContent: some View {
         // One layout for all phases: pulse while still thinking → revealed
         // text → committed markdown. Tool rows no longer render here — they
-        // moved to the composer's task strip (ComposerTaskStrip), which has no
-        // bubble to anchor to (a mid-turn steer can split one turn's rows
-        // across bubbles with no stable owner).
+        // moved to the composer's task strip, which has no bubble to anchor to
+        // (a mid-turn steer can split one turn's rows across bubbles with no
+        // stable owner).
         if message.streaming && message.content.isEmpty {
             PulseDots()
         } else if message.streaming {
@@ -113,63 +65,33 @@ struct MessageBubble: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Markdown(message.content)
                 .markdownTheme(.dusk)
+                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if cutoffLabel != nil { interruptedMarker }
+            if messageCutoffLabel(for: message.cutoffKind) != nil {
+                interruptedMarker
+            }
         }
     }
 
     private var interruptedMarker: some View {
-        Label(cutoffLabel ?? "", systemImage: "stop.circle")
-            .font(.system(size: TypeScale.sm))
+        Label(messageCutoffLabel(for: message.cutoffKind) ?? "", systemImage: "stop.circle")
+            .font(Typo.ui(TypeScale.sm))
             .foregroundStyle(DuskColors.ink3)
             .accessibilityIdentifier("message-cutoff-\(index)")
     }
-
-    /// Cut-short marker copy (nil when not cut short). The two gestures read
-    /// differently on purpose and match webui's InterruptChip word-for-word:
-    /// "interrupted" is the Stop button, "barge-in" is the user talking over the
-    /// reply. Collapsing them told the user their tap stopped a reply their
-    /// voice had already cut off.
-    private var cutoffLabel: String? {
-        switch message.cutoffKind {
-        case "barge-in": return "barge-in"
-        case "interrupt": return "interrupted"
-        default: return nil
-        }
-    }
-
-    /// Flush the corner nearest the sender (Android FLUSH_CORNER = 6pt).
-    private var bubbleShape: UnevenRoundedRectangle {
-        let r = Radii.lg
-        let flush = BubbleLayout.flushCorner
-        if isUser {
-            return UnevenRoundedRectangle(
-                topLeadingRadius: r, bottomLeadingRadius: r,
-                bottomTrailingRadius: r, topTrailingRadius: flush
-            )
-        }
-        return UnevenRoundedRectangle(
-            topLeadingRadius: flush, bottomLeadingRadius: r,
-            bottomTrailingRadius: r, topTrailingRadius: r
-        )
-    }
 }
 
-// PulseDots + StreamingText live in BubbleAnimations.swift (kept out of this file
-// for the clean-code size limit).
-
-/// Bubble layout constants. `userBg` approximates the webui
-/// color-mix(in oklab, sage 16%, paper) via sRGB interpolation, matching the
-/// Android `lerp(paper, sage, 0.16)`. (Color.mix is iOS 18+, so the token wrapper
-/// does the lerp on the raw ARGB values, keeping the iOS-17 deployment target.)
-enum BubbleLayout {
-    static let flushCorner: CGFloat = 6
-    static let avatarSize: CGFloat = 28
-    static let edgeMin: CGFloat = 12
-    static let pulseDot: CGFloat = 6
-    static let pulseGap: CGFloat = 4
-    static let pulseStagger: Double = 0.18
-    static let userBg = DuskColors.userBubble
+/// Cut-short marker copy (nil when not cut short). The two gestures read
+/// differently on purpose and match webui's InterruptChip word-for-word:
+/// "interrupted" is the Stop button, "barge-in" is the user talking over the
+/// reply. Collapsing them told the user their tap stopped a reply their voice
+/// had already cut off.
+func messageCutoffLabel(for cutoffKind: String?) -> String? {
+    switch cutoffKind {
+    case "barge-in": return "barge-in"
+    case "interrupt": return "interrupted"
+    default: return nil
+    }
 }
 
 #Preview {

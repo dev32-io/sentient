@@ -13,9 +13,11 @@
 import { describe, expect, it } from "bun:test";
 import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTEvent } from "../adapters/stt/stt-adapter-types.js";
+import { createGatewayLogger } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
+import { captureDiagnosticRef } from "./capture-diagnostics.js";
 import { createSttSession } from "./stt-session.js";
 
 const TEST_CONFIG: STTAdapterConfig = {
@@ -31,6 +33,7 @@ const TEST_CONFIG: STTAdapterConfig = {
 interface FakeAdapter {
   adapter: STTAdapter;
   emit(event: STTEvent): void;
+  fail(error: Error): void;
   sent: Uint8Array[];
   turnModes: TurnMode[];
   flushes: number;
@@ -38,24 +41,26 @@ interface FakeAdapter {
   closes: number;
 }
 
-function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
-  const pendingEvents: STTEvent[] = [];
-  let deliver: ((e: STTEvent | null) => void) | null = null;
+function fakeAdapter(openError?: Error, eventsError?: Error, endError?: Error): FakeAdapter {
+  const pendingEvents: Array<STTEvent | Error> = [];
+  let deliver: ((e: STTEvent | Error | null) => void) | null = null;
+  const enqueue = (value: STTEvent | Error): void => {
+    const d = deliver;
+    if (d) {
+      deliver = null;
+      d(value);
+      return;
+    }
+    pendingEvents.push(value);
+  };
   const f: FakeAdapter = {
     sent: [],
     turnModes: [],
     flushes: 0,
     suppressions: [],
     closes: 0,
-    emit(event) {
-      const d = deliver;
-      if (d) {
-        deliver = null;
-        d(event);
-        return;
-      }
-      pendingEvents.push(event);
-    },
+    emit: enqueue,
+    fail: enqueue,
     adapter: {
       open: async () => {
         if (openError) throw openError;
@@ -65,6 +70,7 @@ function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
       },
       endUtterance: () => {
         f.flushes += 1;
+        if (endError) throw endError;
       },
       setTurnMode: (mode) => {
         f.turnModes.push(mode);
@@ -82,13 +88,15 @@ function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
         while (true) {
           const next = pendingEvents.shift();
           if (next !== undefined) {
+            if (next instanceof Error) throw next;
             yield next;
             continue;
           }
-          const awaited = await new Promise<STTEvent | null>((resolve) => {
+          const awaited = await new Promise<STTEvent | Error | null>((resolve) => {
             deliver = resolve;
           });
           if (awaited === null) return;
+          if (awaited instanceof Error) throw awaited;
           yield awaited;
         }
       },
@@ -168,7 +176,7 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
     fake.emit({ type: "transcript", turnIdx: 1, text: "turn on the lights" });
     await settle();
@@ -188,7 +196,7 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
     fake.emit({ type: "turn_started", turnIdx: 1 });
     await settle();
@@ -209,7 +217,7 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
     fake.emit({ type: "transcript", turnIdx: 1, text: "   " });
     await settle();
@@ -229,14 +237,290 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("manual");
+    session.start("cap-1", "manual");
     await settle();
-    session.pushFrame(new Uint8Array([1, 2, 3]));
-    session.end();
+    session.pushFrame("cap-1", new Uint8Array([1, 2, 3]));
+    session.end("cap-1");
 
     expect(fake.turnModes).toEqual(["manual"]);
     expect(fake.sent).toHaveLength(1);
     expect(fake.flushes).toBe(1);
+    session.close();
+  });
+
+  it("buffers manual transcript until matching end commits it", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-1", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "send this" });
+    await settle();
+    expect(stub.submitted).toEqual([]);
+
+    session.end("manual-1");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "send this final" });
+    await settle();
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "send this final" }]);
+    session.close();
+  });
+
+  it("submits no turn when manual finalization is empty", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-empty", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "provisional words" });
+    await settle();
+    session.end("manual-empty");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "   " });
+    await settle();
+
+    expect(fake.flushes).toBe(1);
+    expect(stub.submitted).toEqual([]);
+    expect(session.start("next", "manual")).toBe(true);
+    session.close();
+  });
+
+  it("submits exactly once when an adapter repeats the finalized callback", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-duplicate", "manual");
+    await settle();
+    session.end("manual-duplicate");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "final words" });
+    fake.emit({ type: "transcript", turnIdx: 1, text: "final words" });
+    await settle();
+
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "final words" }]);
+    session.close();
+  });
+
+  it("drops manual input when requesting the final flush fails", async () => {
+    const fake = fakeAdapter(undefined, undefined, new Error("flush failed"));
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-failure", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "provisional words" });
+    await settle();
+    session.end("manual-failure");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "late final words" });
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(fake.closes).toBe(1);
+    expect(session.start("next", "manual")).toBe(true);
+    session.close();
+  });
+
+  it("keeps the first matching terminal outcome across cancel/end races", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("cancel-wins", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "provisional words" });
+    await settle();
+    session.cancel("cancel-wins");
+    session.end("cancel-wins");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "late final words" });
+    await settle();
+
+    expect(fake.flushes).toBe(0);
+    expect(stub.submitted).toEqual([]);
+    session.close();
+  });
+
+  it("does not let cancel steal a capture after End has won", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("end-wins", "manual");
+    await settle();
+    session.end("end-wins");
+    session.cancel("end-wins");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "final words" });
+    await settle();
+
+    expect(fake.flushes).toBe(1);
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "final words" }]);
+    session.close();
+  });
+
+  it("does not retain credential-shaped capture IDs in STT logs", async () => {
+    const lines: string[] = [];
+    await createGatewayLogger({ logLevel: "debug", testSink: (line) => lines.push(line) });
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const untrusted = "token=private-content-shaped-capture";
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start(untrusted, "manual");
+    await settle();
+    session.end(untrusted);
+    fake.emit({ type: "transcript", turnIdx: 1, text: "synthetic final" });
+    await settle();
+    session.close();
+
+    const output = lines.join("\n");
+    expect(output).not.toContain(untrusted);
+    expect(output).toContain(captureDiagnosticRef(untrusted));
+    expect(output).not.toContain("captureId=");
+  });
+
+  it("drops manual transcript and late adapter callbacks after cancel", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-1", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "never submit" });
+    await settle();
+    session.cancel("manual-1");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "also stale" });
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(fake.flushes).toBe(0);
+    session.close();
+  });
+
+  it("keeps End -> turn_started eligible for one committed semantic transcript", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    expect(session.start("cap-1", "semantic")).toBe(true);
+    await settle();
+    session.end("cap-1");
+    fake.emit({ type: "turn_started", turnIdx: 1 });
+    await settle();
+    expect(session.start("cap-blocked", "semantic")).toBe(false);
+
+    fake.emit({ type: "transcript", turnIdx: 1, text: "commit this once" });
+    await settle();
+    fake.emit({ type: "turn_dropped", turnIdx: 1 });
+    await settle();
+
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "commit this once" }]);
+    expect(session.start("cap-2", "semantic")).toBe(true);
+    session.close();
+  });
+
+  it("releases End -> turn_started on a true dropped terminal without submitting", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    expect(session.start("cap-1", "semantic")).toBe(true);
+    await settle();
+    session.end("cap-1");
+    fake.emit({ type: "turn_started", turnIdx: 1 });
+    fake.emit({ type: "turn_dropped", turnIdx: 1 });
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(session.start("cap-2", "semantic")).toBe(true);
+    session.close();
+  });
+
+  it("terminalizes End -> turn_started when its semantic event stream fails", async () => {
+    const failing = fakeAdapter();
+    const healthy = fakeAdapter();
+    const queue = [failing, healthy];
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => (queue.shift() ?? healthy).adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    expect(session.start("cap-1", "semantic")).toBe(true);
+    await settle();
+    session.end("cap-1");
+    failing.emit({ type: "turn_started", turnIdx: 1 });
+    await settle();
+    expect(session.start("cap-blocked", "semantic")).toBe(false);
+    failing.fail(new Error("final stream failed"));
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(session.start("cap-2", "semantic")).toBe(true);
+    await settle();
+    session.pushFrame("cap-2", new Uint8Array([1]));
+    expect(healthy.sent).toHaveLength(1);
     session.close();
   });
 
@@ -253,10 +537,10 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle(); // the first adapter's events() rejects here
 
-    session.pushFrame(new Uint8Array([1])); // mic still open → frame-driven re-dial
+    session.pushFrame("cap-1", new Uint8Array([1])); // mic still open → frame-driven re-dial
     await settle();
     healthy.emit({ type: "transcript", turnIdx: 1, text: "still here" });
     await settle();
@@ -276,10 +560,10 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
 
-    expect(() => session.pushFrame(new Uint8Array([1]))).not.toThrow();
+    expect(() => session.pushFrame("cap-1", new Uint8Array([1]))).not.toThrow();
     expect(fake.sent).toEqual([]);
     session.close();
   });
@@ -304,9 +588,9 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
-    session.pushFrame(new Uint8Array([1, 2, 3, 4]));
+    session.pushFrame("cap-1", new Uint8Array([1, 2, 3, 4]));
     expect(session.buffered).toBe(4);
 
     session.discard();
@@ -350,7 +634,7 @@ describe("createSttSession", () => {
       },
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
     // The transcript enters `dispatch` and parks on the runtime lookup.
     fake.emit({ type: "transcript", turnIdx: 1, text: "meant for the other chat" });
@@ -378,7 +662,7 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => stub.runtime,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
     session.discard();
     fake.emit({ type: "turn_started", turnIdx: 1 });
@@ -391,7 +675,7 @@ describe("createSttSession", () => {
     session.close();
   });
 
-  it("keeps the mic live across a discard — the next frame re-dials and speech continues", async () => {
+  it("requires a fresh capture after discard before speech can continue", async () => {
     let dialled = 0;
     const first = fakeAdapter();
     const second = fakeAdapter();
@@ -406,12 +690,13 @@ describe("createSttSession", () => {
       getRuntimeForInput: async () => null,
     });
 
-    session.start("semantic");
+    session.start("cap-1", "semantic");
     await settle();
     session.discard();
-    session.pushFrame(new Uint8Array([9]));
+    session.pushFrame("cap-1", new Uint8Array([9]));
+    session.start("cap-2", "semantic");
     await settle();
-    session.pushFrame(new Uint8Array([9]));
+    session.pushFrame("cap-2", new Uint8Array([9]));
 
     expect(dialled).toBe(2);
     expect(second.sent).toHaveLength(1);

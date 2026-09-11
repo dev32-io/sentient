@@ -70,7 +70,8 @@ export type CommandKind =
   | "interrupt"
   | "permission.response"
   | "audio.start"
-  | "audio.end";
+  | "audio.end"
+  | "audio.cancel";
 
 export interface InboundCommand {
   readonly type: CommandKind;
@@ -208,6 +209,7 @@ function discardUplink(conn: ServerWebSocket<SessionData>, reason: CommandRefusa
     bufferedBytes: stt.buffered,
     reason: `${reason}: this connection's mic is aimed at a session it is no longer a window on`,
   });
+  conn.data.audioCapture = null;
   stt.discard();
 }
 

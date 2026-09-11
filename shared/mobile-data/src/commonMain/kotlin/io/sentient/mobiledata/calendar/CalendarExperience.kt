@@ -145,6 +145,7 @@ private data class InFlightRequestRegistration(
     val bookkeepingGeneration: Long,
     val requestId: Long,
     val deferred: Deferred<WindowLoadResult>,
+    val waiters: Int = 1,
 )
 
 /**
@@ -167,7 +168,6 @@ private data class BookkeepingJobRegistration(
 private sealed interface WindowLoadResult {
     data class Complete(
         val occurrences: List<EffectiveOccurrence>,
-        val fetchedAt: Long,
     ) : WindowLoadResult
 
     data class Failed(val error: CalendarExperienceError) : WindowLoadResult
@@ -276,6 +276,51 @@ class CalendarExperience(
     private var unregisterNamespaceListener: (() -> Unit)? = null
     private var closed: Boolean = false
 
+    private val viewport = CalendarViewportCoordinator(
+        cache = cacheStore,
+        scope = scope,
+        presentation = state,
+        captureFence = {
+            val namespace = cacheStore.currentNamespace.value
+            val epoch = namespaceGeneration
+            val valid: () -> Boolean = { !accessDisabled && isNamespaceCurrent(namespace, epoch) }
+            valid
+        },
+        windowFor = { period, locale ->
+            windowFor(_state.value.copy(view = period.view, anchorDate = period.anchorDate, locale = locale))
+        },
+        viewed = { snapshot, valid ->
+            val namespace = cacheStore.currentNamespace.value
+            val epoch = namespaceGeneration
+            if (valid()) recordViewedWindow(snapshot, requestGeneration, namespace, epoch)
+        },
+        load = { window, valid ->
+            val namespace = cacheStore.currentNamespace.value
+            val epoch = namespaceGeneration
+            val loaded = if (valid()) loadWindow(window, namespace, epoch) else WindowLoadResult.Cancelled
+            when (val result = loaded) {
+                WindowLoadResult.Cancelled -> CalendarViewportLoadResult.Cancelled
+                is WindowLoadResult.Complete -> CalendarViewportLoadResult.Complete
+                is WindowLoadResult.Failed -> {
+                    if (isNamespaceCurrent(namespace, epoch)) {
+                        when (result.error.kind) {
+                            CalendarExperienceErrorKind.AUTHORIZATION -> scheduleAuthenticationExpiry(namespace, epoch)
+                            CalendarExperienceErrorKind.FORBIDDEN -> scheduleForbiddenPurge(namespace, result.error)
+                            else -> Unit
+                        }
+                    }
+                    CalendarViewportLoadResult.Failed(result.error)
+                }
+            }
+        },
+    )
+
+    /** Read-only simultaneous periods; semantic navigation remains in [state]. */
+    val viewportState: StateFlow<CalendarViewportState> get() = viewport.state
+
+    /** One route owns the viewport. A successor makes an old lease's teardown inert. */
+    fun acquireViewport(): CalendarViewportLease = viewport.acquire()
+
     init {
         // The SQLDelight store invokes this hook before changing its selected
         // namespace. Keeping the StateFlow collector as a fallback also makes
@@ -333,10 +378,9 @@ class CalendarExperience(
         if (requestedWindow == window && observationJob?.isActive == true) return state
 
         val changingWindow = requestedWindow != window
-        if (changingWindow) {
-            cancelPrefetchWork()
-            cancelSharedRequests()
-        }
+        if (changingWindow) cancelPrefetchWork()
+        // Ordinary navigation releases only foreground/prefetch waiters below;
+        // a still-visible viewport keeps its coalesced transport alive.
         requestedWindow = window
         activeWindow = window
         requestGeneration += 1L
@@ -1176,6 +1220,7 @@ class CalendarExperience(
         // mutation must not merely join a refresh that started before its write.
         forceRevalidateAfterMutation(fence)
         if (!isMutationFenceCurrent(fence)) return
+        viewport.refresh()
         mutationRefreshJob?.cancel()
         val namespace = fence.namespace
         val epoch = fence.namespaceGeneration
@@ -1399,7 +1444,41 @@ class CalendarExperience(
     }
 
     fun dispatch(action: CalendarNavigationAction) {
-        if (closed) return
+        dispatchNavigation(action)
+    }
+
+    /**
+     * Explicit Previous/Next/mode command or in-week Week date tap from a native
+     * route's local browse cursor. The cursor is only a reducer basis, never an intermediate state.
+     * Scrolling/setPeriods must not call this semantic navigation boundary.
+     * SelectDate is supported only in WEEK and retains the supplied anchor.
+     * Out-of-week dates return OUTSIDE_VISIBLE_WEEK; invalid/unrepresentable
+     * dates return INVALID_DATE. Rejections leave state and preferences unchanged.
+     */
+    fun navigateFromViewport(
+        anchorDate: String,
+        action: CalendarNavigationAction,
+    ): CalendarViewportRequestResult {
+        if (accessDisabled || !isNamespaceCurrent(observedNamespace, namespaceGeneration)) {
+            return CalendarViewportRequestResult.RETIRED
+        }
+        if (action != CalendarNavigationAction.Previous && action != CalendarNavigationAction.Next &&
+            action !is CalendarNavigationAction.SelectView && action !is CalendarNavigationAction.SelectDate
+        ) return CalendarViewportRequestResult.UNSUPPORTED_ACTION
+        if (!isCalendarDate(anchorDate)) return CalendarViewportRequestResult.INVALID_DATE
+        return dispatchNavigation(action, basisAnchorDate = anchorDate)
+    }
+
+    private fun dispatchNavigation(
+        action: CalendarNavigationAction,
+        basisAnchorDate: String? = null,
+    ): CalendarViewportRequestResult {
+        if (closed) return CalendarViewportRequestResult.RETIRED
+        val namespace = observedNamespace
+        val epoch = namespaceGeneration
+        if (basisAnchorDate != null && (accessDisabled || !isNamespaceCurrent(namespace, epoch))) {
+            return CalendarViewportRequestResult.RETIRED
+        }
         val normalizedAction = try {
             when (action) {
                 is CalendarNavigationAction.SetFilters -> action.copy(filters = validateFilters(action.filters))
@@ -1412,30 +1491,63 @@ class CalendarExperience(
                     userMessage = "The selected calendar filters are invalid.",
                 ),
             )
-            return
+            return CalendarViewportRequestResult.INVALID_DATE
         }
         val current = _state.value
-        val next = try {
-            CalendarNavigation.reduce(current, normalizedAction).state
-        } catch (_: IllegalArgumentException) {
-            updateError(
-                CalendarExperienceError(
-                    kind = CalendarExperienceErrorKind.CONTRACT,
-                    userMessage = "The selected calendar position is invalid.",
-                ),
-            )
-            return
+        if (basisAnchorDate != null && normalizedAction is CalendarNavigationAction.SelectDate) {
+            if (current.view != CalendarView.WEEK) return CalendarViewportRequestResult.UNSUPPORTED_ACTION
+            if (!isCalendarDate(normalizedAction.date)) return CalendarViewportRequestResult.INVALID_DATE
+            val interval = try {
+                calendarVisibleInterval(CalendarView.WEEK, basisAnchorDate, current.locale)
+            } catch (_: IllegalArgumentException) {
+                return CalendarViewportRequestResult.INVALID_DATE
+            }
+            if (normalizedAction.date < interval.startDate || normalizedAction.date >= interval.endExclusive) {
+                return CalendarViewportRequestResult.OUTSIDE_VISIBLE_WEEK
+            }
         }
-        val actionForWindow = normalizedAction
-        applyPresentation(next)
-        persistPresentation(next)
-
+        val next = try {
+            val basis = if (basisAnchorDate == null) current else current.copy(
+                anchorDate = basisAnchorDate,
+                selectedDate = basisAnchorDate,
+            )
+            CalendarNavigation.reduce(basis, normalizedAction).state
+        } catch (_: IllegalArgumentException) {
+            if (basisAnchorDate == null) {
+                updateError(
+                    CalendarExperienceError(
+                        kind = CalendarExperienceErrorKind.CONTRACT,
+                        userMessage = "The selected calendar position is invalid.",
+                    ),
+                )
+            }
+            return CalendarViewportRequestResult.INVALID_DATE
+        }
         // Filters are purely local over the complete cached set. View/date/locale
         // changes can alter the visible interval and are the only intents that
         // start a new foreground window request.
-        val requiresWindow = actionForWindow !is CalendarNavigationAction.SetFilters
-        val desiredWindow = windowFor(next)
-        if (requiresWindow && desiredWindow != activeWindow) observe(desiredWindow)
+        val requiresWindow = normalizedAction !is CalendarNavigationAction.SetFilters
+        val desiredWindow = if (basisAnchorDate == null) windowFor(next) else try {
+            // Validate all civil intervals before the first publication. Valid
+            // input near a supported date boundary can step outside it.
+            calendarVisibleInterval(next.view, next.anchorDate, next.locale)
+            selectedDateInterval(next.selectedDate)
+            windowFor(next)
+        } catch (_: IllegalArgumentException) {
+            return CalendarViewportRequestResult.INVALID_DATE
+        }
+        if (basisAnchorDate != null && (accessDisabled || !isNamespaceCurrent(namespace, epoch))) {
+            return CalendarViewportRequestResult.RETIRED
+        }
+        val changingWindow = requiresWindow && desiredWindow != activeWindow
+        if (changingWindow) {
+            applyPresentationForWindowChange(next, desiredWindow)
+        } else {
+            applyPresentation(next)
+        }
+        persistPresentation(next)
+        if (changingWindow) observe(desiredWindow)
+        return CalendarViewportRequestResult.ACCEPTED
     }
 
     fun send(action: CalendarNavigationAction) = dispatch(action)
@@ -1456,6 +1568,7 @@ class CalendarExperience(
      */
     fun refresh(): Job? {
         if (closed || accessDisabled) return null
+        viewport.refresh()
         preparePrefetchForRecovery()
         if (observationJob?.isActive != true) {
             observe(requestedWindow)
@@ -1622,6 +1735,7 @@ class CalendarExperience(
     fun close() {
         if (closed) return
         closed = true
+        viewport.clear()
         requestGeneration += 1L
         namespaceGeneration += 1L
         mutationGeneration += 1L
@@ -2020,10 +2134,8 @@ class CalendarExperience(
 
             is WindowLoadResult.Complete -> {
                 if (!isCurrent(generation, namespace, namespaceEpoch)) return
-                // The SQLDelight flow naturally emits this generation. We also
-                // apply it here so lightweight injected stores that acknowledge
-                // writes before emitting expose a complete value immediately.
-                applyCommittedData(window, loaded.occurrences, loaded.fetchedAt)
+                // loadWindow publishes the committed active generation at the
+                // cache transaction boundary, including for non-emitting stores.
                 log.info(
                     "revalidation.settled",
                     mapOf(
@@ -2062,10 +2174,14 @@ class CalendarExperience(
         // even though this public operation may be initiated synchronously.
         val request = registerInFlightRequest(key, window, namespace, namespaceEpoch, continuationFence)
             ?: return WindowLoadResult.Cancelled
-        request.start()
-        val result = request.await()
-        return if (continuationFence == null || isMutationFenceCurrent(continuationFence)) result
-        else WindowLoadResult.Cancelled
+        try {
+            request.start()
+            val result = request.await()
+            return if (continuationFence == null || isMutationFenceCurrent(continuationFence)) result
+            else WindowLoadResult.Cancelled
+        } finally {
+            releaseWindowRequest(key, request)
+        }
     }
 
     private fun registerInFlightRequest(
@@ -2083,9 +2199,11 @@ class CalendarExperience(
             val existing = registry.entries[key]
             if (existing != null &&
                 existing.bookkeepingGeneration == registry.generation &&
-                existing.deferred.isActive
+                !existing.deferred.isCompleted && !existing.deferred.isCancelled
             ) {
-                return existing.deferred
+                val joined = registry.copy(entries = registry.entries + (key to existing.copy(waiters = existing.waiters + 1)))
+                if (inFlightRequests.compareAndSet(registry, joined)) return existing.deferred
+                continue
             }
 
             // Keep the new Deferred lazy until its exact entry is installed.
@@ -2108,6 +2226,20 @@ class CalendarExperience(
             // Another registrar or cancellation won the linearization point.
             // This lazy child has not performed remote work and is disposable.
             created.cancel()
+        }
+    }
+
+    /** Only the final waiter may cancel a coalesced transport (viewport, foreground or prefetch). */
+    private fun releaseWindowRequest(key: CalendarWindowRequestKey, request: Deferred<WindowLoadResult>) {
+        while (true) {
+            val registry = inFlightRequests.load()
+            val entry = registry.entries[key]?.takeIf { it.deferred === request } ?: return
+            val entries = if (entry.waiters == 1) registry.entries - key
+                else registry.entries + (key to entry.copy(waiters = entry.waiters - 1))
+            if (inFlightRequests.compareAndSet(registry, registry.copy(entries = entries))) {
+                if (entry.waiters == 1) request.cancel()
+                return
+            }
         }
     }
 
@@ -2141,12 +2273,17 @@ class CalendarExperience(
                     continuationFence != null && !isMutationFenceCurrent(continuationFence)
                 ) return WindowLoadResult.Cancelled
                 val isViewedWindow = activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)
+                // A viewport can retain a snapshot beyond disk eviction. Give
+                // its next complete write a later timestamp even within the same
+                // clock tick, so queued older cache emissions cannot roll it back.
+                val fetchedAtCandidate = maxOf(nowMillis().coerceAtLeast(0L), viewport.fetchedAt(window) + 1L)
                 val fetchedAt = if (isViewedWindow) {
-                    nextMonotonicTimestamp(latestActiveFetchedAt, nowMillis().coerceAtLeast(0L))
+                    nextMonotonicTimestamp(latestActiveFetchedAt, fetchedAtCandidate)
                 } else {
-                    nowMillis().coerceAtLeast(0L)
+                    fetchedAtCandidate
                 }
-                val lastAccessedAt = if (isViewedWindow) fetchedAt else previousAccessedAt(namespace, namespaceEpoch, window)
+                val lastAccessedAt = if (isViewedWindow || viewport.contains(window)) fetchedAt
+                    else previousAccessedAt(namespace, namespaceEpoch, window)
                 if (!isLoadRequestCurrent(key, requestId, namespaceEpoch) ||
                     continuationFence != null && !isMutationFenceCurrent(continuationFence)
                 ) return WindowLoadResult.Cancelled
@@ -2183,10 +2320,14 @@ class CalendarExperience(
                         // superseded immediately after this return; waiting for
                         // that caller to reduce the result left the UI stuck in
                         // REFRESHING even though SQLDelight was already fresh.
+                        viewport.committed(window, aggregation.occurrences, fetchedAt) {
+                            isLoadRequestCurrent(key, requestId, namespaceEpoch) &&
+                                (continuationFence == null || isMutationFenceCurrent(continuationFence))
+                        }
                         if (activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)) {
                             applyCommittedData(window, aggregation.occurrences, fetchedAt)
                         }
-                        WindowLoadResult.Complete(aggregation.occurrences, fetchedAt)
+                        WindowLoadResult.Complete(aggregation.occurrences)
                     } else {
                         WindowLoadResult.Cancelled
                     }
@@ -2570,7 +2711,9 @@ class CalendarExperience(
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
     ): List<Job> {
-        if (closed || accessDisabled || !isNamespaceCurrent(namespace, namespaceEpoch)) return emptyList()
+        if (closed || accessDisabled || _state.value.view == CalendarView.YEAR ||
+            !isNamespaceCurrent(namespace, namespaceEpoch)
+        ) return emptyList()
         val scheduled = mutableListOf<Job>()
         val registrationGeneration = bookkeepingGeneration
         bookkeepingMutex.withLock {
@@ -2883,6 +3026,47 @@ class CalendarExperience(
         }
     }
 
+    private fun applyPresentationForWindowChange(
+        next: CalendarExperienceState,
+        window: CalendarCacheWindow,
+    ) {
+        // Fence and stop the old collector before publishing controls for the
+        // new window. Preference writes can emit synchronously, so leaving the
+        // collector current here could briefly republish old authorized rows
+        // under the new view. A viewport may still own the shared transport;
+        // cancellation releases only this foreground waiter.
+        requestGeneration += 1L
+        observationJob?.cancel()
+        refreshJob?.cancel()
+        refreshJob = null
+        revalidationGeneration = null
+        cancelPrefetchWork()
+        requestedWindow = window
+        activeWindow = window
+        _state.update { current ->
+            val projection = buildProjection(next, emptyList())
+            current.copy(
+                anchorDate = next.anchorDate,
+                view = next.view,
+                selectedDate = next.selectedDate,
+                filters = next.filters,
+                locale = next.locale,
+                todayDate = next.todayDate,
+                visibleInterval = window.toDateInterval(),
+                selectedInterval = selectedDateInterval(next.selectedDate),
+                authorizedOccurrences = emptyList(),
+                projection = projection,
+                facets = projection?.facets ?: emptyCalendarFacets(),
+                loading = CalendarLoadingState(CalendarLoadingPhase.LOADING),
+                freshness = CalendarFreshness.STALE,
+                offline = CalendarOfflineState.ONLINE,
+                error = null,
+                hasCompleteCache = false,
+                cachedWindow = null,
+            )
+        }
+    }
+
     private fun persistPresentation(presentation: CalendarExperienceState) {
         val cachePreferences = presentation.toCachePreferences(nowMillis().coerceAtLeast(0L))
         val generation = ++preferenceWriteGeneration
@@ -2948,6 +3132,7 @@ class CalendarExperience(
         cancelAuthExpiry: Boolean = true,
     ) {
         if (closed) return
+        viewport.clear()
         if (namespace != observedNamespace) accessDisabled = false
         if (updateObservedNamespace) observedNamespace = namespace
         namespaceGeneration += 1L
@@ -3048,10 +3233,16 @@ class CalendarExperience(
             selectedDate = preferences.anchorDate,
             locale = current.locale,
         )
+        // Cache preferences persist the anchor, not the live Week selection.
+        // Re-reading our own write (including observation restart) or replaying
+        // unchanged preferences alongside a snapshot is not a selection intent.
+        // Actual persisted presentation changes still restore selection to anchor.
+        val samePresentation = pure.anchorDate == current.anchorDate &&
+            pure.view == current.view && pure.filters == current.filters
         return current.copy(
             anchorDate = pure.anchorDate,
             view = pure.view,
-            selectedDate = pure.selectedDate,
+            selectedDate = if (samePresentation) current.selectedDate else pure.selectedDate,
             filters = pure.filters,
             locale = pure.locale,
             todayDate = current.todayDate,

@@ -43,9 +43,14 @@ enum VoiceLanguages {
     private static let byCode: [String: VoiceLanguage] =
         Dictionary(uniqueKeysWithValues: all.map { ($0.code, $0) })
 
-    /// Display label for a code, or the upper-cased code with a globe when unknown.
+    /// Display label for a code, using the system language name when the code is
+    /// outside the Qwen list so raw protocol casing never becomes interface copy.
     static func label(for code: String) -> String {
-        byCode[code]?.label ?? "🌐 \(code.uppercased())"
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return "" }
+        if let language = byCode[normalized] { return language.label }
+        let languageCode = normalized.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? normalized
+        return "🌐 \(Locale.current.localizedString(forLanguageCode: languageCode) ?? normalized)"
     }
 
     /// Lower-cased code if it is a supported Qwen language, else "" (drops Fish's

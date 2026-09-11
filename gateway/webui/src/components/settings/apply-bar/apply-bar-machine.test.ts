@@ -52,6 +52,26 @@ describe("runApply", () => {
     expect(states).toEqual(["saving", "restarting", "ready"]);
   });
 
+  it("persists a harmless profile draft through the existing save seam and patches live audio", async () => {
+    const saveProfile = async (draft: unknown) => {
+      expect(draft).toEqual({ audio: { ttsEnabled: false, channel: "text" } });
+      return { ok: true };
+    };
+    let patched: unknown;
+    const outcome = await runApply(
+      [{ key: "profile", kind: "fast", payload: { audio: { ttsEnabled: false, channel: "text" } } }],
+      fakeDeps({
+        saveProfile,
+        patchLivePreferences: (patch) => {
+          patched = patch;
+        },
+      }),
+      () => undefined,
+    );
+    expect(outcome.ok).toBe(true);
+    expect(patched).toEqual({ ttsEnabled: false, channel: "text" });
+  });
+
   it("emits failed when a save returns ok=false", async () => {
     const states: string[] = [];
     const deps = fakeDeps({
@@ -74,5 +94,16 @@ describe("runApply", () => {
     );
     expect(outcome.ok).toBe(false);
     expect(states[states.length - 1]).toBe("failed");
+  });
+
+  it("distinguishes a concurrent apply so the caller can offer retry without claiming failure", async () => {
+    const states: string[] = [];
+    const outcome = await runApply(
+      [{ key: "secrets.changed", kind: "slow", payload: null }],
+      fakeDeps({ waitForRestart: async () => ({ state: "already-applying", elapsedMs: 0 }) }),
+      (state) => states.push(state.phase),
+    );
+    expect(outcome).toEqual({ ok: false, errorMessage: "Another apply is already in progress." });
+    expect(states).toEqual(["saving", "restarting", "already-applying"]);
   });
 });

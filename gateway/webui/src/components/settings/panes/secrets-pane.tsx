@@ -1,120 +1,100 @@
-// gateway/webui/src/components/settings/panes/secrets-pane.tsx
-import { useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { createLogger } from "@sentient/web-sdk";
 import { useAuth } from "../../../hooks/use-auth.tsx";
-import { createAdminApi } from "../../../services/admin-api.ts";
-import type { LlmProvider, SecretsStatus } from "../../../services/admin-api.ts";
+import { createAdminApi, type LlmProvider, type SecretsStatus } from "../../../services/admin-api.ts";
 import type { PendingOpWithPayload } from "../apply-bar/apply-bar-machine.ts";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { CustomRow, SecretRow } from "./secret-row.tsx";
-import type { EditingKey } from "./secret-row.tsx";
+import { ActionButton, AsyncState, PaneChrome, SettingsCard, SettingsGroup } from "../../common/index.ts";
+import { CustomRow, SecretRow, type EditingKey } from "./secret-row.tsx";
+
+import { useSettingsBusyState } from "../navigation-state.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "secrets"]);
-const api = createAdminApi();
+const APPLY_SECRETS_OP: PendingOpWithPayload = { key: "secrets.changed", kind: "slow", payload: null };
+type LoadState = "loading" | "ready" | "forbidden" | "error";
 
-export interface SecretsPaneProps {
-  /** Push a slow op into the settings-view imperative queue so the apply
-   *  bar surfaces and, on Apply, the gateway re-renders the user's Hermes
-   *  profile to pick up the new secret. Single-shot key — repeat saves
-   *  coalesce. */
-  onMark: (op: PendingOpWithPayload) => void;
-}
-
-const APPLY_SECRETS_OP: PendingOpWithPayload = {
-  key: "secrets.changed",
-  kind: "slow",
-  payload: null,
-};
-
-// --- SecretsPane -------------------------------------------------------------
+export interface SecretsPaneProps { onMark: (op: PendingOpWithPayload) => void; }
 
 export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
   const auth = useAuth();
+  const [, setBusy] = useSettingsBusyState();
+  const api = useMemo(() => createAdminApi(), []);
   const isAuthed = auth.status === "authenticated";
   const token = isAuthed ? auth.token : "";
   const [data, setData] = useState<SecretsStatus | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
   const [editing, setEditing] = useState<EditingKey>(null);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
+    if (!isAuthed) return;
+    setLoadState("loading");
     const result = await api.getSecretsStatus(token);
     if (result.ok) {
       setData(result.value);
+      setLoadState("ready");
     } else {
-      log.warn("secrets.load.failed", { status: result.error.status });
+      log.warn("secrets.load.failed", { status: result.error.status, code: result.error.code });
+      setData(null);
+      setLoadState(result.error.status === 403 ? "forbidden" : "error");
     }
-  }
+  }, [api, isAuthed, token]);
 
-  if (!data && isAuthed) {
-    void refresh();
-  }
+  useEffect(() => { void refresh(); }, [refresh]);
 
-  async function saveLlmKey(provider: LlmProvider, newKey: string) {
-    await api.setLlmProviderKey(token, provider, { api_key: newKey });
-    setEditing(null);
-    await refresh();
-    onMark(APPLY_SECRETS_OP);
-  }
+  const requireSuccess = async (operation: Promise<{ ok: boolean; error?: { status?: number; code?: string } }>) => {
+    const result = await operation;
+    if (result.ok) return;
+    if (result.error?.status === 403) setLoadState("forbidden");
+    throw new Error(result.error?.code ?? "save-failed");
+  };
 
-  async function saveLlmBaseUrl(provider: LlmProvider, newUrl: string) {
-    await api.setLlmProviderKey(token, provider, { base_url: newUrl });
-    setEditing(null);
-    await refresh();
-    onMark(APPLY_SECRETS_OP);
-  }
+  const saveLlmKey = async (provider: LlmProvider, newKey: string) => {
+    setBusy(true);
+    try {
+      await requireSuccess(api.setLlmProviderKey(token, provider, { api_key: newKey }));
+      setEditing(null);
+      await refresh();
+      onMark(APPLY_SECRETS_OP);
+    } finally { setBusy(false); }
+  };
+  const saveLlmBaseUrl = async (provider: LlmProvider, newUrl: string) => {
+    setBusy(true);
+    try {
+      await requireSuccess(api.setLlmProviderKey(token, provider, { base_url: newUrl }));
+      setEditing(null);
+      await refresh();
+      onMark(APPLY_SECRETS_OP);
+    } finally { setBusy(false); }
+  };
+  const setActive = async (provider: LlmProvider) => {
+    setBusy(true);
+    try {
+      const result = await api.setActiveLlmProvider(token, provider);
+      if (!result.ok) {
+        setLoadState(result.error.status === 403 ? "forbidden" : "error");
+        return;
+      }
+      await refresh();
+      onMark(APPLY_SECRETS_OP);
+    } finally { setBusy(false); }
+  };
 
-  async function setActive(provider: LlmProvider) {
-    await api.setActiveLlmProvider(token, provider);
-    await refresh();
-    onMark(APPLY_SECRETS_OP);
-  }
-
-  if (!isAuthed) return <PaneHead title="Provider keys" sub="Sign in to manage keys." />;
-  if (!data) return <PaneHead title="Provider keys" sub="Loading…" />;
-
-  const { llm } = data;
+  if (!isAuthed) return <PaneChrome title="Provider keys" subtitle="Sign in to manage keys." className="owned-pane">{null}</PaneChrome>;
 
   return (
-    <>
-      <PaneHead title="Provider keys" sub="Encrypted at rest. Shared by the household gateway." />
-      <Card title="Active keys" sub="Update replaces the stored key.">
-        <div class="lst">
-          <SecretRow
-            label="OpenRouter"
-            providerKey="openrouter"
-            status={llm.openrouter}
-            isActive={llm.active === "openrouter"}
-            onSetActive={() => void setActive("openrouter")}
-            editing={editing === "openrouter"}
-            onStartEdit={() => setEditing("openrouter")}
-            onCancel={() => setEditing(null)}
-            onSave={(k) => saveLlmKey("openrouter", k)}
-          />
-          <SecretRow
-            label="Ollama Cloud"
-            providerKey="ollama-cloud"
-            status={llm.ollama_cloud}
-            isActive={llm.active === "ollama-cloud"}
-            onSetActive={() => void setActive("ollama-cloud")}
-            editing={editing === "ollama-cloud"}
-            onStartEdit={() => setEditing("ollama-cloud")}
-            onCancel={() => setEditing(null)}
-            onSave={(k) => saveLlmKey("ollama-cloud", k)}
-          />
-          <CustomRow
-            status={llm.custom}
-            isActive={llm.active === "custom"}
-            onSetActive={() => void setActive("custom")}
-            editingKey={editing}
-            onStartEditKey={() => setEditing("custom")}
-            onStartEditUrl={() => setEditing("custom-baseurl")}
-            onCancel={() => setEditing(null)}
-            onSaveKey={(k) => saveLlmKey("custom", k)}
-            onSaveUrl={(u) => saveLlmBaseUrl("custom", u)}
-          />
-        </div>
-      </Card>
-    </>
+    <PaneChrome title="Provider keys" subtitle="Stored securely. This page reports presence only and never retrieves stored values." className="owned-pane">
+      {loadState === "loading" && <AsyncState state="loading" title="Loading key status" />}
+      {loadState === "forbidden" && <AsyncState state="error" title="Admin access required" message="Your account no longer has permission to manage provider keys." action={<ActionButton onClick={() => void refresh()}>Try again</ActionButton>} />}
+      {loadState === "error" && <AsyncState state="error" title="Key status unavailable" message="Stored key presence could not be loaded." action={<ActionButton onClick={() => void refresh()}>Try again</ActionButton>} />}
+      {loadState === "ready" && data && (
+        <SettingsCard title="Provider keys" subtitle="Updating a field replaces its stored value." padded={false}>
+          <SettingsGroup>
+            <SecretRow label="OpenRouter" status={data.llm.openrouter} isActive={data.llm.active === "openrouter"} onSetActive={() => void setActive("openrouter")} editing={editing === "openrouter"} onStartEdit={() => setEditing("openrouter")} onCancel={() => setEditing(null)} onSave={(key) => saveLlmKey("openrouter", key)} />
+            <SecretRow label="Ollama Cloud" status={data.llm.ollama_cloud} isActive={data.llm.active === "ollama-cloud"} onSetActive={() => void setActive("ollama-cloud")} editing={editing === "ollama-cloud"} onStartEdit={() => setEditing("ollama-cloud")} onCancel={() => setEditing(null)} onSave={(key) => saveLlmKey("ollama-cloud", key)} />
+            <CustomRow status={data.llm.custom} isActive={data.llm.active === "custom"} onSetActive={() => void setActive("custom")} editingKey={editing} onStartEditKey={() => setEditing("custom")} onStartEditUrl={() => setEditing("custom-baseurl")} onCancel={() => setEditing(null)} onSaveKey={(key) => saveLlmKey("custom", key)} onSaveUrl={(url) => saveLlmBaseUrl("custom", url)} />
+          </SettingsGroup>
+        </SettingsCard>
+      )}
+    </PaneChrome>
   );
 }

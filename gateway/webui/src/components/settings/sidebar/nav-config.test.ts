@@ -30,6 +30,7 @@ const EVERYONE: SidebarKey[] = [
   "advanced",
   "account",
   "getApp",
+  "diagnostics",
 ];
 
 const ADMIN_ONLY: SidebarKey[] = ["members", "secrets"];

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/preact";
+import { act, fireEvent, render, screen, within } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
 import type { CalendarOccurrenceV2 } from "../../services/calendar-api.ts";
 import {
@@ -173,6 +173,59 @@ describe("CalendarCanvas", () => {
     expect(screen.getByRole("button", { name: /Dense event 3 with a complete title/i })).toBeTruthy();
     fireEvent.click(overflow);
     expect(onOpenOverflow).toHaveBeenCalledWith("2024-02-29", expect.arrayContaining([expect.objectContaining({ title: "Dense event 4 with a complete title" })]));
+  });
+
+  it("adapts Month density to its measured grid while keeping every hidden event reachable", () => {
+    let resize!: ResizeObserverCallback;
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect = disconnect;
+    });
+    const pointer = { matches: false };
+    vi.stubGlobal("matchMedia", () => pointer);
+    const rows = [1, 2, 3, 4].map((index) => occurrence({ eventId: `resize-${index}`, occurrenceId: `resize-${index}`, title: `Resize event ${index}` }));
+    const onOpenOverflow = vi.fn();
+    const result = render(<CalendarCanvas {...canvasProps("month", projection("month", rows), { onOpenOverflow })} />);
+    try {
+      const grid = result.container.querySelector<HTMLElement>(".calendar-month-grid__grid")!;
+      // jsdom has no layout engine; provide the same CSS measurement contract as the browser.
+      grid.style.setProperty("--calendar-date-space", "36px");
+      grid.style.setProperty("--calendar-event-height", "24px");
+      grid.style.setProperty("--calendar-overflow-height", "20px");
+      const measure = (height: number, width = 980) => act(() => resize([{ target: grid, contentRect: new DOMRect(0, 0, width, height), borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [] }], {} as ResizeObserver));
+      const cell = result.container.querySelector('[data-calendar-date="2024-02-29"]')!;
+      measure(480);
+      expect(cell.querySelectorAll(".calendar-day-cell__events [data-calendar-event]")).toHaveLength(1);
+      let overflow = within(cell as HTMLElement).getByRole("button", { name: /\+3 more events/ });
+      fireEvent.click(overflow);
+      expect(onOpenOverflow.mock.calls.at(-1)?.[1].map((event: { eventId: string }) => event.eventId)).toEqual(["resize-2", "resize-3", "resize-4"]);
+      measure(360);
+      expect(cell.querySelectorAll(".calendar-day-cell__events [data-calendar-event]")).toHaveLength(0);
+      overflow = within(cell as HTMLElement).getByRole("button", { name: /\+4 more events/ });
+      fireEvent.click(overflow);
+      expect(onOpenOverflow.mock.calls.at(-1)?.[1]).toHaveLength(4);
+      measure(900);
+      expect(cell.querySelectorAll(".calendar-day-cell__events [data-calendar-event]")).toHaveLength(2);
+      expect(within(cell as HTMLElement).getByRole("button", { name: /\+2 more events/ })).toBeTruthy();
+      pointer.matches = true;
+      measure(480);
+      expect(within(cell as HTMLElement).getAllByRole("button")).toHaveLength(1);
+      fireEvent.click(within(cell as HTMLElement).getByRole("button", { name: /Open .*4 events/ }));
+      expect(onOpenOverflow.mock.calls.at(-1)?.[1]).toHaveLength(4);
+      measure(1200);
+      expect(cell.querySelectorAll(".calendar-day-cell__events [data-calendar-event]")).toHaveLength(2);
+      measure(1200, 350);
+      expect(within(cell as HTMLElement).getAllByRole("button")).toHaveLength(1);
+      fireEvent.click(within(cell as HTMLElement).getByRole("button", { name: /Open .*4 events/ }));
+      expect(onOpenOverflow.mock.calls.at(-1)?.[1]).toHaveLength(4);
+      expect(result.container.querySelectorAll(".calendar-month-grid__row")).toHaveLength(6);
+    } finally {
+      result.unmount();
+      expect(disconnect).toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("renders every valid Year date, including 29, 30, and 31", () => {

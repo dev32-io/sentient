@@ -8,8 +8,8 @@
 // this pass — the JsonPrimitive `.content` SKIE bridge is unverified and price is
 // not on the parity E2E path; id + context + caps carry the single-select intent.
 //
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -19,8 +19,6 @@ private let providerLabels: [String: String] = [
     "openrouter": "OpenRouter",
     "custom": "Custom",
 ]
-
-private let contextPerK = 1000
 
 struct ModelScreen: View {
     let settings: SettingsComponent
@@ -36,38 +34,43 @@ struct ModelScreen: View {
     }
 
     private var providerSegments: [SegmentOption] {
-        vm.providerOptions.map { SegmentOption(id: $0, label: providerLabels[$0] ?? $0) }
+        // The catalog need not contain the saved provider. Keep its raw value browsable.
+        var providers = vm.providerOptions
+        if !vm.draftProvider.isEmpty && !providers.contains(vm.draftProvider) {
+            providers.append(vm.draftProvider)
+        }
+        return providers.map { SegmentOption(id: $0, label: providerLabels[$0] ?? $0) }
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Model", screenId: "settings-model-screen") {
+        SettingsPageScaffold(
+            title: "Model", screenId: "settings-model-screen",
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            backAccessibilityId: "settings-model-back"
+        ) {
             switch vm.phase {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load models", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
-                saveBanner
-                browseControls
-                modelList
-            }
-        }
-        // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
-        // (gesture is intentionally disabled only while a draft is unsaved).
-        .navigationBarBackButtonHidden(vm.isDirty)
-        .toolbar {
-            if vm.isDirty {
-                ToolbarItem(placement: .navigation) {
-                    SoulBackButton(accessibilityId: "settings-model-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-model-save") {
-                        Task { await vm.save() }
-                    }
+                selectedModel
+                VStack(alignment: .leading, spacing: Space.md) {
+                    browseControls
+                    modelList
                 }
             }
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-model-discard",
+            applyAccessibilityId: "settings-model-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { onBack() }
@@ -75,47 +78,80 @@ struct ModelScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var saveBanner: some View {
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
-    @ViewBuilder
+    private var selectedModel: some View {
+        let entry = vm.models.first { $0.id == vm.draftModelId && $0.provider == vm.draftProvider }
+        return DesignCard(bodyStyle: .padded) {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Label(vm.isDirty ? "Selected model · Unsaved" : "Selected model", systemImage: "checkmark.circle")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                    .accessibilityAddTraits(.isHeader)
+                Text(providerLabels[vm.draftProvider] ?? vm.draftProvider)
+                    .designText(.label)
+                    .foregroundStyle(DuskColors.ink2)
+                Text(vm.draftModelId)
+                    .designText(.large)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DuskColors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let entry {
+                    ModelMetadata(entry: entry)
+                } else {
+                    Text("Not listed in the current catalog. Your selection is preserved.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                }
+            }
+        }
+    }
+
     private var browseControls: some View {
-        if providerSegments.count > 1 {
-            RowSegmented(
-                options: providerSegments,
-                selectedId: vm.browseProvider,
-                accessibilityId: "settings-model-provider",
-                onSelect: { vm.browseProvider = $0 }
-            )
-        }
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass").foregroundStyle(DuskColors.ink3)
-            TextField("Search models…", text: Binding(get: { vm.query }, set: { vm.query = $0 }))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Browse models")
+                .designText(.label)
+                .fontWeight(.semibold)
                 .foregroundStyle(DuskColors.ink)
-                .accessibilityIdentifier("settings-model-search")
+                .accessibilityAddTraits(.isHeader)
+            if providerSegments.count > 1 {
+                DesignSegmentedPicker(
+                    title: "Model provider",
+                    options: providerSegments.map { (value: $0.id, label: $0.label) },
+                    selection: Binding(get: { vm.browseProvider }, set: { vm.browseProvider = $0 }),
+                    accessibilityId: "settings-model-provider"
+                )
+            }
+            DesignSearchField(
+                prompt: "Search model IDs…",
+                query: Binding(get: { vm.query }, set: { vm.query = $0 }),
+                accessibilityId: "settings-model-search"
+            )
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            Text("\(vm.filtered.count) results · \(providerLabels[vm.browseProvider] ?? vm.browseProvider)")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(Space.sm)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
     }
 
     @ViewBuilder
     private var modelList: some View {
         let list = vm.filtered
         if list.isEmpty {
-            Text("No models match.")
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink3)
+            Text("No models match. Try another model ID or provider.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, Space.lg)
         } else {
@@ -143,45 +179,55 @@ private struct ModelCard: View {
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
+        DesignSelectableCard(
+            isSelected: isSelected,
+            accessibilityLabel: "Model \(entry.id)",
+            accessibilityId: "settings-model-card-\(entry.id)",
+            action: onTap
+        ) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 HStack {
                     Text(entry.id)
-                        .font(Typo.mono(TypeScale.sm))
+                        .designText(.label)
+                        .fontWeight(.medium)
                         .foregroundStyle(DuskColors.ink)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     Spacer(minLength: Space.sm)
                     if isSelected {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(DuskColors.accent)
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(DuskColors.accent)
+                            .accessibilityHidden(true)
                     }
                 }
-                HStack(spacing: Space.sm) {
-                    Text("\(entry.contextLength / Int32(contextPerK))k context")
-                        .font(Typo.ui(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                    if entry.supportsTools { capChip("Tools") }
-                    if entry.supportsVision { capChip("Vision") }
-                }
+                ModelMetadata(entry: entry)
             }
-            .padding(Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay(
-                RoundedRectangle(cornerRadius: Radii.md)
-                    .stroke(isSelected ? DuskColors.accent : DuskColors.lineSoft, lineWidth: isSelected ? 2 : 1)
-            )
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-model-card-\(entry.id)")
+    }
+}
+
+/// Catalog values only: zero is the SDK default and Ollama's unlisted context value.
+private struct ModelMetadata: View {
+    let entry: ModelEntry
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.md) { items }
+            VStack(alignment: .leading, spacing: Space.xs) { items }
+        }
+        .designText(.supporting)
+        .foregroundStyle(DuskColors.ink2)
     }
 
-    private func capChip(_ label: String) -> some View {
-        Text(label)
-            .font(Typo.ui(TypeScale.xs, .medium))
-            .foregroundStyle(DuskColors.ink2)
-            .padding(.horizontal, Space.sm)
-            .padding(.vertical, 2)
-            .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
+    @ViewBuilder
+    private var items: some View {
+        if entry.contextLength > 0 {
+            Text("\(Int(entry.contextLength).formatted()) tokens context")
+        } else {
+            Text("Context unavailable")
+        }
+        if entry.supportsTools { Label("Tools", systemImage: "wrench.and.screwdriver") }
+        if entry.supportsVision { Label("Vision", systemImage: "eye") }
     }
 }
 
@@ -191,18 +237,15 @@ private struct ModelCard: View {
 #Preview("browse") {
     NavigationStack {
         SettingsPageScaffold(title: "Model", screenId: "settings-model-screen") {
-            RowSegmented(
-                options: [
-                    SegmentOption(id: "ollama-cloud", label: "Ollama Cloud"),
-                    SegmentOption(id: "openrouter", label: "OpenRouter"),
-                ],
-                selectedId: "openrouter",
-                accessibilityId: "settings-model-provider",
-                onSelect: { _ in }
+            DesignSegmentedPicker(
+                title: "Model provider",
+                options: [(value: "ollama-cloud", label: "Ollama Cloud"), (value: "openrouter", label: "OpenRouter")],
+                selection: .constant("openrouter"),
+                accessibilityId: "settings-model-provider"
             )
-            Text("No models match.")
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink3)
+            Text("No models match. Try another model ID or provider.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
         }
     }
     .preferredColorScheme(.dark)

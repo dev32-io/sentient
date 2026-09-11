@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Calendar component evidence</title>
     <style>
-      html, body, #evidence-root { margin: 0; min-height: 100%; }
+      html, body, #evidence-root { margin: 0; height: 100%; overflow: hidden; }
       body { min-width: 0; background: var(--color-bg); }
-      #evidence-root { min-height: 100vh; }
+      #evidence-root { height: 100dvh; font-family: var(--font-ui); }
       #evidence-metrics { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     </style>
   </head>
@@ -15,54 +15,88 @@
     <div id="evidence-root"></div>
     <pre id="evidence-metrics" aria-hidden="true"></pre>
     <script type="module">
-      import { h, render } from "preact";
+      import { h, render, Fragment } from "preact";
+      import { useState } from "preact/hooks";
       import "/src/styles/tokens/index.css";
+      import "/src/styles/components.css";
+      import "/src/components/common/foundation.css";
+      import "/src/components/common/composites.css";
+      import "/src/components/common/dialog.css";
+      import { AppShell } from "/src/components/shell/app-shell.tsx";
+      import { Topbar } from "/src/components/shell/topbar.tsx";
+      import { CalendarFilterResult } from "/src/components/calendar/calendar-filter-result.tsx";
+      import { clearCalendarFilters } from "/src/components/calendar/calendar-filter-model.ts";
       import { CalendarCanvas } from "/src/components/calendar/calendar-canvas.tsx";
       import { CalendarWorkspace } from "/src/components/calendar/calendar-shell.tsx";
       import { projectCalendar } from "/src/components/calendar/calendar-projections.ts";
       import { measureCalendarResponsiveEvidence } from "/src/components/calendar/calendar-responsive-evidence.ts";
 
+      import { EventPreview } from "/src/components/calendar/event-preview.tsx";
+      import { EventEditor } from "/src/components/calendar/event-editor.tsx";
+      import { CalendarOverflowDialog } from "/src/components/calendar/calendar-overlay-adapters.tsx";
+      import "/src/components/calendar/calendar-view.css";
+      import { stepCalendarAnchor } from "/src/components/calendar/calendar-projections.ts";
+
+      // Isolated synthetic data only: no auth provider, fetch, storage, or persistence.
       const views = ["day", "week", "month", "year"];
       const params = new URLSearchParams(location.search);
       const view = views.includes(params.get("view")) ? params.get("view") : "month";
       const anchorDate = "2024-02-29";
-      const rows = [
+      const rows = params.get("state") === "empty" ? [] : [
         { eventId: "e1", occurrenceId: "e1@2024-02-29", originalStart: "2024-02-29T08:00:00-05:00", recurring: false, revision: 1, scope: "private", title: "School drop-off", start: "2024-02-29T08:00:00-05:00", end: "2024-02-29T08:30:00-05:00", visibility: "everyone", importance: "normal", tags: ["family"] },
         { eventId: "e2", occurrenceId: "e2@2024-02-29", originalStart: "2024-02-29T10:00:00-05:00", recurring: false, revision: 1, scope: "household", title: "Planning meeting", start: "2024-02-29T10:00:00-05:00", end: "2024-02-29T11:00:00-05:00", visibility: "everyone", importance: "important", tags: ["home"] },
         { eventId: "e3", occurrenceId: "e3@2024-02-29", originalStart: "2024-02-29T12:00:00-05:00", recurring: false, revision: 1, scope: "private", title: "Dentist", start: "2024-02-29T12:00:00-05:00", end: "2024-02-29T13:00:00-05:00", visibility: "everyone", importance: "pinned", tags: ["health"] },
         { eventId: "e4", occurrenceId: "e4@2024-02-29", originalStart: "2024-02-29T14:00:00-05:00", recurring: false, revision: 1, scope: "household", title: "Dinner", start: "2024-02-29T14:00:00-05:00", end: "2024-02-29T15:00:00-05:00", visibility: "everyone", importance: "normal", tags: ["family"] },
       ];
-      const projection = projectCalendar({
-        occurrences: rows,
-        view,
-        anchorDate,
-        selectedDate: anchorDate,
-        locale: "en-US",
-        timeZone: "America/New_York",
-        weekStartsOn: 0,
-        today: anchorDate,
-        density: { maxVisibleEvents: 2, maxIndicators: 3 },
-      }).view;
-      const filterFacets = { scopes: ["private", "household", "all"], groups: ["family", "home"], tags: ["family", "health", "home"], importance: ["normal", "important", "pinned"] };
-      render(h(CalendarWorkspace, {
-        view,
-        anchorDate,
-        selectedDate: anchorDate,
-        projection,
-        facets: filterFacets,
-        resultCount: rows.length,
-        onSelectDate: () => undefined,
-        onOpenDay: () => undefined,
-        onOpenEvent: () => undefined,
-        onOpenOverflow: () => undefined,
-        onSelectMonth: () => undefined,
-        onViewChange: () => undefined,
-        onPrevious: () => undefined,
-        onNext: () => undefined,
-        onToday: () => undefined,
-        onAddEvent: () => undefined,
-        children: h(CalendarCanvas, {}),
-      }), document.getElementById("evidence-root"));
+      function CalendarEvidence() {
+        const [selectedView, setView] = useState(view);
+        const [date, setDate] = useState(anchorDate);
+        const [filters, setFilters] = useState({ scopes: ["all"], groups: [], tags: [], importance: null, search: params.get("state") === "nomatch" ? "unmatched-fictional-term" : "" });
+        const [preview, setPreview] = useState(null);
+        const [overflow, setOverflow] = useState(null);
+        const [editing, setEditing] = useState(false);
+        const projected = projectCalendar({
+          occurrences: rows, view: selectedView, anchorDate: date, selectedDate: date,
+          filters, locale: "en-US", timeZone: "America/New_York", weekStartsOn: 0,
+          today: anchorDate, density: { maxVisibleEvents: 3, maxIndicators: 3 },
+        });
+        const openEvent = (event) => setPreview({ occurrence: event, anchor: document.activeElement });
+        const loading = params.get("state") === "loading";
+        const refreshing = params.get("state") === "refreshing";
+        const filterFacets = { scopes: ["private", "household"], groups: ["family", "home"], tags: ["family", "health", "home"], importance: ["normal", "important", "pinned"] };
+        const workspace = h(CalendarWorkspace, {
+            weekStartsOn: 0, locale: "en-US",
+            view: selectedView, anchorDate: date, selectedDate: date, filters,
+            projection: loading ? null : projected.view, facets: filterFacets,
+            loading, refreshing,
+            onFiltersChange: setFilters,
+            onSelectDate: (next) => { setDate(next); setView("day"); },
+            onOpenEvent: openEvent,
+            onOpenOverflow: (date, events) => setOverflow({ date, events }),
+            onSelectMonth: (year, month) => { setDate(`${year}-${String(month).padStart(2, "0")}-01`); setView("month"); },
+            onViewChange: setView,
+            onPrevious: () => setDate(stepCalendarAnchor(selectedView, date, -1)),
+            onNext: () => setDate(stepCalendarAnchor(selectedView, date, 1)),
+            onToday: () => setDate(anchorDate),
+            onAddEvent: () => setEditing(true),
+            children: (slot) => h(CalendarFilterResult, {
+              filters, completeCount: rows.length, resultCount: projected.filteredOccurrences.length,
+              loading, onClear: () => setFilters(clearCalendarFilters()),
+              children: h(CalendarCanvas, slot),
+            }),
+          });
+        const noop = () => {};
+        return h(Fragment, null,
+          params.get("shell") === "app" ? h(AppShell, {
+            topbar: h(Topbar, { householdName: "Fixture household", routeLabel: "Calendar", activeRoute: "calendar", onChatClick: noop, onSettingsClick: noop, onCalendarClick: noop, onMenuClick: noop }),
+            main: h("section", { class: "calendar-view" }, workspace),
+          }) : workspace,
+          preview && h(EventPreview, { ...preview, onClose: () => setPreview(null), onEdit: () => { setPreview(null); setEditing(true); } }),
+          overflow && h(CalendarOverflowDialog, { state: overflow, onClose: () => setOverflow(null), onOpen: (event) => { setOverflow(null); openEvent(event); } }),
+          editing && h(EventEditor, { mode: "create", inputTimeZoneId: "America/New_York", initialDraft: { start: `${anchorDate}T09:00`, end: `${anchorDate}T10:00` }, capabilities: { canCreate: true }, onClose: () => setEditing(false), onCreate: async () => ({ ok: false, error: { code: "io_error", status: 503 } }) }),
+        );
+      }
+      render(h(CalendarEvidence), document.getElementById("evidence-root"));
 
       function collectMetrics() {
         document.getElementById("evidence-metrics").textContent = JSON.stringify({

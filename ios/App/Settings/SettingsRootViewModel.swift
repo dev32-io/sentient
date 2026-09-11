@@ -22,6 +22,11 @@ final class SettingsRootViewModel {
         case loading
         case ready(isAdmin: Bool, fishBrowseEnabled: Bool)
         case failed
+
+        var isAdmin: Bool {
+            if case .ready(let isAdmin, _) = self { return isAdmin }
+            return false
+        }
     }
 
     private(set) var access: AccessState = .loading
@@ -35,10 +40,7 @@ final class SettingsRootViewModel {
 
     /// True only once access has resolved AND the user is an admin. Loading / failed
     /// both read false, so the Admin group is hidden by default (fail-safe).
-    var showAdmin: Bool {
-        if case .ready(let isAdmin, _) = access { return isAdmin }
-        return false
-    }
+    var showAdmin: Bool { access.isAdmin }
 
     /// Resolve the access flags. Idempotent; safe to call on each `.task`. Folds the
     /// SentientResult envelope exhaustively; a thrown error (SKIE suspend-bridge /

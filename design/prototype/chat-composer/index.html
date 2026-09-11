@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sentient chat composer prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&amp;family=Fraunces:opsz,wght@9..144,400;9..144,500&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="vendor/foundation-components.css">
+  <link rel="stylesheet" href="chat-composer.css">
+</head>
+<body class="snt-surface">
+  <svg class="svg-defs" aria-hidden="true">
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m4 4 17 8-17 8 3-8zM7 12h14"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6l-5 4zM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></symbol>
+    <symbol id="i-volume-off" viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6l-5 4zM3 3l18 18"/></symbol>
+    <symbol id="i-attach" viewBox="0 0 24 24"><path d="m9 12 6-6a4 4 0 0 1 6 6l-8 8a6 6 0 0 1-8-8l8-8"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><path d="M8 17a6 6 0 1 1 8 0M9 12h6M12 9v6M8 20h8"/></symbol>
+    <symbol id="i-cancel" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  </svg>
+
+  <header class="prototype-header">
+    <div><span class="snt-kicker">Composer workspace</span><h1>Message or speak to Sentient</h1></div>
+    <p>The supplied composer anatomy with a compact voice control that blooms from the microphone itself.</p>
+  </header>
+
+  <main class="composer-lab" data-composer-lab>
+    <section class="composer-review-controls snt-plate" aria-labelledby="review-state-title">
+      <div><span class="snt-kicker">Review state</span><h2 id="review-state-title">Composer behavior</h2></div>
+      <div class="composer-state-options" role="group" aria-label="Composer state">
+        <button class="snt-chip" type="button" aria-pressed="true" data-review-state="idle">Idle</button>
+        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="text">Text ready</button>
+        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="tasks">Tasks</button>
+        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="responding">Responding</button>
+        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="hold">Hold to talk</button>
+        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="auto">Auto</button>
+      </div>
+    </section>
+
+    <section class="composer-stage" aria-label="Desktop chat composer review">
+      <div class="composer-context" aria-hidden="true"><i></i><i></i><i></i></div>
+      <footer class="composer-dock">
+        <div class="composer-dock__inner">
+          <div class="composer-frame" data-composer-instance>
+            <div class="task-event-slot" data-task-event-slot data-visible="false" aria-hidden="true" inert>
+              <div class="task-event-slot__inner">
+                <div class="task-shelf">
+                  <div class="task-pills" role="list" aria-label="Running task details">
+                    <button class="task-pill" type="button" role="listitem" data-task-pill="traffic" aria-expanded="false" aria-controls="task-detail-traffic" aria-label="Check travel, running"><span class="task-pulse task-pulse--running" aria-hidden="true"></span>Check travel</button>
+                    <button class="task-pill" type="button" role="listitem" data-task-pill="draft" aria-expanded="false" aria-controls="task-detail-draft" aria-label="Prepare draft, done"><span class="task-pulse task-pulse--done" aria-hidden="true"></span>Prepare draft</button>
+                    <button class="task-pill" type="button" role="listitem" data-task-pill="permission" aria-expanded="false" aria-controls="task-detail-permission" aria-label="Approval needed, waiting"><span class="task-pulse task-pulse--ask" aria-hidden="true"></span>Approval needed</button>
+                  </div>
+                  <div class="task-details">
+                    <section class="task-detail-card" id="task-detail-traffic" data-task-detail="traffic" hidden><div><span class="task-kicker">Request</span><p>Check travel time between Jordan’s appointment and school pickup.</p></div><div><span class="task-kicker">Live result</span><p>No delay detected. The calendar overlap still needs a time change.</p></div></section>
+                    <section class="task-detail-card" id="task-detail-draft" data-task-detail="draft" hidden><div><span class="task-kicker">Request</span><p>Prepare the smallest schedule adjustment without moving the appointment.</p></div><div><span class="task-kicker">Result</span><p>Drafted a 3:40 pm pickup with the appointment unchanged.</p></div></section>
+                    <section class="task-detail-card" id="task-detail-permission" data-task-detail="permission" hidden><div><span class="task-kicker">Request</span><p>Update the shared school pickup event.</p></div><div><span class="task-kicker">Waiting</span><p>Sentient paused and requested one-time calendar permission.</p><button class="composer-inline-action" type="button" data-review-permission>Review approval</button></div></section>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <form class="composer" data-composer data-voice="idle">
+              <label class="sr-only" for="desktop-composer-input">Message Sentient</label>
+              <textarea id="desktop-composer-input" placeholder="Message or speak to Sentient" rows="1" data-composer-input></textarea>
+              <div class="composer-actions">
+                <button type="button" class="composer-icon-button" data-attach aria-label="Attach files" title="Attach files"><svg><use href="#i-attach"/></svg></button>
+                <input type="file" multiple hidden data-attachment-input>
+                <button type="button" class="composer-icon-button composer-toggle" data-tts aria-label="Spoken responses on; turn off" title="Spoken responses on" aria-pressed="true"><svg><use href="#i-volume"/></svg></button>
+                <span class="composer-grow"></span>
+                <div class="composer-end-actions">
+                  <button type="button" class="composer-icon-button stop-response-control" data-stop-response aria-label="Stop Sentient response" title="Stop response" hidden><svg><use href="#i-stop"/></svg></button>
+                  <div class="voice-control" data-voice-control data-open="false">
+                    <div class="voice-child-deck" aria-hidden="true">
+                      <button class="voice-child voice-child--auto" type="button" data-voice-target="auto" tabindex="-1"><svg><use href="#i-auto"/></svg><span>Auto</span></button>
+                      <button class="voice-child voice-child--cancel" type="button" data-voice-target="cancel" tabindex="-1"><svg><use href="#i-cancel"/></svg><span>Cancel</span></button>
+                      <button class="voice-child voice-child--send" type="button" data-voice-target="send" tabindex="-1"><svg><use href="#i-send"/></svg><span>Send</span></button>
+                    </div>
+                    <button type="button" class="composer-icon-button composer-action" data-composer-action aria-label="Tap for Auto or hold to talk" title="Talk to Sentient">
+                      <span class="mic-glyph"><svg><use href="#i-mic"/></svg><span class="mic-morph-core" aria-hidden="true"></span></span>
+                      <span class="inline-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </footer>
+    </section>
+
+    <section class="mobile-showcase snt-plate" aria-labelledby="mobile-showcase-title">
+      <div class="mobile-showcase__copy"><span class="snt-kicker">Touch composition</span><h2 id="mobile-showcase-title">Same mini component, phone-sized</h2><p>The child slates rise from the capture pod without becoming a second composer or crowding the phone.</p></div>
+      <div class="phone-frame">
+        <div class="phone-status" aria-hidden="true"><span>9:41</span><span>● ●●</span></div>
+        <div class="phone-thread" aria-hidden="true"><strong>Kitchen plan</strong><i></i><i></i><i></i></div>
+        <div class="phone-composer-anchor">
+          <div class="composer-frame composer-frame--mobile" data-composer-instance>
+            <form class="composer" data-composer data-voice="idle">
+              <label class="sr-only" for="mobile-composer-input">Message Sentient</label>
+              <textarea id="mobile-composer-input" placeholder="Message or speak" rows="1" data-composer-input></textarea>
+              <div class="composer-actions">
+                <button type="button" class="composer-icon-button" data-attach aria-label="Attach files"><svg><use href="#i-attach"/></svg></button>
+                <input type="file" multiple hidden data-attachment-input>
+                <button type="button" class="composer-icon-button composer-toggle" data-tts aria-label="Spoken responses on; turn off" aria-pressed="true"><svg><use href="#i-volume"/></svg></button>
+                <span class="composer-grow"></span>
+                <div class="composer-end-actions">
+                  <button type="button" class="composer-icon-button stop-response-control" data-stop-response aria-label="Stop Sentient response" hidden><svg><use href="#i-stop"/></svg></button>
+                  <div class="voice-control" data-voice-control data-open="false">
+                    <div class="voice-child-deck" aria-hidden="true">
+                      <button class="voice-child voice-child--auto" type="button" data-voice-target="auto" tabindex="-1"><svg><use href="#i-auto"/></svg><span>Auto</span></button>
+                      <button class="voice-child voice-child--cancel" type="button" data-voice-target="cancel" tabindex="-1"><svg><use href="#i-cancel"/></svg><span>Cancel</span></button>
+                      <button class="voice-child voice-child--send" type="button" data-voice-target="send" tabindex="-1"><svg><use href="#i-send"/></svg><span>Send</span></button>
+                    </div>
+                    <button type="button" class="composer-icon-button composer-action" data-composer-action aria-label="Tap for Auto or hold to talk">
+                      <span class="mic-glyph"><svg><use href="#i-mic"/></svg><span class="mic-morph-core" aria-hidden="true"></span></span>
+                      <span class="inline-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div class="phone-home" aria-hidden="true"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="composer-toast" role="status" aria-live="polite" hidden data-composer-toast></div>
+  <script src="vendor/foundation-components.js"></script>
+  <script src="chat-composer.js"></script>
+</body>
+</html>

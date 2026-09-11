@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { Chip } from "../../settings/primitives/chip.tsx";
+import { ChipControl } from "../../common/index.ts";
 import { toggleInArray } from "./fish-bucket.ts";
 
 export interface VoiceFilterSectionProps {
@@ -21,9 +21,9 @@ export function VoiceFilterSection({
       <span class="v-filter-label">{label}</span>
       <div class="v-filter-chips">
         {options.map((opt) => (
-          <Chip key={opt} active={selected.includes(opt)} onClick={() => onChange(toggleInArray(selected, opt))}>
+          <ChipControl key={opt} selected={selected.includes(opt)} onClick={() => onChange(toggleInArray(selected, opt))}>
             {opt}
-          </Chip>
+          </ChipControl>
         ))}
       </div>
     </div>

@@ -25,16 +25,27 @@
   line-height: var(--line-height-normal);
 }
 
-.calendar-editor__all-day {
+.calendar-editor__date-time {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-md);
   background: var(--color-bg-elev);
+}
+
+.calendar-editor__date-time > header {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.calendar-editor__date-time > header strong {
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .calendar-editor__check,
@@ -65,8 +76,8 @@
 }
 
 .calendar-editor__hint {
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 
@@ -97,18 +108,18 @@
 }
 
 .calendar-editor__input-with-suffix > span {
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
 
 .calendar-editor__legend {
   padding: 0;
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .calendar-editor__weekdays {
@@ -132,7 +143,7 @@
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-sm);
   background: var(--color-bg);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
 }
 
 .calendar-editor__weekday:has(input:checked) {
@@ -172,11 +183,10 @@
   border-radius: var(--radius-sm);
   color: var(--color-ink-2);
   cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
+  transition: background var(--motion-feedback), border-color var(--motion-feedback), color var(--motion-feedback);
 }
 
 .calendar-editor__scope-option:hover {
-  border-color: var(--color-line);
   background: var(--color-paper);
 }
 
@@ -192,13 +202,13 @@
 }
 
 .calendar-editor__scope-option strong {
-  font-size: var(--font-size-sm);
+  font-size: 14px;
   font-weight: 600;
 }
 
 .calendar-editor__scope-option small {
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 
@@ -224,8 +234,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-sm);
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
 }
 
 .calendar-editor__conflict-actions .app-dialog__btn {
@@ -244,16 +254,6 @@
   flex: 1;
 }
 
-.calendar-editor__delete-button {
-  background: transparent;
-  border-color: color-mix(in oklab, var(--color-stop) 70%, var(--color-line));
-  color: var(--color-stop);
-}
-
-.calendar-editor__delete-button:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--color-stop) 16%, transparent);
-}
-
 .calendar-editor__latest {
   display: grid;
   gap: var(--space-xs);
@@ -267,8 +267,8 @@
 }
 
 .calendar-editor__latest > span:last-child {
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
 }
 
 .calendar-editor__delete-target {
@@ -283,11 +283,11 @@
 }
 
 .calendar-editor__eyebrow {
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-ink-2);
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 @media (max-width: 620px) {
@@ -325,4 +325,14 @@
   .calendar-editor__weekday {
     transition: none;
   }
+}
+
+/* The shared dialog keeps dismissal/focus policy; only this form's body scrolls. */
+.app-dialog:has(.calendar-editor) { height: min(88dvh, 820px); }
+.app-dialog:has(.calendar-editor) > .app-dialog__head,
+.app-dialog:has(.calendar-editor) > .app-dialog__foot { flex: 0 0 auto; }
+.app-dialog:has(.calendar-editor) > .app-dialog__body { min-height: 0; flex: 1; }
+@media (max-width: 620px) {
+  .app-dialog__scrim:has(.calendar-editor) { align-items: flex-end; padding: 0; }
+  .app-dialog:has(.calendar-editor) { height: 90dvh; max-height: 90dvh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 }

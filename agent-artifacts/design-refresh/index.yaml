@@ -1,0 +1,226 @@
+schemaVersion: 1
+id: design-refresh
+kind: story
+title: Complete WebUI and iOS design refresh
+phase: evaluation
+state: active
+planning:
+  revision: 36
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: design-refresh-contract
+    type: spec
+    path: specs/design-refresh-contract.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: design-refresh-architecture
+    type: design
+    path: design/design-refresh-architecture.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: design-refresh-e2e
+    type: e2e-matrix
+    path: e2e-matrix/design-refresh-e2e.md
+    status: approved
+    narrativeSchemaVersion: 2
+tasks:
+  - id: design-foundation-v2
+    path: tasks/design-foundation-v2/task.yaml
+  - id: capture-protocol-gateway
+    path: tasks/capture-protocol-gateway/task.yaml
+  - id: verification-inventory-harness
+    path: tasks/verification-inventory-harness/task.yaml
+  - id: kmp-capture-semantics
+    path: tasks/kmp-capture-semantics/task.yaml
+  - id: web-foundation-components
+    path: tasks/web-foundation-components/task.yaml
+  - id: ios-foundation-components
+    path: tasks/ios-foundation-components/task.yaml
+  - id: web-shell-auth-history
+    path: tasks/web-shell-auth-history/task.yaml
+  - id: web-settings-shell-trust
+    path: tasks/web-settings-shell-trust/task.yaml
+  - id: web-settings-soul-voice
+    path: tasks/web-settings-soul-voice/task.yaml
+  - id: web-chat-messages
+    path: tasks/web-chat-messages/task.yaml
+  - id: web-chat-composer
+    path: tasks/web-chat-composer/task.yaml
+  - id: web-calendar-refresh
+    path: tasks/web-calendar-refresh/task.yaml
+  - id: ios-identity-startup-history
+    path: tasks/ios-identity-startup-history/task.yaml
+  - id: ios-settings-system
+    path: tasks/ios-settings-system/task.yaml
+  - id: ios-voice-library
+    path: tasks/ios-voice-library/task.yaml
+  - id: ios-calendar-refresh
+    path: tasks/ios-calendar-refresh/task.yaml
+  - id: ios-chat-composer
+    path: tasks/ios-chat-composer/task.yaml
+  - id: ios-access-account-admin
+    path: tasks/ios-access-account-admin/task.yaml
+  - id: refresh-integration-closure
+    path: tasks/refresh-integration-closure/task.yaml
+integrationUnits: []
+delivery:
+  workingBranch: feature/design-refresh
+  createdFromCommit: 653f6cee3bd06491b547c63ec04d88f21f4f147f
+  executionStartCommit: d662a65baa030e8f29757bac0a260b3b1f948a7f
+evaluations:
+  - id: stage-contracts-and-harness-review
+    path: evaluations/stage-contracts-and-harness-review/evaluation.yaml
+  - id: stage-platform-foundations-review
+    path: evaluations/stage-platform-foundations-review/evaluation.yaml
+  - id: stage-product-surfaces-review
+    path: evaluations/stage-product-surfaces-review/evaluation.yaml
+  - id: stage-ios-final-products-review
+    path: evaluations/stage-ios-final-products-review/evaluation.yaml
+  - id: stage-integration-closure-review
+    path: evaluations/stage-integration-closure-review/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
+  - id: final-e2e
+    path: evaluations/final-e2e/evaluation.yaml
+executionStages:
+  - id: contracts-and-harness
+    tasks:
+      - design-foundation-v2
+      - capture-protocol-gateway
+      - verification-inventory-harness
+    checks:
+      - bun run design:foundation:check
+      - bun run design:inventory:check
+      - bun run --filter '@sentient/protocol' test:unit
+      - bun run --filter '@sentient/web-sdk' test:unit
+      - cd gateway && bun test src/session-handlers/ws-handlers-audio.test.ts
+        src/session-handlers/stt-session.test.ts
+        src/session-handlers/command-mediator.test.ts
+      - bun run typecheck
+      - git diff --check
+    mode: concurrent
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Exact v2 values/projection determinism and Android v1 compatibility
+        - Capture commit/cancel security, terminal races, legacy wire
+          compatibility, and content-free logs
+        - Closed inventory, loopback-only fixtures, prototype-reference-only
+          enforcement, and text-only E2E safety
+  - id: platform-foundations
+    tasks:
+      - kmp-capture-semantics
+      - web-foundation-components
+      - ios-foundation-components
+    checks:
+      - bun run design:foundation:check
+      - bun run design:avatar:verify
+      - bun run --filter '@sentient/webui' test:unit
+      - bun run --filter '@sentient/webui' typecheck
+      - bun run --filter '@sentient/webui' build
+      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+        :android:assembleDebug :android:testDebugUnitTest
+      - ./scripts/ios-setup.sh
+      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16'
+      - git diff --check
+    mode: concurrent
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Web and Swift native component semantics, accessibility, exact
+          material recipes, and no prototype runtime dependencies
+        - Platform-owned Rive packaging/fallback and exact three-state adapter
+        - KMP capture serialization, frame/terminal ordering, lifecycle
+          cancellation, and unchanged Android UI
+  - id: product-surfaces
+    tasks:
+      - web-shell-auth-history
+      - web-settings-shell-trust
+      - web-settings-soul-voice
+      - web-chat-messages
+      - web-chat-composer
+      - web-calendar-refresh
+      - ios-identity-startup-history
+      - ios-settings-system
+      - ios-voice-library
+      - ios-calendar-refresh
+    checks:
+      - bun run --filter '@sentient/webui' test:unit
+      - bun run --filter '@sentient/webui' typecheck
+      - bun run --filter '@sentient/webui' build
+      - bun run --filter '@sentient/gateway' test:unit
+      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      - ./scripts/ios-setup.sh
+      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16'
+      - bun run design:inventory:check
+      - git diff --check
+    mode: concurrent
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Complete reachable-state coverage, component-boundary compliance, and
+          no domain/session/persistence regressions
+        - Web text/chat/task/composer/capture separation, Settings trust
+          cleanup, Calendar behavior, keyboard and 200% zoom
+        - iOS Rive/startup readiness/History, native Settings/Voice/Calendar
+          navigation and large Dynamic Type
+        - No audio E2E, no network manipulation, and no prototype runtime imports
+  - id: ios-final-products
+    tasks:
+      - ios-chat-composer
+      - ios-access-account-admin
+    checks:
+      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      - ./scripts/ios-setup.sh
+      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16'
+      - bun run design:inventory:check
+      - git diff --check
+    mode: concurrent
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Native iOS chat projection/outbox/task/permission/composer capture
+          invariants with fake-only audio proof
+        - Setup/login/update/account/admin/secret privacy and authorization
+        - Startup readiness integration, native NavigationStack/sheets/alerts,
+          and larger Dynamic Type
+  - id: integration-closure
+    tasks:
+      - refresh-integration-closure
+    mode: sequential
+    checks:
+      - bun run design:foundation:check
+      - bun run design:avatar:verify
+      - bun run design:inventory:check
+      - bun run ci
+      - bun run test:int
+      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+        :android:assembleDebug :android:testDebugUnitTest
+      - ./scripts/ios-setup.sh
+      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16'
+      - test -z "$(git diff --name-only 653f6cee3bd06491b547c63ec04d88f21f4f147f
+        -- android/src/main/kotlin android/src/main/res | grep . || true)"
+      - git diff --check
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Whole-feature reachable-state completeness and removal of parallel
+          legacy visuals
+        - Static token/component boundaries, byte-identical platform-owned Rive
+          assets, and exact identity mapping
+        - Trust/privacy/no-op/task/Interrupt/session ownership contracts
+        - No Android UI changes, no production/audio/network-disruption
+          verification, and readiness for E2E-001..009

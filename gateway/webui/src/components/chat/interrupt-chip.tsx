@@ -1,11 +1,3 @@
-import type { JSX } from "preact";
-
-export interface InterruptChipProps {
-  variant: "inline" | "meta";
-  cutoffKind: "interrupt" | "barge-in";
-}
-
-export function InterruptChip({ variant, cutoffKind }: InterruptChipProps): JSX.Element {
-  const label = cutoffKind === "barge-in" ? "barge-in" : "interrupted";
-  return <span class={`interrupt-chip interrupt-chip--${variant}`}>• {label}</span>;
-}
+/** Compatibility entry for the canonical cutoff presentation composite. */
+export { MessageCutoff as InterruptChip } from "./message-cutoff.tsx";
+export type { MessageCutoffProps as InterruptChipProps } from "./message-cutoff.tsx";

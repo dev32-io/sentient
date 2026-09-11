@@ -1,0 +1,15 @@
+Re-review head: 5568f8e9f0c66926209b4053b9529edfddebc688
+Bounded repair commit: 53ef1fc51b3c4c382bcbc9d5277b489adda86b99
+Prior reviewed head: ea022ab262853f819870ea2f39c857a9c79ace8d
+
+Prior finding verification:
+IOS-FINAL-001 RESOLVED — active Hold/Auto keeps VoiceCaptureControl mounted when a draft is present; Auto remains explicitly operable and the draft remains available.
+IOS-FINAL-002 RESOLVED — UIKit recognizer maps ended to release and cancelled/failed to cancellation; reducer tests prove one normal send and cancellation/interruption with no send.
+
+Fresh checks:
+PASS ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+PASS ./scripts/ios-setup.sh
+PASS xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16' (25 XCTest and 114 Swift Testing tests)
+PASS bun run design:inventory:check
+PASS git diff --check prior-head..reviewed-head
+PASS worktree clean after checks

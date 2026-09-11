@@ -1,14 +1,22 @@
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.connectors.UserAudioInputConnector
+import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioPath
 import io.sentient.mobilesdk.voice.talk.TurnMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
  * The [SdkVoice] constructor takes both [scope] (the command-consumer coroutine's
@@ -107,7 +115,7 @@ class SdkVoiceTest {
     }
 
     @Test
-    fun requestStart_default_turnMode_is_null_semantic() = runTest {
+    fun requestStart_default_turnMode_is_explicit_semantic() = runTest {
         val va = FakeVoiceAudio()
         val turnModes = mutableListOf<TurnMode?>()
         val voice = SdkVoice(
@@ -119,10 +127,122 @@ class SdkVoiceTest {
             scope = CoroutineScope(Dispatchers.Unconfined),
             uplinkDispatcher = Dispatchers.Unconfined,
         )
-        // The pre-existing continuous path (startMic → requestStart()) is unchanged: null
-        // turnMode ⇒ audio.start omits the field ⇒ gateway defaults to semantic.
+        // New capture-aware clients make semantic mode explicit on every start.
         voice.requestStart(); advanceUntilIdle()
-        assertEquals(listOf<TurnMode?>(null), turnModes)
+        assertEquals(listOf<TurnMode?>(TurnMode.Semantic), turnModes)
+    }
+
+    @Test
+    fun hold_to_auto_serializes_matching_end_before_fresh_semantic_start_and_first_terminal_wins() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val connector = UserAudioInputConnector(send = { sent += it }, sendBinary = {})
+        val ids = listOf("manual-id", "auto-id").iterator()
+        val voice = SdkVoice(
+            voiceAudio = FakeVoiceAudio(),
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            uplinkDispatcher = Dispatchers.Unconfined,
+            createCaptureId = { ids.next() },
+        )
+        voice.requestStart(TurnMode.Manual)
+        voice.requestStop()
+        voice.requestCancel() // duplicate terminal cannot replace the accepted commit
+        voice.requestStart(TurnMode.Semantic)
+        advanceUntilIdle()
+        assertEquals(
+            listOf(
+                ClientMessage.AudioStart("manual-id", "manual"),
+                ClientMessage.AudioEnd("manual-id"),
+                ClientMessage.AudioStart("auto-id", "semantic"),
+            ),
+            sent,
+        )
+    }
+
+    @Test
+    fun teardown_awaits_cancel_terminal_and_leaves_no_active_capture_or_late_frames() = runTest {
+        val controls = mutableListOf<ClientMessage>()
+        val frames = mutableListOf<ByteArray>()
+        val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = { frames += it })
+        val voice = SdkVoice(
+            voiceAudio = null,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+            scope = backgroundScope,
+            uplinkDispatcher = StandardTestDispatcher(testScheduler),
+            createCaptureId = { "teardown-id" },
+        )
+
+        voice.requestStart(TurnMode.Manual)
+        val teardown = backgroundScope.launch { voice.cancelCaptureAndAwait(timeoutMs = 1_000) }
+        advanceUntilIdle()
+        teardown.join()
+        connector.sendAudioFrame(byteArrayOf(1, 2, 3))
+        voice.requestStart(TurnMode.Semantic)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(ClientMessage.AudioStart("teardown-id", "manual"), ClientMessage.AudioCancel("teardown-id")),
+            controls,
+        )
+        assertFalse(connector.hasActiveCapture, "awaited teardown must not retain a streaming/terminating capture")
+        assertEquals(emptyList(), frames, "no binary frame may be accepted after the terminal control")
+    }
+
+    @Test
+    fun hanging_capture_adapter_times_out_force_closes_generation_and_never_deadlocks() = runTest {
+        val controls = mutableListOf<ClientMessage>()
+        val frames = mutableListOf<ByteArray>()
+        val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = { frames += it })
+        val baseAudio = FakeVoiceAudio()
+        val hangingAudio = object : io.sentient.mobilesdk.voice.io.VoiceAudio by baseAudio {
+            override suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int) {
+                awaitCancellation()
+            }
+
+            override suspend fun configure(
+                mic: Boolean,
+                playback: Boolean,
+                path: VoiceAudioPath,
+                playbackRateHz: Int,
+            ) {
+                awaitCancellation()
+            }
+        }
+        val voice = SdkVoice(
+            voiceAudio = hangingAudio,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+            onUplinkForceLocalTerminal = { generation -> connector.forceLocalTerminalCleanup(generation) },
+            scope = backgroundScope,
+            uplinkDispatcher = StandardTestDispatcher(testScheduler),
+            createCaptureId = { "hanging-id" },
+        )
+
+        voice.requestStart(TurnMode.Manual)
+        runCurrent() // audio.start is emitted, then configure suspends forever
+        val teardown = backgroundScope.launch { voice.cancelCaptureAndAwait(timeoutMs = 100) }
+        advanceTimeBy(100)
+        runCurrent()
+
+        assertFalse(teardown.isActive, "bounded teardown must complete without waiting for the adapter")
+        assertFalse(connector.hasActiveCapture, "timeout must force local terminal cleanup")
+        connector.sendAudioFrame(byteArrayOf(9))
+        voice.requestStart(TurnMode.Semantic)
+        runCurrent()
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart("hanging-id", "manual")), controls)
+        assertEquals(emptyList<ByteArray>(), frames, "force-terminal generation must reject every late frame")
+        voice.shutdownLane()
     }
 
     @Test

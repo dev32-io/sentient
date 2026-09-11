@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import type { CalendarMutationScope } from "../../services/calendar-api.ts";
+import { ActionButton } from "../common/index.ts";
 import { Dialog } from "../common/dialog.tsx";
 import { MutationScopeChooser } from "./mutation-scope-chooser.tsx";
 
@@ -39,19 +40,18 @@ export function DeleteConfirmation({
       onClose={onCancel}
       footer={
         <>
-          <button type="button" class="app-dialog__btn app-dialog__btn--ghost" onClick={onCancel} disabled={busy}>
+          <ActionButton className="app-dialog__btn app-dialog__btn--ghost" onClick={() => onCancel()} disabled={busy}>
             Cancel
-          </button>
-          <button
-            type="button"
-            class="app-dialog__btn app-dialog__btn--danger"
+          </ActionButton>
+          <ActionButton
+            className="app-dialog__btn app-dialog__btn--danger"
             disabled={!canConfirm}
             onClick={() => {
               if (selectedScope) onConfirm(selectedScope);
             }}
           >
             {busy ? "Deleting…" : "Delete event"}
-          </button>
+          </ActionButton>
         </>
       }
     >

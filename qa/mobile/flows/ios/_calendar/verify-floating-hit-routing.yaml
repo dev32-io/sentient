@@ -1,0 +1,109 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+# Already-open Calendar only: never relaunch/reset away the parent's RTL arguments.
+# Required profile/coordinates and local-backend attestation have NO defaults.
+- assertTrue:
+    condition: ${typeof CALENDAR_HIT_LOCAL_VERIFIED !== 'undefined' && CALENDAR_HIT_LOCAL_VERIFIED === '1'}
+    label: Parent must verify this debug app is connected to the real LOCAL stack
+- assertTrue:
+    condition: ${typeof CALENDAR_HIT_PROFILE !== 'undefined' && CALENDAR_HIT_PROFILE === '393x852-portrait-normal'}
+    label: Requires verified 393x852 portrait with normal Dynamic Type
+- assertTrue:
+    condition: ${typeof CALENDAR_HIT_DIRECTION !== 'undefined' && (CALENDAR_HIT_DIRECTION === 'ltr' || CALENDAR_HIT_DIRECTION === 'rtl')}
+    label: Explicit CALENDAR_HIT_DIRECTION must be ltr or rtl
+- assertTrue:
+    condition: >-
+      ${typeof CALENDAR_HIT_FACE_POINT !== 'undefined' && typeof CALENDAR_HIT_CORNER_POINT !== 'undefined' &&
+      ((CALENDAR_HIT_DIRECTION === 'ltr' && CALENDAR_HIT_FACE_POINT === '34,788' && CALENDAR_HIT_CORNER_POINT === '56,764') ||
+      (CALENDAR_HIT_DIRECTION === 'rtl' && CALENDAR_HIT_FACE_POINT === '359,788' && CALENDAR_HIT_CORNER_POINT === '337,764'))}
+    label: Explicit face/corner coordinates must match the verified direction/profile
+- assertTrue:
+    condition: >-
+      ${typeof CALENDAR_HIT_VISIBLE_DATE_ID === 'string' && CALENDAR_HIT_VISIBLE_DATE_ID.length === 24 &&
+      /^calendar-date-[0-9][0-9][0-9][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/.test(CALENDAR_HIT_VISIBLE_DATE_ID)}
+    label: Parent must supply one exact calendar-date-YYYY-MM-DD ID freshly verified inside the authorized Month viewport away from the footer
+
+# Normal controls, no open filters sheet. The menu-based accessibility branch
+# is not this profile. Month/Today removes any clock-date fixture dependency.
+- assertNotVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-view-day", enabled: true, height: 44 }
+- assertVisible: { id: "calendar-view-week", enabled: true, height: 44 }
+- assertVisible: { id: "calendar-view-month", enabled: true, height: 44 }
+- assertVisible: { id: "calendar-view-year", enabled: true, height: 44 }
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { id: "calendar-today" }
+- assertVisible: { id: "calendar-native-viewport", width: 393, height: 631 }
+- assertVisible: { id: "calendar-open-filters", enabled: true, width: 58, height: 54 }
+- runFlow:
+    when:
+      true: ${CALENDAR_HIT_DIRECTION === 'ltr'}
+    commands:
+      - assertVisible: { id: "calendar-view-day", leftOf: { id: "calendar-view-year" } }
+      - assertVisible: { id: "calendar-open-filters", leftOf: { id: "calendar-view-day" } }
+- runFlow:
+    when:
+      true: ${CALENDAR_HIT_DIRECTION === 'rtl'}
+    commands:
+      - assertVisible: { id: "calendar-view-day", rightOf: { id: "calendar-view-year" } }
+      - assertVisible: { id: "calendar-open-filters", rightOf: { id: "calendar-view-day" } }
+
+# Reset local Calendar filters explicitly. Disabled Clear means activeCount=0.
+# The only subsequent filter edit is this public nonempty query: badge count=1.
+- tapOn: { id: "calendar-open-filters" }
+- assertVisible: { id: "calendar-filter-search" }
+- runFlow:
+    when:
+      visible: { id: "calendar-filter-clear", enabled: true }
+    commands:
+      - tapOn: { id: "calendar-filter-clear" }
+- assertVisible: { id: "calendar-filter-clear", enabled: false }
+- tapOn: { id: "calendar-filter-search" }
+- inputText: "qa-native-hit"
+- assertVisible: { id: "calendar-filter-clear", enabled: true }
+- tapOn: { id: "calendar-close-filters" }
+- assertNotVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-native-viewport", width: 393, height: 631 }
+- assertVisible: { id: "calendar-open-filters", enabled: true, width: 58, height: 54 }
+
+# One real coordinate tap per obligation; no retry if it fails to change UI.
+# Sheet presentation alone is insufficient: the native Month must survive close.
+- tapOn:
+    point: "${CALENDAR_HIT_FACE_POINT}"
+    retryTapIfNoChange: false
+- assertVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-filter-clear", enabled: true }
+- tapOn: { id: "calendar-close-filters" }
+- assertNotVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-native-viewport", width: 393, height: 631 }
+
+- tapOn:
+    point: "${CALENDAR_HIT_CORNER_POINT}"
+    retryTapIfNoChange: false
+- assertVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-filter-clear", enabled: true }
+- tapOn: { id: "calendar-close-filters" }
+- assertNotVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-native-viewport", width: 393, height: 631 }
+
+# Positive control: parent selects this exact owned date from fresh identifiers
+# inside the authorized Month/Today viewport, away from the footer. A global
+# regex/index can AX-scroll across the full civil month collection; never use it.
+- assertVisible: { id: "${CALENDAR_HIT_VISIBLE_DATE_ID}" }
+- tapOn:
+    id: "${CALENDAR_HIT_VISIBLE_DATE_ID}"
+    retryTapIfNoChange: false
+- assertNotVisible: { id: "calendar-native-viewport" }
+- assertVisible: { id: "calendar-view-day", enabled: true }
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { id: "calendar-today" }
+- assertVisible: { id: "calendar-native-viewport", width: 393, height: 631 }
+
+# Successful completion restores Month/Today with zero local filters.
+- tapOn: { id: "calendar-open-filters" }
+- assertVisible: { id: "calendar-filter-clear", enabled: true }
+- tapOn: { id: "calendar-filter-clear" }
+- assertVisible: { id: "calendar-filter-clear", enabled: false }
+- tapOn: { id: "calendar-close-filters" }
+- assertNotVisible: { id: "calendar-filter-search" }
+- assertVisible: { id: "calendar-native-viewport", width: 393, height: 631 }

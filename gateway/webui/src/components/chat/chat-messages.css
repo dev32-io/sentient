@@ -1,0 +1,538 @@
+/* Chat message composites. The generated v2 foundation owns colors, type,
+   materials, radii, and motion; this file owns only chat composition. */
+
+.chat-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-block: 30px 16px;
+  padding-inline: clamp(var(--space-md), 3vw, 34px);
+  mask-image: linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-ink) 14%, transparent) transparent;
+}
+
+.chat-view::-webkit-scrollbar { width: 8px; }
+.chat-view::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--color-ink) 14%, transparent);
+}
+
+.chat-view__content {
+  width: 100%;
+  max-width: 840px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.chat-view__transcript {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-left: 2px solid var(--color-accent);
+  color: var(--color-ink-3);
+  font-style: italic;
+}
+
+.message-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.message-list--empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  padding-block: var(--space-3xl);
+  text-align: center;
+}
+
+.message-list__placeholder {
+  max-width: 44ch;
+  margin: 0;
+  color: var(--color-ink-2);
+  font: var(--font-size-lg) / var(--line-height-normal) var(--font-display);
+}
+
+.message-list--error .message-list__placeholder {
+  color: var(--color-clay);
+}
+
+.day-divider {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-md);
+  margin: 0;
+  color: var(--color-ink-2);
+  font: var(--font-size-sm) / var(--line-height-tight) var(--font-mono);
+}
+
+.day-divider::before,
+.day-divider::after {
+  content: "";
+  height: 1px;
+  background: var(--color-line-soft);
+}
+
+/* MessageGroup frame. Role-specific composites only choose identity and
+   semantic surface state; this stable frame owns chronology alignment. */
+.message-bubble {
+  width: min(100%, 840px);
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-md);
+  margin-right: auto;
+}
+
+.message-bubble--continuation {
+  margin-top: calc(var(--space-lg) * -1);
+}
+
+.message-bubble--user {
+  grid-template-columns: minmax(0, 1fr) 44px;
+  margin-right: 0;
+  margin-left: auto;
+}
+
+.message-bubble > .snt-avatar,
+.message-bubble__avatar-spacer {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.message-bubble--user > .snt-avatar {
+  grid-column: 2;
+}
+
+.message-bubble__avatar-spacer {
+  display: block;
+  min-height: 44px;
+}
+
+.message-bubble__body {
+  min-width: 0;
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  flex-direction: column;
+  gap: 0;
+}
+
+.message-bubble--user .message-bubble__body {
+  width: min(100%, 58ch);
+  grid-column: 1;
+  justify-self: end;
+  align-items: stretch;
+}
+
+.message-bubble__meta {
+  min-width: 0;
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-sm);
+  color: var(--color-ink-2);
+  font: var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
+  flex-wrap: wrap;
+}
+
+.message-bubble--user .message-bubble__meta {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
+.message-bubble__name {
+  max-width: min(100%, 38ch);
+  overflow: hidden;
+  color: var(--color-ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-bubble__sep {
+  color: var(--color-ink-3);
+}
+
+.message-bubble__meta time {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.message-bubble__text-wrap {
+  position: relative;
+  isolation: isolate;
+  width: fit-content;
+  max-width: min(100%, 62ch);
+  min-width: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-bubble[data-message-state="thinking"] .message-bubble__text-wrap,
+.message-bubble[data-message-state="responding"] .message-bubble__text-wrap {
+  width: min(100%, 62ch);
+}
+
+.message-bubble--user .message-bubble__text-wrap {
+  max-width: 100%;
+  margin-left: auto;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+
+/* The surface is a semantic slate material. Its face and shadow recipe stay
+   in the generated foundation; chat only supplies the role/state base. */
+.message-bubble__surface {
+  --slate-base: var(--color-paper);
+  --slate-border: var(--color-line-soft);
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  border: 1px solid var(--slate-border);
+  border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
+  background: var(--slate-face);
+  box-shadow: var(--plate-shadow);
+  pointer-events: none;
+}
+
+.message-bubble--user .message-bubble__surface {
+  --slate-base: var(--color-accent-50);
+  --slate-border: var(--color-accent-soft);
+  border-radius: var(--radius-lg) var(--radius-sm) var(--radius-lg) var(--radius-lg);
+}
+
+.message-bubble[data-message-state="thinking"] .message-bubble__surface,
+.message-bubble[data-message-state="responding"] .message-bubble__surface {
+  --slate-base: var(--color-paper);
+  --slate-border: var(--color-accent-soft);
+}
+
+.message-bubble[data-message-state="interrupted"] .message-bubble__surface {
+  --slate-base: var(--color-paper);
+  --slate-border: var(--color-clay);
+}
+
+.message-bubble__text-inner {
+  position: relative;
+  z-index: 0;
+  min-width: 0;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.bubble-text {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  color: var(--color-ink);
+  font: var(--font-size-base) / var(--line-height-relaxed) var(--font-ui);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.bubble-text__md {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.bubble-text__md > :first-child {
+  margin-top: 0;
+}
+
+.bubble-text__md > :last-child {
+  margin-bottom: 0;
+}
+
+.bubble-text__md p {
+  margin: 0 0 var(--space-sm);
+}
+
+.bubble-text__md ul,
+.bubble-text__md ol {
+  margin: var(--space-xs) 0 var(--space-sm);
+  padding-left: var(--space-xl);
+}
+
+.bubble-text__md li {
+  margin: var(--space-xs) 0;
+}
+
+.bubble-text__md h1,
+.bubble-text__md h2,
+.bubble-text__md h3,
+.bubble-text__md h4,
+.bubble-text__md h5,
+.bubble-text__md h6 {
+  margin: var(--space-md) 0 var(--space-sm);
+  color: var(--color-ink);
+  font: 500 var(--font-size-lg) / var(--line-height-tight) var(--font-display);
+}
+
+.bubble-text__md code {
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-sunk);
+  color: var(--color-ink-2);
+  font: var(--font-size-sm) / var(--line-height-normal) var(--font-mono);
+}
+
+.bubble-text__md pre {
+  max-width: 100%;
+  margin: var(--space-sm) 0;
+  padding: var(--space-md);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  white-space: pre;
+}
+
+.bubble-text__md pre code {
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+}
+
+.bubble-text__md blockquote {
+  margin: var(--space-sm) 0;
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--color-accent);
+  color: var(--color-ink-2);
+  opacity: .85;
+}
+
+.bubble-text__md a {
+  color: var(--color-accent);
+  text-underline-offset: var(--space-xs);
+}
+
+.bubble-text__md a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* Streaming presentation is intentionally outside the Markdown HTML so a
+   growing response can update without changing the sanitized content shape. */
+.bubble-text__pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 1em;
+  vertical-align: text-bottom;
+}
+
+.bubble-text__pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  opacity: .4;
+  animation: bubble-pulse-dot var(--motion-responding-cadence) infinite;
+  animation-delay: initial;
+}
+
+.bubble-text__pulse-dot:nth-child(2),
+.bubble-text__pulse-dot:nth-child(3) {
+  animation-delay: initial;
+}
+
+@keyframes bubble-pulse-dot {
+  0%, 80%, 100% { opacity: .3; transform: scale(.9); }
+  40% { opacity: 1; transform: scale(1.1); }
+}
+
+.bubble-text__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: var(--space-xs);
+  vertical-align: -2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  animation: bubble-streaming-caret var(--motion-responding-cadence) infinite;
+}
+
+@keyframes bubble-streaming-caret {
+  50% { opacity: 0; }
+}
+
+.bubble-speaking-wave {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in oklab, var(--color-accent) 0%, transparent) 15%,
+    color-mix(in oklab, var(--color-accent) 14%, transparent) 35%,
+    color-mix(in oklab, var(--color-accent) 22%, transparent) 50%,
+    color-mix(in oklab, var(--color-accent) 14%, transparent) 65%,
+    color-mix(in oklab, var(--color-accent) 0%, transparent) 85%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-size: 220% 100%;
+  animation: speaking-wave var(--motion-responding-cadence) infinite;
+}
+
+@keyframes speaking-wave {
+  0% { background-position: -60% 0; }
+  50% { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
+}
+
+.interrupt-chip {
+  width: fit-content;
+  min-height: var(--space-xl);
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-pill);
+  background: var(--well-face);
+  color: var(--color-ink-2);
+  box-shadow: var(--well-shadow);
+  font: var(--font-size-sm) / var(--line-height-tight) var(--font-mono);
+}
+
+.interrupt-chip > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-clay);
+}
+
+.interrupt-chip--inline {
+  margin-inline-start: var(--space-sm);
+}
+
+@media (max-width: 860px) {
+  .chat-view {
+    padding: 24px 18px var(--chat-bottom-clear, 220px);
+  }
+}
+
+@media (max-width: 620px) {
+  .chat-view {
+    padding: 16px 12px var(--chat-bottom-clear, 200px);
+  }
+
+  .message-list {
+    gap: var(--space-lg);
+  }
+
+  .message-bubble {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: var(--space-sm);
+  }
+
+  .message-bubble--continuation {
+    margin-top: calc(var(--space-md) * -1);
+  }
+
+  .message-bubble--user {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+
+  .message-bubble > .snt-avatar,
+  .message-bubble__avatar-spacer {
+    min-height: 28px;
+  }
+
+  .message-bubble > .snt-avatar {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+    font-size: var(--font-size-sm);
+  }
+
+  .message-bubble > .snt-avatar .sentient-identity,
+  .message-bubble > .snt-avatar canvas,
+  .message-bubble > .snt-avatar img {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  .message-bubble--user .message-bubble__body {
+    width: min(100%, 88%);
+  }
+
+  .message-bubble__meta {
+    min-height: 18px;
+    margin-bottom: var(--space-xs);
+  }
+
+  .message-bubble__text-inner {
+    padding: var(--space-md);
+  }
+
+  .bubble-text__md p {
+    margin-bottom: var(--space-xs);
+  }
+
+  .bubble-text__md ul,
+  .bubble-text__md ol {
+    margin-block: var(--space-xs);
+    padding-left: var(--space-lg);
+  }
+
+  .bubble-text__md li {
+    margin-block: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble-text__pulse-dot,
+  .bubble-text__caret,
+  .bubble-speaking-wave {
+    animation: none;
+  }
+
+  .bubble-text__pulse-dot {
+    opacity: 1;
+    transform: none;
+  }
+
+  .bubble-text__caret { display: none; }
+
+  .bubble-speaking-wave {
+    background-position: 50% 0;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .message-bubble__surface {
+    border-color: var(--color-ink-3);
+  }
+
+  .interrupt-chip {
+    outline: 1px solid var(--color-ink-3);
+  }
+}

@@ -6,13 +6,15 @@
       "name": "sentient",
       "devDependencies": {
         "@biomejs/biome": "^1.9.0",
+        "ajv": "8.20.0",
         "lefthook": "^1.10.0",
         "typescript": "^5.8.0",
+        "zod": "^3.24.0",
       },
     },
     "gateway": {
       "name": "@sentient/gateway",
-      "version": "1.15.0",
+      "version": "1.16.0",
       "dependencies": {
         "@logtape/file": "^2.0.5",
         "@logtape/logtape": "^2.0.5",
@@ -45,10 +47,11 @@
     },
     "gateway/webui": {
       "name": "@sentient/webui",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@jitsi/rnnoise-wasm": "^0.2.1",
         "@preact/signals": "^2.9.0",
+        "@rive-app/canvas": "2.40.1",
         "@sentient/config": "workspace:*",
         "@sentient/protocol": "workspace:*",
         "@sentient/web-sdk": "workspace:*",
@@ -359,6 +362,8 @@
     "@protobufjs/pool": ["@protobufjs/pool@1.1.0", "", {}, "sha512-0kELaGSIDBKvcgS4zkjz1PeddatrjYcmMWOlAuAPwAeccUrPHdUqo/J6LiymHHEiJT5NrF1UVwxY14f+fy4WQw=="],
 
     "@protobufjs/utf8": ["@protobufjs/utf8@1.1.1", "", {}, "sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg=="],
+
+    "@rive-app/canvas": ["@rive-app/canvas@2.40.1", "", {}, "sha512-ea9oHIoeijZOAafE6bx6+PkiiAGjL43ZeLmhJ3bRMTsvedFvWeO0x/uCx5CY36Biu75S7Xw8hI4PryYy2b1utA=="],
 
     "@rollup/pluginutils": ["@rollup/pluginutils@5.3.0", "", { "dependencies": { "@types/estree": "^1.0.0", "estree-walker": "^2.0.2", "picomatch": "^4.0.2" }, "peerDependencies": { "rollup": "^1.20.0||^2.0.0||^3.0.0||^4.0.0" }, "optionalPeers": ["rollup"] }, "sha512-5EdhGZtnu3V88ces7s53hhfK5KSASnJZv8Lulpc04cWO3REESroJXg73DFsOmgbU2BhwV0E20bu2IDZb3VKW4Q=="],
 

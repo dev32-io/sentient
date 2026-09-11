@@ -1,10 +1,12 @@
 import type { AudioCaptureAdapter } from "@sentient/web-sdk";
 import captureWorkletUrl from "../audio/capture-worklet.ts?worker&url";
 import { CAPTURE_GAIN, CAPTURE_SAMPLE_RATE } from "../constants.ts";
+import { type BrowserAudioPolicy, currentBrowserAudioPolicy } from "./browser-audio-policy.ts";
 
 export interface WebAudioCaptureOptions {
   sampleRate?: number;
   gain?: number;
+  audioPolicy?: BrowserAudioPolicy;
 }
 
 /** PCM message from capture worklet. */
@@ -14,6 +16,22 @@ interface PcmMessage {
 }
 
 type WorkletMessage = PcmMessage;
+
+interface CaptureResources {
+  readonly mediaStream: MediaStream;
+  audioContext: AudioContext | null;
+  sourceNode: MediaStreamAudioSourceNode | null;
+  gainNode: GainNode | null;
+  workletNode: AudioWorkletNode | null;
+  cleaned: boolean;
+}
+
+class CaptureStartCancelled extends Error {
+  constructor() {
+    super("Voice capture was stopped while starting.");
+    this.name = "AbortError";
+  }
+}
 
 function isWorkletMessage(value: unknown): value is WorkletMessage {
   return typeof value === "object" && value !== null && "type" in value;
@@ -27,11 +45,14 @@ function isWorkletMessage(value: unknown): value is WorkletMessage {
 export function createWebAudioCapture(options?: WebAudioCaptureOptions): AudioCaptureAdapter {
   const sampleRate = options?.sampleRate ?? CAPTURE_SAMPLE_RATE;
   const gainValue = options?.gain ?? CAPTURE_GAIN;
+  const audioPolicy = options?.audioPolicy ?? currentBrowserAudioPolicy();
 
-  let audioContext: AudioContext | null = null;
-  let workletNode: AudioWorkletNode | null = null;
-  let mediaStream: MediaStream | null = null;
-  let gainNode: GainNode | null = null;
+  let resources: CaptureResources | null = null;
+  let generation = 0;
+  let startPending = false;
+  // AudioContext.close() is asynchronous. A fresh getUserMedia/AudioContext
+  // pair must not race Firefox's CoreAudio teardown from the preceding use.
+  let closeBarrier: Promise<void> = Promise.resolve();
 
   const audioHandlers = new Set<(data: ArrayBuffer) => void>();
   const errorHandlers = new Set<(message: string) => void>();
@@ -44,49 +65,98 @@ export function createWebAudioCapture(options?: WebAudioCaptureOptions): AudioCa
     }
   }
 
-  function cleanup(): void {
-    workletNode?.disconnect();
-    gainNode?.disconnect();
-    for (const t of mediaStream?.getTracks() ?? []) t.stop();
-    audioContext?.close().catch(() => {});
-    workletNode = null;
-    gainNode = null;
-    mediaStream = null;
-    audioContext = null;
+  function isCurrent(candidate: CaptureResources, expectedGeneration: number): boolean {
+    return resources === candidate && generation === expectedGeneration;
+  }
+
+  function cleanup(candidate: CaptureResources | null): void {
+    if (candidate === null || candidate.cleaned) return;
+    candidate.cleaned = true;
+    if (resources === candidate) resources = null;
+
+    if (candidate.workletNode) {
+      candidate.workletNode.port.onmessage = null;
+      candidate.workletNode.port.close();
+      candidate.workletNode.disconnect();
+    }
+    candidate.sourceNode?.disconnect();
+    candidate.gainNode?.disconnect();
+    for (const track of candidate.mediaStream.getTracks()) track.stop();
+
+    const context = candidate.audioContext;
+    candidate.workletNode = null;
+    candidate.sourceNode = null;
+    candidate.gainNode = null;
+    candidate.audioContext = null;
+    if (context) {
+      const closing = context.close().catch(() => undefined);
+      closeBarrier = Promise.all([closeBarrier, closing]).then(() => undefined);
+    }
+  }
+
+  function assertCurrent(candidate: CaptureResources, expectedGeneration: number): void {
+    if (!isCurrent(candidate, expectedGeneration)) throw new CaptureStartCancelled();
   }
 
   return {
     async start() {
+      if (startPending || resources !== null) throw new Error("Voice capture is already starting or active.");
+      startPending = true;
+      const expectedGeneration = ++generation;
+      let candidate: CaptureResources | null = null;
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
+        // stop() releases tracks synchronously, but Firefox completes the
+        // underlying AudioDSP/CoreAudio shutdown with close() asynchronously.
+        await closeBarrier;
+        if (generation !== expectedGeneration) throw new CaptureStartCancelled();
+
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate,
-            echoCancellation: true,
-            noiseSuppression: true,
+            ...audioPolicy.captureProcessing,
           },
         });
+        candidate = {
+          mediaStream,
+          audioContext: null,
+          sourceNode: null,
+          gainNode: null,
+          workletNode: null,
+          cleaned: false,
+        };
+        resources = candidate;
+        assertCurrent(candidate, expectedGeneration);
 
-        audioContext = new AudioContext({ sampleRate });
+        const audioContext = new AudioContext({ sampleRate });
+        candidate.audioContext = audioContext;
         await audioContext.audioWorklet.addModule(captureWorkletUrl);
+        assertCurrent(candidate, expectedGeneration);
 
-        const source = audioContext.createMediaStreamSource(mediaStream);
-        gainNode = audioContext.createGain();
-        gainNode.gain.value = gainValue;
-        workletNode = new AudioWorkletNode(audioContext, "capture-processor");
-        workletNode.port.onmessage = handleWorkletMessage;
+        candidate.sourceNode = audioContext.createMediaStreamSource(mediaStream);
+        candidate.gainNode = audioContext.createGain();
+        candidate.gainNode.gain.value = gainValue;
+        candidate.workletNode = new AudioWorkletNode(audioContext, "capture-processor");
+        candidate.workletNode.port.onmessage = handleWorkletMessage;
 
         // Chain: source -> gain -> worklet (no output to destination -- avoids feedback).
-        source.connect(gainNode).connect(workletNode);
+        candidate.sourceNode.connect(candidate.gainNode).connect(candidate.workletNode);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Mic access failed";
-        for (const h of errorHandlers) h(message);
-        cleanup();
+        const intentionallyStopped = generation !== expectedGeneration || candidate?.cleaned === true;
+        cleanup(candidate);
+        if (intentionallyStopped) throw new CaptureStartCancelled();
+        if (!(error instanceof CaptureStartCancelled)) {
+          const message = error instanceof Error ? error.message : "Mic access failed";
+          for (const h of errorHandlers) h(message);
+        }
         throw error;
+      } finally {
+        startPending = false;
       }
     },
 
     stop() {
-      cleanup();
+      ++generation;
+      cleanup(resources);
     },
 
     onAudioData(handler) {

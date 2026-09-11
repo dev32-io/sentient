@@ -19,12 +19,13 @@ private let rowTagPrefix = "history-row-"
 struct HistoryRow: View {
     let row: SessionRow
     let nowMs: Int64
+    let isSelected: Bool
     let onSwitch: () -> Void
     let onAskRename: () -> Void
     let onAskDelete: () -> Void
 
-    private var titleColor: Color { row.isActive ? DuskColors.accent : DuskColors.ink }
-    private var rowFill: Color { row.isActive ? DuskColors.accent50 : .clear }
+    private var active: Bool { row.isActive || isSelected }
+    private var titleColor: Color { active ? DuskColors.accent : DuskColors.ink }
 
     // Relative time only. The message-count suffix was dropped: the gateway
     // session list does not populate a count (always 0 → a misleading "no
@@ -37,7 +38,7 @@ struct HistoryRow: View {
         Button(action: onSwitch) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(row.title)
-                    .font(.system(size: TypeScale.base, weight: row.isActive ? .semibold : .regular))
+                    .font(.system(size: TypeScale.base, weight: active ? .semibold : .regular))
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -50,14 +51,34 @@ struct HistoryRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Space.md)
             .padding(.vertical, Space.md)
-            .background(rowFill, in: RoundedRectangle(cornerRadius: Radii.md))
+            .background {
+                if active { HistorySelectedRowCanvas() }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("\(rowTagPrefix)\(row.sessionId)")
+        .accessibilityAddTraits(active ? .isSelected : [])
         .contextMenu {
             Button("Rename", action: onAskRename)
             Button("Delete", role: .destructive, action: onAskDelete)
         }
+    }
+}
+
+/// Session selection is product-owned rather than a generic selectable-card
+/// treatment. Canvas preserves the established accent-tinted history receiver
+/// without introducing another stacked face or changing the native row target.
+private struct HistorySelectedRowCanvas: View {
+    var body: some View {
+        Canvas { context, size in
+            let shape = RoundedRectangle(cornerRadius: Radii.md)
+            context.fill(
+                shape.path(in: CGRect(origin: .zero, size: size)),
+                with: .color(DuskColors.accent50)
+            )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

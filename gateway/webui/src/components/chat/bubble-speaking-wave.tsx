@@ -1,10 +1,3 @@
-import type { JSX } from "preact";
-
-export interface BubbleSpeakingWaveProps {
-  active: boolean;
-}
-
-export function BubbleSpeakingWave({ active }: BubbleSpeakingWaveProps): JSX.Element | null {
-  if (!active) return null;
-  return <span class="bubble-speaking-wave" aria-hidden="true" />;
-}
+/** Compatibility entry for the canonical streaming presentation composite. */
+export { SpeakingWave as BubbleSpeakingWave } from "./streaming-presentation.tsx";
+export type { SpeakingWaveProps as BubbleSpeakingWaveProps } from "./streaming-presentation.tsx";

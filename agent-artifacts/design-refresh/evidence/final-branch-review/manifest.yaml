@@ -1,0 +1,11 @@
+schemaVersion: 1
+evaluation: final-branch-review
+recordedAt: 2026-08-26T02:46:18.078Z
+entries:
+  - result: Only six agent-artifacts files changed; no relevant repair exists.
+      Checker passes; 373 reviewed entries and 105 needs-review entries remain.
+    command: git diff 6891b1e0..899eba80 with and without agent-artifacts;
+      relevant-path diff; closed checker; manifest count
+    description: Sanitized fresh evidence for the exact iteration-3 bounded diff.
+    path: files/004-1-design-refresh-final-rereview-3-evidence.txt
+    checksum: sha256:8d6c32b7eeddc1c0fab771948b239f18b1d1b2f56aeaee3f30c0c3131b006cbe

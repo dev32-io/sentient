@@ -1,149 +1,89 @@
-// gateway/webui/src/components/settings/panes/system-prompt-pane.tsx
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { ProfileApi, SoulDoc } from "../../../services/profile-api.js";
 import { renderMarkdown } from "../../../lib/render-markdown.ts";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Segmented } from "../primitives/segmented.tsx";
-import { Textarea } from "../primitives/textarea.tsx";
-import { Btn } from "../primitives/btn.tsx";
-import { Modal } from "../primitives/modal.tsx";
+import { ActionButton, ActionRow, AsyncState, Dialog, Notice, PaneChrome, SegmentedControl, SettingsEditor, TextArea } from "../../common/index.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "system-prompt-pane"]);
+const DESCRIPTION = "The base personality and behavior instructions used for new conversations. Changes take effect after Apply.";
 
 export interface SystemPromptPaneProps {
   api: ProfileApi;
   token: string;
-  /** Called when user clicks Restore default — replaces draft with template body. */
   onRestoreDefault: (defaultBody: string) => void;
-  /** Source of truth for textarea content (controlled by SettingsView). */
   draft: string | null;
-  /** Last-saved Soul.md (used for Discard / dirty diff). */
   original: SoulDoc | null;
-  /** SettingsView passes a setter so pane can hydrate when fetch lands. */
   setOriginal: (doc: SoulDoc) => void;
   setDraft: (body: string) => void;
 }
 
-export function SystemPromptPane({
-  api, token, onRestoreDefault,
-  draft, original, setOriginal, setDraft,
-}: SystemPromptPaneProps): JSX.Element {
+export function SystemPromptPane({ api, token, onRestoreDefault, draft, original, setOriginal, setDraft }: SystemPromptPaneProps): JSX.Element {
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   useEffect(() => {
     if (original !== null) return;
+    setLoadError(null);
     void (async () => {
-      const r = await api.getSoul(token);
-      if (!r.ok) {
-        log.warn("getSoul.failed", { code: r.error.code });
-        setLoadError("Couldn't load Soul.md.");
+      const result = await api.getSoul(token);
+      if (!result.ok) {
+        log.warn("getSoul.failed", { code: result.error.code });
+        setLoadError("Couldn't load the system prompt.");
         return;
       }
-      setOriginal(r.value);
-      setDraft(r.value.content);
+      setOriginal(result.value);
+      setDraft(result.value.content);
     })();
-  }, [api, token, original, setOriginal, setDraft]);
+  }, [api, token, original, setOriginal, setDraft, loadAttempt]);
 
-  const handleEdit = (e: Event) => {
-    setDraft((e.target as HTMLTextAreaElement).value);
-  };
-
-  const handleConfirmRestore = async () => {
-    log.debug("restoreDefault.confirmed");
+  async function handleConfirmRestore(): Promise<void> {
     setRestoring(true);
-    const r = await api.getSoulDefault(token);
+    setRestoreError(null);
+    const result = await api.getSoulDefault(token);
     setRestoring(false);
-    if (!r.ok) {
-      log.warn("restoreDefault.failed", { code: r.error.code });
+    if (!result.ok) {
+      log.warn("restoreDefault.failed", { code: result.error.code });
+      setRestoreError("Couldn't load the default prompt. Try again.");
       return;
     }
-    onRestoreDefault(r.value.content);
+    onRestoreDefault(result.value.content);
     setConfirmOpen(false);
-  };
-
-  const headSub =
-    "The base personality and behavior contract loaded into your assistant at boot. " +
-    "Edits live in Soul.md and are baked into the next conversation chain after Apply.";
-
-  if (loadError) {
-    return (
-      <>
-        <PaneHead title="System Prompt" sub={headSub} />
-        <p class="pane-error">{loadError}</p>
-      </>
-    );
-  }
-
-  if (!original || draft === null) {
-    return (
-      <>
-        <PaneHead title="System Prompt" sub={headSub} />
-        <div class="pane-skeleton" aria-hidden="true" />
-      </>
-    );
   }
 
   return (
-    <>
-      <PaneHead title="Persona" sub="The base personality template — Soul.md loaded at boot." />
-
-      <Card
-        title="Soul.md"
-        sub="Markdown supported. Changes take effect after Apply."
-        action={
-          <Btn kind="secondary" size="sm" danger onClick={() => setConfirmOpen(true)}>
-            Restore default
-          </Btn>
-        }
-      >
-        <div class="md-wrap">
-          <Segmented
-            value={tab}
-            onChange={(v) => setTab(v as "edit" | "preview")}
-            options={[
-              { value: "edit",    label: "Edit" },
-              { value: "preview", label: "Preview" },
-            ]}
-          />
-        </div>
-        {tab === "edit" ? (
-          <Textarea value={draft} monospace rows={18} onChange={handleEdit} />
-        ) : (
-          // renderMarkdown sanitizes via DOMPurify before returning HTML.
-          <div
-            class="md-prev"
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(draft) }}
-          />
-        )}
-      </Card>
-
-      {confirmOpen && (
-        <Modal
-          title="Restore default Soul.md?"
-          onClose={() => setConfirmOpen(false)}
-          footer={
-            <>
-              <Btn kind="ghost" size="sm" onClick={() => setConfirmOpen(false)} disabled={restoring}>
-                Cancel
-              </Btn>
-              <Btn kind="primary" size="sm" danger onClick={handleConfirmRestore} disabled={restoring}>
-                {restoring ? "Restoring…" : "Restore"}
-              </Btn>
-            </>
-          }
+    <PaneChrome title="System prompt" subtitle={DESCRIPTION}>
+      {loadError ? (
+        <AsyncState state="error" title={loadError} message="Your unsaved prompt was not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
+      ) : !original || draft === null ? (
+        <AsyncState state="loading" title="Loading system prompt" />
+      ) : (
+        <SettingsEditor
+          title="Persona instructions"
+          subtitle="Markdown is supported."
+          dirty={draft !== original.content}
+          headerAction={<ActionButton variant="destructive" onClick={() => { setRestoreError(null); setConfirmOpen(true); }}>Restore default</ActionButton>}
         >
-          <p class="modal-lead">
-            This replaces your edits with the canonical Soul.md template. Apply afterwards to make it
-            take effect. You can still discard the change before applying.
-          </p>
-        </Modal>
+          <SegmentedControl label="System prompt view" value={tab} onChange={(value) => setTab(value as "edit" | "preview")} options={[{ value: "edit", label: "Edit" }, { value: "preview", label: "Preview" }]} />
+          {tab === "edit" ? <TextArea label="System prompt" value={draft} monospace dirty={draft !== original.content} rows={18} onInput={(event) => setDraft(event.currentTarget.value)} /> : <div class="md-prev" aria-label="System prompt preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(draft) }} />}
+        </SettingsEditor>
       )}
-    </>
+      {confirmOpen && (
+        <Dialog
+          title="Restore the default system prompt?"
+          description="This replaces your edits with the default template. Apply afterwards to make it take effect; you can still discard the draft before applying."
+          closeOnBackdrop={!restoring}
+          closeOnEscape={!restoring}
+          onClose={() => !restoring && setConfirmOpen(false)}
+          footer={<ActionRow><ActionButton variant="quiet" disabled={restoring} onClick={() => setConfirmOpen(false)}>Cancel</ActionButton><ActionButton variant="destructive" loading={restoring} onClick={() => void handleConfirmRestore()}>Restore</ActionButton></ActionRow>}
+        >
+          {restoreError && <Notice tone="error">{restoreError}</Notice>}
+        </Dialog>
+      )}
+    </PaneChrome>
   );
 }

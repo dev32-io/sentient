@@ -1,18 +1,8 @@
-// gateway/webui/src/components/settings/panes/advanced-pane.tsx
 import type { JSX } from "preact";
 import { createLogger } from "@sentient/web-sdk";
 import type { ProfileV1, ReasoningEffort } from "../../../services/profile-api.js";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Row } from "../primitives/row.tsx";
-import { Select, type SelectOption } from "../primitives/select.tsx";
-import { Slider } from "../primitives/slider.tsx";
-import { Textarea } from "../primitives/textarea.tsx";
+import { PaneChrome, SelectControl, SettingsCard, SettingsEditor, SettingsGroup, SettingsRow, SliderControl, TextArea, type SelectOption } from "../../common/index.ts";
 
-// Surfaced verbatim from Hermes `agent.reasoning_effort` (none/minimal/low/
-// medium/high/xhigh). Labels add the same one-word hint the docs use so
-// non-technical family members can pick without re-reading the upstream
-// configuration page.
 const REASONING_OPTIONS: SelectOption[] = [
   { value: "none", label: "None", tag: "fastest" },
   { value: "minimal", label: "Minimal", tag: "default" },
@@ -21,7 +11,6 @@ const REASONING_OPTIONS: SelectOption[] = [
   { value: "high", label: "High" },
   { value: "xhigh", label: "Extra high", tag: "slowest" },
 ];
-
 const log = createLogger(["sentient", "webui", "settings", "advanced-pane"]);
 
 export interface AdvancedPaneProps {
@@ -30,85 +19,43 @@ export interface AdvancedPaneProps {
   onDraftAdvanced: (adv: ProfileV1["advanced"]) => void;
 }
 
-export function AdvancedPane({
-  draft,
-  onDraftCompression,
-  onDraftAdvanced,
-}: AdvancedPaneProps): JSX.Element {
-  const handleCompressionChange = (v: number) => {
-    log.debug("compression.threshold.change", { threshold: v });
-    onDraftCompression({ ...draft.compression, threshold: v });
-  };
-
-  const handleMaxTokensChange = (v: number) => {
-    log.debug("advanced.maxTokens.change", { maxTokens: v });
-    onDraftAdvanced({ ...draft.advanced, maxTokens: v });
-  };
-
-  const handleExtraPromptChange = (e: Event) => {
-    const v = (e.target as HTMLTextAreaElement).value;
-    log.debug("advanced.extraSystemPrompt.change", { length: v.length });
-    onDraftAdvanced({ ...draft.advanced, extraSystemPrompt: v });
-  };
-
-  const handleReasoningChange = (v: string) => {
-    log.debug("advanced.reasoningEffort.change", { reasoningEffort: v });
-    onDraftAdvanced({ ...draft.advanced, reasoningEffort: v as ReasoningEffort });
-  };
-
+export function AdvancedPane({ draft, onDraftCompression, onDraftAdvanced }: AdvancedPaneProps): JSX.Element {
   return (
-    <>
-      <PaneHead
-        title="Advanced"
-        sub="Power-user knobs. Defaults are sensible — only touch if you know why."
-      />
-
-      <Card title="Context">
-        <Row
-          label="Reasoning"
-          hint="How hard the model thinks before answering. Higher = better on tough questions, slower and pricier per turn. Minimal is the family-assistant default."
-        >
-          <Select
-            value={draft.advanced.reasoningEffort}
-            options={REASONING_OPTIONS}
-            onChange={handleReasoningChange}
-          />
-        </Row>
-        <Row
-          label="Compression threshold"
-          hint="Trigger context summarization when usage exceeds this fraction of the model's window."
-        >
-          <Slider
-            value={draft.compression.threshold}
-            min={0}
-            max={1}
-            step={0.05}
-            format={(v) => v.toFixed(2)}
-            onChange={handleCompressionChange}
-          />
-        </Row>
-        <Row label="Max tokens" hint="Hard cap on assistant output per turn.">
-          <Slider
-            value={draft.advanced.maxTokens}
-            min={128}
-            max={8192}
-            step={128}
-            onChange={handleMaxTokensChange}
-          />
-        </Row>
-      </Card>
-
-      <Card
-        title="Prompt injection"
-        sub="Appended to every user message before it's sent. Use sparingly — counts against context."
-      >
-        <Textarea
+    <PaneChrome title="Advanced" subtitle="Fine-tune reasoning and context limits. The defaults work well for most households.">
+      <SettingsCard title="Context" padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Reasoning" hint="Higher effort can improve difficult answers, but may take longer and cost more.">
+            <SelectControl
+              label="Reasoning effort"
+              value={draft.advanced.reasoningEffort}
+              options={REASONING_OPTIONS}
+              onChange={(reasoningEffort) => {
+                log.debug("advanced.reasoningEffort.change", { reasoningEffort });
+                onDraftAdvanced({ ...draft.advanced, reasoningEffort: reasoningEffort as ReasoningEffort });
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow label="Compression threshold" hint="Summarize context when usage reaches this fraction of the model's window.">
+            <SliderControl label="Compression threshold" value={draft.compression.threshold} min={0} max={1} step={0.05} format={(value) => value.toFixed(2)} onChange={(threshold) => onDraftCompression({ ...draft.compression, threshold })} />
+          </SettingsRow>
+          <SettingsRow label="Maximum response length" hint="Hard cap on assistant output per turn.">
+            <SliderControl label="Maximum response length" value={draft.advanced.maxTokens} min={128} max={8192} step={128} onChange={(maxTokens) => onDraftAdvanced({ ...draft.advanced, maxTokens })} />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsCard>
+      <SettingsEditor title="Extra instructions" subtitle="Appended to every user message. Use sparingly because this counts against context.">
+        <TextArea
+          label="Extra instructions"
           value={draft.advanced.extraSystemPrompt}
           rows={4}
           placeholder="Optional extra instructions…"
-          onChange={handleExtraPromptChange}
+          onInput={(event) => {
+            const extraSystemPrompt = event.currentTarget.value;
+            log.debug("advanced.extraSystemPrompt.change", { length: extraSystemPrompt.length });
+            onDraftAdvanced({ ...draft.advanced, extraSystemPrompt });
+          }}
         />
-      </Card>
-    </>
+      </SettingsEditor>
+    </PaneChrome>
   );
 }

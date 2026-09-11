@@ -4,26 +4,23 @@
 //
 // Lane 1: a button (settings-send-logs). Tap → reveals the session list.
 // Lane 2: newest-first sessions, each human-labelled ("Today 9:43 PM"), crashed
-//   ones flagged 🔴, "This session" (the newest) default-selected. Tapping a row's
+//   ones labelled "Crash recorded", "This session" (the newest) default-selected. Tapping a row's
 //   send button MORPHS it in place into a progress bar (bound to progress: Double?),
 //   then a result line ("Sent ✓ — ref XXXX" / "Retry").
 //
 // Reads the VM's published state; dispatches selection + upload as closures. The
-// owning SettingsSheet builds + owns the SendLogsViewModel.
+// owning DiagnosticsScreen builds + owns the SendLogsViewModel.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
-private let diagnosticsLabel = "Diagnostics"
 private let sendLogsLabel = "Send diagnostic log"
-private let crashFlag = "🔴 "
 private let labelSent = "Sent ✓"
 private let sentRefPrefix = "Sent ✓ — ref "
 private let labelRetry = "Retry"
 private let labelSend = "Send"
 private let labelSelect = "Select"
 private let labelNoSessions = "No diagnostic sessions yet."
-private let progressWidth: CGFloat = 64
 
 /// The diagnostics section. Reads `model` published state; the newest session is
 /// default-selected. Stateless beyond which row is selected (view-local).
@@ -35,20 +32,22 @@ struct SettingsDiagnostics: View {
     @State private var selectedPath: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text(diagnosticsLabel)
-                .font(.system(size: TypeScale.xs, weight: .semibold))
-                .foregroundStyle(DuskColors.ink3)
-
-            sendLogsButton
-
-            if expanded {
-                if model.sessions.isEmpty {
-                    Text(labelNoSessions)
-                        .font(.system(size: TypeScale.sm))
-                        .foregroundStyle(DuskColors.ink3)
+        DesignPane {
+            DesignDisclosureGroup(isExpanded: expanded) {
+                sendLogsButton
+            } content: {
+                switch model.loadPhase {
+                case .loading:
+                    DesignProgress(title: "Loading diagnostic sessions")
+                        .accessibilityIdentifier("settings-log-loading")
+                case .failed:
+                    AsyncNotice(kind: .error, title: "Couldn't load diagnostic sessions") {
+                        Task { await model.load() }
+                    }
+                case .ready where model.sessions.isEmpty:
+                    AsyncNotice(kind: .empty, title: labelNoSessions)
                         .accessibilityIdentifier("settings-log-empty")
-                } else {
+                case .ready:
                     sessionRows
                 }
             }
@@ -60,22 +59,24 @@ struct SettingsDiagnostics: View {
     }
 
     private var sendLogsButton: some View {
-        Button {
-            expanded.toggle()
-            if expanded && selectedPath == nil { selectedPath = model.sessions.first?.path }
-        } label: {
-            Text(sendLogsLabel)
-                .font(.system(size: TypeScale.base, weight: .semibold))
-                .foregroundStyle(DuskColors.ink)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, Space.sm)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Radii.md)
-                        .stroke(DuskColors.line, lineWidth: 1)
-                )
+        DesignDisclosureButton(
+            isExpanded: expanded,
+            accessibilityLabel: sendLogsLabel,
+            accessibilityId: "settings-send-logs",
+            action: {
+                expanded.toggle()
+                if expanded && selectedPath == nil { selectedPath = model.sessions.first?.path }
+            }
+        ) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(sendLogsLabel)
+                    .designText(.body)
+                    .foregroundStyle(DuskColors.ink)
+                Text(expanded ? "Select a session, then send." : "Choose a session to share")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-send-logs")
     }
 
     private var sessionRows: some View {
@@ -95,6 +96,7 @@ struct SettingsDiagnostics: View {
                     onSelect: { selectedPath = session.path },
                     onUpload: { model.upload(path: session.path) }
                 )
+                if index < model.sessions.count - 1 { DesignDivider() }
             }
         }
     }
@@ -102,7 +104,7 @@ struct SettingsDiagnostics: View {
 
 #Preview("empty") {
     SettingsDiagnostics(
-        model: SendLogsViewModel(),
+        model: SendLogsViewModel(initialLoadPhase: .ready),
         nowMs: Int64(Date().timeIntervalSince1970 * 1000)
     )
     .padding()
@@ -121,22 +123,42 @@ private struct SessionUploadRow: View {
     let onUpload: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.sm) {
-            Text((info.crashed ? crashFlag : "") + label)
-                .font(.system(size: TypeScale.sm, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? DuskColors.accent : DuskColors.ink)
+        VStack(alignment: .leading, spacing: Space.sm) {
+            sessionLabel
+            uploadControl
                 .frame(maxWidth: .infinity, alignment: .leading)
-            UploadControl(
-                selected: selected,
-                isUploading: isUploading,
-                progress: progress,
-                outcome: outcome,
-                onSelect: onSelect,
-                onUpload: onUpload
-            )
         }
-        .padding(.vertical, Space.xs)
+        .padding(.vertical, Space.md)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("settings-log-session-\(info.sessionStartMs)")
+    }
+
+    private var sessionLabel: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(label)
+                .designText(.body)
+                .fontWeight(selected ? .semibold : .regular)
+                .foregroundStyle(DuskColors.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if info.crashed {
+                Label("Crash recorded", systemImage: "exclamationmark.triangle")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var uploadControl: some View {
+        UploadControl(
+            selected: selected,
+            isUploading: isUploading,
+            progress: progress,
+            outcome: outcome,
+            onSelect: onSelect,
+            onUpload: onUpload
+        )
     }
 }
 
@@ -152,45 +174,25 @@ private struct UploadControl: View {
     var body: some View {
         switch (isUploading, progress, outcome) {
         case let (true, p?, _):
-            ProgressView(value: p)
-                .frame(width: progressWidth)
-                .accessibilityIdentifier("settings-log-progress")
+            DesignProgress(title: "Sending", value: p, accessibilityId: "settings-log-progress")
         case let (_, _, .sent(ref)):
             Text(ref.isEmpty ? labelSent : "\(sentRefPrefix)\(ref)")
-                .font(.system(size: TypeScale.xs))
+                .designText(.caption)
                 .foregroundStyle(DuskColors.accent)
                 .accessibilityIdentifier("settings-log-sent")
         case (_, _, .failed):
-            controlButton(labelRetry, tint: DuskColors.stop, id: "settings-log-failed") {
-                onSelect(); onUpload()
-            }
+            DesignTextButton(
+                title: labelRetry,
+                role: .destructive,
+                accessibilityId: "settings-log-failed",
+                action: { onSelect(); onUpload() }
+            )
         default:
             if selected {
-                controlButton(labelSend, tint: DuskColors.accent, id: "settings-log-send", action: onUpload)
+                DesignTextButton(title: labelSend, role: .action, accessibilityId: "settings-log-send", action: onUpload)
             } else {
-                controlButton(labelSelect, tint: DuskColors.ink2, id: "settings-log-select", action: onSelect)
+                DesignTextButton(title: labelSelect, accessibilityId: "settings-log-select", action: onSelect)
             }
         }
-    }
-
-    private func controlButton(
-        _ title: String,
-        tint: Color,
-        id: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: TypeScale.xs, weight: .semibold))
-                .foregroundStyle(tint)
-                .padding(.horizontal, Space.sm)
-                .padding(.vertical, Space.xs)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Radii.sm)
-                        .stroke(tint.opacity(0.6), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(id)
     }
 }

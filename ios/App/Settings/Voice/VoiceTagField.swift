@@ -1,88 +1,107 @@
-// ---------------------------------------------------------------------------
-// VoiceTagField — the add-voice tag editor (add on submit, remove per chip),
-// mirroring the webui TagEditor: capped at VoiceCaps.maxTags, each tag trimmed to
-// VoiceCaps.tagMax, de-duplicated. Owns only its own input-draft text; the tag
-// list is hoisted to the caller via `tags` + `onChange`.
-// ---------------------------------------------------------------------------
 import SwiftUI
 
 struct VoiceTagField: View {
     let tags: [String]
     let disabled: Bool
     let onChange: ([String]) -> Void
+    @Binding var draft: String
 
-    @State private var draft = ""
+    private static let suggestions = ["warm", "calm", "deep", "bright", "family", "kids", "news", "soft"]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Tags")
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink)
-            inputRow
+        VStack(alignment: .leading, spacing: Space.md) {
             if !tags.isEmpty {
-                chips
+                tagFlow(title: "Selected tags", values: tags, selected: true)
+            }
+            if !availableSuggestions.isEmpty {
+                tagFlow(title: "Suggested tags", values: availableSuggestions, selected: false)
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                DesignField(
+                    title: tags.count >= VoiceCaps.maxTags ? "Tags (maximum \(VoiceCaps.maxTags))" : "Add a tag",
+                    prompt: tags.count >= VoiceCaps.maxTags ? "Maximum reached" : "Type a tag",
+                    text: $draft,
+                    accessibilityId: "settings-voice-add-tag-input",
+                    isEnabled: !disabled && tags.count < VoiceCaps.maxTags
+                )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit(addTag)
+                DesignActionButton(
+                    title: "Add tag", role: .quiet, state: canAdd ? .normal : .disabled,
+                    accessibilityId: "settings-voice-add-tag-btn", action: addTag
+                )
             }
         }
     }
 
-    private var inputRow: some View {
-        HStack(spacing: Space.sm) {
-            TextField("Add a tag", text: $draft)
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onSubmit(addTag)
-                .accessibilityIdentifier("settings-voice-add-tag-input")
-            Button("Add", action: addTag)
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(canAdd ? DuskColors.accent : DuskColors.ink4)
-                .disabled(!canAdd)
-                .accessibilityIdentifier("settings-voice-add-tag-btn")
-        }
-        .padding(.horizontal, Space.md)
-        .padding(.vertical, Space.sm)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-    }
-
-    private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Space.xs) {
-                ForEach(tags, id: \.self) { tag in
-                    HStack(spacing: Space.xs) {
-                        Text(tag).font(Typo.ui(TypeScale.xs, .medium))
-                        Image(systemName: "xmark").font(.system(size: TypeScale.xs))
-                    }
-                    .foregroundStyle(DuskColors.ink)
-                    .padding(.horizontal, Space.sm)
-                    .padding(.vertical, Space.xs)
-                    .background(DuskColors.bgElev, in: Capsule())
-                    .onTapGesture { onChange(tags.filter { $0 != tag }) }
-                    .accessibilityIdentifier("settings-voice-add-tag-chip-\(tag)")
+    private func tagFlow(title: String, values: [String], selected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .designText(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink2)
+            CenteredFlowLayout(spacing: Space.xs, alignment: .leading) {
+                ForEach(values, id: \.self) { tag in
+                    DesignChip(
+                        title: selected ? "\(tag) ×" : tag,
+                        selected: selected,
+                        isEnabled: !disabled && (selected || tags.count < VoiceCaps.maxTags),
+                        accessibilityId: selected ? "settings-voice-add-tag-chip-\(tag)" : nil,
+                        action: {
+                            if selected { removeTag(tag) }
+                            else { addTag(tag) }
+                        }
+                    )
+                    .accessibilityLabel(selected ? "Remove tag \(tag)" : "Add tag \(tag)")
                 }
             }
         }
     }
 
+    private var availableSuggestions: [String] {
+        let selected = Set(tags.map { $0.lowercased() })
+        return Self.suggestions.filter { !selected.contains($0.lowercased()) }
+    }
+
     private var canAdd: Bool {
-        !disabled && !normalizedDraft.isEmpty && tags.count < VoiceCaps.maxTags && !tags.contains(normalizedDraft)
+        canAdd(normalizedDraft)
     }
 
     private var normalizedDraft: String {
-        String(draft.trimmingCharacters(in: .whitespaces).prefix(VoiceCaps.tagMax))
+        normalized(draft)
+    }
+
+    private func normalized(_ value: String) -> String {
+        String(value.trimmingCharacters(in: .whitespaces).prefix(VoiceCaps.tagMax))
+    }
+
+    private func canAdd(_ value: String) -> Bool {
+        !disabled && !value.isEmpty && tags.count < VoiceCaps.maxTags &&
+            !tags.contains { $0.caseInsensitiveCompare(value) == .orderedSame }
     }
 
     private func addTag() {
-        guard canAdd else { return }
-        onChange(tags + [normalizedDraft])
+        addTag(normalizedDraft)
+    }
+
+    private func addTag(_ value: String) {
+        let value = normalized(value)
+        guard canAdd(value) else { return }
+        onChange(tags + [value])
         draft = ""
+    }
+
+    private func removeTag(_ tag: String) {
+        onChange(tags.filter { $0 != tag })
     }
 }
 
-#Preview {
-    VoiceTagField(tags: ["male", "calm"], disabled: false, onChange: { _ in })
+#Preview("Tags — long content") {
+    @Previewable @State var draft = ""
+    VoiceTagField(tags: ["calm", "a deliberately long descriptive tag", "storytelling"], disabled: false, onChange: { _ in }, draft: $draft)
         .padding(Space.lg)
         .background(DuskColors.bg)
+        .environment(\.dynamicTypeSize, .accessibility3)
         .preferredColorScheme(.dark)
 }

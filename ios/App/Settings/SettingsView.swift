@@ -1,23 +1,18 @@
 // ---------------------------------------------------------------------------
 // SettingsView — the root Settings category list (mobile-settings-parity). Replaces
 // the thin v1 sheet (version + logout + inline diagnostics) with the leveled root:
-// grouped CategoryRows (Soul / User / Admin / Support) that push per-category detail
+// task-grouped CategoryRows that push per-category detail
 // pages, a root-level "Log out" danger row, and the state-morphing UpdateFooter +
 // version caption at the very bottom.
 //
 // Pushed as the `.settings` destination on UserSessionHost's NavigationStack (no
 // nested stack): tapping a row appends its Route to the outer `path` via `onOpen`.
-// Back uses the NATIVE NavigationStack back button (pops `.settings` off `path`
-// back to chat) so the interactive edge-swipe pop works — no custom leading item,
-// which would replace the system back and kill UIKit's interactivePopGesture. The
-// Dusk look comes from restyling the system bar (bg toolbar background + dark
-// toolbar scheme + accent tint), not replacing it. The Admin group is gated on `me.isAdmin`,
-// collected once by the thin `SettingsRootViewModel` over `ObserveSettingsAccessUseCase`.
+// Shared custom header chrome retains native interactive-back navigation through
+// the route-scoped adapter. Admin visibility remains owned by the access VM.
 //
 // accessibilityIdentifiers: settings-screen, settings-logout,
 // settings-update-action (UpdateFooter), settings-version (UpdateFooter caption),
-// settings-cat-<key> per row. (Root back is the system button — no custom id;
-// no e2e flow targets it.)
+// settings-cat-<key> per row; shared header supplies accessible Back.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -26,8 +21,7 @@ private let titleText = "Settings"
 private let logoutLabel = "Log out"
 private let versionUnknown = "unknown"
 
-// Group headers (webui nav-config parity: Soul / User / Admin / Support).
-private let groupSoul = "Soul"
+// Group headers use household-facing capability language.
 private let groupUser = "User"
 private let groupAdmin = "Admin"
 private let groupSupport = "Support"
@@ -50,14 +44,23 @@ private struct CategoryItem: Identifiable {
     var id: String { key }
 }
 
-private let soulItems: [CategoryItem] = [
+private let personalItems: [CategoryItem] = [
     .init(icon: .memory, title: "Memory", route: .settingsMemory, key: "memory"),
-    .init(icon: .calendar, title: "Calendar", route: .settingsCalendar, key: "calendar"),
     .init(icon: .personalities, title: "Personalities", route: .settingsPersonalities, key: "personalities"),
     .init(icon: .voice, title: "Voice", route: .settingsVoice, key: "voice"),
+]
+
+private let responseItems: [CategoryItem] = [
     .init(icon: .audio, title: "Audio", route: .settingsAudio, key: "audio"),
     .init(icon: .model, title: "Model", route: .settingsModel, key: "model"),
+]
+
+private let capabilityItems: [CategoryItem] = [
+    .init(icon: .calendar, title: "Calendar", route: .settingsCalendar, key: "calendar"),
     .init(icon: .tools, title: "Tools", route: .settingsTools, key: "tools"),
+]
+
+private let instructionItems: [CategoryItem] = [
     .init(icon: .systemPrompt, title: "System Prompt", route: .settingsSystemPrompt, key: "system-prompt"),
     .init(icon: .advanced, title: "Advanced", route: .settingsAdvanced, key: "advanced"),
 ]
@@ -100,7 +103,7 @@ struct SettingsSheet: View {
 
     var body: some View {
         SettingsRootView(
-            showAdmin: vm.showAdmin,
+            access: vm.access,
             updateStatus: updateModel.status,
             versionText: versionText,
             onOpen: onOpen,
@@ -116,24 +119,33 @@ struct SettingsSheet: View {
 /// Takes derived state + closures only (no VM) so previews render every access
 /// state with fake data.
 private struct SettingsRootView: View {
-    let showAdmin: Bool
+    let access: SettingsRootViewModel.AccessState
     let updateStatus: UpdateStatus
     let versionText: String
     let onOpen: (Route) -> Void
     let onLogout: () -> Void
     let onCheck: () async -> UpdateStatus
     let onInstall: () -> Void
+    @State private var isConfirmingLogout = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                group(groupSoul, soulItems)
+        DesignPageChrome(title: titleText, accessibilityId: "settings-screen", bottomPadding: Space.xl) {
+            VStack(alignment: .leading, spacing: Space.md) {
+                accessNotice
+                group("Make it yours", personalItems, detail: "Shape what the assistant remembers and how it sounds.")
+                group("Responses", responseItems, detail: "Choose the model and how replies reach you.")
+                group("Capabilities", capabilityItems, detail: "Manage calendars and tool access.")
+                group("Instructions and tuning", instructionItems, detail: "Adjust base instructions and expert controls.")
                 group(groupUser, userItems)
-                if showAdmin { group(groupAdmin, adminItems) }
+                if access.isAdmin { group(groupAdmin, adminItems) }
                 group(groupSupport, supportItems)
 
-                DangerButton(title: logoutLabel, accessibilityId: "settings-logout", action: onLogout)
-                    .padding(.top, Space.sm)
+                DesignActionButton(
+                    title: logoutLabel,
+                    role: .destructive,
+                    accessibilityId: "settings-logout",
+                    action: { isConfirmingLogout = true }
+                )
 
                 UpdateFooter(
                     status: updateStatus,
@@ -143,36 +155,64 @@ private struct SettingsRootView: View {
                     onCheck: onCheck,
                     onInstall: onInstall
                 )
-                .padding(.top, Space.sm)
             }
-            .padding(.horizontal, Space.lg)
-            .padding(.top, Space.md)
-            .padding(.bottom, Space.xl)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(DuskColors.bg)
-        .navigationTitle(titleText)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(DuskColors.bg, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .accessibilityIdentifier("settings-screen")
-        .duskTheme()
+        .confirmationDialog(
+            "Log out of Sentient?",
+            isPresented: $isConfirmingLogout,
+            titleVisibility: .visible
+        ) {
+            Button("Log out", role: .destructive, action: onLogout)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll need your household PIN to sign in again.")
+        }
     }
 
-    /// A titled section: GroupHeader + its CategoryRows.
     @ViewBuilder
-    private func group(_ header: String, _ items: [CategoryItem]) -> some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
-            GroupHeader(title: header)
-            ForEach(items) { item in
-                CategoryRow(
-                    icon: item.icon,
-                    title: item.title,
-                    accessibilityId: "settings-cat-\(item.key)",
-                    onTap: { onOpen(item.route) }
-                )
+    private var accessNotice: some View {
+        switch access {
+        case .loading:
+            AsyncNotice(kind: .loading, title: "Loading settings")
+                .accessibilityIdentifier("settings-access-loading")
+        case .failed:
+            AsyncNotice(
+                kind: .warning,
+                title: "Some settings are unavailable",
+                detail: "You can still use the settings shown below."
+            )
+            .accessibilityIdentifier("settings-access-failed")
+        case .ready:
+            EmptyView()
+        }
+    }
+
+    /// One quiet plate per task group; shared rows retain every route and target.
+    private func group(_ header: String, _ items: [CategoryItem], detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            VStack(alignment: .leading, spacing: .zero) {
+                DesignGroupHeader(title: header)
+                if let detail {
+                    Text(detail)
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            VStack(spacing: .zero) {
+                ForEach(items) { item in
+                    DesignCategoryRow(
+                        icon: item.icon,
+                        title: item.title,
+                        accessibilityId: "settings-cat-\(item.key)",
+                        onTap: { onOpen(item.route) }
+                    )
+                    if item.id != items.last?.id { DesignDivider() }
+                }
+            }
+            .padding(.horizontal, Space.md)
+            .padding(.vertical, Space.xs)
+            .designPlate()
         }
     }
 }
@@ -182,7 +222,7 @@ private struct SettingsRootView: View {
 #Preview("admin") {
     NavigationStack {
         SettingsRootView(
-            showAdmin: true,
+            access: .ready(isAdmin: true, fishBrowseEnabled: true),
             updateStatus: UpdateStatusUpToDate.shared,
             versionText: "0.2.0 (6)",
             onOpen: { _ in },
@@ -194,10 +234,26 @@ private struct SettingsRootView: View {
     .preferredColorScheme(.dark)
 }
 
+#Preview("access loading — larger text") {
+    NavigationStack {
+        SettingsRootView(
+            access: .loading,
+            updateStatus: UpdateStatusUpToDate.shared,
+            versionText: "0.2.0 (6)",
+            onOpen: { _ in },
+            onLogout: {},
+            onCheck: { UpdateStatusUpToDate.shared },
+            onInstall: {}
+        )
+    }
+    .environment(\.dynamicTypeSize, .accessibility3)
+    .preferredColorScheme(.dark)
+}
+
 #Preview("non-admin") {
     NavigationStack {
         SettingsRootView(
-            showAdmin: false,
+            access: .ready(isAdmin: false, fishBrowseEnabled: false),
             updateStatus: UpdateStatusAvailable(
                 latestBuild: 7,
                 versionName: "0.3.0",

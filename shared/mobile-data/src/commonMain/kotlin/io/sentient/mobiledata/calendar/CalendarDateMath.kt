@@ -10,8 +10,8 @@ internal data class DateParts(
 )
 
 internal fun isCalendarDate(value: String): Boolean {
-    if (!DATE_PATTERN.matches(value)) return false
-    return runCatching { parseCalendarDate(value) }.isSuccess
+    val date = parseCalendarDatePartsOrNull(value) ?: return false
+    return date.month in 1..12 && date.day in 1..daysInCalendarMonth(date.year, date.month)
 }
 
 /**
@@ -35,16 +35,25 @@ private fun String.normalizeCalendarInstantForParser(): String {
 }
 
 internal fun parseCalendarDate(value: String): DateParts {
-    val match = DATE_PATTERN.matchEntire(value)
+    val date = parseCalendarDatePartsOrNull(value)
         ?: throw IllegalArgumentException("Invalid calendar date: $value")
-    val date = DateParts(
-        year = match.groupValues[1].toInt(),
-        month = match.groupValues[2].toInt(),
-        day = match.groupValues[3].toInt(),
-    )
     require(date.month in 1..12) { "Invalid calendar month: $value" }
     require(date.day in 1..daysInCalendarMonth(date.year, date.month)) { "Invalid calendar day: $value" }
     return date
+}
+
+// Parse the fixed-width ASCII shape separately to retain month/day-specific errors.
+private fun parseCalendarDatePartsOrNull(value: String): DateParts? {
+    if (value.length != 10 || value[4] != '-' || value[7] != '-') return null
+    for (index in value.indices) {
+        if (index != 4 && index != 7 && value[index] !in '0'..'9') return null
+    }
+    return DateParts(
+        year = (value[0] - '0') * 1000 + (value[1] - '0') * 100 +
+            (value[2] - '0') * 10 + (value[3] - '0'),
+        month = (value[5] - '0') * 10 + (value[6] - '0'),
+        day = (value[8] - '0') * 10 + (value[9] - '0'),
+    )
 }
 
 internal fun formatCalendarDate(date: DateParts): String =
@@ -152,7 +161,6 @@ private fun floorMod(value: Long, divisor: Long): Long {
     return if (remainder < 0) remainder + divisor else remainder
 }
 
-private val DATE_PATTERN = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$")
 private val RFC3339_OFFSET_VALUE = Regex(
     "^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2})(:\\d{2}(?:\\.\\d+)?)?([Zz]|[+-]\\d{2}:?\\d{2})$",
 )

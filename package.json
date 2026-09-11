@@ -12,6 +12,22 @@
     "stack:down": "bash scripts/stack.sh down",
     "stack:status": "bash scripts/stack.sh status",
     "calendar:fixture": "bun gateway/src/calendar/e2e-fixture-control.ts",
+    "design:fixture": "bun qa/design-refresh/fixture-control.ts",
+    "design:inventory:check": "bun qa/design-refresh/check.ts",
+    "design:e2e:web": "bash qa/design-refresh/run-web-text-only.sh",
+    "design:e2e:ios": "bash qa/design-refresh/run-ios-text-only.sh",
+    "design:avatar:generate": "bash scripts/design/sentient-avatar-rive.sh generate",
+    "design:avatar:verify": "bash scripts/design/sentient-avatar-rive.sh verify",
+    "design:foundation:generate": "bun scripts/design/design-foundation-v2.ts generate",
+    "design:foundation:check": "bun test scripts/design/design-foundation-v2.test.ts && bun scripts/design/design-foundation-v2.ts check && bun scripts/design/web-foundation-check.ts && bun scripts/design/ios-design-boundary.ts",
+    "visual:setup": "npm --prefix tools/visual-diff ci && npm --prefix tools/visual-diff run browsers:install",
+    "visual:test": "npm --prefix tools/visual-diff test",
+    "visual:diff": "node tools/visual-diff/visual-diff.mjs",
+    "visual:compare": "node tools/visual-diff/compare.mjs",
+    "visual:web:capture": "node tools/visual-diff/capture-web.mjs",
+    "visual:ios:setup": "bash scripts/ios-setup.sh",
+    "visual:ios:capture": "bash scripts/design/capture-ios-visual-diff.sh",
+    "visual:android:capture": "bash scripts/design/capture-android-visual-diff.sh",
     "test": "bun run --filter '*' test",
     "test:unit": "bun run --filter '*' test:unit",
     "test:int": "bun run --filter '*' test:int",
@@ -22,7 +38,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "ajv": "8.20.0",
     "lefthook": "^1.10.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "zod": "^3.24.0"
   }
 }

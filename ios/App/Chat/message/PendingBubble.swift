@@ -2,8 +2,10 @@
 // PendingBubble — optimistic user-side bubble while the outbox entry is in
 // QUEUED or FAILED state. There is NO "sent" state: the bubble is reconciled
 // AWAY (cache.remove) on its committed echo, never promoted to a "✓ sent" chip.
-// Mirrors the Android PendingBubble (android/.../chat/MessageList.kt). Rendered
-// as a trailing user-aligned bubble with an inline status chip below the body.
+//
+// MessageBubbleShell owns the shared user-row geometry, avatar, material,
+// metadata, width, and accessibility. This view supplies only plain-text
+// outbox content and its retry/status footer.
 //
 // accessibilityIdentifiers: msg-status-queued / msg-status-failed — mirrors
 // Android testTags.
@@ -15,50 +17,30 @@ struct PendingBubble: View {
     let msg: PendingMessage
     var userName: String = "You"
     var onRetry: () -> Void = {}
+    /// Chronology position is supplied by MessageList; defaults keep direct
+    /// previews and existing internal callers source-compatible.
+    var index: Int = 0
+    var total: Int = 1
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            Spacer(minLength: BubbleLayout.edgeMin)
-            VStack(alignment: .trailing, spacing: Space.xs) {
-                // Sender label — mirrors MessageMeta for the user role.
-                Text(userName)
-                    .font(.system(size: TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink3)
-                bubbleBody
-                statusChip
-            }
-            userAvatar
+        MessageBubbleShell(
+            role: .user,
+            name: userName,
+            timestamp: nil,
+            isStreaming: false,
+            cutoffLabel: nil,
+            index: index,
+            total: total,
+            continuation: false,
+            avatarMode: .idle,
+            metadataMuted: true
+        ) {
+            Text(msg.text)
+                .font(Typo.ui(TypeScale.base))
+                .foregroundStyle(DuskColors.ink)
+        } footer: {
+            statusChip
         }
-        .frame(maxWidth: .infinity)
-    }
-
-    // ── Avatar ────────────────────────────────────────────────────────────────
-
-    private var userAvatar: some View {
-        UserAvatar(name: userName, size: BubbleLayout.avatarSize)
-            .padding(.leading, Space.md)
-    }
-
-    // ── Bubble body ──────────────────────────────────────────────────────────
-
-    private var bubbleBody: some View {
-        Text(msg.text)
-            .font(.system(size: TypeScale.base))
-            .foregroundStyle(DuskColors.ink)
-            .padding(Space.padMsg)
-            .frame(maxWidth: Space.msgMax, alignment: .leading)
-            .background(BubbleLayout.userBg)
-            .clipShape(pendingShape)
-            .overlay(pendingShape.stroke(DuskColors.lineSoft, lineWidth: 1))
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    // Flush the top-trailing corner (user bubble shape — mirrors MessageBubble).
-    private var pendingShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: Radii.lg, bottomLeadingRadius: Radii.lg,
-            bottomTrailingRadius: Radii.lg, topTrailingRadius: BubbleLayout.flushCorner
-        )
     }
 
     // ── Status chip ──────────────────────────────────────────────────────────
@@ -80,7 +62,7 @@ struct PendingBubble: View {
 
     private func chipLabel(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: TypeScale.sm))
+            .font(Typo.ui(TypeScale.sm))
             .foregroundStyle(color)
             .padding(.horizontal, Space.sm)
             .padding(.vertical, 2)
@@ -89,7 +71,6 @@ struct PendingBubble: View {
 }
 
 #Preview {
-    let now = Int64(Date().timeIntervalSince1970 * 1000)
     ScrollView {
         VStack(spacing: Space.gapMsg) {
             PendingBubble(msg: PendingMessage(id: "1", text: "Hello, how are you?", status: .queued, sentAtMs: nil), userName: "Alice")

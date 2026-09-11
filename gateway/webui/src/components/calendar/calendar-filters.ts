@@ -34,7 +34,7 @@ function sortStrings(values: Iterable<string>): string[] {
 }
 
 function selectedScopeValues(filters: CalendarFilters): readonly CalendarReadScope[] {
-  const values = filters.scopes ?? (filters.scope === undefined ? [] : [filters.scope]);
+  const values = filters.scopes ?? (filters.scope === undefined ? ["all" as const] : [filters.scope]);
   return [...new Set(values)].filter(
     (value): value is CalendarReadScope => value === "private" || value === "household" || value === "all",
   );
@@ -56,7 +56,7 @@ function selectedImportanceValues(filters: CalendarFilters): readonly CalendarIm
 }
 
 function selectedText(filters: CalendarFilters): string {
-  return (filters.text ?? filters.query ?? "").trim().toLowerCase();
+  return (filters.search ?? filters.text ?? filters.query ?? "").trim().toLowerCase();
 }
 
 export interface NormalizedCalendarFilters {
@@ -78,7 +78,7 @@ export function normalizeCalendarFilters(filters: CalendarFilters = {}): Normali
 }
 
 function matchesScope(value: CalendarScope, scopes: readonly CalendarReadScope[]): boolean {
-  if (scopes.length === 0 || scopes.includes("all")) return true;
+  if (scopes.includes("all")) return true;
   return scopes.includes(value);
 }
 

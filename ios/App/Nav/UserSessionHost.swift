@@ -87,6 +87,7 @@ struct UserSessionHost: View {
                 makeVM: { userSession.makeChatVM(sessionId: activeSessionId) },
                 makeHistoryVM: { userSession.makeHistoryVM() },
                 userName: userName,
+                activeSessionId: activeSessionId,
                 onSelectSession: { id in
                     activeSessionId = id
                     path.removeAll()

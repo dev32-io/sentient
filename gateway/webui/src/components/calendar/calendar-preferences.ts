@@ -94,10 +94,11 @@ function cleanScopes(
     if (!isScope(item) || result.includes(item)) continue;
     result.push(item);
   }
-  // "all" is the authorized aggregate selector. It is represented as the
-  // sole default selection rather than being mixed with narrower selectors.
+  // "all" is the authorized aggregate selector and represents both visible
+  // calendar checkboxes. An explicit empty array is preserved as the reviewed
+  // recoverable no-match state; malformed non-arrays still use the fallback.
   if (result.includes("all")) return ["all"];
-  return result.length ? result : [...fallback];
+  return result;
 }
 
 function cleanDate(value: unknown, fallback: string): string {
