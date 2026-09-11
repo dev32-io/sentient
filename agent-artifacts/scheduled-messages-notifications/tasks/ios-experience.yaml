@@ -72,12 +72,12 @@ delivery: >-
   Regenerate/build using scripts/ios-setup.sh and project.yml; commit no
   generated .xcodeproj or private xcconfig.
 checks:
-  - source scripts/env.sh && bun scripts/design/ios-design-boundary.ts && bun
-    test scripts/design/ios-design-boundary.test.ts
-  - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test -project
-    ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-    Simulator,name=iPhone 16,OS=18.3' CODE_SIGNING_ALLOWED=NO
-  - source scripts/env.sh && git diff --check
+  - bash -lc "source scripts/env.sh && bun scripts/design/ios-design-boundary.ts
+    && bun test scripts/design/ios-design-boundary.test.ts"
+  - bash -lc "source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
+    -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+    'platform=iOS Simulator,name=iPhone 16,OS=18.3' CODE_SIGNING_ALLOWED=NO"
+  - bash -lc "source scripts/env.sh && git diff --check"
 assignment:
   agent: implementer
   tier: medium
