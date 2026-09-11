@@ -38,8 +38,15 @@ describe("calendar reminder scheduling boundary", () => {
     const accessManager = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
-    const schedules = createScheduleService({ userDataRoot: root, id: () => "linked" });
-    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const schedules = createScheduleService({
+      userDataRoot: root,
+      id: () => "linked",
+    });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+    });
     const created = createCalendarEvent(
       {
         title: "Dentist",
@@ -93,8 +100,15 @@ describe("calendar reminder scheduling boundary", () => {
     const accessManager = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
-    const schedules = createScheduleService({ userDataRoot: root, id: () => "linked" });
-    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const schedules = createScheduleService({
+      userDataRoot: root,
+      id: () => "linked",
+    });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+    });
     const created = createCalendarEvent(
       {
         title: "Dentist",
@@ -109,24 +123,82 @@ describe("calendar reminder scheduling boundary", () => {
     );
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    expect((await scheduler.reconcile(persistence, created.value.eventId, "private")).ok).toBe(true);
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-01-01T00:00:00Z"))).ok,
+    ).toBe(true);
     persistence.close();
     const failed = await scheduler.reconcile(persistence, created.value.eventId, "private");
-    expect(failed).toEqual({ ok: false, error: { code: "unavailable", retryable: true } });
+    expect(failed).toEqual({
+      ok: false,
+      error: { code: "unavailable", retryable: true },
+    });
     const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
     const listed = await schedules.list(resource, undefined, 10);
     expect(listed.ok && listed.value.schedules).toHaveLength(1);
     schedules.close();
   });
 
-  test("uses sparse daily authorization wakes when recurring lead time crosses a date boundary", async () => {
+  test("recovers durable reconciliation work after a schedule-store failure and restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-recovery-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    let persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
+    const schedules = createScheduleService({ userDataRoot: root, id: () => "recovered" });
+    const created = createCalendarEvent(
+      {
+        title: "Recovery appointment",
+        start: "2026-12-10T14:00:00Z" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        reminder: { enabled: true, mode: "at-start" },
+      },
+      persistence,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const unavailable = createCalendarReminderScheduler({
+      schedules: {
+        ...schedules,
+        reconcileCalendarReminder: async () => ({
+          ok: false as const,
+          error: { code: "unavailable" as const, retryable: true },
+        }),
+      },
+      accessManager,
+      calendarConfig: config,
+    });
+    expect((await unavailable.reconcile(persistence, created.value.eventId, "private")).ok).toBe(false);
+    persistence.close();
+
+    persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
+    const recovered = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    expect((await recovered.reconcilePending(persistence, "private")).ok).toBe(true);
+    const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
+    const listed = await schedules.list(resource, undefined, 10);
+    expect(listed.ok && listed.value.schedules).toHaveLength(1);
+    schedules.close();
+    persistence.close();
+  });
+
+  test("projects exact finite recurrence occurrences when lead time crosses a date boundary", async () => {
     const root = mkdtempSync(join(tmpdir(), "calendar-reminder-boundary-"));
     roots.push(root);
     const accessManager = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
-    const schedules = createScheduleService({ userDataRoot: root, id: () => "linked" });
-    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    let sequence = 0;
+    const schedules = createScheduleService({
+      userDataRoot: root,
+      id: () => `linked-${++sequence}`,
+    });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+    });
     const created = createCalendarEvent(
       {
         title: "Early Monday",
@@ -142,14 +214,19 @@ describe("calendar reminder scheduling boundary", () => {
     );
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    expect((await scheduler.reconcile(persistence, created.value.eventId, "private")).ok).toBe(true);
+    const reconciliation = await scheduler.reconcile(
+      persistence,
+      created.value.eventId,
+      "private",
+      new Date("2026-01-01T00:00:00Z"),
+    );
+    expect(reconciliation.ok).toBe(true);
     const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
     const listed = await schedules.list(resource, undefined, 10);
-    expect(listed.ok && listed.value.schedules[0]?.timing).toEqual({
-      kind: "recurring",
-      frequency: "daily",
-      localTime: "23:45",
-      timeZone: "America/Toronto",
+    expect(listed.ok && listed.value.schedules).toHaveLength(10);
+    expect(listed.ok && listed.value.schedules.map((item) => item.timing)).toContainEqual({
+      kind: "once",
+      at: "2026-05-04T03:45:00.000Z",
     });
     schedules.close();
     persistence.close();
@@ -159,13 +236,21 @@ describe("calendar reminder scheduling boundary", () => {
     const root = mkdtempSync(join(tmpdir(), "calendar-reminder-household-"));
     roots.push(root);
     const userDataRoot = join(root, "users");
-    const accessManager = createAccessManager({ userDataRoot, sharedDataRoot: join(root, "shared") });
+    const accessManager = createAccessManager({
+      userDataRoot,
+      sharedDataRoot: join(root, "shared"),
+    });
     const first = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     const second = createUserPrincipal("u_bbbbbbbb", "adult", "home");
     const firstStore = openCalendarPersistence(accessManager.grant(first, "calendar-household"), config);
     const secondStore = openCalendarPersistence(accessManager.grant(second, "calendar-household"), config);
     const schedules = createScheduleService({ userDataRoot });
-    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+      resolveUser: async () => ({ role: "adult", householdId: "home" }),
+    });
     const created = createCalendarEvent(
       {
         title: "Household appointment",
@@ -218,6 +303,76 @@ describe("calendar reminder scheduling boundary", () => {
     secondStore.close();
   });
 
+  test("cancels a child's trusted household reminder when visibility is lost", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-visibility-"));
+    roots.push(root);
+    const userDataRoot = join(root, "users");
+    const accessManager = createAccessManager({
+      userDataRoot,
+      sharedDataRoot: join(root, "shared"),
+    });
+    const adult = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const child = createUserPrincipal("u_bbbbbbbb", "child", "home");
+    const adultStore = openCalendarPersistence(accessManager.grant(adult, "calendar-household"), config);
+    const childStore = openCalendarPersistence(accessManager.grant(child, "calendar-household"), config);
+    const schedules = createScheduleService({ userDataRoot });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+      resolveUser: async (userId) => ({
+        role: userId === child.userId ? "child" : "adult",
+        householdId: "home",
+      }),
+    });
+    const created = createCalendarEvent(
+      {
+        title: "Visible appointment",
+        start: "2026-12-05T10:00:00-05:00" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        scope: "household",
+      },
+      adultStore,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const optedIn = mutateCalendarEvent(
+      {
+        operation: "update",
+        eventId: created.value.eventId,
+        applyTo: "entire_series",
+        scope: "household",
+        changes: { reminder: { enabled: true, mode: "at-start" } },
+      } as CalendarMutationCommand,
+      childStore,
+      config,
+    );
+    expect(optedIn.ok).toBe(true);
+    expect((await scheduler.reconcile(childStore, created.value.eventId, "household")).ok).toBe(true);
+    const hidden = mutateCalendarEvent(
+      {
+        operation: "update",
+        eventId: created.value.eventId,
+        applyTo: "entire_series",
+        scope: "household",
+        changes: { visibility: "adults" },
+      } as CalendarMutationCommand,
+      adultStore,
+      config,
+    );
+    expect(hidden.ok).toBe(true);
+    expect((await scheduler.reconcile(adultStore, created.value.eventId, "household")).ok).toBe(true);
+    const childResource = new PrivateScheduleResource(accessManager.grant(child, "schedule-private"));
+    const listed = await schedules.list(childResource, undefined, 10);
+    expect(listed.ok && listed.value.schedules).toEqual([]);
+    schedules.close();
+    adultStore.close();
+    childStore.close();
+  });
+
   test("moves a recurring occurrence reminder without leaving the base wake eligible", async () => {
     const root = mkdtempSync(join(tmpdir(), "calendar-reminder-move-"));
     roots.push(root);
@@ -231,7 +386,11 @@ describe("calendar reminder scheduling boundary", () => {
         return () => `linked-${++sequence}`;
       })(),
     });
-    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+    });
     const created = createCalendarEvent(
       {
         title: "Medicine",
@@ -248,7 +407,9 @@ describe("calendar reminder scheduling boundary", () => {
     );
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    expect((await scheduler.reconcile(persistence, created.value.eventId, "private")).ok).toBe(true);
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-01-01T00:00:00Z"))).ok,
+    ).toBe(true);
     const moved = mutateCalendarEvent(
       {
         operation: "update",
@@ -278,7 +439,9 @@ describe("calendar reminder scheduling boundary", () => {
       expect.arrayContaining([
         expect.objectContaining({
           timing: { kind: "once", at: "2026-05-02T16:00:00.000Z" },
-          source: expect.objectContaining({ reminderId: expect.stringContaining("2026-05-02T14:00:00.000Z") }),
+          source: expect.objectContaining({
+            reminderId: expect.stringContaining("2026-05-02T14:00:00.000Z"),
+          }),
         }),
       ]),
     );

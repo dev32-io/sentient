@@ -106,13 +106,20 @@ export interface ScheduleServiceOptions {
   readonly id?: () => string;
 }
 
-export type ClaimSessionAssociation = Readonly<{ occurrenceId: string; sessionId: string; replayed: boolean }>;
+export type ClaimSessionAssociation = Readonly<{
+  occurrenceId: string;
+  sessionId: string;
+  replayed: boolean;
+}>;
 /** Durable CAS used by the later chat adapter before it submits any message. */
 export interface ScheduleClaimTransactions {
   associateSession(claim: DueClaim, sessionId: string): Promise<SchedulingResult<ClaimSessionAssociation>>;
 }
 
-export type ScheduleCreateOutcome = Readonly<{ schedule: Schedule; replayed: boolean }>;
+export type ScheduleCreateOutcome = Readonly<{
+  schedule: Schedule;
+  replayed: boolean;
+}>;
 export type CalendarReminderScheduleInput = Readonly<{
   eventId: string;
   reminderId: string;
@@ -138,6 +145,12 @@ export interface ScheduleService
     acceptedAt: Date,
   ): Promise<SchedulingResult<void>>;
   calendarReminderOwners(eventId: string): Promise<SchedulingResult<readonly UserId[]>>;
+  calendarReminderIds(ownerUserId: UserId, eventId: string): Promise<SchedulingResult<readonly string[]>>;
+  removeCalendarRemindersForOwner(
+    ownerUserId: UserId,
+    eventId: string,
+    removedAt: Date,
+  ): Promise<SchedulingResult<void>>;
   close(): void;
 }
 
@@ -163,7 +176,10 @@ function occurrenceId(scheduleId: string, generation: number, intendedAt: string
 
 function timingAt(input: ScheduleCreateRequest["timing"], acceptedAt: Date): ScheduleTiming {
   if (input.kind === "once-after")
-    return { kind: "once", at: iso(new Date(acceptedAt.getTime() + input.afterSeconds * 1_000)) };
+    return {
+      kind: "once",
+      at: iso(new Date(acceptedAt.getTime() + input.afterSeconds * 1_000)),
+    };
   if (input.kind === "once-at") return { kind: "once", at: iso(new Date(input.at)) };
   return input;
 }
@@ -291,7 +307,10 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
               .get(request.idempotencyKey);
             const racedValue = raced && project(raced);
             if (racedValue && !raced.deleted && raced.create_fingerprint === fingerprint(request))
-              return { ok: true, value: { schedule: racedValue, replayed: true } };
+              return {
+                ok: true,
+                value: { schedule: racedValue, replayed: true },
+              };
             return raced ? fail("idempotency_conflict") : fail("unavailable", true);
           }
           const row = db.query<Row, [string]>("SELECT * FROM schedules WHERE schedule_id = ?").get(id);
@@ -391,8 +410,10 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
           }
           const updated = iso(acceptedAt);
           const update = db
-            .query(`UPDATE schedules SET revision=revision+1,generation=generation+1,message=?,timing_json=?,enabled=?,next_run_at=?,updated_at=?
-      WHERE schedule_id=? AND revision=? AND deleted=0`)
+            .query(
+              `UPDATE schedules SET revision=revision+1,generation=generation+1,message=?,timing_json=?,enabled=?,next_run_at=?,updated_at=?
+      WHERE schedule_id=? AND revision=? AND deleted=0`,
+            )
             .run(
               request.changes.message ?? prior.message,
               JSON.stringify(timing),
@@ -476,7 +497,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             preview: string | null;
           },
           [number, number]
-        >(`
+        >(
+          `
           SELECT s.session_id,
                  s.scheduled_schedule_id AS schedule_id,
                  s.scheduled_occurrence_id AS occurrence_id,
@@ -493,7 +515,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             AND s.scheduled_completed_at IS NOT NULL
           ORDER BY s.scheduled_completed_at DESC, s.scheduled_occurrence_id DESC
           LIMIT ? OFFSET ?
-        `)
+        `,
+        )
         .all(bounded + 1, offset);
       const parsed: ScheduledSessionCard[] = rows.slice(0, bounded).map((row) => {
         const preview = row.preview?.replace(/\s+/gu, " ").trim();
@@ -552,12 +575,14 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
         const db = openRoot(root);
         opened.push(db);
         for (const row of db
-          .query<RecoverableRow, [string]>(`
+          .query<RecoverableRow, [string]>(
+            `
             SELECT o.occurrence_id,o.schedule_id,s.owner_user_id,o.intended_at,o.message,o.source_json,o.one_time
             FROM occurrences o JOIN schedules s ON s.schedule_id=o.schedule_id
             WHERE o.session_id IS NOT NULL AND o.outcome IS NULL
               AND (o.claimed_until IS NULL OR o.claimed_until<=?)
-          `)
+          `,
+          )
           .all(iso(now))) {
           if (
             row.owner_user_id !== owner ||
@@ -608,8 +633,10 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
         const token = makeId();
         const until = iso(new Date(now.getTime() + leaseMs));
         const changed = pending.db
-          .query(`UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
-            AND (claimed_until IS NULL OR claimed_until<=?)`)
+          .query(
+            `UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
+            AND (claimed_until IS NULL OR claimed_until<=?)`,
+          )
           .run(token, until, pending.row.occurrence_id, iso(now));
         const source = scheduleSourceSchema.safeParse(parseJson(pending.row.source_json));
         if (changed.changes === 1 && source.success) {
@@ -666,8 +693,10 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             const token = makeId();
             const until = iso(new Date(now.getTime() + leaseMs));
             const changed = candidate.db
-              .query(`UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
-            AND (claimed_until IS NULL OR claimed_until<=?)`)
+              .query(
+                `UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
+            AND (claimed_until IS NULL OR claimed_until<=?)`,
+              )
               .run(token, until, oid, iso(now));
             if (changed.changes !== 1) return undefined;
             return {
@@ -693,6 +722,71 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
         try {
           db.close();
         } catch {}
+    }
+  };
+
+  const calendarReminderIds: ScheduleService["calendarReminderIds"] = async (ownerUserId, eventId) => {
+    if (closed) return fail("closed");
+    if (!eventId) return fail("validation");
+    discover();
+    const root = roots.get(ownerUserId);
+    if (!root) return { ok: true, value: [] };
+    let db: Database | undefined;
+    try {
+      db = openRoot(root);
+      const ids = db
+        .query<{ source_json: string }, []>("SELECT source_json FROM schedules WHERE deleted=0")
+        .all()
+        .flatMap((row) => {
+          const parsed = scheduleSourceSchema.safeParse(parseJson(row.source_json));
+          return parsed.success && parsed.data.kind === "calendar-reminder" && parsed.data.eventId === eventId
+            ? [parsed.data.reminderId]
+            : [];
+        });
+      return { ok: true, value: ids };
+    } catch {
+      return fail("unavailable", true);
+    } finally {
+      try {
+        db?.close();
+      } catch {}
+    }
+  };
+
+  const removeCalendarRemindersForOwner: ScheduleService["removeCalendarRemindersForOwner"] = async (
+    ownerUserId,
+    eventId,
+    removedAt,
+  ) => {
+    if (closed || !eventId || !Number.isFinite(removedAt.getTime())) return fail("validation");
+    discover();
+    const root = roots.get(ownerUserId);
+    if (!root) return { ok: true, value: undefined };
+    let db: Database | undefined;
+    try {
+      db = openRoot(root);
+      const rows = db
+        .query<{ schedule_id: string; source_json: string }, []>(
+          "SELECT schedule_id,source_json FROM schedules WHERE deleted=0",
+        )
+        .all();
+      const at = iso(removedAt);
+      db.transaction(() => {
+        for (const row of rows) {
+          const source = scheduleSourceSchema.safeParse(parseJson(row.source_json));
+          if (!source.success || source.data.kind !== "calendar-reminder" || source.data.eventId !== eventId) continue;
+          db?.query(
+            "UPDATE schedules SET revision=revision+1,generation=generation+1,enabled=0,next_run_at=NULL,updated_at=?,deleted=1,deleted_revision=revision+1 WHERE schedule_id=?",
+          ).run(at, row.schedule_id);
+        }
+      }).immediate();
+      return { ok: true, value: undefined };
+    } catch {
+      return fail("unavailable", true);
+    } finally {
+      try {
+        db?.close();
+      } catch {}
     }
   };
 
@@ -748,10 +842,12 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                 owner_user_id: string;
               },
               [string]
-            >(`
+            >(
+              `
           SELECT o.session_id,o.claim_token,o.generation,o.schedule_id,o.intended_at,s.owner_user_id,
             s.generation current_generation,s.enabled,s.deleted
-          FROM occurrences o JOIN schedules s ON s.schedule_id=o.schedule_id WHERE o.occurrence_id=?`)
+          FROM occurrences o JOIN schedules s ON s.schedule_id=o.schedule_id WHERE o.occurrence_id=?`,
+            )
             .get(claim.occurrenceId);
           if (
             !current ||
@@ -763,7 +859,14 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             return fail("claim_lost");
           if (current.session_id)
             return current.session_id === sessionId
-              ? { ok: true, value: { occurrenceId: claim.occurrenceId, sessionId, replayed: true } }
+              ? {
+                  ok: true,
+                  value: {
+                    occurrenceId: claim.occurrenceId,
+                    sessionId,
+                    replayed: true,
+                  },
+                }
               : fail("claim_lost");
           if (current.generation !== current.current_generation || current.enabled !== 1 || current.deleted === 1)
             return fail("claim_lost");
@@ -771,7 +874,14 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             .query("UPDATE occurrences SET session_id=? WHERE occurrence_id=? AND claim_token=? AND session_id IS NULL")
             .run(sessionId, claim.occurrenceId, claim.claimToken);
           return changed.changes === 1
-            ? { ok: true, value: { occurrenceId: claim.occurrenceId, sessionId, replayed: false } }
+            ? {
+                ok: true,
+                value: {
+                  occurrenceId: claim.occurrenceId,
+                  sessionId,
+                  replayed: false,
+                },
+              }
             : fail("claim_lost");
         })
         .immediate();
@@ -838,9 +948,11 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             )
               return fail("validation");
             database
-              .query(`INSERT OR IGNORE INTO content_outbox
+              .query(
+                `INSERT OR IGNORE INTO content_outbox
             (outbox_id,occurrence_id,owner_user_id,session_id,entry_id,available_at)
-            VALUES (?,?,?,?,?,?)`)
+            VALUES (?,?,?,?,?,?)`,
+              )
               .run(
                 outbox.outboxId,
                 claim.occurrenceId,
@@ -908,7 +1020,12 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
           }
           return {
             ok: true,
-            value: { occurrenceId: claim.occurrenceId, scheduleConsumed: consumed, nextRunAt, replayed: false },
+            value: {
+              occurrenceId: claim.occurrenceId,
+              scheduleConsumed: consumed,
+              nextRunAt,
+              replayed: false,
+            },
           };
         })
         .immediate();
@@ -941,10 +1058,12 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                 attempt: number;
               },
               [string, string, number]
-            >(`
+            >(
+              `
             SELECT outbox_id,occurrence_id,session_id,entry_id,available_at,attempt FROM content_outbox
             WHERE completed_at IS NULL AND available_at<=? AND (claimed_until IS NULL OR claimed_until<=?) LIMIT ?
-          `)
+          `,
+            )
             .all(iso(now), iso(now), limit - entries.length);
           for (const row of rows) {
             const until = iso(new Date(now.getTime() + leaseMs));
@@ -1000,6 +1119,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     createDetailed,
     reconcileCalendarReminder,
     calendarReminderOwners,
+    calendarReminderIds,
+    removeCalendarRemindersForOwner,
     patch,
     delete: remove,
     list,

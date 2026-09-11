@@ -51,10 +51,34 @@ CREATE TABLE tags (
   PRIMARY KEY (event_id, tag)
 );
 
+CREATE TABLE reminder_consents (
+  event_id TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  consented_at TEXT NOT NULL,
+  PRIMARY KEY (event_id, owner_user_id)
+);
+
+CREATE TABLE reminder_reconciliation (
+  event_id TEXT PRIMARY KEY,
+  requested_at TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX idx_events_start_instant ON events (start_instant);
 CREATE INDEX idx_events_start_date ON events (start_date);
 `;
 
-/** Kept as an empty export so callers cannot accidentally add a V1 migration. */
-export const CALENDAR_MIGRATIONS: readonly never[] = [];
-export const CALENDAR_SCHEMA_VERSION = 1;
+export const CALENDAR_MIGRATIONS = [
+  `CREATE TABLE IF NOT EXISTS reminder_consents (
+    event_id TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL,
+    consented_at TEXT NOT NULL,
+    PRIMARY KEY (event_id, owner_user_id)
+  );
+  CREATE TABLE IF NOT EXISTS reminder_reconciliation (
+    event_id TEXT PRIMARY KEY,
+    requested_at TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0
+  );`,
+] as const;
+export const CALENDAR_SCHEMA_VERSION = 2;

@@ -5,11 +5,12 @@ import type { UserRole } from "@sentient/protocol";
 import { z } from "zod";
 import type { Capability, ResourceClass } from "../access/capability.js";
 import { DEFAULT_RECURRENCE_LIMITS, expandRecurrence } from "./expand-recurrence.js";
-import { CALENDAR_DDL, CALENDAR_SCHEMA_VERSION } from "./schema.js";
+import { CALENDAR_DDL, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION } from "./schema.js";
 import {
   type CalendarConfig,
   type CalendarEventId,
   type CalendarEventPatch,
+  type CalendarNotification,
   type CalendarPersistenceBaseEvent,
   type CalendarPersistenceChildren,
   type CalendarPersistenceEvent,
@@ -35,6 +36,13 @@ export interface CalendarStoreDeps {
   fault?: (operation: string) => void;
   /** Alias retained for embedders that call the hook an operation observer. */
   onOperation?: (operation: string) => void;
+}
+
+export interface CalendarTransactionOptions {
+  /** Present only when the authenticated actor explicitly supplied `reminder`. */
+  readonly actorReminderMutation?: boolean;
+  /** Allows a visible household member to change only their own reminder intent. */
+  readonly actorPersonalOnly?: boolean;
 }
 
 export interface CalendarPersistenceTransaction {
@@ -81,8 +89,17 @@ export interface CalendarPersistence {
   readBaseCandidates(limit: number, window: CalendarCandidateWindow): CalendarResult<CalendarCandidateBatch>;
   /** Narrow capability-held seam for query projection; public stores never expose it. */
   readRaw(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
-  transaction<T>(work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>): CalendarResult<T>;
-  withTransaction<T>(work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>): CalendarResult<T>;
+  transaction<T>(
+    work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>,
+    options?: CalendarTransactionOptions,
+  ): CalendarResult<T>;
+  withTransaction<T>(
+    work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>,
+    options?: CalendarTransactionOptions,
+  ): CalendarResult<T>;
+  trustedReminderOwners?(eventId: CalendarEventId): CalendarResult<readonly string[]>;
+  pendingReminderReconciliations?(limit: number): CalendarResult<readonly CalendarEventId[]>;
+  acknowledgeReminderReconciliation?(eventId: CalendarEventId): CalendarResult<void>;
   close(): void;
 }
 
@@ -219,6 +236,8 @@ export function openCalendarPersistence(
       db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION}`);
     } else {
       db.exec("PRAGMA foreign_keys = ON;");
+      for (let next = version; next < CALENDAR_SCHEMA_VERSION; next++) db.exec(CALENDAR_MIGRATIONS[next - 1] ?? "");
+      db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION}`);
     }
   }
   let closed = false;
@@ -259,7 +278,11 @@ export function openCalendarPersistence(
       ...(row.description === null ? {} : { description: row.description }),
       start: validatedStart.data as unknown as CalendarTime,
       ...(end ? { end: end as CalendarTime } : {}),
-      ...(recurrence ? { recurrence: recurrence as unknown as StoredCalendarEvent["recurrence"] } : {}),
+      ...(recurrence
+        ? {
+            recurrence: recurrence as unknown as StoredCalendarEvent["recurrence"],
+          }
+        : {}),
       visibility: row.visibility as StoredCalendarEvent["visibility"],
       importance: row.importance as StoredCalendarEvent["importance"],
       ...(row.group === null ? {} : { group: row.group }),
@@ -296,9 +319,14 @@ export function openCalendarPersistence(
   };
   const readChildren = (id: CalendarEventId): CalendarResult<CalendarPersistenceChildren> => {
     const exceptionRows = db
-      .query<{ occurrence_key: string; cancelled: number; override_json: string | null }, [string]>(
-        "SELECT occurrence_key, cancelled, override_json FROM exceptions WHERE event_id = ? ORDER BY occurrence_key",
-      )
+      .query<
+        {
+          occurrence_key: string;
+          cancelled: number;
+          override_json: string | null;
+        },
+        [string]
+      >("SELECT occurrence_key, cancelled, override_json FROM exceptions WHERE event_id = ? ORDER BY occurrence_key")
       .all(id);
     const exceptions: ExceptionOverride[] = [];
     const cancelledKeys = new Set<string>();
@@ -351,6 +379,36 @@ export function openCalendarPersistence(
     if (!children.ok) return children;
     return { ok: true, value: { ...base.value, ...children.value } };
   };
+  const projectedAuthorized = (id: CalendarEventId, raw = false): CalendarResult<CalendarPersistenceEvent> => {
+    const result = authorized(id, raw);
+    if (!result.ok) return result;
+    const consent = db
+      .query("SELECT 1 FROM reminder_consents WHERE event_id=? AND owner_user_id=?")
+      .get(id, cap.ownerUserId);
+    const filter = (notification: CalendarPersistenceEvent["notification"] | null | undefined) => {
+      if (!notification) return notification;
+      const { sentientPersonalReminders: map, ...next } = notification as Record<string, unknown>;
+      if (consent && map && typeof map === "object" && !Array.isArray(map)) {
+        const own = (map as Record<string, unknown>)[cap.ownerUserId];
+        if (own !== undefined) next.sentientPersonalReminders = { [cap.ownerUserId]: own };
+      }
+      return Object.keys(next).length ? (next as CalendarNotification) : undefined;
+    };
+    const { notification: _notification, exceptions, ...event } = result.value;
+    const baseNotification = filter(result.value.notification);
+    return {
+      ok: true,
+      value: {
+        ...event,
+        ...(baseNotification ? { notification: baseNotification } : {}),
+        exceptions: exceptions.map((item) => {
+          if (item.notification === undefined) return item;
+          const notification = filter(item.notification);
+          return { ...item, notification: notification ?? null };
+        }),
+      },
+    };
+  };
 
   const validateChildren = (children: CalendarPersistenceChildren): CalendarResult<void> => {
     const excluded = new Set<string>();
@@ -392,13 +450,17 @@ export function openCalendarPersistence(
     return { ok: true, value: undefined };
   };
 
-  const transaction = <T>(work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>): CalendarResult<T> =>
+  const transaction = <T>(
+    work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>,
+    options: CalendarTransactionOptions = {},
+  ): CalendarResult<T> =>
     usable(() => {
       try {
         const result = db.transaction(() => {
+          const touched = new Set<CalendarEventId>();
           // This check is deliberately inside the SQLite transaction. Callers
           // cannot bypass the household write gate through a new transaction.
-          if (cap.resource === "calendar-household" && !isAdult(cap.role))
+          if (cap.resource === "calendar-household" && !isAdult(cap.role) && !options.actorPersonalOnly)
             throw new TransactionAbort({ ok: false, error: "forbidden" });
           const tx: CalendarPersistenceTransaction = {
             readBaseEvent: (id) => readBase(id),
@@ -408,6 +470,7 @@ export function openCalendarPersistence(
             readEvent: (id) => authorized(id, false),
             insertBaseEvent: (event) => {
               touch("insert-base-event");
+              touched.add(event.id);
               const valid = validateBase(event);
               if (!valid.ok || event.revision !== 1) return { ok: false, error: "invalid" };
               const exists = db.query("SELECT 1 FROM events WHERE id = ?").get(event.id);
@@ -439,6 +502,7 @@ export function openCalendarPersistence(
             },
             replaceBaseEvent: (event) => {
               touch("replace-base-event");
+              touched.add(event.id);
               const valid = validateBase(event);
               if (!valid.ok) return valid;
               const exists = ensureEvent(event.id);
@@ -465,6 +529,7 @@ export function openCalendarPersistence(
             },
             compareAndSwapRevision: (id, expectedRevision) => {
               touch("compare-and-swap-revision");
+              touched.add(id);
               const current = readBase(id);
               if (!current.ok) return current as CalendarResult<CalendarRevision>;
               if (current.value.revision !== expectedRevision) return { ok: false, error: "conflict" };
@@ -477,11 +542,15 @@ export function openCalendarPersistence(
             },
             compareAndSwapBaseRevision: (id, expectedRevision) => tx.compareAndSwapRevision(id, expectedRevision),
             replaceExceptions: (id, exceptions) => {
+              touched.add(id);
               const exists = ensureEvent(id);
               if (!exists.ok) return exists;
               const current = readChildren(id);
               if (!current.ok) return current;
-              const checked = validateChildren({ ...current.value, exceptions });
+              const checked = validateChildren({
+                ...current.value,
+                exceptions,
+              });
               if (!checked.ok) return checked;
               touch("replace-exceptions");
               db.query("DELETE FROM exceptions WHERE event_id = ?").run(id);
@@ -495,11 +564,15 @@ export function openCalendarPersistence(
               return { ok: true, value: undefined };
             },
             replaceExclusions: (id, exclusions) => {
+              touched.add(id);
               const exists = ensureEvent(id);
               if (!exists.ok) return exists;
               const current = readChildren(id);
               if (!current.ok) return current;
-              const checked = validateChildren({ ...current.value, exclusions });
+              const checked = validateChildren({
+                ...current.value,
+                exclusions,
+              });
               if (!checked.ok) return checked;
               touch("replace-exclusions");
               db.query("DELETE FROM exclusions WHERE event_id = ?").run(id);
@@ -508,6 +581,7 @@ export function openCalendarPersistence(
               return { ok: true, value: undefined };
             },
             replaceTags: (id, tags) => {
+              touched.add(id);
               const exists = ensureEvent(id);
               if (!exists.ok) return exists;
               const current = readChildren(id);
@@ -532,6 +606,7 @@ export function openCalendarPersistence(
             },
             deleteSegment: (id) => {
               touch("delete-segment");
+              touched.add(id);
               const exists = ensureEvent(id);
               if (!exists.ok) return exists;
               db.query("DELETE FROM events WHERE id = ?").run(id);
@@ -540,6 +615,47 @@ export function openCalendarPersistence(
           };
           const result = work(tx);
           if (!result.ok) throw new TransactionAbort(result as CalendarResult<never>);
+          const requestedAt = new Date().toISOString();
+          for (const eventId of touched) {
+            const persisted = readBase(eventId);
+            if (!persisted.ok && persisted.error === "not-found")
+              db.query("DELETE FROM reminder_consents WHERE event_id=?").run(eventId);
+            if (options.actorReminderMutation) {
+              const current = persisted;
+              const children = current.ok ? readChildren(eventId) : undefined;
+              const values = current.ok
+                ? [
+                    current.value.notification,
+                    ...(children?.ok ? children.value.exceptions.map((item) => item.notification) : []),
+                  ]
+                : [];
+              const enabled = values.some((notification) => {
+                const map = notification && (notification as Record<string, unknown>).sentientPersonalReminders;
+                const value =
+                  map && typeof map === "object" && !Array.isArray(map)
+                    ? (map as Record<string, unknown>)[cap.ownerUserId]
+                    : undefined;
+                return Boolean(
+                  value &&
+                    typeof value === "object" &&
+                    !Array.isArray(value) &&
+                    (value as Record<string, unknown>).enabled === true,
+                );
+              });
+              if (enabled)
+                db.query(
+                  "INSERT INTO reminder_consents VALUES (?,?,?) ON CONFLICT(event_id,owner_user_id) DO UPDATE SET consented_at=excluded.consented_at",
+                ).run(eventId, cap.ownerUserId, requestedAt);
+              else
+                db.query("DELETE FROM reminder_consents WHERE event_id=? AND owner_user_id=?").run(
+                  eventId,
+                  cap.ownerUserId,
+                );
+            }
+            db.query(
+              "INSERT INTO reminder_reconciliation VALUES (?,?,0) ON CONFLICT(event_id) DO UPDATE SET requested_at=excluded.requested_at,attempt_count=0",
+            ).run(eventId, requestedAt);
+          }
           touch("commit");
           return result;
         })();
@@ -560,7 +676,8 @@ export function openCalendarPersistence(
       // Recurring rows can begin before the window; exception rows are included
       // conservatively because an override may move an occurrence into it.
       const rows = db
-        .query<{ id: string }, [string, string, string, string, string, string, number]>(`
+        .query<{ id: string }, [string, string, string, string, string, string, number]>(
+          `
       SELECT id FROM events
       WHERE (
         (start_instant BETWEEN ? AND ? OR (recurrence IS NOT NULL AND start_instant <= ?))
@@ -569,7 +686,8 @@ export function openCalendarPersistence(
       )
       ORDER BY id
       LIMIT ?
-    `)
+    `,
+        )
         .all(timedFrom, timedTo, timedTo, allDayFrom, allDayTo, allDayTo, limit + 1);
       return {
         ok: true,
@@ -584,12 +702,40 @@ export function openCalendarPersistence(
     scope: cap.resource === "calendar-household" ? "household" : "private",
     ownerUserId: cap.ownerUserId,
     role: cap.role,
-    read: (id) => usable(() => authorized(id, false)),
-    get: (id) => usable(() => authorized(id, false)),
+    read: (id) => usable(() => projectedAuthorized(id)),
+    get: (id) => usable(() => projectedAuthorized(id)),
     readBaseCandidates,
-    readRaw: (id) => usable(() => authorized(id, true)),
+    readRaw: (id) => usable(() => projectedAuthorized(id, true)),
     transaction,
     withTransaction: transaction,
+    trustedReminderOwners: (eventId) =>
+      usable(() => ({
+        ok: true,
+        value: db
+          .query<{ owner_user_id: string }, [string]>(
+            "SELECT owner_user_id FROM reminder_consents WHERE event_id=? ORDER BY owner_user_id",
+          )
+          .all(eventId)
+          .map((row) => row.owner_user_id),
+      })),
+    pendingReminderReconciliations: (limit) =>
+      usable(() => {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { ok: false, error: "invalid" };
+        return {
+          ok: true,
+          value: db
+            .query<{ event_id: string }, [number]>(
+              "SELECT event_id FROM reminder_reconciliation ORDER BY requested_at LIMIT ?",
+            )
+            .all(limit)
+            .map((row) => row.event_id as CalendarEventId),
+        };
+      }),
+    acknowledgeReminderReconciliation: (eventId) =>
+      usable(() => {
+        db.query("DELETE FROM reminder_reconciliation WHERE event_id=?").run(eventId);
+        return { ok: true, value: undefined };
+      }),
     close: () => {
       if (!closed) {
         closed = true;
@@ -665,7 +811,14 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
       return tx.replaceChildren(event.id, children);
     });
     if (!result.ok) return result;
-    return { ok: true, value: { ...event, start: normalizedStart, ...(normalizedEnd ? { end: normalizedEnd } : {}) } };
+    return {
+      ok: true,
+      value: {
+        ...event,
+        start: normalizedStart,
+        ...(normalizedEnd ? { end: normalizedEnd } : {}),
+      },
+    };
   };
   const list = (window: {
     from: CalendarTime;
@@ -683,7 +836,10 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
             timedFrom: window.from.instant,
             timedTo: window.to.kind === "timed" ? window.to.instant : window.from.instant,
           }
-        : { allDayFrom: window.from.date, allDayTo: window.to.kind === "all-day" ? window.to.date : window.from.date },
+        : {
+            allDayFrom: window.from.date,
+            allDayTo: window.to.kind === "all-day" ? window.to.date : window.from.date,
+          },
     );
     if (!candidates.ok) return candidates;
     if (candidates.value.overflow) return { ok: false, error: "recurrence-limit" };

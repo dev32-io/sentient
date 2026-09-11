@@ -125,6 +125,14 @@ async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Prom
       ...(deps.householdTimeZone ? { householdTimeZone: deps.householdTimeZone } : {}),
     });
 
+    // Durable calendar-local work is retried opportunistically on every
+    // authenticated calendar request. A schedule-store outage never changes
+    // the already-committed calendar response or invites a duplicate create.
+    if (deps.reminders) {
+      await deps.reminders.reconcilePending(privateStore, "private");
+      await deps.reminders.reconcilePending(householdStore, "household");
+    }
+
     if (route.kind === "list") {
       if (request.method === "POST")
         return await createEvent(privateStore, householdStore, body, cfg, requestId, deps.reminders);
@@ -208,11 +216,8 @@ async function createEvent(
   if (!parsed.success) return error(422, "malformed", "Calendar create fields are invalid", requestId);
   const persistence = parsed.data.scope === "household" ? householdStore : privateStore;
   const result = createCalendarEvent(parsed.data as CalendarCreateInput, persistence, cfg);
-  if (result.ok && reminders) {
-    const reconciled = await reminders.reconcile(persistence, result.value.eventId, parsed.data.scope ?? "private");
-    if (!reconciled.ok)
-      return error(503, "io_error", "The event was saved, but its reminder could not be scheduled yet", requestId);
-  }
+  if (result.ok && reminders)
+    await reminders.reconcile(persistence, result.value.eventId, parsed.data.scope ?? "private");
   return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 
@@ -252,9 +257,7 @@ async function mutateEvent(
     for (const id of ids) {
       const original =
         id === eventId && parsed.data.applyTo === "this_occurrence" ? parsed.data.originalStart : undefined;
-      const reconciled = await reminders.reconcile(persistence, id, scope, undefined, original);
-      if (!reconciled.ok)
-        return error(503, "io_error", "The event was saved, but its reminder could not be reconciled yet", requestId);
+      await reminders.reconcile(persistence, id, scope, undefined, original);
     }
   }
   return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);

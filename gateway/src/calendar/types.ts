@@ -421,7 +421,18 @@ export const calendarCreateInputSchema = z
     scope: calendarWriteScopeSchema.optional(),
   })
   .strict()
-  .superRefine((value, ctx) => validateReminderAgainstStart(value.start, value.reminder, ctx));
+  .superRefine((value, ctx) => {
+    validateReminderAgainstStart(value.start, value.reminder, ctx);
+    if (
+      value.notificationPolicy &&
+      Object.prototype.hasOwnProperty.call(value.notificationPolicy, "sentientPersonalReminders")
+    )
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["notificationPolicy", "sentientPersonalReminders"],
+        message: "personal reminder metadata is reserved; use the authenticated reminder field",
+      });
+  });
 export type CalendarCreateInput = z.infer<typeof calendarCreateInputSchema>;
 export const calendarCreateEventSchema = calendarCreateInputSchema;
 

@@ -211,6 +211,16 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
             schedules: services.schedules,
             accessManager: services.accessManager,
             calendarConfig: services.calendarConfig,
+            resolveUser: async (userId) => {
+              const found = await services.auth.users.get(userId);
+              return found.ok && found.value ? { role: found.value.role, householdId: "home" } : null;
+            },
+            listUsers: async () => {
+              const found = await services.auth.users.list();
+              return found.ok
+                ? found.value.map((user) => ({ userId: user.userId, role: user.role, householdId: "home" }))
+                : [];
+            },
           }),
         }
       : {}),

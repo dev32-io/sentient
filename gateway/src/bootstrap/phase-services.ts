@@ -1710,7 +1710,16 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       calendarConfig,
       calendarHouseholdTimeZone,
       deps.schedules
-        ? createCalendarReminderScheduler({ schedules: deps.schedules, accessManager, calendarConfig })
+        ? createCalendarReminderScheduler({
+            schedules: deps.schedules,
+            accessManager,
+            calendarConfig,
+            resolveUser: async (userId) => {
+              if (!auth) return null;
+              const found = await auth.users.get(userId);
+              return found.ok && found.value ? { role: found.value.role, householdId: "home" } : null;
+            },
+          })
         : undefined,
     );
 
