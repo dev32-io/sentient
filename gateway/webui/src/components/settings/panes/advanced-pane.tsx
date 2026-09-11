@@ -48,7 +48,6 @@ export function AdvancedPane({ draft, onDraftCompression, onDraftAdvanced }: Adv
           label="Extra instructions"
           value={draft.advanced.extraSystemPrompt}
           rows={4}
-          dirty={Boolean(draft.advanced.extraSystemPrompt)}
           placeholder="Optional extra instructions…"
           onInput={(event) => {
             const extraSystemPrompt = event.currentTarget.value;

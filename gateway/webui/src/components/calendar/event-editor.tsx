@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
   CalendarGetResult,
   CalendarMutationScope,
@@ -47,8 +47,20 @@ import type {
 import { browserTimeZone, todayCalendarDate } from "./calendar-time.ts";
 import "./event-editor.css";
 
-export function EventEditor({
-  open = true,
+export function EventEditor(props: EventEditorProps): JSX.Element | null {
+  const source = eventSource(props.event, props.occurrence);
+  const mode = props.mode ?? (source ? "edit" : "create");
+  if (props.open === false || (mode === "edit" && !source)) return null;
+  // Revision, seed and timezone refreshes are not a new editing target.
+  // Closing unmounts the lifetime; reopening takes a fresh snapshot.
+  const targetKey = JSON.stringify([
+    mode, source?.scope, eventIdOf(source),
+    source && "occurrenceId" in source ? source.occurrenceId : rawSourceTime(originalStartOf(source)),
+  ]);
+  return <EventEditorLifetime key={targetKey} {...props} />;
+}
+
+function EventEditorLifetime({
   mode: suppliedMode,
   event,
   occurrence,
@@ -71,17 +83,17 @@ export function EventEditor({
   onSubmitted,
   onReread,
 }: EventEditorProps): JSX.Element | null {
-  const source = eventSource(event, occurrence);
+  // Keep the source revision paired with the draft: an incidental refresh
+  // must not silently authorize overwriting a newer server revision.
+  const [source] = useState(() => eventSource(event, occurrence));
   const mode = suppliedMode ?? (source ? "edit" : "create");
   const sourceId = eventIdOf(source);
-  const sourceOccurrenceId = source && "occurrenceId" in source ? source.occurrenceId : "";
-  const suppliedDraftKey = initialDraft ? JSON.stringify(initialDraft) : "";
-  const targetKey = `${mode}:${sourceId ?? "new"}:${sourceOccurrenceId}:${source?.revision ?? ""}:${suppliedDraftKey}`;
+  const active = useRef(true);
+  useLayoutEffect(() => () => { active.current = false; }, []);
   const titleRef = useRef<HTMLInputElement | null>(null);
   const formId = useRef(`calendar-editor-form-${Math.random().toString(36).slice(2, 9)}`);
-  const previousTarget = useRef<string | null>(null);
-  const baseline = useRef("");
   const [draft, setDraft] = useState<CalendarEditorDraft>(() => initialDraftFor(source, mode, inputTimeZoneId, initialDraft));
+  const baseline = useRef(editableDraftKey(draft));
   const [mutationScope, setMutationScope] = useState<CalendarMutationScope | undefined>(() =>
     mode === "edit" && eventIsRecurring(source) ? undefined : "entire_series",
   );
@@ -92,28 +104,6 @@ export function EventEditor({
   const [conflict, setConflict] = useState(false);
   const [latestEvent, setLatestEvent] = useState<CalendarGetResult | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      previousTarget.current = null;
-      return;
-    }
-    if (previousTarget.current === targetKey) return;
-    previousTarget.current = targetKey;
-    const next = initialDraftFor(source, mode, inputTimeZoneId, initialDraft);
-    setDraft(next);
-    baseline.current = editableDraftKey(next);
-    setMutationScope(mode === "edit" && eventIsRecurring(source) ? undefined : "entire_series");
-    setBusy(false);
-    setDeleteOpen(false);
-    setDiscardOpen(false);
-    setError(null);
-    setConflict(false);
-    setLatestEvent(null);
-    setReviewBusy(false);
-  }, [inputTimeZoneId, initialDraft, mode, open, source, targetKey]);
-
-  if (!open || (mode === "edit" && !source)) return null;
 
   const dirty = baseline.current !== editableDraftKey(draft);
   const saveAction = mode === "create" ? "create" : "update";
@@ -197,7 +187,7 @@ export function EventEditor({
         }
       }
     }
-    if (!api) return null;
+    if (!active.current || !api) return null;
     try {
       if (request.operation === "create") return await api.create(token, request.input);
       return await api.mutate(token, request.eventId, request.command);
@@ -211,6 +201,7 @@ export function EventEditor({
     setError(null);
     setConflict(false);
     const result = await executeRequest(request);
+    if (!active.current) return;
     if (!result) {
       setBusy(false);
       onSubmitted?.(request);
@@ -306,6 +297,7 @@ export function EventEditor({
     } catch {
       result = { ok: false, error: { status: 0, code: "api-error" } };
     }
+    if (!active.current) return;
     setReviewBusy(false);
     if (!result) return;
     if (!result.ok) {

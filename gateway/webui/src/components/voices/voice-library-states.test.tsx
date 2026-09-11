@@ -43,4 +43,17 @@ describe("voice library states", () => {
     fireEvent.click(stop);
     expect(onPlay).toHaveBeenCalledWith(voice.voiceId, voice.language);
   });
+  it("keeps keyboard preview separate from selecting the voice row", () => {
+    const onPlay = vi.fn();
+    const onPick = vi.fn();
+    render(<VoicePackGrid {...props({ onPlay, onPick })} />);
+    const preview = screen.getByRole("button", { name: /^Preview/ });
+    fireEvent.keyDown(preview, { key: "Enter" });
+    fireEvent.click(preview);
+    expect(onPlay).toHaveBeenCalledTimes(1);
+    expect(onPick).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByText(voice.name).closest(".voice")!, { key: "Enter" });
+    expect(onPick).toHaveBeenCalledWith(voice.voiceId);
+  });
+
 });

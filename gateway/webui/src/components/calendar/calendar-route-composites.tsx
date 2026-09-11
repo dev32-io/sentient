@@ -39,13 +39,14 @@ export interface CalendarRouteNoticeProps {
 export function CalendarRouteNotice({
   errorCode,
   hasData,
-  refreshing,
-  stale,
   canEdit,
   mutationNotice,
   successorEventId,
   onRetry,
 }: CalendarRouteNoticeProps): JSX.Element | null {
+  // Refreshing/stale are controller freshness signals, not in-flow notices.
+  // The workspace exposes aria-busy and retains complete data; only an actual
+  // failure needs a persistent saved-data notice and retry action.
   const notices: JSX.Element[] = [];
   if (errorCode && hasData) {
     notices.push(
@@ -54,19 +55,8 @@ export function CalendarRouteNotice({
         <ActionButton onClick={onRetry}>Try again</ActionButton>
       </div>,
     );
-  } else if (stale) {
-    notices.push(
-      <div class="calendar-route-notice calendar-route-notice--stale" role="status" key="stale-refreshing" data-calendar-state="stale">
-        <span>Showing saved events while Calendar refreshes.</span>
-      </div>,
-    );
-  } else if (refreshing) {
-    notices.push(
-      <div class="calendar-route-notice" role="status" key="refreshing" data-calendar-state="refreshing">
-        Refreshing Calendar…
-      </div>,
-    );
   }
+
   if (!hasData && errorCode && errorCode !== "forbidden") {
     notices.push(
       <div class="calendar-route-notice calendar-route-notice--error" role="alert" key="error" data-calendar-state="error">

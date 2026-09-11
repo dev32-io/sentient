@@ -33,7 +33,9 @@ plugins {
 // Bumped to 0.5.0: mobile interaction reliability — fresh-chat isolation,
 // mic envelope metering, and shared talk-mode barge-in behavior.
 // Bumped to 0.6.0: calendar V2 wire contracts and client operations.
-version = "0.6.0"
+// Bumped to 0.7.0: design-refresh command binding, voice/lifecycle boundaries,
+// and shared design foundation projection.
+version = "0.7.0"
 
 // The gateway JSON is the cross-client wire fixture. Generate a test-only
 // Kotlin holder from that file instead of copying its values into SDK tests.

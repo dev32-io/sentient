@@ -234,7 +234,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps): JSX.Element {
     ...(legacyProps?.onChange === undefined ? {} : { onChange: legacyProps.onChange }),
     ...(clearFilters === undefined ? {} : { onClearFilters: clearFilters }),
   };
-  const rootClass = ["snt-plate", "calendar-workspace", props.className].filter(Boolean).join(" ");
+  const rootClass = ["calendar-workspace", props.className].filter(Boolean).join(" ");
   const addEventLabel = props.addEventLabel;
   const addEventDisabled = props.addEventDisabled;
   const dateNavigation: CalendarDateNavigationProps = {
@@ -259,7 +259,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps): JSX.Element {
       class={rootClass}
       data-calendar-workspace
       data-sidebar-breakpoint={CALENDAR_SIDEBAR_COLLAPSE_BREAKPOINT}
-      aria-busy={model.loading ?? false}
+      aria-busy={Boolean(model.loading || model.refreshing)}
     >
       <CalendarFilterSidebar
         {...filterProps}
@@ -267,21 +267,20 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps): JSX.Element {
         addEventLabel={addEventLabel ?? "Add event"}
         addEventDisabled={addEventDisabled ?? false}
       />
-      <main class="calendar-workspace__main" aria-labelledby="calendar-period-title">
-        <CalendarDateNavigation {...dateNavigation} />
-        <div class="calendar-workspace__compact">
+      <main class="snt-plate calendar-workspace__main" aria-labelledby="calendar-period-title">
+        <CalendarDateNavigation {...dateNavigation} compactControls={
           <CalendarCompactControls
             {...filterProps}
             {...(actions.onAddEvent === undefined ? {} : { onAddEvent: actions.onAddEvent })}
             addEventLabel={addEventLabel ?? "Add event"}
             addEventDisabled={addEventDisabled ?? false}
           />
-        </div>
+        } />
         <div class="calendar-workspace__canvas" data-calendar-canvas-slot aria-label="Calendar canvas">
           {renderCanvasSlot(slot, canvasSlotProps)}
         </div>
+        <CalendarFloatingViewBar {...viewSwitcher} />
       </main>
-      <CalendarFloatingViewBar {...viewSwitcher} />
       <p class="calendar-workspace__live-status" role="status" aria-live="polite" aria-atomic="true">{statusText}</p>
     </div>
   );

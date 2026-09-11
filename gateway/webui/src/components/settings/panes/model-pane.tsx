@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { ModelEntry, ProvidersApi } from "../../../services/providers-api.ts";
 import type { ProfileV1 } from "../../../services/profile-api.js";
-import { ActionButton, AsyncState, Field, PaneHeader, SegmentedControl, SettingsCard } from "../../common/index.ts";
+import { ActionButton, AsyncState, Field, PaneChrome, SegmentedControl, SettingsCard } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "model-pane"]);
@@ -84,19 +84,17 @@ export function ModelPane({
 
   if (loadError) {
     return (
-      <>
-        {!hideHead && <PaneHeader title="Model" subtitle="Choose the model that powers reasoning and tool use." />}
+      <PaneChrome title={hideHead ? undefined : "Model"} subtitle={hideHead ? undefined : "Choose the model that powers reasoning and tool use."}>
         <AsyncState state="error" title={loadError} action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
-      </>
+      </PaneChrome>
     );
   }
 
   if (!models) {
     return (
-      <>
-        {!hideHead && <PaneHeader title="Model" subtitle="Choose the model that powers reasoning and tool use." />}
+      <PaneChrome title={hideHead ? undefined : "Model"} subtitle={hideHead ? undefined : "Choose the model that powers reasoning and tool use."}>
         <AsyncState state="loading" title="Loading models" />
-      </>
+      </PaneChrome>
     );
   }
 
@@ -170,8 +168,7 @@ export function ModelPane({
   );
 
   return (
-    <>
-      {!hideHead && <PaneHeader title="Model" subtitle="Choose the model that powers reasoning and tool use." />}
+    <PaneChrome title={hideHead ? undefined : "Model"} subtitle={hideHead ? undefined : "Choose the model that powers reasoning and tool use."}>
 
       {hideSavedTile ? (
         body
@@ -185,7 +182,7 @@ export function ModelPane({
           </SettingsCard>
         </>
       )}
-    </>
+    </PaneChrome>
   );
 }
 

@@ -19,7 +19,7 @@ import {
 
 const log = createLogger(["sentient", "webui", "settings", "memory-pane"]);
 
-const SLOT_LABEL: Record<MemorySlot, string> = { memory: "MEMORY.md", user: "USER.md" };
+const SLOT_LABEL: Record<MemorySlot, string> = { memory: "General memory", user: "About you" };
 const SLOT_EXPLAIN: Record<MemorySlot, string> = {
   memory: "Notes about the world, including environment facts, conventions, and things the assistant has learned. The assistant writes and prunes these notes; edit them to seed or correct a fact.",
   user: "Your preferences, communication style, and recurring expectations. The assistant infers these over time; edit them to seed or correct what it remembers about you.",

@@ -97,11 +97,13 @@ export function VoiceRow(props: VoiceRowProps): JSX.Element {
 
   return (
     <div
-      class={["voice", selected && "is-sel"].filter(Boolean).join(" ")}
+      class={["voice snt-plate", selected && "is-sel"].filter(Boolean).join(" ")}
       onClick={onSelect}
       role="button"
+      aria-pressed={selected}
       tabIndex={0}
       onKeyDown={(e: KeyboardEvent) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
         onSelect();

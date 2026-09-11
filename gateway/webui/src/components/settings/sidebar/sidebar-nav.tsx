@@ -1,6 +1,6 @@
+import { SurfaceAction } from "../../common/foundation.tsx";
 import type { ComponentChildren, JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
-import { ActionButton } from "../../common/foundation.tsx";
 import { Icon, type IconName } from "../../common/icon.tsx";
 import { SOUL_KEYS, type SidebarKey, navGroupsFor } from "./nav-config.ts";
 
@@ -74,11 +74,12 @@ export function LocalNavigation<TKey extends string>({
           >
             {group.label && <h2 id={headingId} class="s-nav-h">{group.label}</h2>}
             {group.items.map((item) => (
-              <ActionButton
+              <SurfaceAction
+                type="button"
                 key={item.key}
-                className={["s-nav-i", item.description && "s-nav-i--described"].filter(Boolean).join(" ")}
+                class={["s-nav-i", item.description && "s-nav-i--described"].filter(Boolean).join(" ")}
                 aria-current={active === item.key ? "page" : undefined}
-                ariaLabel={item.dirty ? `${item.label}, changed` : undefined}
+                aria-label={item.dirty ? `${item.label}, changed` : undefined}
                 onClick={() => onChange(item.key)}
                 title={item.dirty ? `${item.label}, changed` : item.label}
               >
@@ -92,7 +93,7 @@ export function LocalNavigation<TKey extends string>({
                   : item.navigable
                     ? <Icon name="chevron" size={17} />
                     : null}
-              </ActionButton>
+              </SurfaceAction>
             ))}
           </section>
         );

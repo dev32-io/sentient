@@ -1,38 +1,26 @@
 import type { JSX } from "preact";
 import type { SessionRow as Row } from "@sentient/protocol";
 import { RowMenu } from "./row-menu.tsx";
-import { ActionButton } from "../common/foundation.tsx";
+import { OverflowActionRow } from "../common/overflow-action-row.tsx";
 
 export interface SessionRowProps {
   row: Row;
   isCurrent: boolean;
-  onSwitch(): void;
+  disabled?: boolean;
+  onSwitch(event: MouseEvent): void;
   onAskRename(): void;
   onAskDelete(): void;
 }
 
-export function SessionRow({
-  row,
-  isCurrent,
-  onSwitch,
-  onAskRename,
-  onAskDelete,
-}: SessionRowProps): JSX.Element {
-  const cls = ["session-row", isCurrent && "session-row--current"]
-    .filter(Boolean)
-    .join(" ");
-
+export function SessionRow({ row, isCurrent, disabled = false, onSwitch, onAskRename, onAskDelete }: SessionRowProps): JSX.Element {
   return (
-    <div class={cls}>
-      <ActionButton
-        variant="quiet"
-        className="session-row__main"
-        onClick={onSwitch}
-        title={row.title}
-      >
-        <span class="session-row__title">{row.title}</span>
-      </ActionButton>
-      <RowMenu onRename={onAskRename} onDelete={onAskDelete} />
-    </div>
+    <OverflowActionRow
+      className={isCurrent ? "session-row session-row--current" : "session-row"}
+      title={row.title}
+      current={isCurrent}
+      disabled={disabled}
+      onActivate={onSwitch}
+      overflow={<RowMenu onRename={onAskRename} onDelete={onAskDelete} />}
+    />
   );
 }

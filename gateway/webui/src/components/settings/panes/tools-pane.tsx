@@ -9,7 +9,7 @@ import type {
   ProfileApi,
   ProfileV1,
 } from "../../../services/profile-api.js";
-import { ActionButton, AsyncState, Disclosure, PaneHeader, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
+import { ActionButton, AsyncState, Disclosure, PaneChrome, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
 import {
   effectiveToolPermission,
   effectiveWildcardPermission,
@@ -118,10 +118,9 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 
   if (!catalog) {
     return (
-      <>
-        <PaneHeader title="Tools" subtitle="Loading available capabilities…" />
+      <PaneChrome title="Tools" subtitle="Choose which capabilities Sentient can use.">
         {error ? <AsyncState state="error" title="Couldn't load tools" message="Your permissions were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} /> : <AsyncState state="loading" title="Loading tools" />}
-      </>
+      </PaneChrome>
     );
   }
 
@@ -129,8 +128,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
   const wildcardKey = catalog.wildcardPermissionKey;
 
   return (
-    <>
-      <PaneHeader title="Tools" subtitle="Choose whether each capability can run, ask first, be refused, or stay hidden. Changes apply after you save settings." />
+    <PaneChrome title="Tools" subtitle="Choose whether each capability can run, ask first, be refused, or stay hidden. Changes apply after you save settings.">
 
       <SettingsCard title="Connected capabilities" padded={false}>
         <div class="mcp-list">
@@ -173,7 +171,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
         onToggleOpen={() => setBuiltinsOpen((v) => !v)}
         onToggleToolset={handleToggleBuiltinToolset}
       />
-    </>
+    </PaneChrome>
   );
 }
 

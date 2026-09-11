@@ -1,3 +1,4 @@
+import { SurfaceAction } from "../common/foundation.tsx";
 import type { JSX } from "preact";
 import { IconButton } from "../common/icon-button.tsx";
 import { SentientMark, type SentientMarkMode } from "../common/sentient-mark.tsx";
@@ -38,10 +39,10 @@ export function Topbar({
       {onMenuClick && (
         <IconButton iconName="menu" title="Past chats" onClick={onMenuClick} />
       )}
-      <div class="topbar__brand">
+      <SurfaceAction type="button" class="topbar__brand" aria-label="Sentient — go to chat" onClick={onChatClick}>
         <SentientMark size={26} mode={markMode} className="topbar__mark" />
         <span class="topbar__brand-name">Sentient</span>
-      </div>
+      </SurfaceAction>
       <div class="topbar__crumbs" aria-label="Location">
         <span>{householdName}</span>
         <span class="topbar__crumb-dot" aria-hidden="true" />

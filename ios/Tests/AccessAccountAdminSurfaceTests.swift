@@ -47,12 +47,6 @@ final class AccessAccountAdminSurfaceTests: XCTestCase {
         XCTAssertEqual(loginPickerState(isLoading: false, userCount: 2, error: nil), .ready)
     }
 
-    func testLoginPinFeedbackKeepsCopyAndTimingBounded() {
-        XCTAssertEqual(loginPinErrorMessage(for: AuthError.InvalidCredentials.shared), "Wrong PIN")
-        XCTAssertEqual(LoginFeedbackTiming.checkingMinimum, .milliseconds(700))
-        XCTAssertEqual(LoginFeedbackTiming.successTransition, .milliseconds(250))
-    }
-
     func testUpdateGateCoversOptionalDismissalAndMandatoryOverride() {
         XCTAssertEqual(updateGateState(version: nil, mandatory: false, bannerDismissed: false), .clear)
         XCTAssertEqual(updateGateState(version: "2.0", mandatory: false, bannerDismissed: false), .banner("2.0"))

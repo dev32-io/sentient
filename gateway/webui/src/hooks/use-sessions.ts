@@ -26,8 +26,8 @@ export interface UseSessions {
   readonly currentId: Signal<string | null>;
   load(): Promise<void>;
   search(q: string): Promise<void>;
-  switchTo(id: string): Promise<void>;
-  newChat(): Promise<void>;
+  switchTo(id: string): Promise<boolean>;
+  newChat(): Promise<boolean>;
   delete(id: string): Promise<void>;
   rename(id: string, title: string): Promise<void>;
   dispose(): void;
@@ -134,23 +134,29 @@ export function createUseSessions(connector: SessionsConnector): UseSessions {
       }
     },
     async switchTo(id) {
+      err.value = null;
       try {
         await connector.switchTo(id);
         currentId.value = id;
+        return true;
       } catch (e: unknown) {
         const message = (e as Error).message;
         log.warn("sessions.switch.failed", { sessionId: id, reason: message });
         err.value = message;
+        return false;
       }
     },
     async newChat() {
+      err.value = null;
       try {
         const { draftKey } = await connector.newChat();
         currentId.value = draftKey;
+        return true;
       } catch (e: unknown) {
         const message = (e as Error).message;
         log.warn("sessions.new.failed", { reason: message });
         err.value = message;
+        return false;
       }
     },
     async delete(id) {

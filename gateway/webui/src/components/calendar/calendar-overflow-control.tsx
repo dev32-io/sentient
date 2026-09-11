@@ -1,6 +1,6 @@
+import { SurfaceAction } from "../common/foundation.tsx";
 import type { JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
-import { ActionButton } from "../common/index.ts";
 import { formatAccessibleCalendarDate } from "./calendar-time.ts";
 import type { OverflowControlProps } from "./calendar-canvas-types.ts";
 import { invokeOverflowOpen } from "./calendar-canvas-intents.ts";
@@ -29,15 +29,16 @@ export function OverflowControl({
   if (count <= 0) return null;
   const accessibleLabel = label ?? `+${count} more events on ${formatAccessibleCalendarDate(date)}`;
   return (
-    <ActionButton
+    <SurfaceAction
+        type="button"
       buttonRef={buttonRef}
-      className={joinClasses("calendar-overflow-control", className)}
-      ariaLabel={accessibleLabel}
+      class={joinClasses("calendar-overflow-control", className)}
+      aria-label={accessibleLabel}
       title={accessibleLabel}
       onClick={() => invokeOverflowOpen(callbacks, date, events)}
     >
       <span aria-hidden="true">+{count}</span>
       <span class="calendar-overflow-control__suffix" aria-hidden="true">more</span>
-    </ActionButton>
+    </SurfaceAction>
   );
 }

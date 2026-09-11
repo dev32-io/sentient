@@ -8,7 +8,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-lg);
-  background: color-mix(in oklab, var(--color-ink) 35%, transparent);
+  background: var(--color-overlay-scrim);
   backdrop-filter: saturate(1.1) blur(6px);
   -webkit-backdrop-filter: saturate(1.1) blur(6px);
   animation: app-dialog-scrim-in 160ms ease-out;
@@ -51,21 +51,10 @@
   margin: 0;
 }
 .app-dialog__close {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  border: 0;
-  background: transparent;
-  color: var(--color-ink-3);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background var(--motion-feedback), color var(--motion-feedback);
-}
-.app-dialog__close:hover {
-  background: var(--color-bg-elev);
-  color: var(--color-ink);
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
 }
 
 .app-dialog__body {
@@ -110,64 +99,25 @@
   width: 100%;
   min-height: 44px;
   padding: var(--space-sm) var(--space-md);
-  background: var(--color-bg-elev);
+  background: var(--well-face);
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-md);
   color: var(--color-ink);
   font-family: var(--font-ui);
   font-size: var(--font-size-base);
   outline: none;
+  box-shadow: var(--well-shadow);
   transition: border-color var(--motion-feedback), box-shadow var(--motion-feedback), background var(--motion-feedback);
   box-sizing: border-box;
 }
 .app-dialog__input:focus {
-  background: var(--color-paper);
-  border-color: color-mix(in oklab, var(--color-accent) 60%, var(--color-line));
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent);
+  background: var(--well-face);
+  border-color: color-mix(in oklab, var(--color-accent) 56%, var(--color-line));
+  box-shadow: var(--well-shadow-focus);
 }
 
-/* ─── Dialog buttons ─── */
-.app-dialog__btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  padding: 0 var(--space-lg);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback);
-}
-.app-dialog__btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.app-dialog__btn--ghost {
-  background: transparent;
-  color: var(--color-ink-2);
-  border-color: var(--color-line);
-}
-.app-dialog__btn--ghost:hover:not(:disabled) {
-  background: var(--color-bg-elev);
-  color: var(--color-ink);
-}
-.app-dialog__btn--primary {
-  background: var(--color-accent);
-  color: var(--color-bg);
-}
-.app-dialog__btn--primary:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--color-accent) 88%, white);
-}
-.app-dialog__btn--danger {
-  background: var(--color-stop);
-  color: #fff;
-}
-.app-dialog__btn--danger:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--color-stop) 88%, white);
-}
+/* ActionButton owns key material and states; Dialog owns target/layout sizing. */
+.app-dialog__btn { min-height: 44px; }
 
 @media (prefers-reduced-motion: reduce) {
   .app-dialog__scrim,
@@ -175,8 +125,6 @@
     animation: none;
   }
 
-  .app-dialog__close,
-  .app-dialog__btn,
   .app-dialog__input {
     transition: none;
   }
@@ -218,7 +166,4 @@
     border-radius: 999px;
     background: var(--color-line);
   }
-}
-@media (hover: none), (pointer: coarse) {
-  .app-dialog__close { width: 44px; height: 44px; }
 }

@@ -15,6 +15,8 @@ import { AddVoiceModal } from "./AddVoiceModal.tsx";
 import { deriveLanguageOptions, deriveTagOptions, filterPacks, type VoiceSource } from "./voice-filter.ts";
 import { createVoicesPanelHandlers } from "./voices-panel-handlers.ts";
 
+import { useSettingsBusyState } from "../settings/navigation-state.ts";
+
 const fishApi = createFishApi();
 
 export interface VoicesPanelProps {
@@ -33,7 +35,7 @@ export interface VoicesPanelProps {
 export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
   const { token, activeVoiceId, onActiveVoiceChanged, assistantSpeaking } = props;
   const toast = useToast();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useSettingsBusyState();
   const [addOpen, setAddOpen] = useState(false);
   const [q, setQ] = useState("");
   const [source, setSource] = useState<VoiceSource>("all");

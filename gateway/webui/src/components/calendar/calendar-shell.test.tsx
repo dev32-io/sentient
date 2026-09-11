@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
 import type { CalendarOccurrenceV2 } from "../../services/calendar-api.ts";
 import {
@@ -298,7 +298,12 @@ describe("CalendarWorkspace", () => {
     );
 
     expect(screen.getAllByRole("checkbox", { name: "Private" })).toHaveLength(1);
-    expect(screen.getAllByText("5 active filters")).toHaveLength(2);
+    expect(screen.getAllByText("5 active filters")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Filters, 5 active filters" }));
+    const drawer = screen.getByRole("dialog", { name: "Calendar filters" });
+    expect(within(drawer).getByText("5 active filters")).toBeTruthy();
+    expect((within(drawer).getByRole("checkbox", { name: "Private" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(drawer).getByRole("button", { name: "Done" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Private" }));
     expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ scopes: [] }));
     expect(screen.queryByText("member")).toBeNull();

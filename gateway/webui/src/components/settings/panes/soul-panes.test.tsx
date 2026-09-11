@@ -38,7 +38,7 @@ describe("Soul settings panes", () => {
     );
     await waitFor(() => expect(setDraft).toHaveBeenCalledWith("memory", "saved"));
     rerender(<MemoryPane api={api({})} token="token" drafts={{ memory: "changed", user: null }} originals={{ memory: doc, user: null }} setOriginal={vi.fn()} setDraft={setDraft} memoryToggles={profile().memory} onDraftMemoryToggles={onDraftMemoryToggles} />);
-    expect(screen.getByLabelText("Edit MEMORY.md").getAttribute("data-dirty")).toBe("true");
+    expect(screen.getByLabelText("Edit General memory").getAttribute("data-dirty")).toBe("true");
     expect(screen.getByRole("status", { name: "Unsaved" })).not.toBeNull();
     fireEvent.click(screen.getByRole("switch", { name: "Memory sparking" }));
     expect(onDraftMemoryToggles).toHaveBeenCalledWith(expect.objectContaining({ spark: false }));
@@ -67,12 +67,18 @@ describe("Soul settings panes", () => {
   it("covers model loading, empty search, and draft selection", async () => {
     const onDraftModel = vi.fn();
     const providers = { listModels: vi.fn(async () => ({ ok: true as const, value: { stale: false, models: [{ id: "model-b", provider: "openrouter" as const, name: "B", description: "", contextLength: 32000, pricingPer1mPrompt: 1, pricingPer1mCompletion: 2, supportsTools: true, supportsVision: false }] } })) } satisfies ProvidersApi;
-    render(<ModelPane api={providers} token="token" draft={profile()} savedModel={null} onDraftModel={onDraftModel} />);
+    const { rerender } = render(<ModelPane api={providers} token="token" draft={profile()} savedModel={null} onDraftModel={onDraftModel} />);
     const model = await screen.findByRole("button", { name: /model-b/i });
     fireEvent.click(model);
     expect(onDraftModel).toHaveBeenCalledWith({ id: "model-b", provider: "openrouter" });
     fireEvent.input(screen.getByLabelText("Search models"), { target: { value: "missing" } });
     expect(screen.getByText("No models match")).not.toBeNull();
+    // The account wizard embeds the same picker without settings chrome or saved state.
+    rerender(<ModelPane api={providers} token="token" draft={profile()} savedModel={null} onDraftModel={onDraftModel} hideHead hideSavedTile lockedProvider="openrouter" />);
+    expect(screen.queryByRole("heading", { name: "Model" })).toBeNull();
+    expect(screen.queryByText("Current selection")).toBeNull();
+    fireEvent.input(screen.getByLabelText("Search models"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: /model-b/i })).not.toBeNull();
   });
 
   it("loads, edits, previews, and reports restore failures for the system prompt", async () => {

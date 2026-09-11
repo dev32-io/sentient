@@ -1,6 +1,6 @@
 // gateway/webui/src/components/settings/apply-bar/apply-bar.tsx
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { ActionButton } from "../../common/foundation.tsx";
 import { runApply, type ApplyBarState, type ApplyDeps, type PendingOpWithPayload } from "./apply-bar-machine.ts";
@@ -10,12 +10,20 @@ const log = createLogger(["sentient", "webui", "settings", "apply-bar"]);
 export interface ApplyBarProps {
   pending: PendingOpWithPayload[];
   deps: ApplyDeps;
-  onApplied: () => void; // parent clears dirty
+  onApplied: () => void | Promise<void>; // parent clears dirty
   onDiscard: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  hidden?: boolean;
+  externalBusy?: boolean;
 }
 
-export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps): JSX.Element | null {
+export function ApplyBar({ pending, deps, onApplied, onDiscard, onBusyChange, hidden, externalBusy }: ApplyBarProps): JSX.Element | null {
   const [state, setState] = useState<ApplyBarState>({ phase: "idle", pending });
+
+  const running = useRef(false);
+  const [settling, setSettling] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(timer.current), []);
 
   if (pending.length === 0 && state.phase === "idle") return null;
 
@@ -23,8 +31,8 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
   // op's extra profile rewrite is a background disk write (measured 8-12ms),
   // invisible to the user.
   const label = "Apply changes";
-  const isBusy = state.phase === "saving" || state.phase === "restarting";
-  const visualState = state.phase === "ready"
+  const isBusy = settling || state.phase === "saving" || state.phase === "restarting";
+  const visualState = state.phase === "ready" && !settling
     ? "done"
     : isBusy
       ? "applying"
@@ -33,20 +41,32 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
         : "dirty";
 
   const handleApply = async () => {
-    log.info("apply.start", { count: pending.length, hasSlow: pending.some((p) => p.kind === "slow") });
-    const outcome = await runApply(pending, deps, setState);
-    if (outcome.ok) {
-      log.info("apply.ok");
-      onApplied();
-      // hold "ready" briefly, then return to idle
-      setTimeout(() => setState({ phase: "idle", pending: [] }), 1500);
-    } else {
-      log.warn("apply.failed", { errorMessage: outcome.errorMessage });
+    if (running.current || externalBusy) return;
+    running.current = true;
+    clearTimeout(timer.current);
+    setSettling(true);
+    onBusyChange?.(true);
+    try {
+      log.info("apply.start", { count: pending.length, hasSlow: pending.some((p) => p.kind === "slow") });
+      const outcome = await runApply(pending, deps, setState);
+      if (outcome.ok) {
+        await onApplied();
+        log.info("apply.ok");
+        timer.current = setTimeout(() => setState({ phase: "idle", pending: [] }), 1500);
+      } else {
+        log.warn("apply.failed");
+      }
+    } catch {
+      setState({ phase: "failed", errorMessage: "Changes could not be applied. Try again." });
+    } finally {
+      running.current = false;
+      setSettling(false);
+      onBusyChange?.(false);
     }
   };
 
   return (
-    <div class="apply-bar" data-state={visualState} role="status" aria-live="polite">
+    <div hidden={hidden} class="apply-bar" data-state={visualState} role="status" aria-live="polite">
       <div class="ab-copy">
         <i class="ab-marker" aria-hidden="true" />
         <div class="ab-text">
@@ -59,10 +79,10 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
         </div>
       </div>
       <div class="ab-actions">
-        <ActionButton variant="quiet" onClick={onDiscard} disabled={isBusy}>
+        <ActionButton variant="quiet" onClick={onDiscard} disabled={isBusy || externalBusy}>
           Discard
         </ActionButton>
-        <ActionButton variant="primary" onClick={() => void handleApply()} disabled={isBusy} loading={isBusy}>
+        <ActionButton variant="primary" onClick={() => void handleApply()} disabled={isBusy || externalBusy} loading={isBusy}>
           {state.phase === "saving" && <>Saving…</>}
           {state.phase === "restarting" && <>Applying…</>}
           {state.phase === "ready" && <>Applied</>}

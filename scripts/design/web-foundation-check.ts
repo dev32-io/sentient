@@ -19,11 +19,13 @@ export interface TransitionalAllowlistEntry {
 
 /**
  * Existing product styles and controls that are intentionally outside this
- * foundation contribution. New page files are not added here; later product
- * migrations remove these entries one path at a time.
+ * foundation contribution, plus explicitly reviewed product compositions.
+ * New entries require an exact path and a semantic reason; this is not a
+ * blanket exemption for page-local controls or a second token palette.
  */
 export const WEB_FOUNDATION_TRANSITIONAL_ALLOWLIST: readonly TransitionalAllowlistEntry[] = [
   { path: "src/styles/components.css", reason: "legacy global shell and non-chat product styles" },
+  { path: "src/components/auth/login-screen.css", reason: "reviewed Homecoming responsive product composition; canonical token/material recipes and shared avatar/PIN controls, no copied palette or prototype runtime imports" },
   { path: "src/components/account-wizard/account-wizard.css", reason: "account wizard composition" },
   { path: "src/components/chat/chat-messages.css", reason: "chat product surface" },
   { path: "src/components/calendar/calendar-canvas.css", reason: "calendar product surface" },

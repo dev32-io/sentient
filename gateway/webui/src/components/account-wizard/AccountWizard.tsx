@@ -29,6 +29,8 @@ export interface AccountWizardProps {
   adminToken?: string;
   onComplete: (summary: UserSummary) => void;
   onCancel?: () => void;
+  /** Paired mutation notifications; false is sent only after submission settles, not on unmount. */
+  onBusyChange?: (busy: boolean) => void;
   /**
    * When true, suppresses the outer <main> wrapper so the wizard can be
    * rendered inside an existing container (e.g. WizardShell's boxed layout)
@@ -102,6 +104,7 @@ export function AccountWizard({
   adminToken,
   onComplete,
   onCancel,
+  onBusyChange,
   nested = false,
 }: AccountWizardProps): JSX.Element {
   const [step, setStep] = useState<WizardStep>("identity");
@@ -110,6 +113,7 @@ export function AccountWizard({
     isAdmin: mode === "first-admin",
   });
   const [busy, setBusy] = useState(false);
+  const submittingRef = useRef(false);
   const [stageLabel, setStageLabel] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -152,7 +156,11 @@ export function AccountWizard({
   }
 
   async function handleSubmit(): Promise<void> {
-    if (busy) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    // Keep the same reporter for the matching completion, even across rerenders/unmount.
+    const reportBusy = onBusyChange;
+    reportBusy?.(true);
     setBusy(true);
     setSubmitError(null);
 
@@ -211,7 +219,9 @@ export function AccountWizard({
       log.warn("submit.unexpected-error", { errorType: err instanceof Error ? err.name : "unknown" });
       setSubmitError("Something went wrong. Please try again.");
     } finally {
+      submittingRef.current = false;
       setBusy(false);
+      reportBusy?.(false);
     }
   }
 

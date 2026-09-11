@@ -16,20 +16,35 @@ import {
   SettingsRow,
 } from "../../common/index.ts";
 
+import { useDisplayNameDraft, useSettingsBusyState, useSettingsDraft } from "../navigation-state.ts";
+
 const log = createLogger(["sentient", "webui", "settings", "account-pane"]);
 const PIN_PATTERN = /^\d{4}$/;
 
-export function AccountPane(): JSX.Element {
+export interface AccountPaneProps {
+  onRequestLogout?: () => void;
+  /** Settings supplies both props to retain only the non-sensitive name across panes. */
+  displayNameDraft?: string;
+  onDisplayNameDraftChange?: (name: string) => void;
+}
+
+export function AccountPane({ onRequestLogout, displayNameDraft, onDisplayNameDraftChange }: AccountPaneProps = {}): JSX.Element {
   const auth = useAuth();
   const toast = useToast();
   const api = createAuthApi();
-  const [name, setName] = useState(auth.status === "authenticated" ? auth.user.displayName : "");
+  const [localName, setLocalName] = useDisplayNameDraft(
+    auth.status === "authenticated" ? auth.user.userId : null,
+    auth.status === "authenticated" ? auth.user.displayName : "",
+  );
+  const name = displayNameDraft ?? localName;
+  const setName = onDisplayNameDraftChange ?? setLocalName;
   const [pinOpen, setPinOpen] = useState(false);
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [pinError, setPinError] = useState<string | undefined>();
-  const [savingName, setSavingName] = useState(false);
-  const [savingPin, setSavingPin] = useState(false);
+  const [savingName, setSavingName] = useSettingsBusyState();
+  const [savingPin, setSavingPin] = useSettingsBusyState();
+  useSettingsDraft((displayNameDraft === undefined && auth.status === "authenticated" && name.trim() !== auth.user.displayName) || Boolean(oldPin || newPin));
 
   if (auth.status !== "authenticated") return <></>;
 
@@ -47,6 +62,7 @@ export function AccountPane(): JSX.Element {
       toast.show("Couldn't update display name", "error");
       return;
     }
+    setName(result.value.user.displayName);
     auth.updateUser(result.value.user);
     toast.show("Display name updated");
   };
@@ -66,12 +82,12 @@ export function AccountPane(): JSX.Element {
     setSavingPin(false);
     if (!result.ok) {
       log.warn("changePin.failed", { code: result.error.code, status: result.error.status });
-      if (result.error.status === 401) setPinError("Current PIN is wrong");
-      else if (result.error.status === 422) setPinError("PIN must be 4 digits");
+      if (result.error.status === 401) setPinError("Current Pin is wrong");
+      else if (result.error.status === 422) setPinError("Pin must be 4 digits");
       else setPinError("Something went wrong. Try again.");
       return;
     }
-    toast.show("PIN updated");
+    toast.show("Pin updated");
     closePinDialog();
   };
 
@@ -93,8 +109,8 @@ export function AccountPane(): JSX.Element {
 
       <SettingsCard title="Security" subtitle="Used for sensitive household actions." padded={false}>
         <SettingsGroup>
-          <SettingsRow label="PIN" hint="Four digits, required for sensitive actions.">
-            <ActionButton onClick={() => setPinOpen(true)}>Change PIN</ActionButton>
+          <SettingsRow label="Pin" hint="Four digits, required for sensitive actions.">
+            <ActionButton onClick={() => setPinOpen(true)}>Change Pin</ActionButton>
           </SettingsRow>
         </SettingsGroup>
       </SettingsCard>
@@ -102,26 +118,28 @@ export function AccountPane(): JSX.Element {
       <SettingsCard title="Session" subtitle="This device only." padded={false}>
         <SettingsGroup>
           <SettingsRow label="Sign out" hint="Returns you to the login screen on this device.">
-            <ActionButton variant="destructive" onClick={() => void auth.logout()}>Sign out</ActionButton>
+            <ActionButton variant="destructive" onClick={() => { if (onRequestLogout) onRequestLogout(); else void auth.logout(); }}>Sign out</ActionButton>
           </SettingsRow>
         </SettingsGroup>
       </SettingsCard>
 
       {pinOpen && (
         <Dialog
-          title="Change PIN"
-          description="Enter your current four-digit PIN, then choose a new one."
-          onClose={closePinDialog}
+          title="Change Pin"
+          description="Enter your current four-digit Pin, then choose a new one."
+          closeOnBackdrop={!savingPin}
+          closeOnEscape={!savingPin}
+          onClose={() => !savingPin && closePinDialog()}
           footer={
             <ActionRow>
               <ActionButton variant="quiet" disabled={savingPin} onClick={closePinDialog}>Cancel</ActionButton>
-              <ActionButton variant="primary" loading={savingPin} disabled={!canSubmitPin} onClick={() => void handleSavePin()}>Update PIN</ActionButton>
+              <ActionButton variant="primary" loading={savingPin} disabled={!canSubmitPin} onClick={() => void handleSavePin()}>Update Pin</ActionButton>
             </ActionRow>
           }
         >
           <div class="owned-fields">
-            <PinEntry label="Current PIN" value={oldPin} onChange={setOldPin} autoFocus error={pinError} />
-            <PinEntry label="New PIN" value={newPin} onChange={setNewPin} />
+            <PinEntry label="Current Pin" value={oldPin} onChange={setOldPin} autoFocus error={pinError} />
+            <PinEntry label="New Pin" value={newPin} onChange={setNewPin} />
           </div>
         </Dialog>
       )}

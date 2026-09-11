@@ -17,6 +17,25 @@ For UI-only iteration, run `bun run dev` in `gateway/webui/`. Vite listens
 strictly on port 5173 and proxies `/api/v1/ws` plus `/api/v1/*` to the local
 gateway at `https://localhost:8888`.
 
+## Login and navigation
+
+Coming Home uses the shared avatar and PIN controls, including desktop keyboard
+input. Verification retains at least 700 ms of checking and 250 ms of accepted
+feedback, then fades directly into chat over 250 ms without a welcome page.
+Back cancels the login attempt; late responses cannot persist authentication.
+Fresh login opens chat; an existing authenticated session restores its route.
+
+The brand returns to chat without creating a conversation. History selection and
+New chat change route only after a successful session operation. Leaving dirty
+settings offers **Stay / Discard changes** before navigation or session effects;
+a pending save must settle first. Discard does not undo completed immediate saves.
+Clean settings can be left, including Sign out, without a confirmation.
+
+Calendar refresh keeps useful content in place rather than inserting a flashing
+loading bar. Initial loading, errors and retry remain explicit. Editors preserve
+drafts across incidental refreshes and retain the original revision for conflict
+checks; changing the target or closing/reopening starts a fresh editor.
+
 ## Audio path
 
 Capture and playback use AudioWorklets rather than `MediaRecorder`.
@@ -79,6 +98,27 @@ gateway/webui/
   vite.config.ts
   package.json
 ```
+
+## Isolated product review
+
+With Vite running, these DEV-only pages render actual production components using
+fictional fixtures:
+
+- `/product-review.html?page=login&state=populated`
+- `/product-review.html?page=history&state=populated`
+- `/product-review.html?page=settings&pane=memory` (navigate to the other panes)
+- `/calendar-evidence.html?view=month&shell=app` (also `day`, `week`, `year`)
+
+Product review uses isolated in-memory storage, default-deny fixture fetches and
+transport-blocking CSP. It does not authenticate against the gateway, play audio,
+or prove real API/Rive behavior. Test real flows separately against a disposable
+local fixture, never production. See [`qa/design-refresh`](../../qa/design-refresh/).
+
+Use native browser zoom for 200% checks; resizing the viewport is not equivalent
+zoom evidence. Native Chrome zoom can crop Playwright's default screenshot clip:
+verify raster dimensions against viewport/DPR, or capture the full visible surface
+with CDP `Page.captureScreenshot` without a clip and with
+`captureBeyondViewport: false`.
 
 ## Build and production serving
 

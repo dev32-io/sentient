@@ -185,6 +185,10 @@ export function CalendarFilterPanel({
 
   return (
     <div class={`calendar-filter-panel ${className}`.trim()}>
+      <CalendarSearchControl
+        value={filters.search ?? ""}
+        onChange={(value) => emitCalendarFilterChange(props, updateCalendarFilters(filters, { search: value }))}
+      />
       <FilterSection label="Calendars">
         <div class="calendar-scope-options" role="group" aria-label="Calendar scope">
           {scopes.map((option) => {
@@ -231,11 +235,6 @@ export function CalendarFilterPanel({
         </Disclosure>
       </div>
 
-      <CalendarSearchControl
-        value={filters.search ?? ""}
-        onChange={(value) => emitCalendarFilterChange(props, updateCalendarFilters(filters, { search: value }))}
-      />
-
       {includeSummary && (
         <CalendarActiveFilterSummary
           filters={filters}
@@ -257,18 +256,20 @@ export interface CalendarFilterDialogProps extends CalendarFilterControlsProps {
 export function CalendarFilterDialog({ id, open = true, onClose, ...props }: CalendarFilterDialogProps): JSX.Element | null {
   if (!open) return null;
   return (
-    <Dialog
-      title="Calendar filters"
-      description="Choose calendars, importance, groups, tags, and search."
-      width={360}
-      onClose={onClose}
-      inertBackground
-      footer={<ActionButton variant="quiet" onClick={onClose}>Done</ActionButton>}
-    >
-      <div id={id} class="calendar-filter-popover">
-        <CalendarFilterPanel {...props} idPrefix={id} includeSummary />
-      </div>
-    </Dialog>
+    <div class="calendar-filter-drawer">
+      <Dialog
+        title="Calendar filters"
+        description="Choose calendars, importance, groups, tags, and search."
+        width={360}
+        onClose={onClose}
+        inertBackground
+        footer={<ActionButton variant="quiet" onClick={onClose}>Done</ActionButton>}
+      >
+        <div id={id} class="calendar-filter-popover">
+          <CalendarFilterPanel {...props} idPrefix={id} includeSummary />
+        </div>
+      </Dialog>
+    </div>
   );
 }
 
@@ -383,15 +384,6 @@ export function CalendarCompactControls({
           {isOpen && <CalendarFilterDialog {...props} id={popoverId} onClose={() => setOpen(false)} />}
         </div>
       </div>
-      <CalendarActiveFilterSummary
-        filters={filters}
-        onRemoveFilter={(key, value) => emitCalendarFilterChange(props, removeCalendarFilter(filters, key, value))}
-        onClearFilters={() => {
-          if (props.onClearFilters) props.onClearFilters();
-          else emitCalendarFilterChange(props, clearCalendarFilters());
-        }}
-        className="calendar-compact-controls__summary"
-      />
     </section>
   );
 }

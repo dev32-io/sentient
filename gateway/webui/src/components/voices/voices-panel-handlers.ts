@@ -69,18 +69,23 @@ export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): Voices
       language,
     });
     setBusy(true);
-    const r = await hook.createVoice(audio, name, description, tags, language);
-    setBusy(false);
-    if (!r.ok) {
-      toast.show("Couldn't create voice", "error");
-      return false;
+    try {
+      const r = await hook.createVoice(audio, name, description, tags, language);
+      if (!r.ok) {
+        toast.show("Couldn't create voice", "error");
+        return false;
+      }
+      toast.show(
+        r.warning === "not-activated"
+          ? "Voice saved, but activation failed — try selecting it below."
+          : "Voice created",
+        r.warning ? "error" : "success",
+      );
+      // A `warning` still means the pack exists server-side — success.
+      return true;
+    } finally {
+      setBusy(false);
     }
-    toast.show(
-      r.warning === "not-activated" ? "Voice saved, but activation failed — try selecting it below." : "Voice created",
-      r.warning ? "error" : "success",
-    );
-    // A `warning` still means the pack exists server-side — success.
-    return true;
   }
 
   async function handleCloneFromFish(
@@ -97,45 +102,54 @@ export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): Voices
       language,
     });
     setBusy(true);
-    const r = await fishApi.cloneFromFish(token, { fishVoiceId, name, description, tags, language });
-    setBusy(false);
-    if (!r.ok) {
-      log.warn("cloneFromFish.failed", { status: r.error.status, code: r.error.code });
-      toast.show(mapFishCloneError(r.error), "error");
-      return false;
+    try {
+      const r = await fishApi.cloneFromFish(token, { fishVoiceId, name, description, tags, language });
+      if (!r.ok) {
+        log.warn("cloneFromFish.failed", { status: r.error.status, code: r.error.code });
+        toast.show(mapFishCloneError(r.error), "error");
+        return false;
+      }
+      await hook.load();
+      if (r.value.warning === "not-activated") {
+        toast.show("Voice saved, but activation failed — try selecting it below.", "error");
+      } else {
+        hook.activateVoiceLocally(r.value.voiceId);
+        toast.show("Voice created", "success");
+      }
+      // A `warning` still means the pack exists server-side — success.
+      return true;
+    } finally {
+      setBusy(false);
     }
-    await hook.load();
-    if (r.value.warning === "not-activated") {
-      toast.show("Voice saved, but activation failed — try selecting it below.", "error");
-    } else {
-      hook.activateVoiceLocally(r.value.voiceId);
-      toast.show("Voice created", "success");
-    }
-    // A `warning` still means the pack exists server-side — success.
-    return true;
   }
 
   async function handleDelete(voiceId: string): Promise<void> {
     log.debug("delete.requested", { voiceId });
     setBusy(true);
-    const r = await hook.deleteVoice(voiceId);
-    setBusy(false);
-    if (!r.ok) {
-      toast.show("Couldn't delete voice", "error");
-      return;
+    try {
+      const r = await hook.deleteVoice(voiceId);
+      if (!r.ok) {
+        toast.show("Couldn't delete voice", "error");
+        return;
+      }
+      toast.show(
+        r.warning === "profile-not-updated" ? "Voice deleted, but the active pick may be stale." : "Voice deleted",
+        r.warning ? "error" : "success",
+      );
+    } finally {
+      setBusy(false);
     }
-    toast.show(
-      r.warning === "profile-not-updated" ? "Voice deleted, but the active pick may be stale." : "Voice deleted",
-      r.warning ? "error" : "success",
-    );
   }
 
   async function handlePick(voiceId: string): Promise<void> {
     log.debug("setActive.requested", { voiceId });
     setBusy(true);
-    const r = await hook.setActiveVoice(voiceId);
-    setBusy(false);
-    if (!r.ok) toast.show("Couldn't switch voice", "error");
+    try {
+      const r = await hook.setActiveVoice(voiceId);
+      if (!r.ok) toast.show("Couldn't switch voice", "error");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handlePlay(voiceId: string, language: string, disabled: boolean): void {

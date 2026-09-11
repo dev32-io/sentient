@@ -1,4 +1,4 @@
-import type { ComponentChildren, JSX } from "preact";
+import type { ComponentChildren, JSX, Ref } from "preact";
 import { classes } from "./utils.ts";
 
 export interface ActionButtonProps {
@@ -69,4 +69,19 @@ export function FoundationIconButton({ label, children, variant = "default", pre
       {children}
     </button>
   );
+}
+
+/**
+ * An action embedded in a content surface (date, row, navigation, identity).
+ * Unlike a standalone ActionButton key, it adds no resting elevation or
+ * geometry. The composition owns the face and persistent selection; this
+ * boundary owns native interaction, focus, press feedback and disabled state.
+ * Keep native event/currentTarget, ARIA, form and ref APIs intact.
+ */
+export interface SurfaceActionProps extends Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "ref"> {
+  buttonRef?: Ref<HTMLButtonElement> | undefined;
+}
+
+export function SurfaceAction({ type = "button", class: className, className: alias, buttonRef, ...props }: SurfaceActionProps): JSX.Element {
+  return <button {...props} {...(buttonRef ? { ref: buttonRef } : {})} type={type} class={["snt-surface-action", className, alias].filter(Boolean).join(" ")} />;
 }

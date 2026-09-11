@@ -16,7 +16,7 @@ export function WeekGrid({
       data-calendar-view="week"
       data-calendar-canvas-view="week"
       aria-label={`Week view from ${projection.interval.from} through ${projection.interval.to}`}
-      aria-busy={loading}
+      aria-busy={loading || refreshing}
     >
       {loading && <CalendarLoadingState refreshing={refreshing} />}
       <div class="calendar-week-grid__weekdays" role="row" aria-label="Weekdays">
@@ -33,7 +33,7 @@ export function WeekGrid({
           <DayCell key={cell.date} cell={cell} compact {...callbacks} />
         ))}
       </div>
-      {!hasEvents && <CalendarEmptyState label={emptyLabel} />}
+      {!loading && !hasEvents && <CalendarEmptyState label={emptyLabel} />}
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { FoundationIconButton } from "./foundation/buttons.tsx";
 import { XIcon } from "./icons/x.tsx";
 
 export type DialogCloseReason = "escape" | "backdrop" | "close-button";
@@ -114,6 +115,9 @@ function applyInert(element: HTMLElement, value: boolean): void {
 function restoreInert(element: HTMLElement, snapshot: InertSnapshot): void {
   if (snapshot.inertProperty !== undefined) {
     (element as HTMLElement & { inert?: boolean }).inert = snapshot.inertProperty;
+  } else {
+    // Remove the fallback expando in environments without native inert support.
+    Reflect.deleteProperty(element, "inert");
   }
   if (snapshot.inertAttribute === null) element.removeAttribute("inert");
   else element.setAttribute("inert", snapshot.inertAttribute);
@@ -151,7 +155,7 @@ function isolateBackground(element: HTMLElement): () => void {
 }
 
 function focusElement(element: HTMLElement | null): void {
-  if (!element || !element.isConnected) return;
+  if (!element || !element.isConnected || isHidden(element) || element.matches(":disabled")) return;
   try {
     element.focus();
   } catch {
@@ -179,7 +183,7 @@ export function Dialog({
 }: DialogProps): JSX.Element {
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
+  const releaseIsolation = useRef<(() => void) | null>(null);
   const titleId = useRef(`app-dialog-title-${++nextDialogId}`);
   const descriptionId = useRef(`app-dialog-description-${nextDialogId}`);
   const requestClose = (reason: DialogCloseReason): void => {
@@ -195,8 +199,14 @@ export function Dialog({
   };
 
   useEffect(() => {
-    previousFocus.current = document.activeElement as HTMLElement | null;
-    return () => focusElement(previousFocus.current);
+    const previousFocus = document.activeElement as HTMLElement | null;
+    // One teardown boundary: a browser cannot focus a still-inert opener.
+    // Release only our isolation tokens, retaining any enclosing dialog's.
+    return () => {
+      releaseIsolation.current?.();
+      releaseIsolation.current = null;
+      focusElement(previousFocus);
+    };
   }, []);
 
   useEffect(() => {
@@ -247,11 +257,15 @@ export function Dialog({
   }, [initialFocusRef]);
 
   useEffect(() => {
+    // Update isolation policy without restoring focus while the dialog is open.
+    // The lifetime effect above owns both isolation teardown and focus return.
+    releaseIsolation.current?.();
+    releaseIsolation.current = null;
     if (!(inertBackground ?? backgroundInert ?? true)) return;
     const scrim = scrimRef.current;
     if (!scrim) return;
     const cleanups = outsideTreeElements(scrim).map((element) => isolateBackground(element));
-    return () => cleanups.forEach((cleanup) => cleanup());
+    releaseIsolation.current = () => cleanups.forEach((cleanup) => cleanup());
   }, [backgroundInert, inertBackground]);
 
   return (
@@ -276,14 +290,13 @@ export function Dialog({
       >
         <header class="app-dialog__head">
           <h2 id={titleId.current} class="app-dialog__title">{title}</h2>
-          <button
-            type="button"
-            class="app-dialog__close"
+          <FoundationIconButton
+            className="app-dialog__close"
             onClick={() => requestClose("close-button")}
-            aria-label="Close"
+            label="Close"
           >
-            <XIcon size={14} />
-          </button>
+            <XIcon size={18} />
+          </FoundationIconButton>
         </header>
         {(description || children) && (
           <div class="app-dialog__body">

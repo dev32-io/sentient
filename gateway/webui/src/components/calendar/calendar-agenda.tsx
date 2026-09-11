@@ -1,10 +1,9 @@
+import { SurfaceAction } from "../common/foundation.tsx";
 import type { JSX } from "preact";
-import { useLayoutEffect, useRef } from "preact/hooks";
-import { ActionButton } from "../common/index.ts";
 import { presentCalendarEvent } from "./calendar-density.ts";
 import type { AgendaRowProps, AgendaSectionProps } from "./calendar-canvas-types.ts";
-import { invokeDateSelect } from "./calendar-canvas-intents.ts";
-import { EventIndicator } from "./calendar-event-indicator.tsx";
+import { Icon } from "../common/icon.tsx";
+import { invokeDateSelect, invokeEventOpen } from "./calendar-canvas-intents.ts";
 import { calendarDateToUtcMillis, formatCalendarDate, type CalendarDate } from "./calendar-time.ts";
 import "./calendar-canvas.css";
 
@@ -57,8 +56,16 @@ export function AgendaRow({
   const time = event.start.kind === "all-day" ? "All day" : event.start.displayTime ?? event.start.label;
   return (
     <li class={joinClasses("calendar-agenda-row", className)} data-calendar-event-row="true">
-      <EventIndicator presentation={presentation} date={date} class="calendar-agenda-row__event" {...callbacks} />
-      <span class="calendar-agenda-row__time" aria-hidden="true">{time}</span>
+      <SurfaceAction type="button" class="calendar-agenda-row__event" data-calendar-event="true"
+        data-event-id={event.eventId} data-occurrence-id={event.occurrenceId} data-importance={event.importance}
+        aria-label={presentation.accessibleName} aria-haspopup="dialog" onClick={() => invokeEventOpen(callbacks, event, date)}>
+        <time class="calendar-agenda-row__time" aria-hidden="true">{time}</time>
+        <span class="calendar-agenda-row__marker" aria-hidden="true" />
+        <span class="calendar-agenda-row__copy"><strong>{event.title}</strong><small>{event.description ?? event.group}</small></span>
+        <span class="calendar-agenda-row__scope" aria-label={event.scope === "private" ? "Private" : "Household"}>
+          <Icon name={event.scope === "private" ? "key" : "users-group"} size={16} />
+        </span>
+      </SurfaceAction>
     </li>
   );
 }
@@ -73,10 +80,6 @@ export function AgendaSection({
   ...callbacks
 }: AgendaSectionProps): JSX.Element {
   const sectionId = `calendar-agenda-${dateId(date)}`;
-  const dateButtonRef = useRef<HTMLButtonElement | null>(null);
-  useLayoutEffect(() => {
-    dateButtonRef.current?.setAttribute("id", sectionId);
-  }, [sectionId]);
   return (
     <section
       class={joinClasses("calendar-agenda-section", !showDateHeader && "calendar-agenda-section--no-date", className)}
@@ -86,16 +89,17 @@ export function AgendaSection({
     >
       {showDateHeader && (
         <header class="calendar-agenda-section__date">
-          <ActionButton
-            buttonRef={dateButtonRef}
-            className="calendar-agenda-section__date-button"
-            ariaLabel={label}
+          <SurfaceAction
+            type="button"
+            id={sectionId}
+            class="calendar-agenda-section__date-button"
+            aria-label={label}
             aria-pressed={false}
             onClick={() => invokeDateSelect(callbacks, date)}
           >
             <strong aria-hidden="true">{shortDateLabel(date)}</strong>
             <span aria-hidden="true">{weekdayLabel(date)}</span>
-          </ActionButton>
+          </SurfaceAction>
         </header>
       )}
       {events.length > 0 ? (

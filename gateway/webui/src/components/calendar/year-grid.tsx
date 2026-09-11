@@ -118,7 +118,7 @@ export function YearGrid({
       data-calendar-view="year"
       data-calendar-canvas-view="year"
       aria-label={`Year view for ${projection.anchorDate.slice(0, 4)}`}
-      aria-busy={loading}
+      aria-busy={loading || refreshing}
     >
       {loading && <CalendarLoadingState refreshing={refreshing} />}
       <div class="calendar-year-grid__grid">
@@ -132,7 +132,7 @@ export function YearGrid({
           />
         ))}
       </div>
-      {!hasEvents && <CalendarEmptyState label={emptyLabel} />}
+      {!loading && !hasEvents && <CalendarEmptyState label={emptyLabel} />}
     </section>
   );
 }

@@ -44,13 +44,15 @@
   background: transparent;
   color: var(--color-ink-2);
   box-shadow: none;
+  font-family: var(--font-ui);
+  cursor: pointer;
   font-size: 14px;
   font-weight: inherit;
   line-height: inherit;
   text-align: left;
   white-space: normal;
   transform: none;
-  transition: color var(--motion-feedback), background-color var(--motion-feedback);
+  transition: color var(--motion-feedback), background-color var(--motion-feedback), box-shadow var(--motion-feedback);
 }
 .s-nav-i--described { min-height: 58px; }
 .s-nav-icon {
@@ -91,25 +93,35 @@
   outline-offset: 3px;
 }
 .s-nav-i:active:not(:disabled) {
-  box-shadow: none;
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
   transform: none;
+}
+.s-nav-i[aria-current="page"]:active {
+  box-shadow: var(--slate-shadow-pressed);
 }
 .settings-v2 .s-nav--settings {
   --nav-current-inset: var(--space-md);
   padding: var(--space-xl) var(--space-md);
 }
 .settings-v2 .s-side-foot {
+  flex-shrink: 0;
   display: grid;
   gap: var(--space-sm);
   margin-top: auto;
   padding: var(--space-lg);
   color: var(--color-ink-2);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
+}
+.settings-v2 .s-side-foot .status-chip {
+  height: auto;
+  min-height: 28px;
+  padding-block: var(--space-xs);
 }
 .settings-v2 .s-side-foot p { margin: 0; line-height: var(--line-height-normal); }
 
 @media (hover: hover) and (pointer: fine) {
-  .s-nav-i:not([aria-current="page"]):hover {
+  .s-nav-i:not([aria-current="page"]):hover:not(:active) {
     border-color: transparent;
     background: color-mix(in oklab, var(--color-bg-elev) 78%, var(--color-paper));
     box-shadow: none;
@@ -124,7 +136,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .s-nav-current { transition: none; }
+  .s-nav-current, .s-nav-i { transition: none; }
 }
 
 @media (prefers-contrast: more) {

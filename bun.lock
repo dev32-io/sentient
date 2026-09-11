@@ -14,7 +14,7 @@
     },
     "gateway": {
       "name": "@sentient/gateway",
-      "version": "1.15.0",
+      "version": "1.16.0",
       "dependencies": {
         "@logtape/file": "^2.0.5",
         "@logtape/logtape": "^2.0.5",
@@ -47,7 +47,7 @@
     },
     "gateway/webui": {
       "name": "@sentient/webui",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@jitsi/rnnoise-wasm": "^0.2.1",
         "@preact/signals": "^2.9.0",

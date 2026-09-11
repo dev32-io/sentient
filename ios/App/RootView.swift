@@ -33,6 +33,7 @@ import MobileData
 struct RootView: View {
     @EnvironmentObject private var appConfig: AppConfig
     @State private var showSetupOverride = false
+    @State private var loginRevealed = false
     @StateObject private var startup: StartupReadinessCoordinator
     private let log = AppLog("root")
 
@@ -45,7 +46,7 @@ struct RootView: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if !appConfig.isConfigured || showSetupOverride {
                 BackendSetupView(
                     model: BackendSetupViewModel(
@@ -56,13 +57,25 @@ struct RootView: View {
                 )
             } else if appConfig.hasToken {
                 UpdateGate(appConfig: appConfig)
+                    .transition(.opacity)
+                    .zIndex(1)
             } else {
                 LoginView(
-                    onAuthenticatedUser: { appConfig.didLogin(authenticatedUserId: $0) },
+                    onAuthenticatedUser: { userId in
+                        // PIN feedback has already completed. Start the shell now;
+                        // the opacity handoff adds no extra pre-login hold.
+                        withAnimation(.easeInOut(duration: DesignV2.Motion.state)) {
+                            appConfig.didLogin(authenticatedUserId: userId)
+                        }
+                    },
                     onConnect: {},
                     onInitialUsersResolved: { startup.rootDidResolve() },
-                    onOpenBackendSetup: { showSetupOverride = true }
+                    onOpenBackendSetup: { showSetupOverride = true },
+                    isRevealed: loginRevealed
                 )
+                .allowsHitTesting(!appConfig.hasToken)
+                .transition(.opacity)
+                .zIndex(2)
             }
         }
         .overlay {
@@ -80,6 +93,16 @@ struct RootView: View {
             if !appConfig.isConfigured || appConfig.hasToken {
                 startup.rootDidResolve()
             }
+        }
+        .task(id: startup.isCovering) {
+            loginRevealed = false
+            guard !startup.isCovering else { return }
+            do {
+                // Don't spend the landing animation underneath the splash fade.
+                try await Task.sleep(for: .seconds(SplashLayout.fadeOut))
+                try Task.checkCancellation()
+                loginRevealed = true
+            } catch { /* The next startup generation owns its own reveal. */ }
         }
         .onChange(of: startup.isCovering) { _, covering in
             if !covering { log.info("startup.reveal") }

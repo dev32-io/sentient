@@ -1,6 +1,6 @@
+import { SurfaceAction } from "../common/foundation.tsx";
 import type { JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
-import { ActionButton } from "../common/index.ts";
 import type { EventIndicatorProps } from "./calendar-canvas-types.ts";
 import { invokeEventOpen } from "./calendar-canvas-intents.ts";
 import "./calendar-canvas.css";
@@ -42,18 +42,19 @@ export function EventIndicator({
   const title = eventTitle(presentation);
   const time = eventTime(presentation);
   return (
-    <ActionButton
+    <SurfaceAction
+        type="button"
       buttonRef={buttonRef}
-      className={joinClasses(
+      class={joinClasses(
         "calendar-event-indicator",
         `calendar-event-indicator--${presentation.mode}`,
         compact && "calendar-event-indicator--compact",
         visuallyHidden && "calendar-event-indicator--visually-hidden",
         className,
       )}
-      ariaLabel={presentation.accessibleName}
+      aria-label={presentation.accessibleName}
       title={presentation.accessibleName}
-      hasPopup="dialog"
+      aria-haspopup="dialog"
       onClick={() => invokeEventOpen(callbacks, event, date)}
     >
       <span class="calendar-event-indicator__pill" aria-hidden="true">
@@ -61,6 +62,6 @@ export function EventIndicator({
         <span class="calendar-event-indicator__title">{title}</span>
       </span>
       <span class="calendar-event-indicator__dot" aria-hidden="true" />
-    </ActionButton>
+    </SurfaceAction>
   );
 }

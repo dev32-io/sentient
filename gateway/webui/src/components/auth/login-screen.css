@@ -1,0 +1,49 @@
+/* Homecoming composition only; identity and PIN materials remain canonical. */
+.homecoming { width: 100%; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+.homecoming__brand { padding: var(--space-xl) var(--space-2xl) 0; font: 400 var(--font-size-xl)/var(--line-height-tight) var(--font-display); }
+.homecoming__body { width: min(100%, 1120px); margin: auto; padding: var(--space-3xl); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: clamp(32px, 6vw, 80px); align-items: center; }
+.homecoming__welcome { padding-block: var(--space-2xl); }
+.homecoming__identity { width: 128px; height: 128px; margin-bottom: var(--space-3xl); }
+.homecoming__welcome h1 { margin: 0; font: 400 var(--font-size-display)/var(--line-height-tight) var(--font-display); letter-spacing: -.035em; }
+.homecoming__welcome em { display: block; font-style: normal; color: var(--color-accent); }
+.homecoming__welcome p { margin: var(--space-xl) 0 0; color: var(--color-ink-2); line-height: var(--line-height-relaxed); }
+.homecoming__signature { display: flex; align-items: center; gap: var(--space-md); margin-top: var(--space-3xl); font-size: var(--font-size-sm); color: var(--color-ink-3); }
+.homecoming__signature::before { content: ""; width: 26px; height: 1px; background: var(--color-line); }
+.homecoming__stage { min-width: 0; width: 100%; max-width: 480px; justify-self: center; }
+.homecoming__content { animation: homecoming-stage var(--motion-state) both; }
+.homecoming__content h2 { margin: 0; font: 400 var(--font-size-xl)/var(--line-height-tight) var(--font-display); overflow-wrap: anywhere; }
+.homecoming__heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.homecoming__heading > span { color: var(--color-ink-3); font-size: var(--font-size-sm); flex-shrink: 0; }
+.homecoming__subtitle { margin: var(--space-sm) 0 var(--space-xl); color: var(--color-ink-2); }
+.homecoming__people { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); max-height: 420px; overflow-y: auto; padding: 6px 6px 18px; margin: 0 -6px; scrollbar-width: thin; }
+.homecoming__person { display: flex; align-items: center; gap: var(--space-md); min-width: 0; min-height: 76px; padding: var(--space-md); border: 0; border-radius: var(--radius-md); background: var(--slate-face); box-shadow: var(--slate-shadow); text-align: start; transition: background var(--motion-feedback), box-shadow var(--motion-feedback); }
+.homecoming__person-name { font-size: var(--font-size-base); line-height: 1.4; overflow-wrap: anywhere; }
+.homecoming__chevron { display: none; margin-inline-start: auto; color: var(--color-ink-2); }
+.homecoming__person:active { box-shadow: var(--slate-shadow-pressed); }
+.homecoming__person:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.homecoming__hint { text-align: center; color: var(--color-ink-3); font-size: var(--font-size-sm); margin: var(--space-sm) 0; }
+.homecoming__empty { grid-column: 1/-1; padding: var(--space-xl); text-align: center; color: var(--color-ink-2); }
+.homecoming__stage .snt-filter-bar { grid-template-columns: minmax(0, 1fr) auto; padding: 0; margin-bottom: var(--space-lg); }
+.homecoming__stage .snt-search { min-width: 0; }
+.homecoming__stage .snt-search input { min-height: 44px; }
+.homecoming__back { margin-bottom: var(--space-xl); }
+.homecoming__pin-identity { display: flex; align-items: center; gap: var(--space-lg); margin-bottom: var(--space-lg); }
+.homecoming__pin-identity p { margin: var(--space-sm) 0 0; color: var(--color-ink-2); }
+.homecoming__help { display: flex; margin: var(--space-lg) auto 0; }
+.homecoming__footer { padding: var(--space-lg) var(--space-2xl); color: var(--color-ink-3); font-size: var(--font-size-sm); }
+@media (hover: hover) and (pointer: fine) { .homecoming__person:hover { background: var(--slate-face-hover); } }
+@media (max-width: 760px) {
+  .homecoming__body { grid-template-columns: minmax(0, 1fr); max-width: 540px; gap: var(--space-xl); padding: var(--space-xl); }
+  .homecoming__welcome { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: var(--space-lg); padding: 0; }
+  .homecoming__identity { width: 64px; height: 64px; margin: 0; }
+  .homecoming__identity > * { width: 64px !important; height: 64px !important; }
+  .homecoming__welcome h1 { font-size: var(--font-size-xl); letter-spacing: -.02em; }
+  .homecoming__welcome p, .homecoming__signature { display: none; }
+  .homecoming__people { grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
+  .homecoming__person { min-height: 64px; }
+  .homecoming__chevron { display: block; }
+  .homecoming__footer { text-align: center; }
+}
+@keyframes homecoming-stage { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .homecoming__content { animation: none; } .homecoming__person { transition: none; } }
+@media (prefers-contrast: more) { .homecoming__person { border: 1px solid var(--color-ink-3); } }

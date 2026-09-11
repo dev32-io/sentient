@@ -2,6 +2,11 @@
 
 /* Settings group */
 .snt-settings-group { padding: 0 16px; }
+.snt-plate__body > .snt-settings-group { padding-inline: 0; }
+.snt-plate__head { padding-inline: 16px; }
+.snt-plate__body { padding: 16px; }
+/* A standalone header owns its inset; a pane already owns its outer measure. */
+.snt-pane > .snt-pane-head { padding: 0; }
 /* Keep dividers out of row measurement so every control variant shares one rhythm. */
 .snt-settings-group > .snt-settings-row + .snt-settings-row {
   border-top: 0;
@@ -34,7 +39,7 @@
 .snt-pane-head > .snt-button { flex: 0 0 auto; }
 
 @media (max-width: 620px) {
-  .snt-pane-head { align-items: flex-start; }
+  .snt-pane-head { align-items: flex-start; flex-wrap: wrap; }
 }
 
 /* Full-measure settings editor. Draft and apply behavior stay with its caller. */
@@ -60,6 +65,7 @@
   line-height: 1.45;
 }
 .snt-settings-editor__header-actions {
+  flex-shrink: 0;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -96,7 +102,7 @@
   background: color-mix(in oklab, var(--color-bg-sunk) 25%, var(--color-paper));
 }
 @media (max-width: 620px) {
-  .snt-settings-editor__head { align-items: flex-start; }
+  .snt-settings-editor__head { align-items: flex-start; flex-wrap: wrap; }
   .snt-settings-editor__header-actions { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {

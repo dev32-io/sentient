@@ -31,7 +31,7 @@ export function CalendarCanvas({
         class={resolvedClassName}
         data-calendar-canvas="true"
         data-calendar-loading={loading ? "true" : "false"}
-        aria-busy={loading}
+        aria-busy={loading || refreshing}
         aria-label="Calendar"
       >
         {loading ? <CalendarLoadingState refreshing={refreshing} /> : <CalendarEmptyState label={emptyLabel ?? "Calendar is unavailable."} />}
@@ -57,7 +57,7 @@ export function CalendarCanvas({
       data-calendar-canvas="true"
       data-calendar-canvas-view={projection.kind}
       data-calendar-loading={loading ? "true" : "false"}
-      aria-busy={loading}
+      aria-busy={loading || refreshing}
       aria-label={`${projection.kind[0]?.toUpperCase() ?? ""}${projection.kind.slice(1)} calendar canvas`}
     >
       {content}

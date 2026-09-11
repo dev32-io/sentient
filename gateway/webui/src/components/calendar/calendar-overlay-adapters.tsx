@@ -1,3 +1,4 @@
+import { SurfaceAction } from "../common/foundation.tsx";
 import type { JSX } from "preact";
 import { ActionButton } from "../common/index.ts";
 import { Dialog } from "../common/dialog.tsx";
@@ -29,13 +30,13 @@ export function CalendarOverflowDialog({ state, onClose, onOpen }: CalendarOverf
       <div class="calendar-overflow-dialog__list" role="list" aria-label="Events in this day">
         {state.events.map((event) => (
           <div role="listitem" key={event.occurrenceId}>
-            <ActionButton
-              className="calendar-overflow-dialog__event"
+            <SurfaceAction type="button"
+              class="calendar-overflow-dialog__event"
               onClick={(clickEvent) => onOpen(event, clickEvent.currentTarget as HTMLElement)}
             >
               <strong>{event.title}</strong>
               <span>{event.start.label}</span>
-            </ActionButton>
+            </SurfaceAction>
           </div>
         ))}
       </div>

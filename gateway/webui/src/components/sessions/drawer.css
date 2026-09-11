@@ -99,59 +99,8 @@
 /* ─── New Chat button ─────────────────────────────────────────────────── */
 
 .new-chat-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
   width: 100%;
   min-height: 46px;
-  padding: var(--space-sm) var(--space-md);
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--color-accent) 16%, var(--color-bg-elev)),
-    var(--color-accent-50)
-  );
-  color: var(--color-accent);
-  border: 1px solid color-mix(in oklab, var(--color-accent) 35%, transparent);
-  border-radius: var(--radius-md);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklab, var(--color-accent) 15%, transparent),
-    0 6px 18px -10px color-mix(in oklab, var(--color-accent) 60%, transparent);
-  transition: background var(--motion-fast), border-color var(--motion-fast),
-    transform var(--motion-fast), box-shadow var(--motion-fast);
-}
-.new-chat-button:hover {
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--color-accent) 24%, var(--color-bg-elev)),
-    color-mix(in oklab, var(--color-accent) 12%, var(--color-accent-50))
-  );
-  border-color: color-mix(in oklab, var(--color-accent) 50%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklab, var(--color-accent) 22%, transparent),
-    0 10px 28px -12px color-mix(in oklab, var(--color-accent) 75%, transparent);
-}
-.new-chat-button:focus-visible {
-  outline: none;
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklab, var(--color-accent) 22%, transparent),
-    0 0 0 3px color-mix(in oklab, var(--color-accent) 35%, transparent);
-}
-.new-chat-button:active {
-  transform: translateY(1px);
-}
-.new-chat-button__plus {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--color-accent) 22%, transparent);
 }
 
 /* ─── Search box ──────────────────────────────────────────────────────── */
@@ -228,11 +177,9 @@
 /* ─── Date group header ───────────────────────────────────────────────── */
 
 .sessions-date-group {
-  font-size: var(--font-size-xs);
-  color: var(--color-ink-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink-2);
   padding: 0 var(--space-sm) var(--space-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
   font-weight: 600;
 }
 
@@ -260,73 +207,6 @@
 }
 .session-list__group:first-child {
   margin-top: var(--space-sm);
-}
-
-/* ─── Session row ─────────────────────────────────────────────────────── */
-
-.session-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 40px;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  transition: background var(--motion-fast), box-shadow var(--motion-fast);
-}
-.session-row:hover {
-  background: color-mix(in oklab, var(--color-bg-sunk) 65%, transparent);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
-}
-.session-row--current {
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--color-accent) 22%, var(--color-bg-elev)),
-    color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-elev))
-  );
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklab, var(--color-accent) 32%, transparent),
-    0 6px 16px -8px color-mix(in oklab, var(--color-accent) 50%, transparent);
-}
-.session-row--current:hover {
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--color-accent) 26%, var(--color-bg-elev)),
-    color-mix(in oklab, var(--color-accent) 14%, var(--color-bg-elev))
-  );
-}
-
-.session-row__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
-  background: transparent;
-  border: 0;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  border-radius: var(--radius-sm);
-}
-.session-row__main:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 50%, transparent);
-}
-.session-row__title {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--color-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.session-row--current .session-row__title {
-  color: var(--color-accent);
-  font-weight: 600;
 }
 
 /* ─── Row menu (overflow trigger + popover) ───────────────────────────── */
@@ -532,15 +412,6 @@
   }
   .drawer__heading {
     font-size: var(--font-size-lg);
-  }
-  .session-row {
-    min-height: 52px;
-  }
-  .session-row__main {
-    padding: var(--space-md) var(--space-sm) var(--space-md) var(--space-md);
-  }
-  .session-row__title {
-    font-size: var(--font-size-base);
   }
   .new-chat-button {
     min-height: 50px;

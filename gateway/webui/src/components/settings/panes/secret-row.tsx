@@ -3,6 +3,8 @@ import type { JSX } from "preact";
 import type { LlmProviderStatus } from "../../../services/admin-api.ts";
 import { ActionButton, ActionRow, Field, SettingsRow } from "../../common/index.ts";
 
+import { useSettingsDraft } from "../navigation-state.ts";
+
 export type EditingKey = "openrouter" | "ollama-cloud" | "custom" | "custom-baseurl" | null;
 
 export interface RowStatus { has_key: boolean; }
@@ -19,6 +21,7 @@ export interface SecretRowProps {
 
 export function SecretRow({ label, status, isActive, onSetActive, editing, onStartEdit, onCancel, onSave }: SecretRowProps): JSX.Element {
   const [draftKey, setDraftKey] = useState("");
+  useSettingsDraft(editing && Boolean(draftKey));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -56,7 +59,6 @@ export function SecretRow({ label, status, isActive, onSetActive, editing, onSta
           <strong id={labelId}>{label}</strong>
           <small>{presence}</small>
         </span>
-        <span class="owned-secret-editor__presence" aria-hidden="true">{presence}</span>
         <ActionRow>
           {isActive ? <span class="snt-kicker">Active</span> : onSetActive ? <ActionButton variant="quiet" onClick={onSetActive}>Set active</ActionButton> : null}
           <ActionButton buttonRef={editButtonRef} onClick={onStartEdit}>Edit</ActionButton>
@@ -93,6 +95,7 @@ interface UrlEditRowProps {
 
 function UrlEditRow({ onCancel, onSave }: UrlEditRowProps): JSX.Element {
   const [draft, setDraft] = useState("");
+  useSettingsDraft(Boolean(draft));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const save = async () => {

@@ -4,6 +4,9 @@ Local, secret-driven build scripts. No CI machine. Artifacts are signed on your
 Mac from secrets that never enter this (public) repo. See the design spec:
 `docs/superpowers/specs/2026-06-13-mobile-build-release-tooling-design.md`.
 
+iOS is the active mobile release target. Android is deprecated; its commands
+below are retained for legacy maintenance, not as a prerequisite for iOS releases.
+
 ## One-time setup
 
 1. **Android keystore:** `./scripts/android-make-keystore.sh`
@@ -48,4 +51,10 @@ Bump app release versions manually in `ios/project.yml`
 (`CFBundleShortVersionString`/`CFBundleVersion`) and `android/build.gradle.kts`
 (`versionName`/`versionCode`). Keep Android and iOS app versions aligned for a joint release.
 The shared `mobile-sdk`/`mobile-data` module versions follow their own source track and need not
-numerically match the app release. The scripts do not bump versions.
+numerically match the app release. An iOS-only release leaves the deprecated Android version
+unchanged. Regenerate `ios/App/Info.plist` from `ios/project.yml` with XcodeGen; do not hand-edit
+the generated plist or commit generated Xcode project/scheme state. The scripts do not bump versions.
+
+The design-refresh release uses iOS **1.5.0 (build 12)** and shared mobile SDK/data **0.7.0**.
+Its gateway/WebUI counterparts are **1.16.0 / 0.8.0**. These are source version bumps,
+not evidence that signed artifacts have been built or deployed.

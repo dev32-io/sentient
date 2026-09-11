@@ -2,21 +2,35 @@
 .settings-v2 {
   display: grid;
   grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
-  min-height: calc(100vh - 3.5rem);
+  /* Consume the available AppShell row, not a guessed topbar height. */
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
 }
 .settings-v2 .s-side {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
   border-right: 1px solid var(--color-line-soft);
+}
+.settings-v2 .s-side > .s-nav {
+  min-height: 0;
+  overflow-y: auto;
 }
 .settings-v2 .s-main {
   min-width: 0;
+  min-height: 0;
+  scroll-padding-block: var(--space-md) 9rem;
   overflow-y: auto;
   padding: var(--space-xl) var(--space-2xl) 9rem;
 }
 .settings-v2 .s-pane,
 .settings-v2 .owned-pane { width: 100%; }
+.settings-v2 .settings-pane-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings-v2 .apply-bar[hidden] { display: none; }
 .settings-v2 .s-narrow-back { display: none; }
 .settings-v2 .owned-inline-field {
   display: grid;
@@ -26,16 +40,13 @@
   min-width: min(24rem, 100%);
 }
 .settings-v2 .owned-fields,
-.settings-v2 .owned-secret-edit,
-.settings-v2 .owned-member-list {
+.settings-v2 .owned-secret-edit {
   display: grid;
   gap: var(--space-md);
 }
 .owned-secret-editor {
   overflow: hidden;
-  border: 1px solid var(--color-line-soft);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elev);
+  border-bottom: 1px solid var(--color-line-soft);
   transition: border-color var(--motion-state), background-color var(--motion-state), box-shadow var(--motion-state);
 }
 .owned-secret-editor + .owned-secret-editor,
@@ -44,19 +55,14 @@
 .owned-secret-editor__read {
   min-height: 78px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-md);
-  padding: var(--space-md);
+  padding: var(--space-md) 0;
 }
 .owned-secret-editor__copy { min-width: 0; display: grid; }
 .owned-secret-editor__copy strong { color: var(--color-ink); font-size: 14px; font-weight: 600; }
 .owned-secret-editor__copy small { color: var(--color-ink-2); font-size: var(--font-size-sm); }
-.owned-secret-editor__presence {
-  color: var(--color-ink-2);
-  font: var(--font-size-sm) var(--font-mono);
-  white-space: nowrap;
-}
 .owned-secret-editor__form {
   display: grid;
   gap: var(--space-md);
@@ -88,10 +94,11 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-md);
-  padding: var(--space-md) var(--space-lg);
+  padding: var(--space-md) 16px;
   border-top: 1px solid var(--color-line-soft);
 }
 .settings-v2 .owned-member-row:first-child { border-top: 0; }
+.settings-v2 .owned-member-list { display: grid; }
 .settings-v2 .owned-member-name { color: var(--color-ink-2); }
 .settings-v2 .owned-member-name strong { color: var(--color-ink); }
 .settings-v2 .role-pill {
@@ -100,7 +107,7 @@
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-pill);
   color: var(--color-ink-2);
-  font: var(--font-size-xs) / var(--line-height-normal) var(--font-mono);
+  font: var(--font-size-sm) / var(--line-height-normal) var(--font-mono);
 }
 .settings-v2 .role-pill--admin { border-color: var(--color-accent); color: var(--color-accent); }
 .settings-v2 .owned-download-code {
@@ -119,14 +126,10 @@
 }
 .settings-v2 .owned-download-code figcaption { max-width: 100%; overflow-wrap: anywhere; }
 
-@media (max-width: 620px) {
-  .owned-secret-editor__read { grid-template-columns: minmax(0, 1fr) auto; }
-  .owned-secret-editor__presence { grid-column: 1 / -1; grid-row: 2; }
-}
-
 @media (max-width: 55rem) {
-  .settings-v2 { display: block; }
+  .settings-v2 { grid-template-columns: minmax(0, 1fr); }
   .settings-v2 .s-side { border-right: 0; }
+  .settings-v2 .s-side > .s-nav { flex-shrink: 0; overflow-y: visible; }
   .settings-v2 .s-main { display: none; padding: var(--space-md) var(--space-md) 8rem; }
   .settings-v2[data-narrow-pane-open="true"] .s-side { display: none; }
   .settings-v2[data-narrow-pane-open="true"] .s-main { display: block; }
@@ -135,4 +138,12 @@
   .settings-v2 .owned-member-row > .snt-action-row { grid-column: 1 / -1; justify-content: flex-end; }
   .settings-v2 .owned-inline-field { grid-template-columns: minmax(0, 1fr); }
   .settings-v2[data-narrow-pane-open="false"] .apply-bar { display: none; }
+}
+
+@media (max-width: 620px) {
+  .owned-secret-editor__read { grid-template-columns: minmax(0, 1fr); }
+  .owned-secret-editor__read > .snt-action-row { justify-content: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .owned-secret-editor__form { animation: none; }
 }

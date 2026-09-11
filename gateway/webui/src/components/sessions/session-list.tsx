@@ -6,7 +6,8 @@ import { SessionRow } from "./session-row.tsx";
 export interface SessionListProps {
   rows: readonly Row[];
   currentId: string | null;
-  onSwitch(id: string): void;
+  pending?: boolean;
+  onSwitch(id: string, event: MouseEvent): void;
   onAskDelete(id: string, title: string): void;
   onAskRename(id: string, title: string): void;
   /**
@@ -20,6 +21,7 @@ export interface SessionListProps {
 export function SessionList({
   rows,
   currentId,
+  pending = false,
   onSwitch,
   onAskDelete,
   onAskRename,
@@ -45,8 +47,9 @@ export function SessionList({
             <SessionRow
               key={row.sessionId}
               row={row}
+              disabled={pending}
               isCurrent={row.sessionId === currentId}
-              onSwitch={() => onSwitch(row.sessionId)}
+              onSwitch={(event) => onSwitch(row.sessionId, event)}
               onAskRename={() => onAskRename(row.sessionId, row.title)}
               onAskDelete={() => onAskDelete(row.sessionId, row.title)}
             />

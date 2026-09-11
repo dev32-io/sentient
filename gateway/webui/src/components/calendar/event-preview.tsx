@@ -181,7 +181,7 @@ export function EventPreview({
   viewport,
   viewportMargin = 12,
   gap = 12,
-  maxWidth = 320,
+  maxWidth = 380,
   locale,
   timeZone,
   deviceTimeZone,
@@ -348,7 +348,7 @@ export function EventPreview({
     const root = previewRef.current;
     if (!root) return undefined;
     const margin = Math.max(0, Number.isFinite(viewportMargin) ? viewportMargin : 12);
-    const preferredWidth = Math.max(0, Number.isFinite(maxWidth) ? maxWidth : 320);
+    const preferredWidth = Math.max(0, Number.isFinite(maxWidth) ? maxWidth : 380);
     const update = (): void => {
       const currentViewport = viewportSize(viewport);
       const availableWidth = Math.max(0, currentViewport.width - margin * 2);
@@ -436,7 +436,6 @@ export function EventPreview({
       style={style}
       tabIndex={-1}
     >
-      <div class="event-preview__hero" aria-hidden="true" />
       <EventPreviewContent
         model={model}
         titleId={titleId}

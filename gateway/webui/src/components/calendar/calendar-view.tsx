@@ -11,6 +11,8 @@ import {
   type CalendarTime,
 } from "../../services/calendar-api.ts";
 import { createCalendarApi } from "../../services/calendar-api.ts";
+import { CalendarFilterResult } from "./calendar-filter-result.tsx";
+import { clearCalendarFilters } from "./calendar-filter-model.ts";
 import { CalendarCanvas } from "./calendar-canvas.tsx";
 import {
   EventEditor,
@@ -372,7 +374,13 @@ export function CalendarView({
         locale={locale}
         addEventDisabled={!canCreate}
       >
-        <CalendarCanvas />
+        {(slot) => <CalendarFilterResult
+          filters={controller.filters}
+          completeCount={controller.completeOccurrences.length}
+          resultCount={controller.filteredOccurrences.length}
+          loading={controller.loading}
+          onClear={() => controller.actions.setFilters(clearCalendarFilters())}
+        ><CalendarCanvas {...slot} /></CalendarFilterResult>}
       </CalendarWorkspace>
 
       {preview && (

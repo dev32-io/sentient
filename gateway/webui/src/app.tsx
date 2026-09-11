@@ -1,7 +1,7 @@
 import { createContext } from "preact";
 import type { ComponentChildren } from "preact";
 import { useComputed } from "@preact/signals";
-import { useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { AuthProvider, useAuth } from "./hooks/use-auth.tsx";
 import { ToastProvider, useToast } from "./hooks/use-toast.tsx";
@@ -24,6 +24,7 @@ import { ToastHost } from "./components/common/toast.tsx";
 import { GateState } from "./components/common/gate-state.tsx";
 import { ConnectionBanner } from "./components/shell/connection-banner.tsx";
 import { loadStoredRoute, storeRoute } from "./components/shell/route-state.ts";
+import { useSettingsDeparture } from "./components/shell/settings-departure.tsx";
 import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
 import { SessionsProvider } from "./context/sessions.tsx";
 import { createUseSessions, type UseSessions } from "./hooks/use-sessions.ts";
@@ -94,6 +95,9 @@ function AppInner() {
     // onRouteChange is stable (closure over setRoute), safe to omit from deps
   }, [auth.status]);
 
+  const freshLogin = auth.status === "authenticated" &&
+    (prevAuthStatusRef.current === "anonymous" || prevAuthStatusRef.current === "authenticating");
+
   // ── Boot: show loading while we hydrate the token from sessionStorage ──
   // NOTE: do NOT include "authenticating" here. Login/setup screens drive
   // their own per-action loading state; unmounting them during the auth
@@ -126,8 +130,43 @@ function AppInner() {
     );
   }
 
-  // ── Authenticated: show main app ──
+  return <AuthenticatedApp
+    key={auth.user.userId}
+    auth={auth}
+    route={freshLogin ? "chat" : route}
+    freshLogin={freshLogin}
+    settingsTab={settingsTab}
+    settingsNonce={settingsNonce}
+    onRouteChange={onRouteChange}
+    onOpenAccount={onOpenAccount}
+    onOpenSettings={() => {
+      setSettingsTab("memory");
+      setSettingsNonce((n) => n + 1);
+      onRouteChange("settings");
+    }}
+  />;
+}
+
+interface AuthenticatedAppProps {
+  auth: Extract<ReturnType<typeof useAuth>, { status: "authenticated" }>;
+  route: TopbarRoute;
+  freshLogin: boolean;
+  settingsTab: "memory" | "account";
+  settingsNonce: number;
+  onRouteChange(route: TopbarRoute): void;
+  onOpenAccount(): void;
+  onOpenSettings(): void;
+}
+
+// Keep authenticated effects in their own mounted lifetime. In particular,
+// login feedback never creates a voice/session client or waits on its readiness.
+function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce, onRouteChange, onOpenAccount, onOpenSettings }: AuthenticatedAppProps) {
   const { token, user } = auth;
+  const [arriving] = useState(freshLogin);
+  const departure = useSettingsDeparture();
+  const leaveSettings = async (action: () => void) => {
+    if (await departure.request()) action();
+  };
   const toast = useToast();
   const client = useVoiceClient({
     token,
@@ -147,7 +186,7 @@ function AppInner() {
       hook: createUseSessions(client.sessionsConnector),
     };
   }
-  useEffect(() => () => {
+  useLayoutEffect(() => () => {
     sessionsRef.current?.hook.dispose();
     sessionsRef.current = null;
   }, []);
@@ -252,23 +291,20 @@ function AppInner() {
   return (
     <SessionsProvider value={sessions}>
       <AppShell
+        arriving={arriving}
         topbar={
           <Topbar
             householdName="My Home"
             routeLabel={ROUTE_LABELS[route]}
             activeRoute={route}
             markMode={topbarMarkMode}
-            onChatClick={() => onRouteChange("chat")}
-            onSettingsClick={() => {
-              setSettingsTab("memory");
-              setSettingsNonce((n) => n + 1);
-              onRouteChange("settings");
-            }}
-            onCalendarClick={() => onRouteChange("calendar")}
+            onChatClick={() => void leaveSettings(() => onRouteChange("chat"))}
+            onSettingsClick={() => void leaveSettings(onOpenSettings)}
+            onCalendarClick={() => void leaveSettings(() => onRouteChange("calendar"))}
             onMenuClick={() => setDrawerOpen(true)}
             user={user}
-            onLogout={() => auth.logout()}
-            onOpenAccount={onOpenAccount}
+            onLogout={() => void leaveSettings(() => { void auth.logout(); })}
+            onOpenAccount={() => void leaveSettings(onOpenAccount)}
           />
         }
         main={
@@ -289,6 +325,8 @@ function AppInner() {
               key={settingsNonce}
               onAudioApplied={client.patchPreferences}
               assistantSpeaking={assistantSpeaking}
+              onNavigationStateChange={departure.onStateChange}
+              onRequestLogout={() => void leaveSettings(() => { void auth.logout(); })}
             />
           )
         }
@@ -349,7 +387,13 @@ function AppInner() {
           ) : undefined
         }
       />
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onBeforeSessionChange={departure.request}
+        onSessionSelected={() => onRouteChange("chat")}
+      />
+      {departure.dialog}
       {connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}
       {client.permissionRequest.value && (
         <PermissionDialog request={client.permissionRequest.value} onRespond={client.respondToPermission} />

@@ -381,7 +381,7 @@ export function buildUpdateCommand(
   | { ok: false; code: string; message: string } {
   const eventId = eventIdOf(event);
   const scope = originalEventScope(event);
-  if (!eventId || scope === null)
+  if (!event || !eventId || scope === null)
     return { ok: false, code: "not_found", message: "This calendar event is no longer available." };
   if (eventIsRecurring(event) && mutationScope === undefined) {
     return { ok: false, code: "invalid_mutation_scope", message: "Choose which occurrences to update." };
@@ -392,16 +392,31 @@ export function buildUpdateCommand(
   if (!recurrence.ok) return recurrence;
   const changes: CalendarUpdateChanges = {
     title: draft.title.trim(),
-    description: draft.description,
+    description: draft.description || null,
     start: times.start,
     end: times.end ?? null,
     visibility: draft.visibility,
     importance: draft.importance,
     group: draft.group.trim() || null,
     tags: parseTags(draft.tagsText),
-    recurrence: recurrence.value ?? null,
   };
   const applyTo = mutationScope ?? "entire_series";
+  // Compare editor-normalized recurrence values so merely opening a rule with
+  // omitted defaults does not rewrite it. Occurrence patches forbid this key,
+  // even when its value is null or the existing rule.
+  const originalRecurrence = buildRecurrence(draftFromEvent(event, draft.inputTimeZoneId));
+  const recurrenceChanged =
+    !originalRecurrence.ok || JSON.stringify(recurrence.value) !== JSON.stringify(originalRecurrence.value);
+  if (recurrenceChanged) {
+    if (applyTo === "this_occurrence") {
+      return {
+        ok: false,
+        code: "invalid_mutation_scope",
+        message: "Choose a series scope to change the repeat pattern.",
+      };
+    }
+    changes.recurrence = recurrence.value ?? null;
+  }
   const command: Extract<CalendarMutationCommand, { operation: "update" }> = {
     operation: "update",
     applyTo,

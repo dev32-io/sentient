@@ -16,6 +16,8 @@ import {
   SettingsCard,
 } from "../../common/index.ts";
 
+import { useSettingsBusyState } from "../navigation-state.ts";
+
 const log = createLogger(["sentient", "webui", "settings", "members-pane"]);
 const POOL_SIZE = 3;
 type LoadState = "loading" | "ready" | "forbidden" | "error";
@@ -26,6 +28,8 @@ export function MembersPane(): JSX.Element {
   const api = useMemo(() => createAdminApi(), []);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [, setBusy] = useSettingsBusyState();
+  const [wizardBusy, setWizardBusy] = useSettingsBusyState();
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UserSummary | null>(null);
   const [toggleTarget, setToggleTarget] = useState<UserSummary | null>(null);
@@ -61,9 +65,11 @@ export function MembersPane(): JSX.Element {
   };
 
   const handleToggleAdmin = async (user: UserSummary) => {
+    setBusy(true);
     setBusyUserId(user.userId);
     const result = await api.setIsAdmin(token, user.userId, !user.isAdmin);
     setBusyUserId(null);
+    setBusy(false);
     setToggleTarget(null);
     if (result.ok) {
       setUsers((current) => current.map((item) => item.userId === user.userId ? result.value.user : item));
@@ -74,9 +80,11 @@ export function MembersPane(): JSX.Element {
   };
 
   const handleDelete = async (user: UserSummary) => {
+    setBusy(true);
     setBusyUserId(user.userId);
     const result = await api.deleteUser(token, user.userId);
     setBusyUserId(null);
+    setBusy(false);
     setDeleteTarget(null);
     if (result.ok) {
       setUsers((current) => current.filter((item) => item.userId !== user.userId));
@@ -127,7 +135,7 @@ export function MembersPane(): JSX.Element {
         </SettingsCard>
       )}
 
-      {addOpen && <Dialog title="Add user" onClose={() => setAddOpen(false)} width={560}><AccountWizard mode="admin" adminToken={token} onComplete={handleAddComplete} onCancel={() => setAddOpen(false)} /></Dialog>}
+      {addOpen && <Dialog title="Add user" closeOnBackdrop={!wizardBusy} closeOnEscape={!wizardBusy} onClose={() => !wizardBusy && setAddOpen(false)} width={560}><AccountWizard mode="admin" adminToken={token} onComplete={handleAddComplete} onBusyChange={setWizardBusy} onCancel={() => !wizardBusy && setAddOpen(false)} /></Dialog>}
       {deleteTarget && (
         <Dialog title={`Remove ${deleteTarget.displayName}?`} description="This signs them out and removes their assistant profile. This cannot be undone." onClose={() => setDeleteTarget(null)} footer={<ActionRow><ActionButton variant="quiet" onClick={() => setDeleteTarget(null)}>Cancel</ActionButton><ActionButton variant="destructive" loading={busyUserId === deleteTarget.userId} onClick={() => void handleDelete(deleteTarget)}>Remove</ActionButton></ActionRow>} />
       )}

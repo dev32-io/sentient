@@ -1,11 +1,12 @@
+import { SurfaceAction } from "../common/foundation.tsx";
 import type { JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
-import { ActionButton } from "../common/index.ts";
 import { presentCalendarEvent } from "./calendar-density.ts";
 import type { DayCellProps } from "./calendar-canvas-types.ts";
-import { invokeDateSelect } from "./calendar-canvas-intents.ts";
+import { invokeDateSelect, invokeOverflowOpen } from "./calendar-canvas-intents.ts";
 import { EventIndicator } from "./calendar-event-indicator.tsx";
 import { OverflowControl } from "./calendar-overflow-control.tsx";
+import { weekdayShortLabel } from "./calendar-agenda.tsx";
 import { formatAccessibleCalendarDate } from "./calendar-time.ts";
 import "./calendar-canvas.css";
 
@@ -21,6 +22,7 @@ export function DayCell({
   cell,
   class: className,
   compact = false,
+  dayAccessOnly = false,
   showOutsideMonth = true,
   ...callbacks
 }: DayCellProps): JSX.Element {
@@ -39,6 +41,7 @@ export function DayCell({
       role="gridcell"
       class={joinClasses(
         "calendar-day-cell",
+        dayAccessOnly && "calendar-day-cell--day-access",
         cell.today && "calendar-day-cell--today",
         cell.selected && "calendar-day-cell--selected",
         showOutsideMonth && cell.outsideMonth && "calendar-day-cell--outside",
@@ -52,16 +55,22 @@ export function DayCell({
       aria-label={cell.accessibleLabel}
       aria-selected={cell.selected}
     >
-      <ActionButton
+      <SurfaceAction
+        type="button"
         buttonRef={dateButtonRef}
-        className="calendar-day-cell__date"
-        ariaLabel={cell.accessibleLabel}
+        class="calendar-day-cell__date"
+        aria-label={dayAccessOnly ? `Open ${cell.accessibleLabel}, ${cell.eventCount} events` : cell.accessibleLabel}
         aria-pressed={cell.selected}
-        onClick={() => invokeDateSelect(callbacks, date)}
+        onClick={() => {
+          if (dayAccessOnly && !(callbacks.onSelectDate ?? callbacks.onDateSelect ?? callbacks.onOpenDay ?? callbacks.onDaySelect)) {
+            invokeOverflowOpen(callbacks, date, cell.density.events.map((event) => event.event));
+          } else invokeDateSelect(callbacks, date);
+        }}
       >
-        <span aria-hidden="true">{cell.day}</span>
-      </ActionButton>
-      <div class="calendar-day-cell__events" aria-label={cell.eventCount ? `${cell.eventCount} events` : undefined}>
+        <span aria-hidden="true">{compact ? `${weekdayShortLabel(date)} ${cell.day}` : cell.day}</span>
+        {dayAccessOnly && cell.eventCount > 0 && <small aria-hidden="true">+{cell.eventCount}</small>}
+      </SurfaceAction>
+      {!dayAccessOnly && <div class="calendar-day-cell__events" aria-label={cell.eventCount ? `${cell.eventCount} events` : undefined}>
         {visibleEvents.map((presentation) => (
           <EventIndicator key={presentation.event.occurrenceId} presentation={presentation} date={date} {...callbacks} />
         ))}
@@ -72,8 +81,8 @@ export function DayCell({
           {...(cell.density.overflowLabel === undefined ? {} : { label: cell.density.overflowLabel })}
           {...callbacks}
         />
-      </div>
-      {overflowEvents.length > 0 && (
+      </div>}
+      {!dayAccessOnly && overflowEvents.length > 0 && (
         <ul class="calendar-canvas__accessible-overflow" aria-label={`Additional events on ${formatAccessibleCalendarDate(date)}`}>
           {overflowEvents.map((event) => (
             <li key={event.occurrenceId}>

@@ -1,14 +1,10 @@
 // ---------------------------------------------------------------------------
-// AuthViewModel — login-scoped state owner for the avatar-grid → PIN-pad flow.
+// AuthViewModel — login-scoped owner of profile selection and PIN feedback.
 //
-// Mirrors the Android AuthViewModel role: one observable state struct, one
-// action surface. This owns UI state ONLY (users / selected user / pin / error)
-// — NOT the SDK state surface. Navigation to chat is NOT modelled here:
-// RootView derives login-vs-chat from AppConfig; the chat-scoped session owns
-// connect() and reaches status == .ready, matching the codebase's event-driven UX
-// inference. On a successful login we save the token to the same Keychain store
-// the SDK reads, then call connect(); the SDK reaches .ready and
-// RootView swaps to chat.
+// This owns UI state, not SDK or transport state. After the PIN composite's
+// bounded feedback, the server-authenticated identity/token commit changes
+// AppConfig's auth gate. The authenticated session owns connection startup;
+// transport readiness never selects the root.
 //
 // PIN is NEVER logged. Auto-submit fires once 4 digits are entered.
 //
@@ -43,6 +39,15 @@ func loginPinErrorMessage(for error: AuthError) -> String {
     }
 }
 
+/// A narrow adapter seam around the shared auth client, not a second auth stack.
+@MainActor
+protocol LoginAuthenticating {
+    func listUsers() async throws -> AuthResult<NSArray>
+    func login(userId: String, pin: String) async throws -> AuthResult<AuthResponse>
+}
+
+extension AuthClient: LoginAuthenticating {}
+
 @MainActor
 final class AuthViewModel: ObservableObject {
     /// Avatar-grid entries from GET /auth/users.
@@ -64,7 +69,7 @@ final class AuthViewModel: ObservableObject {
 
     var phase: AuthPhase { selectedUser == nil ? .pickUser : .enterPin }
 
-    private let authClient: AuthClient
+    private let authClient: any LoginAuthenticating
     private let tokenStore: SecureTokenStore
     private let displayNameStore: DisplayNameStore
     private let connect: () -> Void
@@ -74,9 +79,10 @@ final class AuthViewModel: ObservableObject {
     private let onInitialUsersResolved: () -> Void
     private var initialUsersResolved = false
     private var loginAttempt = 0
+    private var usersRequest = 0
     private var loginTask: Task<Void, Never>?
-    private let sleep: @Sendable (Duration) async throws -> Void
-    private let clock = ContinuousClock()
+    private let sleep: @MainActor (Duration) async throws -> Void
+    private let now: () -> ContinuousClock.Instant
     private let log = AppLog("auth", "model")
 
     /// - Parameters:
@@ -92,10 +98,11 @@ final class AuthViewModel: ObservableObject {
         connect: @escaping () -> Void,
         onAuthenticatedUser: @escaping (String) -> Void = { _ in },
         onInitialUsersResolved: @escaping () -> Void = {},
-        authClient: AuthClient = AuthViewModel.makeAuthClient(),
+        authClient: any LoginAuthenticating = AuthViewModel.makeAuthClient(),
         tokenStore: SecureTokenStore = createTokenStore(),
         displayNameStore: DisplayNameStore = DisplayNameStore(),
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        now: @escaping () -> ContinuousClock.Instant = { ContinuousClock().now }
     ) {
         self.connect = connect
         self.onAuthenticatedUser = onAuthenticatedUser
@@ -104,16 +111,20 @@ final class AuthViewModel: ObservableObject {
         self.tokenStore = tokenStore
         self.displayNameStore = displayNameStore
         self.sleep = sleep
+        self.now = now
     }
 
     // ── User actions ────────────────────────────────────────────────────────
 
     func loadUsers() async {
+        usersRequest += 1
+        let request = usersRequest
         log.info("loadUsers.start")
         isLoadingUsers = true
         error = nil
         do {
             let result = try await authClient.listUsers()
+            guard !Task.isCancelled, request == usersRequest else { return }
             switch onEnum(of: result) {
             case .success(let success):
                 let list = success.value as? [AuthUserLite] ?? []
@@ -124,6 +135,7 @@ final class AuthViewModel: ObservableObject {
                 error = message(for: failure.error)
             }
         } catch {
+            guard !Task.isCancelled, request == usersRequest else { return }
             log.warn("loadUsers.threw code=transport")
             self.error = "Can't reach the server. Check your connection."
         }
@@ -150,8 +162,17 @@ final class AuthViewModel: ObservableObject {
         pinSuccess = nil
     }
 
+    /// Fence late shared-client responses before settings navigation or removal.
+    /// Preserve accepted feedback while the outgoing login view crossfades.
+    func cancel() {
+        usersRequest += 1
+        invalidateLogin()
+        pin = ""
+    }
+
     func appendDigit(_ digit: Character) {
-        guard !isSubmitting, pin.count < pinLength else { return }
+        guard selectedUser != nil, !isSubmitting, pinSuccess == nil,
+              pin.count < pinLength, "0123456789".contains(digit) else { return }
         pin.append(digit)
         error = nil
         if pin.count == pinLength { submit() }
@@ -182,7 +203,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     private func performLogin(user: AuthUserLite, pin: String, attempt: Int) async {
-        let startedAt = clock.now
+        let startedAt = now()
         do {
             let result = try await authClient.login(userId: user.userId, pin: pin)
             try await waitForMinimumChecking(since: startedAt)
@@ -250,7 +271,7 @@ final class AuthViewModel: ObservableObject {
 
     private func waitForMinimumChecking(since startedAt: ContinuousClock.Instant) async throws {
         let minimum = LoginFeedbackTiming.checkingMinimum
-        let elapsed = startedAt.duration(to: clock.now)
+        let elapsed = startedAt.duration(to: now())
         guard elapsed < minimum else { return }
         try await sleep(minimum - elapsed)
     }
@@ -277,7 +298,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     private func isCurrent(_ attempt: Int, user: AuthUserLite) -> Bool {
-        loginAttempt == attempt && selectedUser?.userId == user.userId
+        !Task.isCancelled && loginAttempt == attempt && selectedUser?.userId == user.userId
     }
 
     private func invalidateLogin() {

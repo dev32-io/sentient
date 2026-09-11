@@ -1,12 +1,13 @@
 import { signal } from "@preact/signals";
 import type { SessionRow } from "@sentient/protocol";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { describe, expect, it, vi } from "vitest";
 import { SessionsProvider } from "../../context/sessions.tsx";
 import { Dialog } from "../common/dialog.tsx";
 import type { UseSessions } from "../../hooks/use-sessions.ts";
 import { Drawer } from "./drawer.tsx";
+import { useSettingsDeparture } from "../shell/settings-departure.tsx";
 
 function sessionsFixture(): UseSessions {
   const searchHits = signal<SessionRow[] | null>(null);
@@ -20,8 +21,8 @@ function sessionsFixture(): UseSessions {
     search: vi.fn(async (q: string) => {
       if (!q.trim()) searchHits.value = null;
     }),
-    switchTo: vi.fn().mockResolvedValue(undefined),
-    newChat: vi.fn().mockResolvedValue(undefined),
+    switchTo: vi.fn().mockResolvedValue(true),
+    newChat: vi.fn().mockResolvedValue(true),
     delete: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
@@ -34,6 +35,25 @@ function Harness({ sessions }: { sessions: UseSessions }) {
     <SessionsProvider value={sessions}>
       <button type="button" onClick={() => setOpen(true)}>Open history</button>
       <Drawer open={open} onClose={() => setOpen(false)} />
+    </SessionsProvider>
+  );
+}
+
+function DepartureHarness({ sessions }: { sessions: UseSessions }) {
+  const departure = useSettingsDeparture();
+  const [open, setOpen] = useState(true);
+  useEffect(() => departure.onStateChange({ dirty: true, busy: false }), [departure.onStateChange]);
+  return (
+    <SessionsProvider value={sessions}>
+      <Drawer
+        open={open}
+        onClose={() => setOpen(false)}
+        onBeforeSessionChange={async () => {
+          await Promise.resolve();
+          return departure.request();
+        }}
+      />
+      {departure.dialog}
     </SessionsProvider>
   );
 }
@@ -168,10 +188,155 @@ describe("History drawer", () => {
     render(<Harness sessions={sessions} />);
     fireEvent.click(screen.getByRole("button", { name: "Open history" }));
     fireEvent.click(await screen.findByRole("button", { name: "Earlier chat" }));
-    await waitFor(() => expect(sessions.switchTo).toHaveBeenCalledWith("session-1"));
+    await waitFor(() => {
+      expect(sessions.switchTo).toHaveBeenCalledWith("session-1");
+      expect(screen.queryByRole("dialog", { name: "Past chats" })).toBeNull();
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Open history" }));
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(sessions.newChat).toHaveBeenCalledOnce();
   });
+
+  it("marks the current row accessibly without exposing unavailable actions", () => {
+    const sessions = sessionsFixture();
+    sessions.currentId.value = "session-1";
+    render(<SessionsProvider value={sessions}><Drawer open onClose={() => {}} /></SessionsProvider>);
+    expect(screen.getByRole("button", { name: "Earlier chat Current" }).getAttribute("aria-current")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Chat options" })).toBeNull();
+  });
+
+  it.each(["Earlier chat", "New chat"])("guards %s before effects, blocks duplicates and navigates only after success", async (label) => {
+    const sessions = sessionsFixture();
+    let allow!: (value: boolean) => void;
+    let finish!: (value: boolean) => void;
+    const guard = vi.fn(() => new Promise<boolean>((resolve) => { allow = resolve; }));
+    const operation = label === "New chat" ? sessions.newChat : sessions.switchTo;
+    vi.mocked(operation).mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const selected = vi.fn();
+    const close = vi.fn();
+    render(<SessionsProvider value={sessions}><Drawer open onClose={close} onBeforeSessionChange={guard} onSessionSelected={selected} /></SessionsProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect(guard).toHaveBeenCalledOnce();
+    expect(operation).not.toHaveBeenCalled();
+    allow(false);
+    await waitFor(() => expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(false));
+    expect(operation).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    allow(true);
+    await waitFor(() => expect(operation).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: label === "New chat" ? "Earlier chat" : "New chat" }));
+    expect(guard).toHaveBeenCalledTimes(2);
+    expect(selected).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    finish(true);
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(selected).toHaveBeenCalledOnce();
+    expect(selected.mock.invocationCallOrder[0]).toBeLessThan(close.mock.invocationCallOrder[0]!);
+  });
+
+  it.each(["Earlier chat", "New chat"])("keeps %s failure visible and allows retry without navigating", async (label) => {
+    const sessions = sessionsFixture();
+    const operation = label === "New chat" ? sessions.newChat : sessions.switchTo;
+    vi.mocked(operation).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const close = vi.fn();
+    const selected = vi.fn();
+    render(<SessionsProvider value={sessions}><Drawer open onClose={close} onSessionSelected={selected} /></SessionsProvider>);
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn't open chat");
+    expect(close).not.toHaveBeenCalled();
+    expect(selected).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("recovers from a rejected guard without starting session effects", async () => {
+    const sessions = sessionsFixture();
+    const close = vi.fn();
+    render(<SessionsProvider value={sessions}><Drawer open onClose={close} onBeforeSessionChange={async () => { throw new Error("guard unavailable"); }} /></SessionsProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await screen.findByRole("alert");
+    expect(sessions.newChat).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "New chat" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps the action-owned drawer visible through deferred session completion", async () => {
+    const sessions = sessionsFixture();
+    let finish!: (value: boolean) => void;
+    vi.mocked(sessions.newChat).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const close = vi.fn();
+    const { container } = render(<SessionsProvider value={sessions}><Drawer open onClose={close} /></SessionsProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    const closeButton = screen.getByRole("button", { name: "Close past chats" }) as HTMLButtonElement;
+    expect(closeButton.disabled).toBe(true);
+    fireEvent.click(closeButton);
+    fireEvent.click(container.querySelector(".drawer__backdrop")!);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(close).not.toHaveBeenCalled();
+    finish(true);
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  });
+
+  it.each([
+    ["guard", "unmount"], ["operation", "unmount"],
+    ["guard", "close"], ["operation", "close"],
+    ["guard", "context replacement"], ["operation", "context replacement"],
+  ] as const)("fences deferred %s completion after %s", async (stage, boundary) => {
+    const sessions = sessionsFixture();
+    let finish!: (value: boolean) => void;
+    const deferred = () => new Promise<boolean>((resolve) => { finish = resolve; });
+    const guard = stage === "guard" ? deferred : undefined;
+    if (stage === "operation") vi.mocked(sessions.newChat).mockImplementation(deferred);
+    const close = vi.fn();
+    const selected = vi.fn();
+    const draw = (open: boolean, value = sessions) => (
+      <SessionsProvider value={value}>
+        <Drawer open={open} onClose={close} onSessionSelected={selected} {...(guard ? { onBeforeSessionChange: guard } : {})} />
+      </SessionsProvider>
+    );
+    const view = render(draw(true));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    if (boundary === "unmount") view.unmount();
+    else if (boundary === "close") {
+      view.rerender(draw(false));
+      view.rerender(draw(true));
+    } else view.rerender(draw(true, sessionsFixture()));
+    finish(true);
+    // Flush both the guard and operation continuations, not just one microtask.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(selected).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(sessions.newChat).toHaveBeenCalledTimes(stage === "operation" ? 1 : 0);
+  });
+
+  it.each([
+    ["Earlier chat", "Stay"], ["New chat", "Stay"],
+    ["Earlier chat", "Escape"], ["New chat", "Escape"],
+  ])("restores enabled %s focus after actual settings-departure %s", async (label, dismissal) => {
+    const sessions = sessionsFixture();
+    render(<DepartureHarness sessions={sessions} />);
+    const trigger = screen.getByRole("button", { name: label }) as HTMLButtonElement;
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole("dialog", { name: "Discard unsaved changes?" });
+    expect(trigger.disabled).toBe(true);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Stay", exact: true })));
+    if (dismissal === "Stay") fireEvent.click(screen.getByRole("button", { name: "Stay", exact: true }));
+    else fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull();
+      expect(trigger.disabled).toBe(false);
+      expect(document.activeElement).toBe(trigger);
+    });
+    expect(screen.getByRole("dialog", { name: "Past chats" })).toBeTruthy();
+    expect(sessions.switchTo).not.toHaveBeenCalled();
+    expect(sessions.newChat).not.toHaveBeenCalled();
+  });
+
 });

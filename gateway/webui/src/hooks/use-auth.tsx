@@ -1,7 +1,7 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
-import { AUTH_STORAGE_KEY } from "../constants.js";
+import { AUTH_STORAGE_KEY, AUTH_TIMEOUT_MS } from "../constants.js";
 import type { AuthApi, AuthApiError, AuthUser } from "../services/auth-api.js";
 import type { AuthState } from "../types.js";
 
@@ -16,6 +16,8 @@ type AuthResult<T> = { ok: true; value: T } | { ok: false; error: AuthApiError }
 export interface AuthLoginOptions {
   /** Resolve after client-owned verification feedback has been presented. */
   beforeCommit?: () => void | Promise<void>;
+  /** Cancels an uncommitted login; never clears an already committed session. */
+  signal?: AbortSignal;
 }
 
 type AuthContextValue = AuthState & {
@@ -98,6 +100,28 @@ function clearStoredToken(): void {
   }
 }
 
+/** Logical cancellation: AuthApi has no transport signal, so late responses are ignored. */
+function loginBoundary<T>(operation: () => T | Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(new Error("cancelled")); return; }
+    const finish = (callback: () => void) => {
+      window.clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = () => finish(() => reject(new Error("cancelled")));
+    const timer = window.setTimeout(() => finish(() => reject(new Error("timeout"))), AUTH_TIMEOUT_MS);
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve().then(() => {
+      if (signal.aborted) throw new Error("cancelled");
+      return operation();
+    }).then(
+      (value) => finish(() => resolve(value)),
+      () => finish(() => reject(new Error("request-failed"))),
+    );
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -110,9 +134,23 @@ interface AuthProviderProps {
 export function AuthProvider({ api, children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>({ status: "boot" });
   const mountedRef = useRef(true);
+  const generationRef = useRef(0);
+  const pendingLoginRef = useRef<AbortController | null>(null);
+
+  const invalidateLogin = () => {
+    generationRef.current += 1;
+    pendingLoginRef.current?.abort();
+    pendingLoginRef.current = null;
+  };
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    invalidateLogin();
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
+    const generation = generationRef.current;
     const storedToken = readStoredToken();
 
     if (!storedToken) {
@@ -121,10 +159,10 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
       return;
     }
 
-    log.debug("hydrate-validating", { tokenPreview: storedToken.slice(0, 8) });
+    log.debug("hydrate-validating");
     (async () => {
       const result = await api.me(storedToken);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || generation !== generationRef.current) return;
 
       if (!result.ok) {
         log.warn("hydrate-token-invalid", { code: result.error.code });
@@ -148,29 +186,57 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
   }, [api]);
 
   const login = async (input: { userId: string; pin: string }, options?: AuthLoginOptions) => {
-    setState({ status: "authenticating" });
-    const result = await api.login(input);
+    invalidateLogin();
+    const generation = generationRef.current;
+    const controller = new AbortController();
+    pendingLoginRef.current = controller;
+    const cancel = () => controller.abort();
+    options?.signal?.addEventListener("abort", cancel, { once: true });
+    if (options?.signal?.aborted) cancel();
+    const current = () => mountedRef.current && generation === generationRef.current;
+    const cancelled = { ok: false as const, error: { status: 0, code: "login-cancelled" } };
 
-    if (!result.ok) {
-      log.warn("login-failed", { code: result.error.code });
+    if (current() && !controller.signal.aborted) setState({ status: "authenticating" });
+    try {
+      const result = await loginBoundary(() => api.login(input), controller.signal);
+      if (!current() || controller.signal.aborted) return cancelled;
+      if (!result.ok) {
+        log.warn("login-failed", { code: result.error.code });
+        setState({ status: "anonymous" });
+        return { ok: false as const, error: result.error };
+      }
+
+      await loginBoundary(() => options?.beforeCommit?.(), controller.signal);
+      // Presentation completion is not authorization to persist a stale attempt.
+      if (!current() || controller.signal.aborted) return cancelled;
+      persistToken(result.value.token);
+      pendingLoginRef.current = null;
+      setState({ status: "authenticated", token: result.value.token, user: result.value.user });
+      log.debug("login-success", { userId: result.value.user.userId });
+      return { ok: true as const, value: { token: result.value.token } };
+    } catch {
+      if (!current()) return cancelled;
       setState({ status: "anonymous" });
-      return { ok: false as const, error: result.error };
+      if (controller.signal.aborted) return cancelled;
+      log.warn("login-request-failed");
+      return { ok: false as const, error: { status: 0, code: "network-error" } };
+    } finally {
+      options?.signal?.removeEventListener("abort", cancel);
+      if (pendingLoginRef.current === controller) {
+        pendingLoginRef.current = null;
+        if (current() && controller.signal.aborted) setState({ status: "anonymous" });
+      }
     }
-
-    await options?.beforeCommit?.();
-    log.debug("login-success", { userId: result.value.user.userId });
-    persistToken(result.value.token);
-    setState({
-      status: "authenticated",
-      token: result.value.token,
-      user: result.value.user,
-    });
-    return { ok: true as const, value: { token: result.value.token } };
   };
 
   const setup = async (input: { userId: string; displayName: string; pin: string }) => {
+    invalidateLogin();
+    const generation = generationRef.current;
     setState({ status: "authenticating" });
     const result = await api.setup(input);
+    if (!mountedRef.current || generation !== generationRef.current) {
+      return { ok: false as const, error: { status: 0, code: "login-cancelled" } };
+    }
 
     if (!result.ok) {
       log.warn("setup-failed", { code: result.error.code });
@@ -189,9 +255,12 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
   };
 
   const logout = async () => {
+    invalidateLogin();
+    const generation = generationRef.current;
     if (state.status === "authenticated") {
       await api.logout(state.token);
     }
+    if (!mountedRef.current || generation !== generationRef.current) return;
     log.debug("logout");
     clearStoredToken();
     setState({ status: "anonymous" });

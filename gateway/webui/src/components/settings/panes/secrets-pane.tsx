@@ -7,6 +7,8 @@ import type { PendingOpWithPayload } from "../apply-bar/apply-bar-machine.ts";
 import { ActionButton, AsyncState, PaneChrome, SettingsCard, SettingsGroup } from "../../common/index.ts";
 import { CustomRow, SecretRow, type EditingKey } from "./secret-row.tsx";
 
+import { useSettingsBusyState } from "../navigation-state.ts";
+
 const log = createLogger(["sentient", "webui", "settings", "secrets"]);
 const APPLY_SECRETS_OP: PendingOpWithPayload = { key: "secrets.changed", kind: "slow", payload: null };
 type LoadState = "loading" | "ready" | "forbidden" | "error";
@@ -15,6 +17,7 @@ export interface SecretsPaneProps { onMark: (op: PendingOpWithPayload) => void; 
 
 export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
   const auth = useAuth();
+  const [, setBusy] = useSettingsBusyState();
   const api = useMemo(() => createAdminApi(), []);
   const isAuthed = auth.status === "authenticated";
   const token = isAuthed ? auth.token : "";
@@ -46,25 +49,34 @@ export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
   };
 
   const saveLlmKey = async (provider: LlmProvider, newKey: string) => {
-    await requireSuccess(api.setLlmProviderKey(token, provider, { api_key: newKey }));
-    setEditing(null);
-    await refresh();
-    onMark(APPLY_SECRETS_OP);
+    setBusy(true);
+    try {
+      await requireSuccess(api.setLlmProviderKey(token, provider, { api_key: newKey }));
+      setEditing(null);
+      await refresh();
+      onMark(APPLY_SECRETS_OP);
+    } finally { setBusy(false); }
   };
   const saveLlmBaseUrl = async (provider: LlmProvider, newUrl: string) => {
-    await requireSuccess(api.setLlmProviderKey(token, provider, { base_url: newUrl }));
-    setEditing(null);
-    await refresh();
-    onMark(APPLY_SECRETS_OP);
+    setBusy(true);
+    try {
+      await requireSuccess(api.setLlmProviderKey(token, provider, { base_url: newUrl }));
+      setEditing(null);
+      await refresh();
+      onMark(APPLY_SECRETS_OP);
+    } finally { setBusy(false); }
   };
   const setActive = async (provider: LlmProvider) => {
-    const result = await api.setActiveLlmProvider(token, provider);
-    if (!result.ok) {
-      setLoadState(result.error.status === 403 ? "forbidden" : "error");
-      return;
-    }
-    await refresh();
-    onMark(APPLY_SECRETS_OP);
+    setBusy(true);
+    try {
+      const result = await api.setActiveLlmProvider(token, provider);
+      if (!result.ok) {
+        setLoadState(result.error.status === 403 ? "forbidden" : "error");
+        return;
+      }
+      await refresh();
+      onMark(APPLY_SECRETS_OP);
+    } finally { setBusy(false); }
   };
 
   if (!isAuthed) return <PaneChrome title="Provider keys" subtitle="Sign in to manage keys." className="owned-pane">{null}</PaneChrome>;

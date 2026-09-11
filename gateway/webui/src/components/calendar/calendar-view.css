@@ -1,7 +1,9 @@
 .calendar-view {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-width: 0;
-  min-height: 100%;
+  min-height: 0;
   background: var(--color-bg);
   color: var(--color-ink);
 }
@@ -29,23 +31,6 @@
   font-size: var(--font-size-sm);
 }
 
-.calendar-route-notice button {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 var(--space-md);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-paper);
-  color: var(--color-ink);
-  font: var(--font-size-xs)/1 var(--font-mono);
-  cursor: pointer;
-}
-
-.calendar-route-notice button:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
 .calendar-route-notice--stale {
   border-color: color-mix(in oklab, var(--color-amber) 48%, var(--color-line-soft));
   background: color-mix(in oklab, var(--color-amber) 8%, var(--color-bg-elev));
@@ -57,7 +42,7 @@
 }
 
 .calendar-route-notice--permission {
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
 }
 
 .calendar-route-notice--success {
@@ -87,9 +72,9 @@
 .calendar-route-state__eyebrow {
   margin: 0;
   color: var(--color-accent);
-  font: var(--font-size-xs)/1 var(--font-mono);
+  font: var(--font-size-sm)/1 var(--font-mono);
   letter-spacing: 0.1em;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .calendar-route-state h1 {
@@ -99,7 +84,7 @@
 
 .calendar-route-state p:last-child {
   margin: var(--space-md) 0 0;
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -126,19 +111,19 @@
 }
 
 .calendar-overflow-dialog__event:hover {
-  border-color: var(--color-accent);
   background: var(--color-paper);
 }
 
 .calendar-overflow-dialog__event strong {
+  font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .calendar-overflow-dialog__event span {
-  color: var(--color-ink-3);
-  font: var(--font-size-xs)/1.2 var(--font-mono);
+  color: var(--color-ink-2);
+  font: var(--font-size-sm)/1.2 var(--font-mono);
 }
 
 .calendar-view button:focus-visible,
@@ -182,3 +167,5 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.calendar-view > .calendar-workspace { flex: 1; height: auto; }

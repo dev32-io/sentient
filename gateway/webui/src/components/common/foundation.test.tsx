@@ -21,6 +21,22 @@ function readFoundationCss(): string {
 }
 
 describe("Web foundation controls", () => {
+  it("normalizes only semantic fieldset chrome while retaining the Pin group's name and wells", () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(process.cwd(), "src/components/common/foundation/fields.css"), "utf8");
+    document.body.append(style);
+    render(<PinEntry label="Current Pin" value="" onChange={() => {}} />);
+    const group = screen.getByRole("group", { name: "Current Pin" });
+    expect(group.tagName).toBe("FIELDSET");
+    expect(group.querySelector("legend")?.textContent).toBe("Current Pin");
+    const computed = getComputedStyle(group);
+    expect(computed.borderTopWidth).toBe("0px");
+    expect(computed.padding).toBe("0px");
+    expect(computed.margin).toBe("0px");
+    expect(computed.minInlineSize).toBe("0");
+    expect(group.querySelectorAll("input")).toHaveLength(4);
+  });
+
   it("uses native semantics for fields, selects, switches, and checkboxes", () => {
     const onSelect = vi.fn();
     const onToggle = vi.fn();

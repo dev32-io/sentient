@@ -1,4 +1,6 @@
 /* Recessed receiving surfaces. */
+/* Keep semantic fieldset/legend grouping without native frame chrome. */
+fieldset.snt-field { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
 .snt-field { display: grid; gap: 7px; min-width: 0; }
 .snt-field__label { color: var(--color-ink); font-size: 14px; font-weight: 500; }
 .snt-field__hint { color: var(--color-ink-2); font-size: var(--font-size-sm); }

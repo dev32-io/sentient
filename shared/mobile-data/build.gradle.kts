@@ -17,7 +17,9 @@ plugins {
 // Bumped to 0.4.0: lockstep with mobile-sdk 0.4.0 (2.0 memory-branch release).
 // Bumped to 0.5.0: lockstep with mobile-sdk 0.5.0 (mobile interaction reliability).
 // Bumped to 0.6.0: lockstep with mobile-sdk 0.6.0 (calendar V2 data APIs).
-version = "0.6.0"
+// Bumped to 0.7.0: design-refresh calendar projection/viewport behavior and
+// authenticated connection teardown, alongside mobile-sdk 0.7.0.
+version = "0.7.0"
 
 kotlin {
     androidTarget {

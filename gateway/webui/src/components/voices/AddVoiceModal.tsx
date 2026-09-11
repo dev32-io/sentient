@@ -9,6 +9,8 @@ import { VoiceCapture } from "./VoiceCapture.tsx";
 import { FishClonePanel, type FishClonePickInput } from "./fish/FishClonePanel.tsx";
 import { TagEditor, MAX_TAGS } from "./TagEditor.tsx";
 
+import { useSettingsDraft } from "../settings/navigation-state.ts";
+
 const log = createLogger(["sentient", "webui", "voices", "add-modal"]);
 
 const BASE_MODE_OPTIONS = [
@@ -89,6 +91,8 @@ export function AddVoiceModal({
   const [audioDurationMs, setAudioDurationMs] = useState<number | null>(null);
   const [fishVoiceId, setFishVoiceId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useSettingsDraft(open && Boolean(name || description || tags.length || language || audio || fishVoiceId));
 
   if (!open) return null;
 

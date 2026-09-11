@@ -93,6 +93,12 @@ html.is-paused *::after {
   font-family: var(--font-ui);
   overflow: hidden; /* nothing ever escapes the shell */
 }
+/* PIN verification feedback is complete before this starts. No navigation hold. */
+@keyframes chat-arrival { from { opacity: 0; } to { opacity: 1; } }
+.app-shell[data-login-arrival] { animation: chat-arrival var(--motion-state) both; }
+@media (prefers-reduced-motion: reduce) {
+  .app-shell[data-login-arrival] { animation: none; }
+}
 .app-shell__topbar {
   position: relative;
   z-index: 10;
@@ -207,6 +213,10 @@ html.is-paused *::after {
   -webkit-backdrop-filter: saturate(1.2) blur(10px);
   border-bottom: 1px solid var(--color-line-soft);
 }
+.topbar .icon-btn,
+.topbar__brand,
+.topbar__nav,
+.topbar > .user-menu { flex-shrink: 0; }
 .topbar__brand {
   display: inline-flex;
   align-items: center;
@@ -214,7 +224,18 @@ html.is-paused *::after {
   font-family: var(--font-display);
   font-size: var(--font-size-xl);
   letter-spacing: 0.2px;
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
 }
+.topbar__brand:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+.topbar__brand:is(:hover, :active) .topbar__brand-name { color: var(--color-accent); }
 .topbar__mark {
   display: inline-flex;
   align-items: center;
@@ -280,6 +301,13 @@ html.is-paused *::after {
 /* Tablet: tighter gaps, smaller side padding */
 @media (max-width: 860px) {
   .topbar { gap: 12px; padding: 12px 18px; }
+  .topbar__crumbs,
+  .topbar__brand-name,
+  .topbar .user-menu__name { display: none; }
+}
+
+@media (pointer: coarse) {
+  .topbar .icon-btn { min-width: 44px; min-height: 44px; }
 }
 
 /* Mobile: compact topbar and status chip. */

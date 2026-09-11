@@ -1,6 +1,6 @@
 // gateway/webui/src/components/settings/settings-view.tsx
 import type { JSX } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ReadonlySignal } from "@preact/signals";
 import { createLogger } from "@sentient/web-sdk";
 import { useAuth } from "../../hooks/use-auth.tsx";
@@ -33,11 +33,18 @@ import { DiagnosticsPane } from "./panes/diagnostics-pane.tsx";
 import { ActionButton } from "../common/foundation.tsx";
 import { Icon } from "../common/icon.tsx";
 
+import { SettingsNavigationContext, useDisplayNameDraft, type SettingsNavigationState } from "./navigation-state.ts";
+export type { SettingsNavigationState } from "./navigation-state.ts";
+
 const log = createLogger(["sentient", "webui", "settings", "view"]);
 
 export interface SettingsViewProps {
   /** Initial sidebar tab. Defaults to "memory" — the first tab in the Soul group. */
   initialTab?: SidebarKey;
+  /** Shell exits must await busy=false, then confirm discarding dirty local drafts. */
+  onNavigationStateChange?: (state: SettingsNavigationState) => void;
+  /** Delegate personal-account sign-out to the shell exit guard. */
+  onRequestLogout?: () => void;
   /**
    * Called after a successful profile Apply when the audio sub-tree changed.
    * Use this to push a live WS preference patch so the session picks up the
@@ -53,10 +60,23 @@ export function SettingsView({
   initialTab = "memory",
   onAudioApplied,
   assistantSpeaking,
+  onNavigationStateChange,
+  onRequestLogout,
 }: SettingsViewProps = {}): JSX.Element {
   const auth = useAuth();
   const profileApi = useMemo(() => createProfileApi(), []);
   const providersApi = useMemo(() => createProvidersApi(), []);
+
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [busyCount, setBusyCount] = useState(0);
+  const [localDirtyCount, setLocalDirtyCount] = useState(0);
+  const navigationContext = useMemo(() => ({
+    changeBusy: (delta: number) => setBusyCount((count) => count + delta),
+    changeDirty: (delta: number) => setLocalDirtyCount((count) => count + delta),
+  }), []);
+  const navigationCallback = useRef(onNavigationStateChange);
+  navigationCallback.current = onNavigationStateChange;
+  useLayoutEffect(() => () => navigationCallback.current?.({ dirty: false, busy: false }), []);
 
   const [tab, setTab] = useState<SidebarKey>(initialTab);
   const [narrowPaneOpen, setNarrowPaneOpen] = useState(false);
@@ -79,6 +99,9 @@ export function SettingsView({
 
   const isAuthed = auth.status === "authenticated";
   const token = isAuthed ? auth.token : "";
+  const savedDisplayName = isAuthed ? auth.user.displayName : "";
+  const [displayNameDraft, setDisplayNameDraft] = useDisplayNameDraft(isAuthed ? auth.user.userId : null, savedDisplayName);
+  const displayNameDirty = isAuthed && displayNameDraft.trim() !== savedDisplayName;
   // DERIVED from the record the gateway sent with this session's `auth.ok` /
   // `/me` — never latched, never stored, and re-derived on every sign-in. It
   // decides what the sidebar DRAWS; every admin call it leads to is still
@@ -164,6 +187,7 @@ export function SettingsView({
 
   const dirtyKeys = useMemo<Set<SidebarKey>>(() => {
     const s = new Set<SidebarKey>();
+    if (displayNameDirty) s.add("account");
     if (profileDiff.audio) s.add("audio");
     if (profileDiff.model) s.add("model");
     if (profileDiff.tools) s.add("tools");
@@ -173,7 +197,23 @@ export function SettingsView({
     if (imperativeOps.some((op) => op.key.startsWith("personalities."))) s.add("personalities");
     if (imperativeOps.some((op) => op.key === "secrets.changed")) s.add("secrets");
     return s;
-  }, [profileDiff, soulDirty, memoryDirty, imperativeOps]);
+  }, [profileDiff, soulDirty, memoryDirty, imperativeOps, displayNameDirty]);
+
+  const dirty = pending.length > 0 || localDirtyCount > 0 || displayNameDirty;
+  const busy = applyBusy || busyCount > 0;
+  useLayoutEffect(() => {
+    navigationCallback.current?.({ dirty, busy });
+  }, [dirty, busy]);
+
+  // Sync-only — voice is an immediate op (VoicesPanel persists it itself via
+  // the voices REST API / profile PUT). This does NOT PUT anything; it only
+  // keeps profileDraft/profileOriginal.voice in step so a later model/tools
+  // Apply (which PUTs the whole profile) doesn't revert the user's pick back
+  // to whatever voice.id happened to be in the draft at page-load time.
+  const onActiveVoiceChanged = useCallback((voiceId: string) => {
+    setProfileDraft((d) => d && { ...d, voice: { provider: "local-tts", id: voiceId } });
+    setProfileOriginal((o) => o && { ...o, voice: { provider: "local-tts", id: voiceId } });
+  }, []);
 
   if (!isAuthed) return <></>;
 
@@ -227,16 +267,6 @@ export function SettingsView({
     setMemoryDrafts((prev) => ({ ...prev, [slot]: content }));
   };
 
-  // Sync-only — voice is an immediate op (VoicesPanel persists it itself via
-  // the voices REST API / profile PUT). This does NOT PUT anything; it only
-  // keeps profileDraft/profileOriginal.voice in step so a later model/tools
-  // Apply (which PUTs the whole profile) doesn't revert the user's pick back
-  // to whatever voice.id happened to be in the draft at page-load time.
-  const onActiveVoiceChanged = (voiceId: string) => {
-    setProfileDraft((d) => d && { ...d, voice: { provider: "local-tts", id: voiceId } });
-    setProfileOriginal((o) => o && { ...o, voice: { provider: "local-tts", id: voiceId } });
-  };
-
   const deps = makeApplyDeps(profileApi, token, onAudioApplied);
 
   const openPane = (key: SidebarKey) => {
@@ -252,6 +282,7 @@ export function SettingsView({
   };
 
   return (
+    <SettingsNavigationContext.Provider value={navigationContext}>
     <div class="settings-v2 snt-surface" data-narrow-pane-open={narrowPaneOpen ? "true" : "false"}>
       <aside ref={sidebarRef} class="s-side" aria-label="Settings navigation">
         <SidebarNav active={tab} onChange={openPane} dirtyKeys={dirtyKeys} isAdmin={isAdmin} />
@@ -264,7 +295,7 @@ export function SettingsView({
             <Icon name="chevron" size={14} /> Settings
           </ActionButton>
         </div>
-        <div class="s-pane" key={tab} tabIndex={-1}>
+        <fieldset class="s-pane settings-pane-fields" key={tab} disabled={applyBusy} inert={applyBusy} tabIndex={-1}>
           {tab === "memory" && profileDraft && (
             <MemoryPane
               api={profileApi}
@@ -331,18 +362,17 @@ export function SettingsView({
               onDraftAdvanced={(advanced) => setProfileDraft({ ...profileDraft, advanced })}
             />
           )}
-          {tab === "account" && <AccountPane />}
+          {tab === "account" && <AccountPane displayNameDraft={displayNameDraft} onDisplayNameDraftChange={setDisplayNameDraft} {...(onRequestLogout ? { onRequestLogout } : {})} />}
           {tab === "members" && <MembersPane />}
           {tab === "secrets" && <SecretsPane onMark={markImperative} />}
           {tab === "getApp" && <GetAppPane />}
           {tab === "diagnostics" && <DiagnosticsPane token={token} />}
-        </div>
+        </fieldset>
       </main>
 
-      {APPLY_BAR_KEYS.has(tab) && (
-        <ApplyBar pending={pending} deps={deps} onApplied={onApplied} onDiscard={onDiscard} />
-      )}
+      <ApplyBar pending={pending} deps={deps} onApplied={onApplied} onDiscard={onDiscard} onBusyChange={setApplyBusy} externalBusy={busyCount > 0} hidden={!APPLY_BAR_KEYS.has(tab) && !applyBusy} />
     </div>
+    </SettingsNavigationContext.Provider>
   );
 }
 

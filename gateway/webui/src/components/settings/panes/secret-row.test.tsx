@@ -21,7 +21,7 @@ describe("SecretRow", () => {
   it("keeps stored values presence-only and restores focus after cancel", async () => {
     const { container } = render(<SecretRowHarness />);
 
-    expect(screen.getAllByText("Configured")).toHaveLength(2);
+    expect(screen.getByText("Configured")).toBeTruthy();
     expect(container.textContent).not.toContain("••");
 
     const edit = screen.getByRole("button", { name: "Edit" });

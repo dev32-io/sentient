@@ -5,6 +5,8 @@ import type { PersonalityList, ProfileApi } from "../../../services/profile-api.
 import { ActionButton, ActionRow, AsyncState, Disclosure, Field, PaneChrome, SettingsCard, TextArea } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 
+import { useSettingsDraft } from "../navigation-state.ts";
+
 const log = createLogger(["sentient", "webui", "settings", "personalities-pane"]);
 const NEW_KEY = "__new__";
 const DESCRIPTION = "Switchable tone profiles. Activate one for the assistant to use.";
@@ -37,6 +39,7 @@ export function PersonalitiesPane({ api, token, onMark }: PersonalitiesPaneProps
   }
 
   const isNewOpen = openId === NEW_KEY;
+  useSettingsDraft(isNewOpen && Boolean(newName || newBody));
   return (
     <PaneChrome title="Personalities" subtitle={DESCRIPTION}>
       {loadError ? (

@@ -38,7 +38,7 @@
   border: 1px solid var(--color-line-soft);
   border-radius: 8px;
   padding: 16px 20px;
-  font-size: 13.5px;
+  font-size: 15px;
   color: var(--color-ink);
   line-height: 1.65;
   word-wrap: break-word;
@@ -107,19 +107,11 @@
   align-items: start;
   gap: 12px;
   /* Symmetric so content sits 18px from all card edges (matches sc-h sides). */
-  padding: 0 18px;
+  padding: 0 16px;
 }
 .settings-v2 .lst-disclosure {
   min-width: 0;
   border-bottom: 0;
-}
-.settings-v2 .lst-disclosure[data-open="true"] {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
 }
 .settings-v2 .lst-disclosure > .snt-disclosure__button {
   min-height: 68px;
@@ -137,12 +129,6 @@
 }
 .settings-v2 .lst-row-main > .snt-action-row {
   align-self: center;
-}
-.settings-v2 .lst-row.on .lst-row-main {
-  background: color-mix(in oklab, var(--color-accent) 4%, var(--color-paper));
-}
-.settings-v2 .lst-row.open {
-  background: color-mix(in oklab, var(--color-ink) 2%, var(--color-paper));
 }
 .settings-v2 .lst-edit {
   padding: 18px;
@@ -164,14 +150,14 @@
   gap: 6px;
 }
 .settings-v2 .lst-field-l {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-ink-2);
   font-weight: 500;
   letter-spacing: 0.005em;
 }
 .settings-v2 .lst-body { flex: 1; min-width: 0; }
 .settings-v2 .lst-title {
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -180,8 +166,8 @@
   color: var(--color-ink);
 }
 .settings-v2 .lst-sub {
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   margin-top: 3px;
 }
 .settings-v2 .lst-sub.mono { font-family: var(--font-mono); }
@@ -196,7 +182,7 @@
 /* ---- Keyboard badge ---- */
 .settings-v2 .kbd {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 14px;
   background: var(--color-bg-sunk);
   padding: 2px 7px;
   border-radius: 5px;
@@ -206,11 +192,11 @@
 /* ---- Tag ---- */
 .settings-v2 .tag {
   display: inline-block;
-  font-size: 10.5px;
+  font-size: 12.5px;
   padding: 2px 7px;
   border-radius: 999px;
   background: var(--color-bg-sunk);
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
   font-family: var(--font-mono);
   line-height: 1.4;
 }
@@ -220,8 +206,8 @@
 }
 
 /* ---- Muted / ok-dot ---- */
-.settings-v2 .muted { color: var(--color-ink-3); }
-.settings-v2 .muted.xs { font-size: 12px; }
+.settings-v2 .muted { color: var(--color-ink-2); }
+.settings-v2 .muted.xs { font-size: 12.5px; }
 .settings-v2 .ok-dot {
   display: inline-block;
   width: 6px;
@@ -236,8 +222,8 @@
   grid-column: 1 / -1;
   padding: 32px 16px;
   text-align: center;
-  color: var(--color-ink-3);
-  font-size: 13px;
+  color: var(--color-ink-2);
+  font-size: 14px;
 }
 
 /* ---- Model "current selection" tile (in card body, full width) ---- */
@@ -249,23 +235,21 @@
 }
 
 /* ---- Provider selector ---- */
-.settings-v2 .prov-body { padding: 18px; }
+.settings-v2 .prov-body { padding: 16px; }
 .settings-v2 .prov-row {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
 }
-/* Pull the seg2 left so its outer border sits flush with the card body
-   padding edge (compensates for seg2's own 3px outer padding). */
-.settings-v2 .prov-row > .seg2 { margin-left: -3px; }
 /* The provider hint reads as a third tab when sitting next to the
    segmented control. Push it to the far right + drop the monospace
    styling so it reads as a subtitle, not a clickable option. */
 .settings-v2 .prov-row-s {
   margin-left: auto;
-  font-size: 12px;
-  color: var(--color-ink-4);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   font-family: var(--font-ui);
   font-style: italic;
 }
@@ -276,17 +260,9 @@
 .settings-v2 .mod {
   position: relative;
   padding: 12px 44px 12px 14px;
-  background: var(--color-paper);
-  border: 1px solid var(--color-line-soft);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
+  white-space: normal;
 }
-.settings-v2 .mod:hover { border-color: var(--color-line); }
-.settings-v2 .mod.is-sel {
-  border-color: color-mix(in oklab, var(--color-accent) 60%, var(--color-line));
-  background: color-mix(in oklab, var(--color-accent) 5%, var(--color-paper));
-}
+.settings-v2 .mod.snt-button:hover:not(:disabled) { transform: none; }
 .settings-v2 .mod-top {
   display: flex;
   align-items: center;
@@ -312,7 +288,8 @@
 }
 .settings-v2 .mod-id {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
   color: var(--color-ink);
   background: transparent;
   padding: 0;
@@ -321,17 +298,17 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--color-ink-2);
   font-family: var(--font-mono);
   flex-wrap: wrap;
 }
 .settings-v2 .mod-meta .grow { flex: 1; }
-.settings-v2 .mod-dot { color: var(--color-ink-4); }
+.settings-v2 .mod-dot { color: var(--color-ink-2); }
 .settings-v2 .mod-price { color: var(--color-ink); }
 .settings-v2 .mod-caps { display: flex; gap: 4px; }
 .settings-v2 .cap {
-  font-size: 10.5px;
+  font-size: 12.5px;
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--color-accent-50);
@@ -347,21 +324,15 @@
 /* ---- Model saved tile (Card action slot, "Current selection") ---- */
 /* Reuses .mod DOM for visual parity; orange-tinted bg distinguishes it. */
 .settings-v2 .mod-saved {
+  padding: 0;
   cursor: default;
-  max-width: 460px;
-  padding: 12px 14px;
-  background: color-mix(in oklab, var(--color-accent) 8%, var(--color-paper));
-  border-color: color-mix(in oklab, var(--color-accent) 25%, var(--color-line-soft));
-}
-.settings-v2 .mod-saved:hover {
-  border-color: color-mix(in oklab, var(--color-accent) 25%, var(--color-line-soft));
 }
 .settings-v2 .mod-saved-empty,
 .settings-v2 .mod-saved-unknown {
   display: flex;
   align-items: center;
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   font-style: italic;
   min-height: 40px;
   padding: 8px 14px;
@@ -411,7 +382,7 @@
   align-items: center;
   padding: 2px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   background: var(--color-bg-elev);
   border: 1px solid var(--color-line-soft);
   color: var(--color-ink-2);
@@ -454,7 +425,7 @@
   border-bottom: 0;
 }
 .settings-v2 .mcp-disclosure > .snt-disclosure__button {
-  padding-left: 18px;
+  padding-left: 16px;
   padding-right: 12px;
 }
 .settings-v2 .mcp > .snt-toggle {
@@ -469,12 +440,12 @@
 }
 .settings-v2 .mcp-desc {
   font-size: max(var(--font-size-sm), 0.78125rem);
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
   line-height: 1.4;
 }
 .settings-v2 .mcp-url {
-  font-size: 11.5px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   margin-top: 4px;
   font-family: var(--font-mono);
 }
@@ -485,12 +456,12 @@
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
-.settings-v2 .mcp-count.dim { color: var(--color-ink-3); font-style: italic; }
+.settings-v2 .mcp-count.dim { color: var(--color-ink-2); font-style: italic; }
 
 /* Memory pane char counter — sits in the Card's action slot. */
 .settings-v2 .memory-count {
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -508,7 +479,7 @@
   grid-template-columns: 32px minmax(180px, 1fr) 1.6fr;
   align-items: center;
   gap: 12px;
-  padding: 7px 18px 7px 36px;
+  padding: 12px 16px;
 }
 /* Permission table only (PermissionToolTable: MCP servers + gateway-native
    tools) — a 4-state Allow/Ask/Deny/Off Select needs room for its label +
@@ -517,27 +488,26 @@
    than widening `.tool-row` itself, which the Hermes built-ins table
    (ToggleToolTable) still uses unchanged with its narrow boolean Toggle. */
 .settings-v2 .tool-row.tool-row-perm { grid-template-columns: 140px minmax(180px, 1fr) 1.6fr; }
-.settings-v2 .tool-row.off { opacity: .55; }
-.settings-v2 .tool-row.off:hover { opacity: .8; }
+
 .settings-v2 .tool-row.on .tc-name code { color: var(--color-ink); }
 .settings-v2 .tc-tog { display: flex; align-items: center; justify-content: flex-start; }
 .settings-v2 .sel-btn:disabled { opacity: .6; cursor: not-allowed; }
 .settings-v2 .sel-btn:disabled:hover { border-color: var(--color-line-soft); }
 .settings-v2 .tc-name code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-ink-2);
   background: transparent;
 }
 .settings-v2 .tc-desc {
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   line-height: 1.4;
 }
 .settings-v2 .tc-placeholder {
   font-style: italic;
-  color: var(--color-ink-4);
-  font-size: 12px;
+  color: var(--color-ink-2);
+  font-size: 12.5px;
 }
 .settings-v2 .tool-row-head {
   background: color-mix(in oklab, var(--color-ink) 3%, var(--color-paper));
@@ -546,10 +516,10 @@
   border-bottom: 1px solid var(--color-line-soft);
 }
 .settings-v2 .tc-th {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
 }
 .settings-v2 .tc-name {
   display: flex;
@@ -559,9 +529,9 @@
 }
 .settings-v2 .tc-badge {
   display: inline-block;
-  font-size: 10px;
+  font-size: 12.5px;
   letter-spacing: 0.02em;
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
   background: color-mix(in oklab, var(--color-ink) 6%, transparent);
   border-radius: 999px;
   padding: 2px 7px;
@@ -810,14 +780,14 @@
 }
 .settings-v2 .voices-rec-time {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
   color: var(--color-ink);
   min-width: 44px;
 }
 .settings-v2 .voices-rec-hint {
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   margin: 0;
 }
 .settings-v2 .voices-rec-row {
@@ -941,8 +911,8 @@
 .settings-v2 .v-filter-label {
   flex-shrink: 0;
   width: 56px;
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
 }
 .settings-v2 .v-filter-chips {
   display: flex;
@@ -956,7 +926,7 @@
   background: transparent;
   border: 0;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--color-accent);
   cursor: pointer;
   padding: 4px 8px;
@@ -971,8 +941,8 @@
   margin-bottom: 10px;
 }
 .settings-v2 .v-result-count {
-  font-size: 12px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   font-variant-numeric: tabular-nums;
 }
 .settings-v2 .v-clear {
@@ -980,7 +950,7 @@
   background: transparent;
   border: 0;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--color-accent);
   cursor: pointer;
   padding: 0;
@@ -1007,58 +977,11 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 14px; /* symmetric — delete overlays on hover instead of reserving space */
-  background: var(--color-paper);
-  border: 1px solid var(--color-line-soft);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
-  /* Fixed height so selection / content variation never reflows. */
-  height: 96px;
+  padding: 12px 14px;
   min-height: 96px;
-  max-height: 96px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-.settings-v2 .voice:hover { border-color: var(--color-line); }
-.settings-v2 .voice.is-sel {
-  border-color: color-mix(in oklab, var(--color-accent) 50%, var(--color-line));
-  background: color-mix(in oklab, var(--color-accent) 5%, var(--color-paper));
-}
-.settings-v2 .v-play {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-bg-sunk);
-  color: var(--color-ink-2);
-  border: 1px solid var(--color-line-soft);
   cursor: pointer;
-  flex-shrink: 0;
-  transition: background .15s, color .15s, border-color .15s;
 }
-.settings-v2 .v-play:hover {
-  background: var(--color-accent);
-  color: var(--color-paper);
-  border-color: var(--color-accent);
-}
-.settings-v2 .v-play-on,
-.settings-v2 .v-play-on:hover {
-  background: var(--color-accent);
-  color: var(--color-paper);
-  border-color: var(--color-accent);
-}
-.settings-v2 .v-play:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-}
-.settings-v2 .v-play:disabled:hover {
-  background: var(--color-bg-sunk);
-  color: var(--color-ink-2);
-  border-color: var(--color-line-soft);
-}
+.settings-v2 .v-play { flex-shrink: 0; }
 .settings-v2 .v-meta { flex: 1; min-width: 0; }
 .settings-v2 .v-name {
   font-size: 14px;
@@ -1080,8 +1003,8 @@
   -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
 }
 .settings-v2 .v-info {
-  font-size: 11.5px;
-  color: var(--color-ink-3);
+  font-size: 12.5px;
+  color: var(--color-ink-2);
   margin-top: 4px;
 }
 .settings-v2 .v-scroll {
@@ -1098,8 +1021,8 @@
   background: var(--color-bg-sunk);
   padding: 1px 5px;
   border-radius: 3px;
-  color: var(--color-ink-3);
-  font-size: 10px;
+  color: var(--color-ink-2);
+  font-size: 12.5px;
   flex-shrink: 0;
 }
 .settings-v2 .v-lang {
@@ -1108,7 +1031,7 @@
   padding: 1px 5px;
   border-radius: 3px;
   color: var(--color-ink-2);
-  font-size: 10.5px;
+  font-size: 12.5px;
   flex-shrink: 0;
 }
 .settings-v2 .v-fact {
@@ -1118,7 +1041,7 @@
 .settings-v2 .v-fact::before {
   content: "·";
   margin-right: 6px;
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
 }
 /* No ellipsis/clamp here — .v-desc can run long and overflows inside
  * .v-scroll; the hover marquee (below) is what reveals the rest. */
@@ -1126,10 +1049,10 @@
 .settings-v2 .v-desc::before {
   content: "·";
   margin-right: 6px;
-  color: var(--color-ink-3);
+  color: var(--color-ink-2);
 }
 .settings-v2 .v-tags {
-  height: 22px;
+  min-height: 22px;
   margin-top: 6px;
 }
 .settings-v2 .v-tag {
@@ -1138,16 +1061,10 @@
   background: var(--color-bg-sunk);
   border: 0;
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: 12.5px;
   color: var(--color-ink-2);
   padding: 2px 7px;
   border-radius: 999px;
-  cursor: pointer;
-  transition: background .15s, color .15s;
-}
-.settings-v2 .v-tag:hover {
-  background: color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-sunk));
-  color: var(--color-accent);
 }
 
 /* On row hover, slide .v-scroll to reveal whatever overflows its container
@@ -1170,58 +1087,8 @@
 /* Inline "Active" marker (Voice-Packs only) — a plain flex sibling after
  * .v-meta, not absolutely positioned, so it never has to reserve clearance
  * the old absolute checkmark circle needed. */
-/* Delete (Voice-Packs, user packs only) — overlays the row's right edge on
- * hover/focus instead of permanently reserving space (row padding is
- * symmetric now — see .settings-v2 .voice above). A solid clay (danger)
- * square, sized to match .v-play, so the destructive action is
- * unmistakable and balances the row's leading play button. The ::before
- * gradient fades the row's own background in just left of the button so
- * tag/description text scrolling underneath fades out rather than hard-
- * abutting the red square. */
-.settings-v2 .v-del {
-  position: absolute;
-  top: 50%;
-  right: 10px;
-  transform: translateY(-50%);
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-clay);
-  color: #fff;
-  border: 1px solid color-mix(in oklab, var(--color-clay) 72%, black);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity .15s, background .15s;
-}
-.settings-v2 .v-del::before {
-  content: "";
-  position: absolute;
-  inset: -8px 40px -8px -40px; /* fade zone to the LEFT of the button only */
-  background: linear-gradient(to right, transparent, var(--color-paper) 85%);
-  z-index: -1;
-  pointer-events: none;
-}
-.settings-v2 .voice.is-sel .v-del::before {
-  background: linear-gradient(
-    to right,
-    transparent,
-    color-mix(in oklab, var(--color-accent) 5%, var(--color-paper)) 85%
-  );
-}
-.settings-v2 .voice:hover .v-del,
-.settings-v2 .voice:focus-within .v-del {
-  opacity: 1;
-}
-.settings-v2 .v-del:hover {
-  background: color-mix(in oklab, var(--color-clay) 86%, white);
-}
-.settings-v2 .v-del:disabled {
-  opacity: .4;
-  cursor: not-allowed;
-}
+/* Keep destructive actions visible and in flow on every input modality. */
+.settings-v2 .v-del { flex-shrink: 0; }
 
 /* Soul and voice product surfaces use foundation controls; these rules only
    arrange domain content and preserve reflow at narrow/zoomed widths. */
@@ -1242,7 +1109,6 @@
   min-width: 0;
 }
 .settings-v2 .lst-row-btn > span { display: flex; align-items: center; gap: 10px; }
-.settings-v2 .voice { height: auto; min-height: 96px; max-height: none; }
 .settings-v2 .voice-filter .snt-field { flex: 1 1 220px; }
 .settings-v2 .v-toolbar .snt-field { flex: 1 1 160px; min-width: 0; }
 .settings-v2 .v-filter-label,

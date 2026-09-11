@@ -7,7 +7,7 @@ opus, and logging live in the SDK — this app is UI + scopes + navigation only.
 server-side; no on-device wake word in v1.
 
 - **Project:** `ios/SentientApp.xcodeproj` · **scheme:** `SentientApp`
-- **Version:** `1.4.0` (`CFBundleShortVersionString` in authoritative `project.yml`)
+- **Version:** `1.5.0`, build `12` (`CFBundleShortVersionString` / `CFBundleVersion` in authoritative `project.yml`)
 - **Deployment target:** iOS 18 (some views carry iOS-17 fallbacks).
 
 ## Architecture
@@ -38,6 +38,15 @@ flowchart LR
 - **Optimistic send:** `OutboundCache` is per-conversation, VM-owned, and in-memory.
   Entries remain queued until their exact `pendingId` echo, fail after 10 seconds
   unechoed, and are resend-safe because the gateway deduplicates by `pendingId`.
+
+## Coming Home login
+
+The login screen uses native SwiftUI motion and canonical avatar/PIN controls.
+Checking lasts at least 700 ms, followed by 250 ms of accepted feedback and a
+250 ms direct opacity transition into chat; there is no separate welcome page.
+Authentication remains the root gate. Cancelled or superseded attempts cannot
+commit late results, and transition completion does not undo valid authentication.
+Reduce Motion and accessibility text sizes retain usable PIN/help navigation.
 
 ## Layout
 

@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { ActionButton, SegmentedControl } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 import type { CalendarViewMode } from "./calendar-projections.ts";
@@ -44,6 +44,7 @@ export interface CalendarDateNavigationProps {
   readonly onAnchorDateChange?: (date: string) => void;
   readonly onAddEvent?: () => void;
   readonly addEventDisabled?: boolean;
+  readonly compactControls?: ComponentChildren;
 }
 
 export interface FloatingViewBarProps {
@@ -94,6 +95,7 @@ export function DateNavigation({
   onAnchorDateChange,
   onAddEvent,
   addEventDisabled = false,
+  compactControls,
 }: CalendarDateNavigationProps): JSX.Element {
   const view = selectedView ?? suppliedView ?? "month";
   const anchorDate = safeDate(suppliedAnchorDate ?? date);
@@ -102,10 +104,11 @@ export function DateNavigation({
   return (
     <header class="calendar-date-navigation" data-calendar-date-navigation>
       <div class="calendar-date-navigation__title">
-        <h1 id={headingId}>{periodTitle(view, anchorDate, weekStartsOn, locale)}</h1>
         <p>{description}</p>
+        <h1 id={headingId}>{periodTitle(view, anchorDate, weekStartsOn, locale)}</h1>
       </div>
       <div class="calendar-date-navigation__actions" role="group" aria-label="Date navigation">
+        {compactControls && <div class="calendar-workspace__compact">{compactControls}</div>}
         <ActionButton className="calendar-nav-button" ariaLabel="Previous period" {...(onPrevious === undefined ? {} : { onClick: onPrevious })}>
           <Icon name="chevron" size={17} />
         </ActionButton>
@@ -116,7 +119,7 @@ export function DateNavigation({
         {dateChange && <span hidden data-calendar-date-navigation-owned="true" />}
         {onAddEvent && (
           <ActionButton variant="primary" className="calendar-toolbar-add" ariaLabel="Add event" disabled={addEventDisabled} onClick={onAddEvent}>
-            <span><Icon name="plus" size={16} /> Add event</span>
+            <Icon name="plus" size={16} /><span>Add event</span>
           </ActionButton>
         )}
       </div>
