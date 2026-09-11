@@ -36,6 +36,10 @@ export interface CalendarEditorDraft {
   recurrenceEnd: "count" | "until";
   recurrenceCount: string;
   recurrenceUntil: string;
+  reminderEnabled: boolean;
+  reminderMode: "at-start" | "lead" | "all-day";
+  reminderLeadMinutes: string;
+  reminderLocalTime: string;
   /** The device zone used by native datetime-local controls. */
   inputTimeZoneId: string;
   /** Compatibility/source zone retained for helper conversion only. */

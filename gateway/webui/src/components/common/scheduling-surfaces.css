@@ -1,0 +1,30 @@
+/* Shared schedule editor, personal-reminder, and bounded message-card compositions. */
+.schedule-form { display: grid; gap: var(--space-md); }
+.schedule-form > .snt-segmented { justify-self: start; }
+.schedule-form .snt-settings-row { padding-inline: 0; }
+.snt-status-text { color: var(--color-ink-2); font-size: var(--font-size-sm); }
+
+.calendar-editor__reminder { display: grid; gap: var(--space-md); padding: var(--space-md); border: 1px solid var(--color-line-soft); border-radius: var(--radius-md); background: var(--well-face); box-shadow: var(--well-shadow); }
+.calendar-editor__reminder-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.calendar-editor__reminder-head > div { display: grid; min-width: 0; }
+.calendar-editor__reminder-head strong { color: var(--color-ink); font-size: var(--font-size-base); }
+.calendar-editor__reminder-head span { color: var(--color-ink-2); font-size: var(--font-size-sm); }
+
+.message-inbox { position: fixed; inset: 0; z-index: 70; visibility: hidden; pointer-events: none; }
+.message-inbox--open { visibility: visible; pointer-events: auto; }
+.message-inbox__backdrop { position: absolute; inset: 0; width: 100%; background: color-mix(in oklab, var(--color-bg-sunk) 72%, transparent); opacity: 0; transition: opacity var(--motion-state); }
+.message-inbox--open .message-inbox__backdrop { opacity: 1; }
+.message-inbox__panel { position: absolute; top: var(--space-lg); right: var(--space-lg); width: min(25rem, calc(100% - 2 * var(--space-md))); max-height: calc(100% - 2 * var(--space-lg)); overflow: auto; border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--slate-face); box-shadow: var(--slate-shadow-raised); transform: translateY(calc(-1 * var(--space-sm))); opacity: 0; transition: transform var(--motion-state), opacity var(--motion-state); }
+.message-inbox--open .message-inbox__panel { transform: translateY(0); opacity: 1; }
+.message-inbox__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: var(--space-md); border-bottom: 1px solid var(--color-line-soft); }
+.message-inbox__header h2, .message-inbox__header p { margin: 0; }
+.message-inbox__header h2 { font: var(--font-size-lg) var(--font-display); }
+.message-inbox__header p, .message-card small { color: var(--color-ink-2); font-size: var(--font-size-sm); }
+.message-inbox__list ul { margin: 0; padding: var(--space-sm); list-style: none; }
+.message-inbox__list li + li { border-top: 1px solid var(--color-line-soft); }
+.message-card { width: 100%; min-height: 66px; display: grid; gap: var(--space-xs); padding: var(--space-md); text-align: left; }
+.message-card strong { display: -webkit-box; overflow: hidden; color: var(--color-ink); font-size: var(--font-size-base); font-weight: 600; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.message-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { .message-card:hover { background: var(--color-bg-elev); } }
+@media (max-width: 620px) { .schedule-form > .snt-segmented { width: 100%; } .message-inbox__panel { inset: var(--space-md); width: auto; max-height: none; } }
+@media (prefers-reduced-motion: reduce) { .message-inbox__backdrop, .message-inbox__panel { transition: none; } }

@@ -16,6 +16,8 @@ export interface TopbarProps {
   onSettingsClick(): void;
   onCalendarClick(): void;
   onMenuClick?(): void;
+  onNotificationsClick?(): void;
+  notificationsOpen?: boolean;
   user?: AuthUser;
   onLogout?: () => void;
   onOpenAccount?: () => void;
@@ -30,6 +32,8 @@ export function Topbar({
   onSettingsClick,
   onCalendarClick,
   onMenuClick,
+  onNotificationsClick,
+  notificationsOpen = false,
   user,
   onLogout,
   onOpenAccount,
@@ -71,9 +75,10 @@ export function Topbar({
       </nav>
       <IconButton
         iconName="bell"
-        title="Notifications — coming soon"
-        disabled
-        onClick={() => undefined}
+        title="Messages"
+        active={notificationsOpen}
+        disabled={!onNotificationsClick}
+        onClick={() => onNotificationsClick?.()}
       />
       {user && onLogout && onOpenAccount && (
         <UserMenu user={user} onLogout={onLogout} onOpenAccount={onOpenAccount} />

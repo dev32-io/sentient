@@ -10,6 +10,8 @@ export type SidebarKey =
   | "systemPrompt"
   | "advanced"
   | "account"
+  | "scheduledMessages"
+  | "pushNotifications"
   | "members"
   | "secrets"
   | "getApp"
@@ -51,6 +53,8 @@ const ALL_NAV_GROUPS: readonly NavGroup[] = [
     group: "User",
     items: [
       { key: "account", label: "Account", icon: "user-circle" },
+      { key: "scheduledMessages", label: "Scheduled messages", icon: "calendar" },
+      { key: "pushNotifications", label: "Push notifications", icon: "bell" },
       { key: "getApp", label: "Get the app", icon: "phone" },
       { key: "diagnostics", label: "Diagnostics", icon: "thermo" },
     ],

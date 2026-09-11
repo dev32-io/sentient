@@ -29,6 +29,8 @@ const EVERYONE: SidebarKey[] = [
   "systemPrompt",
   "advanced",
   "account",
+  "scheduledMessages",
+  "pushNotifications",
   "getApp",
   "diagnostics",
 ];

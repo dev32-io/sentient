@@ -118,6 +118,10 @@ function defaultDraft(timeZoneId: string): CalendarEditorDraft {
     recurrenceEnd: "count",
     recurrenceCount: "1",
     recurrenceUntil: datePart(today),
+    reminderEnabled: false,
+    reminderMode: "at-start",
+    reminderLeadMinutes: "15",
+    reminderLocalTime: "09:00",
     inputTimeZoneId: timeZoneId,
   };
 }
@@ -187,6 +191,12 @@ export function draftFromEvent(
     recurrenceEnd: recurrence?.until !== undefined ? "until" : "count",
     recurrenceCount: String(recurrence?.count ?? 1),
     recurrenceUntil,
+    reminderEnabled: source.reminder?.enabled === true,
+    reminderMode: source.reminder?.enabled === true ? source.reminder.mode : allDay ? "all-day" : "at-start",
+    reminderLeadMinutes:
+      source.reminder?.enabled === true && source.reminder.mode === "lead" ? String(source.reminder.leadMinutes) : "15",
+    reminderLocalTime:
+      source.reminder?.enabled === true && source.reminder.mode === "all-day" ? source.reminder.localTime : "09:00",
     inputTimeZoneId: timeZoneId,
     ...(source.start.kind === "timed" && source.start.timeZoneId !== undefined
       ? { eventTimeZoneId: source.start.timeZoneId }
@@ -229,6 +239,10 @@ export function editableDraftKey(draft: CalendarEditorDraft): string {
     recurrenceEnd: draft.recurrenceEnd,
     recurrenceCount: draft.recurrenceCount,
     recurrenceUntil: draft.recurrenceUntil,
+    reminderEnabled: draft.reminderEnabled,
+    reminderMode: draft.reminderMode,
+    reminderLeadMinutes: draft.reminderLeadMinutes,
+    reminderLocalTime: draft.reminderLocalTime,
     inputTimeZoneId: draft.inputTimeZoneId,
     eventTimeZoneId: draft.eventTimeZoneId,
   });
@@ -350,6 +364,32 @@ export function buildTimes(
   return { ok: true, start: start.value, end: end.value };
 }
 
+function reminderError(draft: CalendarEditorDraft): { code: string; message: string } | null {
+  if (!draft.reminderEnabled) return null;
+  if (draft.allDay && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(draft.reminderLocalTime))
+    return { code: "invalid_reminder", message: "Choose a valid all-day reminder time." };
+  if (!draft.allDay && draft.reminderMode === "lead") {
+    const minutes = Number(draft.reminderLeadMinutes);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43_200)
+      return { code: "invalid_reminder", message: "Reminder lead time must be between 1 and 43,200 minutes." };
+  }
+  return null;
+}
+
+function reminderOf(draft: CalendarEditorDraft) {
+  if (!draft.reminderEnabled) return { enabled: false as const };
+  if (draft.allDay)
+    return {
+      enabled: true as const,
+      mode: "all-day" as const,
+      localTime: draft.reminderLocalTime,
+      timeZone: draft.inputTimeZoneId,
+    };
+  if (draft.reminderMode === "lead")
+    return { enabled: true as const, mode: "lead" as const, leadMinutes: Number(draft.reminderLeadMinutes) };
+  return { enabled: true as const, mode: "at-start" as const };
+}
+
 export function buildCreateInput(
   draft: CalendarEditorDraft,
 ): { ok: true; value: CalendarCreateInput } | { ok: false; code: string; message: string } {
@@ -357,6 +397,8 @@ export function buildCreateInput(
   if (!times.ok) return times;
   const recurrence = buildRecurrence(draft);
   if (!recurrence.ok) return recurrence;
+  const invalidReminder = reminderError(draft);
+  if (invalidReminder) return { ok: false, ...invalidReminder };
   const value: CalendarCreateInput = {
     title: draft.title.trim(),
     ...(draft.description.trim() ? { description: draft.description } : {}),
@@ -368,6 +410,9 @@ export function buildCreateInput(
     ...(draft.group.trim() ? { group: draft.group.trim() } : {}),
     tags: parseTags(draft.tagsText),
     ...(recurrence.value !== undefined ? { recurrence: recurrence.value } : {}),
+    ...(draft.reminderEnabled
+      ? { reminder: reminderOf(draft) as Exclude<ReturnType<typeof reminderOf>, { enabled: false }> }
+      : {}),
   };
   return { ok: true, value };
 }
@@ -390,6 +435,8 @@ export function buildUpdateCommand(
   if (!times.ok) return times;
   const recurrence = buildRecurrence(draft);
   if (!recurrence.ok) return recurrence;
+  const invalidReminder = reminderError(draft);
+  if (invalidReminder) return { ok: false, ...invalidReminder };
   const changes: CalendarUpdateChanges = {
     title: draft.title.trim(),
     description: draft.description || null,
@@ -407,6 +454,9 @@ export function buildUpdateCommand(
   const originalRecurrence = buildRecurrence(draftFromEvent(event, draft.inputTimeZoneId));
   const recurrenceChanged =
     !originalRecurrence.ok || JSON.stringify(recurrence.value) !== JSON.stringify(originalRecurrence.value);
+  const originalReminder = reminderOf(draftFromEvent(event, draft.inputTimeZoneId));
+  const nextReminder = reminderOf(draft);
+  if (JSON.stringify(originalReminder) !== JSON.stringify(nextReminder)) changes.reminder = nextReminder;
   if (recurrenceChanged) {
     if (applyTo === "this_occurrence") {
       return {

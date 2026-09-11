@@ -126,6 +126,7 @@ function legacyUpdatePatch(command: Extract<CalendarMutationCommand, { operation
     ...(changes.group === undefined ? {} : { group: changes.group }),
     ...(changes.tags === undefined ? {} : { tags: changes.tags }),
     ...(changes.recurrence === undefined ? {} : { recurrence: changes.recurrence }),
+    ...(changes.reminder === undefined ? {} : { reminder: changes.reminder }),
     ...(command.scope === undefined ? {} : { scope: command.scope }),
     ...(command.expectedRevision === undefined ? {} : { expectedRevision: command.expectedRevision }),
   };
