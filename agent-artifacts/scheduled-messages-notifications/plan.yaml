@@ -22,8 +22,8 @@ stages:
       - web-experience
     mode: concurrent
     checks:
-      - source scripts/env.sh && bun run typecheck && bun run
-        design:foundation:check && git diff --check
+      - bash -lc "source scripts/env.sh && bun run typecheck && bun run
+        design:foundation:check && git diff --check"
     review:
       mode: required
       focus: Review scheduling mutation/claim fencing and recurrence; per-device
