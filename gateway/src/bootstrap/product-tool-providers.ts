@@ -1,11 +1,14 @@
-import type { ProductToolGroup } from "@sentient/config";
+import type { FoundationProductToolGroup, ProductToolGroup } from "@sentient/config";
 import type { NativeToolRunner } from "../tools/tool-broker.js";
 import { calendarProductToolProvider } from "./product-tools/calendar-provider.js";
 import { homeProductToolProvider } from "./product-tools/home-provider.js";
 import { musicProductToolProvider } from "./product-tools/music-provider.js";
 import { webProductToolProvider } from "./product-tools/web-provider.js";
 
-export type FoundationProductGroup = "web" | "home" | "music" | "calendar";
+/** `scheduled` is reserved for the scheduled-message provider. It is type-visible
+ * so that provider can compile independently, but intentionally has no registry
+ * slot or composition-loop entry until the later integration owner mounts it. */
+export type FoundationProductGroup = FoundationProductToolGroup;
 
 /** A group-owned contribution slot. Future providers implement only their
  * factory and receive only their own configuration object; this registry and
@@ -27,6 +30,7 @@ export interface ProductToolProviderConfig {
   readonly home?: Readonly<Record<string, unknown>>;
   readonly music?: Readonly<Record<string, unknown>>;
   readonly calendar?: Readonly<Record<string, unknown>>;
+  readonly scheduled?: Readonly<Record<string, unknown>>;
 }
 
 /** Stable bootstrap-owned slots. Each value lives in its independently-owned

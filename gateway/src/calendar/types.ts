@@ -309,6 +309,86 @@ export const calendarRecurrenceInputSchema = z
 export type CalendarRecurrenceInput = z.infer<typeof calendarRecurrenceInputSchema>;
 export type RecurrenceInput = CalendarRecurrenceInput;
 
+const reminderLocalTimeSchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "expected HH:mm local time");
+export const calendarReminderEnabledInputSchema = z.union([
+  z.object({ enabled: z.literal(true), mode: z.literal("at-start") }).strict(),
+  z
+    .object({ enabled: z.literal(true), mode: z.literal("lead"), leadMinutes: z.number().int().positive().max(43_200) })
+    .strict(),
+  z
+    .object({
+      enabled: z.literal(true),
+      mode: z.literal("all-day"),
+      localTime: reminderLocalTimeSchema,
+      timeZone: eventTimeZoneId,
+    })
+    .strict(),
+]);
+export const calendarReminderUpdateInputSchema = z.union([
+  calendarReminderEnabledInputSchema,
+  z.object({ enabled: z.literal(false) }).strict(),
+]);
+export const calendarReminderOutputSchema = z.union([
+  z.object({ enabled: z.literal(false) }).strict(),
+  z
+    .object({
+      reminderId: z.string().min(1),
+      enabled: z.literal(true),
+      mode: z.enum(["at-start", "lead", "all-day"]),
+      leadMinutes: z.number().int().positive().max(43_200).optional(),
+      localTime: reminderLocalTimeSchema.optional(),
+      timeZone: eventTimeZoneId.optional(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      if (value.mode === "lead" && value.leadMinutes === undefined)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["leadMinutes"],
+          message: "lead reminder requires leadMinutes",
+        });
+      if (value.mode === "all-day" && (value.localTime === undefined || value.timeZone === undefined))
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["localTime"],
+          message: "all-day reminder requires localTime and timeZone",
+        });
+      if (value.mode !== "lead" && value.leadMinutes !== undefined)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["leadMinutes"],
+          message: "leadMinutes is only valid for lead reminders",
+        });
+      if (value.mode !== "all-day" && (value.localTime !== undefined || value.timeZone !== undefined))
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["localTime"],
+          message: "localTime/timeZone are only valid for all-day reminders",
+        });
+    }),
+]);
+export type CalendarReminderCreateInput = z.infer<typeof calendarReminderEnabledInputSchema>;
+export type CalendarReminderUpdateInput = z.infer<typeof calendarReminderUpdateInputSchema>;
+export type CalendarReminderOutput = z.infer<typeof calendarReminderOutputSchema>;
+
+function validateReminderAgainstStart(
+  start: string,
+  reminder: CalendarReminderCreateInput | undefined,
+  ctx: z.RefinementCtx,
+): void {
+  if (!reminder) return;
+  const allDay = /^\d{4}-\d{2}-\d{2}$/.test(start);
+  if (allDay !== (reminder.mode === "all-day")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reminder"],
+      message: allDay
+        ? "all-day events require an all-day reminder time"
+        : "timed events cannot use an all-day reminder",
+    });
+  }
+}
+
 const optionalDescription = z.string().min(1).optional();
 const optionalGroup = z.string().min(1).optional();
 const eventMetadataShape = {
@@ -324,6 +404,7 @@ const eventMetadataShape = {
 };
 
 /** Input used by create; scope is optional because adapters default it to private. */
+/** On create, omission means no personal reminder; an enabled value belongs to the acting user. */
 export const calendarCreateInputSchema = z
   .object({
     ...eventMetadataShape,
@@ -331,9 +412,11 @@ export const calendarCreateInputSchema = z
     importance: z.enum(["normal", "important", "pinned"]).default("normal"),
     tags: z.array(z.string()).default([]),
     notificationPolicy: z.record(z.unknown()).optional(),
+    reminder: calendarReminderEnabledInputSchema.optional(),
     scope: calendarWriteScopeSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => validateReminderAgainstStart(value.start, value.reminder, ctx));
 export type CalendarCreateInput = z.infer<typeof calendarCreateInputSchema>;
 export const calendarCreateEventSchema = calendarCreateInputSchema;
 
@@ -344,6 +427,8 @@ export const calendarEventSchema = z
     revision: revisionSchema,
     scope: calendarWriteScopeSchema,
     ...eventMetadataShape,
+    /** Optional for old responses; new reminder-aware adapters emit enabled or disabled explicitly. */
+    reminder: calendarReminderOutputSchema.optional(),
   })
   .strict();
 export type CalendarEvent = z.infer<typeof calendarEventSchema>;
@@ -358,6 +443,7 @@ export const calendarOccurrenceProjectionSchema = z
     revision: revisionSchema,
     scope: calendarWriteScopeSchema,
     ...eventMetadataShape,
+    reminder: calendarReminderOutputSchema.optional(),
   })
   .strict();
 export type CalendarOccurrenceProjection = z.infer<typeof calendarOccurrenceProjectionSchema>;
@@ -398,15 +484,23 @@ const updateChangeShape = {
   group: z.string().min(1).nullable().optional(),
   tags: z.array(z.string()).optional(),
   recurrence: calendarRecurrenceInputSchema.nullable().optional(),
+  /** Omission preserves the acting user's reminder; `{ enabled:false }` removes it. */
+  reminder: calendarReminderUpdateInputSchema.optional(),
 };
 const changesSchema = z
   .object(updateChangeShape)
   .strict()
-  .refine((changes) => Object.keys(changes).length > 0, "at least one change is required");
+  .refine((changes) => Object.keys(changes).length > 0, "at least one change is required")
+  .superRefine((changes, ctx) => {
+    if (changes.start && changes.reminder?.enabled) validateReminderAgainstStart(changes.start, changes.reminder, ctx);
+  });
 const occurrenceChangesSchema = z
   .object({ ...updateChangeShape, recurrence: z.never().optional() })
   .strict()
-  .refine((changes) => Object.keys(changes).length > 0, "at least one change is required");
+  .refine((changes) => Object.keys(changes).length > 0, "at least one change is required")
+  .superRefine((changes, ctx) => {
+    if (changes.start && changes.reminder?.enabled) validateReminderAgainstStart(changes.start, changes.reminder, ctx);
+  });
 const mutationTargetShape = {
   eventId: z.string().min(1),
   scope: calendarWriteScopeSchema.optional(),

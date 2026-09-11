@@ -90,6 +90,51 @@ describe("loadStartupConfig — access root expansion", () => {
   });
 });
 
+describe("loadStartupConfig — scheduling/push carry-through", () => {
+  it("maps explicit YAML policy without inventing provider credentials", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentient-startup-scheduling-"));
+    const path = join(dir, "config.yaml");
+    writeFileSync(
+      path,
+      `${CONFIG_WITH_TILDE_SHARED_ROOT}
+scheduling:
+  tick_interval_ms: 1000
+  missed_grace_ms: 900000
+  claim_lease_ms: 60000
+  due_claim_limit: 25
+  max_relative_delay_ms: 31536000000
+  max_message_chars: 12000
+  cards_default_page_size: 20
+  cards_max_page_size: 100
+  outbox_claim_limit: 50
+  outbox_lease_ms: 60000
+push:
+  request_timeout_ms: 5000
+  drain_interval_ms: 1000
+  drain_claim_limit: 50
+  max_attempts: 5
+  retry_base_ms: 1000
+  retry_max_ms: 60000
+  payload_max_bytes: 4096
+  content_preview_max_chars: 280
+  revocation_ttl_ms: 2592000000
+`,
+    );
+    const prev = process.env.GATEWAY_CONFIG_PATH;
+    process.env.GATEWAY_CONFIG_PATH = path;
+    try {
+      const cfg = loadStartupConfig();
+      expect(cfg.scheduling?.missedGraceMs).toBe(900000);
+      expect(cfg.scheduling?.cardsMaxPageSize).toBe(100);
+      expect(cfg.push?.payloadMaxBytes).toBe(4096);
+      expect(cfg.push).not.toHaveProperty("apnsKey");
+    } finally {
+      if (prev === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
+      else process.env.GATEWAY_CONFIG_PATH = prev;
+    }
+  });
+});
+
 describe("loadStartupConfig — security.inbound_scan carry-through", () => {
   it("threads an operator-disabled channel into StartupConfig.inboundScan", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentient-startup-config-"));

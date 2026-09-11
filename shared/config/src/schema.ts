@@ -4,6 +4,8 @@ import { hermesBuiltinToolsSchema } from "./schemas/hermes-builtin-tools";
 import { hermesConfigSchema } from "./schemas/hermes-config";
 import { mcpCatalogSchema } from "./schemas/mcp-catalog";
 import { orchestratorConfigSchema } from "./schemas/orchestrator-config";
+import { pushConfigSchema } from "./schemas/push-config";
+import { schedulingConfigSchema } from "./schemas/scheduling-config";
 import { storeConfigSchema } from "./schemas/store-config";
 import { systemOrchestratorConfigSchema } from "./schemas/system-orchestrator-config";
 
@@ -460,6 +462,12 @@ export const gatewayConfigSchema = z.object({
   // (Plan 2). The composition root that constructs the orchestrator runtime
   // MUST fail loudly if this is absent when the orchestrator is enabled.
   orchestrator: orchestratorConfigSchema.optional(),
+  // Optional for operator-file compatibility. When present, every scheduling
+  // behavior knob is explicit; consumers must not synthesize fallback policy.
+  scheduling: schedulingConfigSchema.optional(),
+  // Optional until native push is configured. Contains policy only, never APNs
+  // credentials or locally provisioned provider secrets.
+  push: pushConfigSchema.optional(),
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
   tts: ttsConfigSchema,

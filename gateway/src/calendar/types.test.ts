@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { goldenScheduleWireFixtures } from "@sentient/protocol";
 import {
   calendarCreateInputSchema,
   calendarErrorSchema,
@@ -10,6 +11,8 @@ import {
   calendarPageSchema,
   calendarQueryInputSchema,
   calendarRecurrenceInputSchema,
+  calendarReminderOutputSchema,
+  calendarReminderUpdateInputSchema,
   calendarRequestSchema,
   calendarResponseSchema,
   calendarTimeInputSchema,
@@ -76,6 +79,35 @@ describe("calendar V2 contracts", () => {
     expect(defaults.visibility).toBe("everyone");
     expect(defaults.importance).toBe("normal");
     expect(defaults.tags).toEqual([]);
+  });
+
+  test("distinguishes acting-user reminder omission, explicit disable, and event time kinds", () => {
+    const reminderFixtures = goldenScheduleWireFixtures.calendarReminderStates;
+    expect(calendarCreateInputSchema.safeParse(reminderFixtures.createOmitted).success).toBe(true);
+    expect(
+      calendarCreateInputSchema.safeParse({
+        title: "Timed",
+        start: "2026-08-05T09:00:00-04:00",
+        reminder: reminderFixtures.enabledAtStart,
+      }).success,
+    ).toBe(true);
+    expect(
+      calendarCreateInputSchema.safeParse({
+        title: "All day",
+        start: "2026-08-05",
+        reminder: { enabled: true, mode: "all-day", localTime: "09:00", timeZone: "America/Toronto" },
+      }).success,
+    ).toBe(true);
+    expect(
+      calendarCreateInputSchema.safeParse({
+        title: "Invalid all day",
+        start: "2026-08-05",
+        reminder: { enabled: true, mode: "at-start" },
+      }).success,
+    ).toBe(false);
+    expect(calendarReminderUpdateInputSchema.safeParse(reminderFixtures.disabled).success).toBe(true);
+    expect(calendarOccurrenceChangesSchema.safeParse({ reminder: reminderFixtures.disabled }).success).toBe(true);
+    expect(calendarReminderOutputSchema.safeParse(reminderFixtures.disabled).success).toBe(true);
   });
 
   test("keeps occurrence identity separate from event identity", () => {

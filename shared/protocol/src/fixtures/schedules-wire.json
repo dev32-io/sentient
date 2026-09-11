@@ -1,0 +1,90 @@
+{
+  "routes": {
+    "collection": "/api/v1/schedules",
+    "item": "/api/v1/schedules/:scheduleId",
+    "cards": "/api/v1/scheduled-session-cards"
+  },
+  "oldClientSessionRow": {
+    "sessionId": "ses_existing",
+    "rootId": "root_existing",
+    "title": "Existing chat",
+    "startedAt": 1785589200000,
+    "lastActiveAt": 1785589260000,
+    "messageCount": 2,
+    "isActive": false
+  },
+  "onceAtCreate": {
+    "idempotencyKey": "create-once-at-1",
+    "message": "Ask me how the dentist appointment went.",
+    "timing": { "kind": "once-at", "at": "2026-08-01T15:30:00.000Z" }
+  },
+  "onceAfterCreate": {
+    "idempotencyKey": "create-once-after-1",
+    "message": "Continue our conversation about the garden plan.",
+    "timing": { "kind": "once-after", "afterSeconds": 1800 }
+  },
+  "resolvedOnce": {
+    "scheduleId": "sch_once",
+    "revision": 1,
+    "message": "Continue our conversation about the garden plan.",
+    "timing": { "kind": "once", "at": "2026-08-01T15:30:00.000Z" },
+    "enabled": true,
+    "source": { "kind": "user" },
+    "nextRunAt": "2026-08-01T15:30:00.000Z",
+    "createdAt": "2026-08-01T15:00:00.000Z",
+    "updatedAt": "2026-08-01T15:00:00.000Z"
+  },
+  "weeklyCreate": {
+    "idempotencyKey": "create-weekly-1",
+    "message": "Give me a brief plan for the week.",
+    "timing": {
+      "kind": "recurring",
+      "frequency": "weekly",
+      "localTime": "08:30",
+      "timeZone": "America/Toronto",
+      "weekdays": ["monday"]
+    },
+    "enabled": true
+  },
+  "monthlyCreate": {
+    "idempotencyKey": "create-monthly-1",
+    "message": "Help me review the household budget.",
+    "timing": {
+      "kind": "recurring",
+      "frequency": "monthly",
+      "localTime": "09:00",
+      "timeZone": "America/Toronto",
+      "dayOfMonth": 31
+    }
+  },
+  "cards": {
+    "cards": [
+      {
+        "sessionId": "ses_scheduled_1",
+        "scheduleId": "sch_once",
+        "occurrenceId": "occ_once_20260801",
+        "intendedAt": "2026-08-01T15:30:00.000Z",
+        "completedAt": "2026-08-01T15:31:00.000Z",
+        "status": "completed",
+        "preview": "Here is the garden plan we discussed…"
+      },
+      {
+        "sessionId": "ses_scheduled_2",
+        "scheduleId": "sch_weekly",
+        "occurrenceId": "occ_weekly_20260725",
+        "intendedAt": "2026-07-25T12:30:00.000Z",
+        "completedAt": "2026-07-25T12:31:00.000Z",
+        "status": "interrupted"
+      }
+    ],
+    "nextCursor": "older_2"
+  },
+  "calendarReminderStates": {
+    "createOmitted": {
+      "title": "Dentist",
+      "start": "2026-08-05T09:00:00-04:00"
+    },
+    "enabledAtStart": { "enabled": true, "mode": "at-start" },
+    "disabled": { "enabled": false }
+  }
+}

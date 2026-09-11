@@ -31,6 +31,9 @@ export const productToolGroupSchema = z
   .min(1)
   .regex(/^[a-z][a-z0-9_-]*$/);
 export type ProductToolGroup = z.infer<typeof productToolGroupSchema>;
+/** Built-in provider vocabulary. `scheduled` is reserved but not mounted by the contracts stage. */
+export const foundationProductToolGroupSchema = z.enum(["web", "home", "music", "calendar", "scheduled"]);
+export type FoundationProductToolGroup = z.infer<typeof foundationProductToolGroupSchema>;
 
 /** Standard groups participate in role defaults. Advanced groups are opt-in:
  * they contribute no model definitions until a profile explicitly enables
