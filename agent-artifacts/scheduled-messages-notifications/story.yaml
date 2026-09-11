@@ -583,11 +583,13 @@ e2e: >
 
 
   With two disposable local accounts, attempt cross-account schedule/card access
-  and session-link opening. Revoke relevant access before a schedule fires.
-  Where development device registration is available, also exercise account
-  switching and attempted destination registration on behalf of the other user;
-  otherwise record that platform limitation and use focused authorization tests
-  for that boundary.
+  and session-link opening, and revoke access before a schedule fires. Where
+  development device registration is available, sign out with the gateway
+  temporarily unreachable, restore connectivity for pending unlink, and switch
+  accounts while attempting cross-account destination registration. Otherwise
+  record the platform-specific limitation; authorization and
+  pending-unlink/rebinding state machines still require deterministic boundary
+  tests.
 
 
   ### Oracle
@@ -595,18 +597,22 @@ e2e: >
 
   Another account cannot read/mutate the owner's schedules, see their cards, or
   treat a session identifier as authorization. Due execution respects current
-  user authorization. Supported device account switching removes the old
-  delivery association and does not permit cross-account registration. Ordinary
+  authority. Local logout completes even if unlink fails, with a visible warning
+  that pushes may continue until server acknowledgement; restored connectivity
+  completes pending revocation without retaining general account access. A new
+  delivery binding cannot become active before the old one is disabled. Ordinary
   chat policy remains unchanged.
 
 
   ### Proof
 
 
-  Retain sanitized denial outcomes and content-free
-  schedule/session/registration states, with no tokens or message content.
-  Distinguish exercised native association behavior from skipped
-  platform-dependent portions; remove disposable resources.
+  Retain sanitized denial outcomes, local auth/pending-unlink state, and
+  content-free binding/schedule/session identifiers. Record the distinction
+  between exercised native association behavior and skipped device-dependent
+  portions. Verify narrow revocation authority, account-switch fencing, and
+  retry behavior in deterministic boundary tests regardless of real-device
+  availability. Restore local connectivity and remove disposable resources.
 
 
   ## Exclusions
