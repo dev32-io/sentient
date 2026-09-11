@@ -545,36 +545,37 @@ e2e: >
   configuration and remove disposable resources.
 
 
-  ## E2E-008 — Schedules notifications and links preserve account isolation
+  ## E2E-008 — Schedules cards and session links preserve account isolation
 
 
   ### Exercise
 
 
-  With two disposable local accounts, attempt cross-account schedule/inbox
-  access, destination registration, and session-link opening. Switch the
-  signed-in account on a test installation and revoke relevant access before a
-  schedule fires. Use an ordinary scheduled request that would require
-  permissions the owner does not have.
+  With two disposable local accounts, attempt cross-account schedule/card access
+  and session-link opening. Revoke relevant access before a schedule fires.
+  Where development device registration is available, also exercise account
+  switching and attempted destination registration on behalf of the other user;
+  otherwise record that platform limitation and use focused authorization tests
+  for that boundary.
 
 
   ### Oracle
 
 
-  Another account cannot read or mutate the owner's schedules/inbox, bind a
-  destination on their behalf, or use an identifier as authorization. Account
-  switching removes the old delivery association. Execution uses current
-  authority and normal tool/confirmation policy; a scheduled request cannot gain
-  access denied to an interactive request.
+  Another account cannot read/mutate the owner's schedules, see their cards, or
+  treat a session identifier as authorization. Due execution respects current
+  user authorization. Supported device account switching removes the old
+  delivery association and does not permit cross-account registration. Ordinary
+  chat policy remains unchanged.
 
 
   ### Proof
 
 
-  Retain sanitized authorization outcomes and content-free
-  registration/run/session states, with no tokens or user content. Verify denied
-  tool execution through status/name only. Remove the disposable accounts and
-  all associated test registrations.
+  Retain sanitized denial outcomes and content-free
+  schedule/session/registration states, with no tokens or message content.
+  Distinguish exercised native association behavior from skipped
+  platform-dependent portions; remove disposable resources.
 
 
   ## Exclusions
