@@ -62,12 +62,12 @@ delivery: >-
   skills/tools. Commit the reusable service and factories without starting
   runtime or production services.
 checks:
-  - source scripts/env.sh && bun test gateway/src/scheduling
+  - bash -lc "source scripts/env.sh && bun test gateway/src/scheduling
     gateway/src/api/handlers/scheduled-messages.test.ts
-    gateway/src/bootstrap/product-tools/scheduled-message-provider.test.ts
-  - source scripts/env.sh && bun test
+    gateway/src/bootstrap/product-tools/scheduled-message-provider.test.ts"
+  - bash -lc "source scripts/env.sh && bun test
     gateway/src/calendar/expand-recurrence.test.ts && bun run --filter
-    @sentient/gateway typecheck && git diff --check
+    @sentient/gateway typecheck && git diff --check"
 assignment:
   agent: implementer
   tier: medium
