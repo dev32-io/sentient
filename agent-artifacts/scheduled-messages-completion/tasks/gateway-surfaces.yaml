@@ -1,0 +1,93 @@
+schemaVersion: 1
+id: gateway-surfaces
+title: Compose gateway scheduling push and session-backed cards
+dependsOn:
+  - scheduled-chat-execution
+  - ios-experience
+description: Finish public gateway mounting and lifecycle composition over the
+  existing schedule/push services and completed scheduled-chat runner, and
+  implement the session-backed card projection consumed by web and iOS. Schedule
+  and push handler factories already exist but do not establish
+  whole-application integration. The bell inbox is only bounded previews of
+  existing sessions; ordinary session listing and resume must remain compatible.
+  Preserve the implemented terminal/outbox transaction rather than replacing it.
+scope: >-
+  Own `gateway/src/api/router.ts`, composition in
+  `gateway/src/bootstrap/phase-services.ts` and `create-gateway-services.ts`,
+  real model provider registry/metadata/role-default mounting,
+  scheduled-message/push API dependency wiring, current auth/revocation
+  integration, and session-store projection/read helpers. Consume
+  createScheduledMessagesHandler, createScheduledMessageProvider or the actual
+  existing scheduled provider factory, createPushHandler, createScheduleService,
+  openPushStore, createPushDeliveryService, createPushOutboxDrainer and the
+  completed runner/outbox adapter. Inspect actual exports; do not invent
+  parallel interfaces or client endpoint spellings.
+
+
+  The established scheduled-message handler routes SCHEDULE_CARDS_ROUTE through
+  ScheduleCommands.cards. Replace the existing schedule-store scheduled_cards
+  query with an injected/session-backed query behind that same validated route.
+  Use the completed session provenance and current membership; preserve public
+  card DTOs and client fixtures. Do not add another endpoint family,
+  notification database or transcript copy. No UI or calendar
+  subscription/mutation implementation here; calendar-specific composition
+  follows separately. Do not redesign occurrence finalization, change existing
+  workflow resources, add FCM/browser delivery, or run production operations.
+delivery: >-
+  - Implement bounded newest-first card reads with validated
+  pagination/filtering and truncated plain-text preview or safe saved failure
+  status. Resolve current owner/session membership at read time. Cards survive
+  once deletion and do not leak stale/deleted/inaccessible sessions. Stop using
+  the redundant scheduled_cards table as authority; retain prior session and
+  execution bookkeeping and handle schema evolution compatibly.
+
+  - Mount the real schedule/push APIs at the shared contract routes and register
+  actual model tools/metadata/default role policy. Tool/argument descriptions
+  distinguish once/recurring future messages from calendar events and automatic
+  once cleanup. Mediation, immutable principal and capability ownership remain
+  enforced; body-supplied owners or installation IDs never grant access.
+
+  - Compose runner, claim discovery, current-user execution authorization,
+  handle factories, durable reference outbox, content resolver and push drainer
+  once under the existing host lifecycle. Use actual current household/user
+  authority consistently rather than synthetic fallback principals. Start
+  according to optional YAML settings; bound and cancel operations; ensure
+  restart/shutdown does not duplicate supervisors or lose ordinary background
+  retention.
+
+  - Inject protected APNs/Gorush credentials and existing managed-service
+  availability. Missing credentials/addon failures produce truthful unavailable
+  push status without blocking schedule/chat/cards. Keep APNs-only private host
+  transport and existing launchd ownership. No new credentials, production setup
+  or hand-started production services.
+
+  - Expose exact-generation revoke-only cleanup separately from authenticated
+  account APIs, with no privilege widening. Connect normal logout, account
+  revocation/deletion and current binding checks to the actual push service.
+  Clients own immediate local logout/warnings; the server enforces old-binding
+  disable before replacement activation and current privacy on each retry.
+
+  - Add composition/public-route/projection tests using temporary real stores
+  and controlled runtime/provider boundaries. Prove owner isolation, bounded
+  cards after once cleanup, normal message execution through the mounted runner,
+  optional push failure, single lifecycle activation, current authority, pending
+  unlink/rebinding and backward-compatible session APIs. Verify the completed
+  web/iOS wire fixtures against these actual routes rather than silently
+  changing either side.
+
+  - Leave a clean committed gateway integration ready for the calendar source
+  adapter and final local journeys. No real APNs receipt is required by
+  deterministic tests and no special skill/tool internals need re-proving.
+checks:
+  - bash -lc "source scripts/env.sh && bun test gateway/src/api
+    gateway/src/store gateway/src/scheduling gateway/src/scheduled-chat
+    gateway/src/push"
+  - bash -lc "source scripts/env.sh && bun test gateway/src/bootstrap
+    gateway/src/tools/role-defaults.test.ts && bun run typecheck && git diff
+    --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: Public composition and projection form one bounded gateway boundary
+    once execution and both clients are present. Calendar mutations and durable
+    finalization each retain separate ownership.
