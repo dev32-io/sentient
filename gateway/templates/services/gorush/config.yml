@@ -1,0 +1,49 @@
+core:
+  enabled: true
+  address: "0.0.0.0"
+  port: "8088"
+  worker_num: 2
+  queue_num: 64
+  max_notification: 50
+  sync: true
+  mode: release
+  ssl: false
+  http_proxy: ""
+grpc:
+  enabled: false
+api:
+  push_uri: /api/push
+  stat_go_uri: /disabled/stat-go
+  stat_app_uri: /disabled/stat-app
+  config_uri: /disabled/config
+  sys_stat_uri: /disabled/sys-stats
+  metric_uri: /disabled/metrics
+  health_uri: /healthz
+android:
+  enabled: false
+  max_retry: 0
+huawei:
+  enabled: false
+  max_retry: 0
+ios:
+  enabled: true
+  key_path: ""
+  key_base64: ""
+  key_type: p8
+  production: true
+  max_concurrent_pushes: 20
+  max_retry: 0
+  key_id: ""
+  team_id: ""
+queue:
+  engine: local
+log:
+  format: json
+  access_log: stdout
+  access_level: warning
+  error_log: stderr
+  error_level: error
+  hide_token: true
+  hide_messages: true
+stat:
+  engine: memory

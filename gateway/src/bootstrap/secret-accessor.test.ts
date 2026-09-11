@@ -17,7 +17,10 @@ const mockInternalStore: InternalSecretsStore = {
 
 /** Minimal SecretsStore stub: loadSync returns a flat nested object. */
 const mockSecretsStore = {
-  loadSync: () => ({ home_assistant: { mcp_server_token: "ha-tok", url: "http://ha:8123" } }),
+  loadSync: () => ({
+    home_assistant: { mcp_server_token: "ha-tok", url: "http://ha:8123" },
+    push: { apns_key_base64: "base64-private-key" },
+  }),
 } as unknown as SecretsStore;
 
 test("resolves internal.searxng_secret via internalSecretsStore", () => {
@@ -28,6 +31,11 @@ test("resolves internal.searxng_secret via internalSecretsStore", () => {
 test("resolves operator binding (home_assistant.mcp_server_token) via secretsStore", () => {
   const accessor = makeSecretAccessor(mockSecretsStore, mockInternalStore);
   expect(accessor.resolve("home_assistant.mcp_server_token")).toBe("ha-tok");
+});
+
+test("resolves APNs credential only through protected secrets accessor", () => {
+  const accessor = makeSecretAccessor(mockSecretsStore, mockInternalStore);
+  expect(accessor.resolve("push.apns_key_base64")).toBe("base64-private-key");
 });
 
 test("returns null for unknown internal.* key", () => {

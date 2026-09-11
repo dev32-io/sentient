@@ -961,6 +961,22 @@ managed_services:
     depends_on: []
     optional: false
 
+  # Optional APNs transport. Missing signing credentials causes registry skip;
+  # push reports unavailable without holding gateway readiness.
+  gorush:
+    template: gorush.yaml
+    allowed_images: ["appleboy/gorush:1.22.0@sha256:2bc21bc98c2253f2d14b4aeb614ec89b72188b2e885d58490ac712cb85a9b8bd"]
+    networks: ["sentient-external"]
+    secrets:
+      GORUSH_APNS_KEY_BASE64: push.apns_key_base64
+      GORUSH_APNS_KEY_ID: push.apns_key_id
+      GORUSH_APNS_TEAM_ID: push.apns_team_id
+    healthcheck:
+      url: http://127.0.0.1:8088/healthz
+      timeout_ms: 10000
+    depends_on: []
+    optional: true
+
   outbound-worker:
     template: outbound-worker.yaml
     allowed_images: ["sentient/outbound-worker:local"]

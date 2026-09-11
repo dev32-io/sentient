@@ -31,8 +31,9 @@ The image bakery builds:
 - `sentient/ingress-proxy:local`
 - `sentient/inbound-proxy:local`
 
-SearXNG and egress-proxy use configured public images that the gateway pulls
-and manages. Compose does not define runtime networks or start any service.
+SearXNG, egress-proxy, and optional Gorush use configured public images that
+the gateway pulls and manages. Compose does not define runtime networks or
+start any service.
 
 ## Build and install
 
@@ -117,6 +118,18 @@ The first-run web wizard stores admin, provider, and integration settings in
 the operator state tree. Process-only secrets required by a native addon, such
 as deep-memory's bearer tokens, must be provided to the gateway launchd
 environment and must not be placed in `config.yaml`.
+
+## Optional iOS push (Gorush)
+
+Gorush is APNs-only, loopback-published on port 8088, and optional: absent APNs
+credentials leave push unavailable without blocking gateway or voice use. Copy
+no real key into the repository. In the mode-0600
+`~/.sentient/gateway/secrets/keys.yaml`, set `push.apns_key_base64` to the
+base64 of the Apple `.p8` signing key and set its key/team IDs. Keep the app
+bundle/topic in operator configuration at the composition boundary. Restart
+through the normal local stack command or production installer; never hand-start
+a production container or gateway. Gorush has provider retries disabled and
+hides device tokens and message bodies from logs.
 
 ## Native capabilities
 

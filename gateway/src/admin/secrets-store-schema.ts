@@ -32,6 +32,15 @@ export const KeysYamlSchema = z.object({
     local_ip: z.string().nullable().default(null),
     token: z.string().nullable(),
   }),
+  /** APNs credentials are optional protected values. The private key is base64
+   * so multiline signing material is never rendered into config YAML. */
+  push: z
+    .object({
+      apns_key_base64: z.string().nullable().default(null),
+      apns_key_id: z.string().nullable().default(null),
+      apns_team_id: z.string().nullable().default(null),
+    })
+    .optional(),
   admin_token: z.string(),
 });
 
@@ -51,6 +60,11 @@ export interface ResolvedLlm {
   provider: LlmProvider;
   apiKey: string; // empty string if null
   baseUrl: string; // empty string if null
+}
+export interface ResolvedApnsCredentials {
+  keyBase64: string;
+  keyId: string;
+  teamId: string;
 }
 
 // --- Status ------------------------------------------------------------------
@@ -80,6 +94,8 @@ export interface SecretsStore {
   getProviderSecrets(provider: LlmProvider): Promise<Result<ResolvedLlm, SecretsStoreError>>;
   /** Returns secrets for a specific provider from cache; null if cache not yet warm. */
   getProviderSecretsSync(provider: LlmProvider): ResolvedLlm | null;
+  /** Null fields remain empty strings; composition decides that push is unavailable. */
+  getApnsCredentialsSync?(): ResolvedApnsCredentials | null;
   setLlmProviderKey(
     provider: LlmProvider,
     patch: { api_key?: string | null; base_url?: string | null },

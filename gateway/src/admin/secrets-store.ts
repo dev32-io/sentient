@@ -13,6 +13,7 @@ import {
   type SecretsStoreError,
 } from "./secrets-store-schema.js";
 
+export type { ResolvedApnsCredentials } from "./secrets-store-schema.js";
 export type {
   KeysYaml,
   LlmProvider,
@@ -180,6 +181,15 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
     getProviderSecretsSync(provider) {
       if (!cache) return null;
       return resolveProviderLlm(cache, provider);
+    },
+
+    getApnsCredentialsSync() {
+      if (!cache) return null;
+      return {
+        keyBase64: cache.push?.apns_key_base64 ?? "",
+        keyId: cache.push?.apns_key_id ?? "",
+        teamId: cache.push?.apns_team_id ?? "",
+      };
     },
 
     async setLlmProviderKey(provider, patch) {
