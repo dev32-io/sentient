@@ -428,6 +428,41 @@ e2e: >
   identifiers. Do not capture message content. Remove only disposable test data.
 
 
+  ## E2E-005 — Device registration and privacy are independent
+
+
+  ### Exercise
+
+
+  On the local stack, register two authorized native test installations for one
+  disposable account. Keep one in default Hide content and choose Show content
+  on the other; exercise denied permission and registration failure. Generate a
+  scheduled result including a payload-limit case, change privacy while delivery
+  is pending, disable/unlink a destination, and exercise token
+  replacement/invalidation using controlled development setup.
+
+
+  ### Oracle
+
+
+  Settings report actual permission/registration state. Hidden outbound payloads
+  contain only generic presentation and minimal routing metadata; the other
+  device receives bounded plain-text response content. Both reference the same
+  session with the full response available there. Latest preferences apply to
+  subsequent dispatch/retry, invalid or unlinked destinations stop receiving new
+  sends, and other devices/schedules remain unaffected.
+
+
+  ### Proof
+
+
+  Use a content-free transport-boundary assertion for the hidden privacy
+  invariant: report field presence, byte limits, destination identity aliases,
+  and routing equality without retaining payloads or tokens. Capture redacted
+  settings states. This case does not establish real OS delivery; unregister
+  test devices and remove disposable accounts.
+
+
   ## Exclusions
 
 
