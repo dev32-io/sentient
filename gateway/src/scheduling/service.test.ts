@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -134,6 +135,23 @@ describe("schedule persistence", () => {
     );
     expect(replay.ok && replay.value.replayed).toBe(true);
     expect((await service.claim(new Date("2026-08-01T15:03:01Z"), 10, 60_000)).ok).toBe(true);
+  });
+
+  test("fails closed when a recoverable occurrence has invalid persisted authority inputs", async () => {
+    const { service, resource } = setup();
+    await service.create(resource, once("corrupt-recovery", "2026-08-01T15:00:00Z"), new Date("2026-08-01T14:00:00Z"));
+    const due = await service.claimDue(new Date("2026-08-01T15:01:00Z"), 1, 1_000);
+    if (!due.ok || !due.value[0]) throw new Error("claim failed");
+    expect((await service.associateSession(due.value[0], "session-corrupt")).ok).toBe(true);
+
+    const db = new Database(join(resource.rootPath, "scheduling-v1", "schedules.db"));
+    db.query("UPDATE occurrences SET source_json='{}'").run();
+    db.close();
+
+    expect(await service.claimDue(new Date("2026-08-01T15:01:02Z"), 1, 1_000)).toEqual({
+      ok: false,
+      error: { code: "internal", retryable: false },
+    });
   });
 
   test("pause, edit, and delete fence already-issued claims", async () => {

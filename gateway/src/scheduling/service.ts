@@ -9,6 +9,7 @@ import {
   type ScheduledSessionCard,
   type ScheduledSessionCardPage,
   scheduleSchema,
+  scheduleSourceSchema,
 } from "@sentient/protocol";
 import type { PrivateScheduleResource } from "../access/private-schedule-resource.js";
 import { type UserId, isValidUserId } from "../user-auth/user-id.js";
@@ -87,6 +88,7 @@ type Candidate = { db: Database; row: Row; owner: UserId; intendedMs: number };
 type RecoverableRow = {
   occurrence_id: string;
   schedule_id: string;
+  owner_user_id: string;
   intended_at: string;
   message: string;
   source_json: string;
@@ -436,13 +438,19 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
         opened.push(db);
         for (const row of db
           .query<RecoverableRow, [string]>(`
-            SELECT o.occurrence_id,o.schedule_id,o.intended_at,o.message,o.source_json,o.one_time
+            SELECT o.occurrence_id,o.schedule_id,s.owner_user_id,o.intended_at,o.message,o.source_json,o.one_time
             FROM occurrences o JOIN schedules s ON s.schedule_id=o.schedule_id
             WHERE o.session_id IS NOT NULL AND o.outcome IS NULL
               AND (o.claimed_until IS NULL OR o.claimed_until<=?)
           `)
           .all(iso(now))) {
-          if (row.message && row.source_json) recoverable.push({ db, owner, row });
+          if (
+            row.owner_user_id !== owner ||
+            !row.message ||
+            !scheduleSourceSchema.safeParse(parseJson(row.source_json)).success
+          )
+            return fail("internal");
+          recoverable.push({ db, owner, row });
         }
         const rows = db
           .query<Row, []>("SELECT * FROM schedules WHERE deleted=0 AND enabled=1 AND next_run_at IS NOT NULL")
@@ -488,14 +496,14 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
           .query(`UPDATE occurrences SET claim_token=?,claimed_until=? WHERE occurrence_id=? AND outcome IS NULL
             AND (claimed_until IS NULL OR claimed_until<=?)`)
           .run(token, until, pending.row.occurrence_id, iso(now));
-        const source = parseJson(pending.row.source_json) as DueClaim["source"];
-        if (changed.changes === 1 && source) {
+        const source = scheduleSourceSchema.safeParse(parseJson(pending.row.source_json));
+        if (changed.changes === 1 && source.success) {
           claims.push({
             claimToken: token,
             scheduleId: pending.row.schedule_id,
             occurrenceId: pending.row.occurrence_id,
             ownerUserId: pending.owner,
-            source,
+            source: source.data,
             intendedAt: pending.row.intended_at,
             claimedUntil: until,
             message: pending.row.message,
