@@ -79,11 +79,11 @@ delivery: >-
   credential setup without actual keys and leave clean committed
   provider-independent APIs ready for composition.
 checks:
-  - source scripts/env.sh && bun test gateway/src/push
-    gateway/src/api/handlers/push.test.ts gateway/src/system-orchestrator
-  - source scripts/env.sh && bun test gateway/src/access
+  - bash -lc "source scripts/env.sh && bun test gateway/src/push
+    gateway/src/api/handlers/push.test.ts gateway/src/system-orchestrator"
+  - bash -lc "source scripts/env.sh && bun test gateway/src/access
     gateway/src/admin/secrets-store.test.ts && bun run --filter
-    @sentient/gateway typecheck && git diff --check
+    @sentient/gateway typecheck && git diff --check"
 assignment:
   agent: implementer
   tier: medium
