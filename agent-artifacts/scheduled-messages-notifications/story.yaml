@@ -530,6 +530,38 @@ e2e: >
   local configuration and remove disposable resources.
 
 
+  ## E2E-008 — Schedules notifications and links preserve account isolation
+
+
+  ### Exercise
+
+
+  With two disposable local accounts, attempt cross-account schedule/inbox
+  access, destination registration, and session-link opening. Switch the
+  signed-in account on a test installation and revoke relevant access before a
+  schedule fires. Use an ordinary scheduled request that would require
+  permissions the owner does not have.
+
+
+  ### Oracle
+
+
+  Another account cannot read or mutate the owner's schedules/inbox, bind a
+  destination on their behalf, or use an identifier as authorization. Account
+  switching removes the old delivery association. Execution uses current
+  authority and normal tool/confirmation policy; a scheduled request cannot gain
+  access denied to an interactive request.
+
+
+  ### Proof
+
+
+  Retain sanitized authorization outcomes and content-free
+  registration/run/session states, with no tokens or user content. Verify denied
+  tool execution through status/name only. Remove the disposable accounts and
+  all associated test registrations.
+
+
   ## Exclusions
 
 
