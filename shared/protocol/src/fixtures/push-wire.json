@@ -60,15 +60,52 @@
     "status": "revoked",
     "acknowledgedAt": "2026-08-01T16:00:00.000Z"
   },
-  "replacementPending": {
-    "bindingId": "bind_2",
+  "replacementRegistration": {
+    "idempotencyKey": "replace-2",
     "installationId": "ios-install-1",
     "platform": "ios",
-    "generation": 8,
-    "state": "pending-old-binding-disable",
-    "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
-    "createdAt": "2026-08-01T16:01:00.000Z",
-    "updatedAt": "2026-08-01T16:01:00.000Z"
+    "apnsDeviceToken": "1111111111111111111111111111111111111111111111111111111111111111",
+    "replaces": { "bindingId": "bind_1", "generation": 7 }
+  },
+  "replacementPending": {
+    "binding": {
+      "bindingId": "bind_2",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 8,
+      "state": "pending-old-binding-disable",
+      "replaces": { "bindingId": "bind_1", "generation": 7 },
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T16:01:00.000Z",
+      "updatedAt": "2026-08-01T16:01:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_2",
+      "generation": 8,
+      "credential": "replacement-revocation-authority",
+      "expiresAt": "2026-08-31T16:01:00.000Z"
+    },
+    "replayed": false
+  },
+  "replacementActive": {
+    "binding": {
+      "bindingId": "bind_2",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 8,
+      "state": "active",
+      "replaces": { "bindingId": "bind_1", "generation": 7 },
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T16:01:00.000Z",
+      "updatedAt": "2026-08-01T16:02:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_2",
+      "generation": 8,
+      "credential": "replacement-revocation-authority",
+      "expiresAt": "2026-08-31T16:01:00.000Z"
+    },
+    "replayed": true
   },
   "retryableFailure": {
     "error": { "code": "provider_unavailable", "message": "Push provider is temporarily unavailable", "retryable": true }

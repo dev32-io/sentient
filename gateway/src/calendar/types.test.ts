@@ -98,13 +98,22 @@ describe("calendar V2 contracts", () => {
         reminder: { enabled: true, mode: "all-day", localTime: "09:00", timeZone: "America/Toronto" },
       }).success,
     ).toBe(true);
-    expect(
-      calendarCreateInputSchema.safeParse({
-        title: "Invalid all day",
-        start: "2026-08-05",
-        reminder: { enabled: true, mode: "at-start" },
-      }).success,
-    ).toBe(false);
+    for (const start of ["2026", "2026-08", "2026-08-05"]) {
+      expect(
+        calendarCreateInputSchema.safeParse({
+          title: "Invalid date-only reminder",
+          start,
+          reminder: { enabled: true, mode: "at-start" },
+        }).success,
+      ).toBe(false);
+      expect(
+        calendarCreateInputSchema.safeParse({
+          title: "Valid date-only reminder",
+          start,
+          reminder: { enabled: true, mode: "all-day", localTime: "09:00", timeZone: "America/Toronto" },
+        }).success,
+      ).toBe(true);
+    }
     expect(calendarReminderUpdateInputSchema.safeParse(reminderFixtures.disabled).success).toBe(true);
     expect(calendarOccurrenceChangesSchema.safeParse({ reminder: reminderFixtures.disabled }).success).toBe(true);
     expect(calendarReminderOutputSchema.safeParse(reminderFixtures.disabled).success).toBe(true);

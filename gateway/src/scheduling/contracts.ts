@@ -45,12 +45,16 @@ export interface ScheduleCommands {
   ): Promise<SchedulingResult<ReadonlyArray<ScheduledSessionCard>>>;
 }
 
-/** A leased occurrence. `occurrenceId` is stable across claims and process restarts. */
+/**
+ * A leased occurrence. `occurrenceId` is stable across claims and process
+ * restarts. Identity and source are persisted facts, not execution authority.
+ */
 export interface DueClaim {
   readonly claimToken: string;
   readonly scheduleId: string;
   readonly occurrenceId: string;
   readonly ownerUserId: UserId;
+  readonly source: Schedule["source"];
   readonly intendedAt: string;
   readonly claimedUntil: string;
   readonly message: string;
@@ -67,7 +71,8 @@ export interface DueClaimSource {
  */
 export type TerminalReceipt =
   | Readonly<{ outcome: "completed"; sessionId: string; completedAt: string; content: ScheduledContentReference }>
-  | Readonly<{ outcome: "failed" | "interrupted" | "expired"; sessionId?: string; completedAt: string }>;
+  | Readonly<{ outcome: "failed" | "interrupted"; sessionId: string; completedAt: string }>
+  | Readonly<{ outcome: "expired"; completedAt: string }>;
 
 /** Identifies saved session content without copying assistant text into a queue. */
 export interface ScheduledContentReference {
@@ -126,7 +131,27 @@ export interface AuthorizedScheduledContentResolver {
   ): Promise<SchedulingResult<ResolvedScheduledContent>>;
 }
 
-/** Adapter seam: submits the saved body as a normal message in one fresh session. */
+/**
+ * Capability-backed authorization for one execution attempt. The resolver must
+ * resolve the current principal through AccessManager, reject disabled/deleted
+ * users, and, for calendar-reminder sources, recheck current event visibility.
+ * The persisted owner/source fields on DueClaim are inputs to that check only.
+ */
+export interface AuthorizedScheduledExecution {
+  readonly resource: PrivateScheduleResource;
+  readonly claim: DueClaim;
+}
+
+export interface ScheduledExecutionAuthorizer {
+  authorize(claim: DueClaim, signal: AbortSignal): Promise<SchedulingResult<AuthorizedScheduledExecution>>;
+}
+
+/**
+ * Adapter seam: accepts only a currently authorized execution and submits its
+ * saved body as a normal message in one fresh session. Every attempted chat
+ * returns that session id, including failed/interrupted attempts; only expiry
+ * before chat submission terminates without a session.
+ */
 export interface ScheduledMessageSubmitter {
-  submit(claim: DueClaim, signal: AbortSignal): Promise<SchedulingResult<TerminalReceipt>>;
+  submit(execution: AuthorizedScheduledExecution, signal: AbortSignal): Promise<SchedulingResult<TerminalReceipt>>;
 }

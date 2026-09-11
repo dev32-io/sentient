@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   goldenPushWireFixtures as fixture,
-  pushBindingSchema,
   pushDeliveryPayloadSchema,
   pushErrorSchema,
   pushPreferencePatchRequestSchema,
@@ -53,9 +52,27 @@ describe("push wire authority and privacy boundary", () => {
     );
   });
 
-  it("fences replacement activation and uses generation/revision CAS for per-device preferences", () => {
-    expect(pushBindingSchema.safeParse(fixture.replacementPending).success).toBe(true);
-    expect(fixture.replacementPending.state).toBe("pending-old-binding-disable");
+  it("fences and reconciles replacement by exact binding generation", () => {
+    expect(pushRegistrationRequestSchema.safeParse(fixture.replacementRegistration).success).toBe(true);
+    expect(pushRegistrationResponseSchema.safeParse(fixture.replacementPending).success).toBe(true);
+    expect(fixture.replacementPending.binding.state).toBe("pending-old-binding-disable");
+    expect(fixture.replacementPending.binding.replaces).toEqual(fixture.replacementRegistration.replaces);
+    expect(pushRegistrationResponseSchema.safeParse(fixture.replacementActive).success).toBe(true);
+    expect(fixture.replacementActive.binding).toMatchObject({
+      bindingId: fixture.replacementPending.binding.bindingId,
+      generation: fixture.replacementPending.binding.generation,
+      state: "active",
+      replaces: fixture.replacementRegistration.replaces,
+    });
+    expect(
+      pushRegistrationResponseSchema.safeParse({
+        ...fixture.replacementPending,
+        binding: { ...fixture.replacementPending.binding, replaces: undefined },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("uses generation/revision CAS for per-device preferences", () => {
     expect(
       pushPreferencePatchRequestSchema.safeParse({
         bindingId: "bind_1",

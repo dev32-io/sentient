@@ -38,7 +38,11 @@ bounded, newest-first session projection without read state. Push registration
 is iOS/APNs-only; an installation id is only a correlator. The separately
 returned revocation credential can only disable its exact binding generation.
 Invalid or expired revocation authority returns a typed error, never a false
-revocation acknowledgement.
+revocation acknowledgement. A replacement registration names the exact old
+binding generation. Its new binding remains `pending-old-binding-disable` and
+cannot deliver until that old binding is confirmed disabled; retrying the exact
+idempotent registration request reconciles to the same new binding in `active`
+state. Installation id alone cannot perform this transition.
 
 `conversation.activate` changes the live WebSocket attachment and produces
 `session.switched`; the client then loads committed history through the messages

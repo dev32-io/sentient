@@ -377,7 +377,10 @@ function validateReminderAgainstStart(
   ctx: z.RefinementCtx,
 ): void {
   if (!reminder) return;
-  const allDay = /^\d{4}-\d{2}-\d{2}$/.test(start);
+  // CalendarTimeInput also permits partial YYYY and YYYY-MM values. Only an
+  // offset date-time is timed; every date/partial-date value needs an explicit
+  // local reminder time and timezone.
+  const allDay = !start.includes("T");
   if (allDay !== (reminder.mode === "all-day")) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

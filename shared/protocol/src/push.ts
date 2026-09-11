@@ -12,18 +12,34 @@ export const pushPreferencesSchema = z
   .object({ enabled: z.boolean(), previewMode: pushPreviewModeSchema, revision: z.number().int().positive() })
   .strict();
 
-export const pushBindingSchema = z
-  .object({
-    bindingId: z.string().min(1),
-    installationId: z.string().min(1).max(200),
-    platform: z.literal("ios"),
-    generation: z.number().int().positive(),
-    state: z.enum(["active", "disabled", "pending-old-binding-disable"]),
-    preferences: pushPreferencesSchema,
-    createdAt: instantSchema,
-    updatedAt: instantSchema,
-  })
+export const pushBindingReferenceSchema = z
+  .object({ bindingId: z.string().min(1), generation: z.number().int().positive() })
   .strict();
+
+const pushBindingShape = {
+  bindingId: z.string().min(1),
+  installationId: z.string().min(1).max(200),
+  platform: z.literal("ios"),
+  generation: z.number().int().positive(),
+  preferences: pushPreferencesSchema,
+  createdAt: instantSchema,
+  updatedAt: instantSchema,
+};
+
+/** A pending replacement names the exact old binding that fences its activation. */
+export const pushBindingSchema = z.discriminatedUnion("state", [
+  z
+    .object({ ...pushBindingShape, state: z.literal("active"), replaces: pushBindingReferenceSchema.optional() })
+    .strict(),
+  z.object({ ...pushBindingShape, state: z.literal("disabled") }).strict(),
+  z
+    .object({
+      ...pushBindingShape,
+      state: z.literal("pending-old-binding-disable"),
+      replaces: pushBindingReferenceSchema,
+    })
+    .strict(),
+]);
 
 /**
  * Narrow bearer authority returned at registration. The credential authorizes only
@@ -39,7 +55,13 @@ export const pushRevocationAuthoritySchema = z
   })
   .strict();
 
-/** Authenticated POST `/api/v1/push/registrations`; installationId correlates retries and is never authority. */
+/**
+ * Authenticated POST `/api/v1/push/registrations`; installationId correlates
+ * retries and is never authority. For replacement, clients retry this exact
+ * idempotent request to reconcile. While the old exact binding remains active,
+ * the response is pending and names it in `binding.replaces`; once the server
+ * confirms it disabled, the same logical create returns that binding as active.
+ */
 export const pushRegistrationRequestSchema = z
   .object({
     idempotencyKey: z.string().min(1).max(200),
@@ -165,8 +187,10 @@ export const pushDeliveryPayloadSchema = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body"], message: "content payloads require a bounded body" });
   });
 
+export type PushBindingReference = z.infer<typeof pushBindingReferenceSchema>;
 export type PushBinding = z.infer<typeof pushBindingSchema>;
 export type PushRegistrationRequest = z.infer<typeof pushRegistrationRequestSchema>;
+export type PushRegistrationResponse = z.infer<typeof pushRegistrationResponseSchema>;
 export type PushRevocationAuthority = z.infer<typeof pushRevocationAuthoritySchema>;
 export type PushRevokeRequest = z.infer<typeof pushRevokeRequestSchema>;
 export type PushUnlinkState = z.infer<typeof pushUnlinkStateSchema>;
