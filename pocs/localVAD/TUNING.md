@@ -1,5 +1,11 @@
 # localVAD PoC — Tuning & Alternatives Reference
 
+> **HISTORICAL POC / NOT PRODUCTION GUIDANCE.** These notes preserve the tuning
+> rationale for the retired Raspberry Pi experiment. The supported production
+> path is the native Apple-silicon Whisper STT addon documented in
+> [`deploy/mac-prod/README.md`](../../deploy/mac-prod/README.md). References to
+> “current” behavior below are contemporaneous with the PoC.
+
 Every configurable knob in this PoC, what it does, what else you could pick,
 and the trade-off. Written so that when one of these libraries or models gets
 abandoned, renamed, or starts misbehaving, you can swap it out without
@@ -468,8 +474,8 @@ sharper CPU% numbers.
    move to a Livekit-based stack later.
 
 4. **STT-triggered endpointing** — let Deepgram/Whisper decide when
-   the user is done, from the STT side. This is the "old way" and is
-   what the main gateway currently uses. Smart-Turn's whole value
+   the user is done, from the STT side. This was the "old way" and is
+   what the gateway used when this PoC was written. Smart-Turn's whole value
    proposition is that it's audio-only and doesn't need STT running
    first. If you go back to STT-triggered, you lose the latency
    advantage of streaming.
@@ -540,8 +546,8 @@ From `service/requirements.txt`:
    if you see specific false-finalization or stuck-forever behavior.
 3. **`intra_op_threads`** in `smart_turn.py` (default 4) — lower to 2
    when sharing the Pi with STT/LLM workloads.
-4. **Silero backend** `onnx=False → True` — when you productionize,
-   saves ~300 MB RAM for free.
+4. **Silero backend** `onnx=False → True` — if adapting this historical PoC,
+   saves ~300 MB RAM.
 5. **`MODEL_FILENAME`** — when Smart-Turn v3.3/v4 ships, flip this
    constant + rebuild.
 

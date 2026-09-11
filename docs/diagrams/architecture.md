@@ -2,40 +2,58 @@
 
 ```mermaid
 flowchart LR
-    User((User))
-    Mic[Mic / Capture Pi5]
-    VAD[VAD<br/>20ms frames]
-    STT[Streaming STT<br/>partial + final]
-    Buf[Conversation buffer<br/>local]
-    Hermes[Hermes worker<br/>LLM + agent loop]
-    FC[Function-call<br/>dispatcher]
-    TTS[Streaming TTS<br/>first-byte ~150ms]
-    Speaker[Speaker / Compute Pi5]
-    Barge[Barge-in detect]
+    subgraph Clients
+        Web[Preact web]
+        Mobile[Android and iOS]
+        Cube[ESP32 cube]
+    end
 
-    User -->|audio| Mic
-    Mic -->|PCM 16kHz| VAD
-    VAD -->|speech frames| STT
-    STT -->|partial transcripts| Buf
-    STT -->|final| Hermes
-    Buf --> Hermes
-    Hermes -->|assistant tokens| TTS
-    Hermes -->|tool call| FC
-    FC -->|result| Hermes
-    TTS -->|PCM stream| Speaker
-    Speaker --> User
-    Mic -->|new speech| Barge
-    Barge -->|cancel| TTS
-    Barge -->|cancel| Hermes
-    Barge -->|reset| STT
+    Edge[inbound-proxy<br/>HTTPS and WSS]
+
+    subgraph Host[Apple-silicon Mac]
+        Gateway[Native Bun gateway<br/>ReAct · SessionRuntime · tools]
+        Store[(Append-only<br/>SQLite session stores)]
+
+        subgraph Native[Native MLX addons]
+            STT[Whisper STT]
+            TTS[Qwen3 TTS]
+            Memory[Deep Memory]
+        end
+
+        Hermes[Hermes CLI<br/>one-shot task]
+
+        subgraph Addons[Supervised Docker addons]
+            Ingress[ingress-proxy]
+            Research[outbound worker<br/>and SearXNG]
+            Egress[egress-proxy]
+        end
+    end
+
+    Provider[OpenAI-compatible<br/>model provider]
+    Tools[Calendar · Home Assistant<br/>Music Assistant · skills]
+
+    Web --> Edge
+    Mobile --> Edge
+    Cube --> Edge
+    Edge --> Gateway
+
+    Gateway <--> Store
+    Gateway <--> STT
+    Gateway --> TTS
+    Gateway <--> Memory
+    Gateway <--> Provider
+    Gateway --> Tools
+    Gateway -. delegateTask .-> Hermes
+    Gateway --> Ingress
+    Ingress --> Research
+    Research --> Egress
 ```
 
-Render this to `architecture.svg` (committed alongside) so renderers that
-don't speak mermaid still see the picture. Use:
+The gateway is the native agent runtime and host supervisor. `launchd` owns its
+production lifecycle; the gateway owns the ReAct loop, durable sessions, tool
+authorization, native services, and Docker addon lifecycle. Hermes is optional
+one-shot delegation, not a service.
 
-```bash
-npx -y @mermaid-js/mermaid-cli -i architecture.md -o architecture.svg
-```
-
-The SVG rendering is part of the post-publish backlog (see `ROADMAP.md`)
-and not blocking for the initial release.
+See [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) for the architecture
+contract and [`../../shared/protocol/WIRE.md`](../../shared/protocol/WIRE.md)
+for the client wire protocol.

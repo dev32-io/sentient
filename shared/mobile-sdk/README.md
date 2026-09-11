@@ -14,13 +14,14 @@ change together.
 
 ## Public surface
 
-- `SentientSdk` — the orchestrator. Exposes `connection: StateFlow<ConnectionState>`,
-  `timeline`/events, `currentSessionId`, and commands (`sendText`, `startMic`/`stopMic`,
-  `interrupt`, `setTtsEnabled`, sessions list/switch/new/rename/delete, `connect`/`disconnect`,
-  `forceReconnect`, `onForeground`).
-- Split observable surface: **continuous state** over `StateFlow` (conflation fine) +
-  **one-shot no-loss notifications** over a buffered `SharedFlow` (token deltas, task upserts,
-  cycle/commit, errors). Errors are a notification, never thrown across the boundary.
+- `SentientSdk` — the orchestrator. Exposes continuous `StateFlow` surfaces for
+  `connection`, committed `timeline`, full-state `tasks`, permissions/delegations, talk/audio
+  state, and `currentSessionId`; commands cover text/voice, interrupt, preferences,
+  session REST operations/activation, connection lifecycle, and liveness recovery.
+- Split observable surface: **continuous complete state** over `StateFlow` (conflation fine) +
+  **ordered one-shot notifications** over buffered `SharedFlow<SdkEvent>` (`MessageStarted`,
+  every `MessageDelta`, commit/turn/session/permission/delegation/error/reopen events). Tool
+  activity is complete state on `tasks`, not an event delta.
 - Async ops are `suspend`, streams are `Flow` — both bridge cleanly to Swift async / SKIE
   `AsyncSequence`. No `Channel`/`Deferred`/raw `Job` crosses the public boundary.
 
@@ -28,21 +29,24 @@ change together.
 
 The SDK follows the gateway's WS-vs-REST split (wire contract:
 [`../protocol/WIRE.md`](../protocol/WIRE.md)). The **WebSocket carries the live chat
-session only** — audio, the live conversation stream, the resume handshake;
-`conversation.activate` (fire-and-forget `switchSession`) focuses it without a history
-payload. **REST drives everything else** — `listSessions`, `deleteSession`,
-`renameSession`, and history paging all hit `/api/v1/sessions`.
+session only** — exact `turn.*`, conversation/session control, task/prompt state, audio,
+and the resume handshake. `conversation.activate` focuses an existing session; history is
+then fetched over REST. The gateway currently implements REST session listing and message
+history under `/api/v1/sessions`; SDK methods for rename/delete must not be presented as a
+supported server capability until matching handlers exist.
 
 - **Resume handshake** — the SDK reads `seq` off every frame (peeling the 9-byte binary
-  audio header), persists a per-device-session `{epoch, lastSeq}` cursor, and on reconnect
-  folds `resume` into `session.configure`. `stream.resumed{recovered:true}` → apply replayed
-  frames in seq order; `recovered:false` → drop local rows + REST-refetch. A stable
-  `deviceId` (generated + persisted by the SDK) keys the gateway's per-device buffer.
+  audio header), tracks `{epoch, lastSeq}`, and folds `resume` into `session.configure` on
+  reconnect. `stream.resumed{recovered:true}` applies replayed frames in order;
+  `recovered:false` clears/replaces local projection through REST history. The default
+  cursor store is a no-op, so the cursor is in-memory unless an owner supplies persistence.
+  The persisted `deviceId` identifies the client installation; replay comes from the durable
+  session journal rather than a per-device conversation buffer.
 - **Fire-and-forget Stop + stuck-state** — `interrupt()` clears local UI immediately and
   best-effort fires the interrupt frame (never gates on a server ack). A watchdog arms only
-  when a cycle is active AND the connection is not READY, resetting to idle after
+  when a turn is active AND the connection is not READY, resetting to idle after
   `client_stuck_state_timeout_ms` — transport-liveness-driven, NOT content-frame silence
-  (a healthy slow cycle can legitimately gap 30s+).
+  (a healthy slow turn can legitimately gap 30s+).
 
 ## Layout (commonMain)
 
@@ -51,7 +55,8 @@ sdk/         SentientSdk orchestrator, SdkLifecycle, SdkAudio, SdkConnectors,
              AudioFsm, StateDeriver, ConnectionState, SdkConfig
 transport/   WsTransport, ReconnectController + backoff, SdkStatus, WebSocketEngine (expect)
 protocol/    ClientMessage / ServerMessage — the gateway wire frames (DO NOT invent envelopes)
-connectors/  sessions, cognition-status, assistant-audio (downlink), user-audio (uplink), tasks
+connectors/  sessions/history, in-flight turn text, cognition, full-state tasks,
+             permissions/delegations, assistant audio (downlink), user audio (uplink)
 audio/       EchoGate, SpeechGate, AudioPreRollRing, opus/ (downlink decoder, uplink encoder,
              OGG demux, lazy native-codec ports)
 audioio/     AudioPipeline (the voice flow manager), UplinkPump,
@@ -64,13 +69,14 @@ dev/         FaultHooks (debug-only fault injection for E2E)
 
 ## expect/actual contract
 
-Each platform capability is ONE `expect` in commonMain with one `actual` per target
-(`androidMain` / `iosMain`): WebSocket engine, audio capture, audio playback, secure token
-store, push-token provider, clock, log sink. `actual`s own platform lifecycle (acquire/release)
+Each platform capability is an `expect` or injected boundary in commonMain with a matching
+platform implementation: WebSocket engine, voice audio, secure token/device-id storage,
+clock, logging, and other platform services. `actual`s own platform lifecycle (acquire/release)
 and adapt platform ↔ commonMain types — they hold **no business logic**, and no platform type
 appears in an `expect` signature (`ByteArray`/`FloatArray`/`String`/`Flow`, never
 `AVAudioPCMBuffer`/`AudioRecord`). Every `actual` has a fake commonTest double so the pure
-logic runs without a device. See `.claude/rules/mobile-sdk/expect-actual-contract.md`.
+logic runs without a device. See `.claude/rules/mobile-shared.md` and
+`agents/docs/mobile-sdk/expect-actual-contract-details.md`.
 
 ## Design foundation v2
 
@@ -103,9 +109,9 @@ source scripts/env.sh
 Pure state machines, codecs, gates, connectors, and reconnect logic are unit-tested in
 **commonTest with NO platform** (native libopus does not load under the host-JVM target, so
 the opus ports are lazy + faked). Tests pin **wire/protocol contracts** at the gateway boundary
-and **FSM invariants** with documented learnings; web-sdk unit tests are ported verbatim to
-hold parity. No API keys in any unit test. See `.claude/rules/mobile-sdk/*.md`,
-`.claude/rules/testing.md`, and `agents/docs/mobile-sdk/`.
+and **FSM invariants**; parity cases mirror the web SDK where the contract is shared. No API
+keys in unit tests. See `.claude/rules/mobile-shared.md`, `agents/docs/testing-details.md`,
+and `agents/docs/mobile-sdk/`.
 
 ## commonMain purity
 

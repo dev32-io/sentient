@@ -1,55 +1,51 @@
-# MobileSession Lifecycle — Details
+# Authenticated Mobile Session Lifecycle — Details
 
-`MobileSession` is the one place the SDK + repositories are wired together, scoped to a single chat screen's lifetime. It replaced the per-platform singletons (`SdkHolder` / `SdkStore`) that the clean-architecture refactor deleted.
+This file expands `.claude/rules/mobile-shared.md`. There is no shared `MobileSession` abstraction in current source. Android `UserSessionManager` and iOS `UserSession`/KMP `IosUserSession` are the platform owners of the same authenticated user/connection lifetime.
 
-## Construction + wiring (shared)
+## Shared composition boundary
+
+`ChatComponent` is hand-written KMP composition over one `SentientSdk`:
 
 ```kotlin
-// shared/mobile-data/.../session/MobileSession.kt
-class MobileSession(val sdk: SentientSdk, private val scope: CoroutineScope, ...) {
-    val chatRepo = ChatRepository(
-        events = sdk.events, timeline = sdk.timeline, scope = scope,
-        send = { text, pendingId -> sdk.sendText(text, pendingId) },
-        newId = { Random.nextLong().toString(16) },
-    )
-    val connectionRepo = ConnectionRepository(connection = sdk.connection)
-    val historyRepo = HistoryRepository(fetch = { sdk.listSessions(limit = 50, offset = 0).items.map { it.toRow() } })
+class ChatComponent(private val sdk: SentientSdk, ...) {
+    val conversationRepository = SdkConversationRepository(sdk)
+    val sessionsRepository = SdkSessionsRepository(sdk)
+    val connection = SdkConnectionStateRepository(sdk)
 
-    init {
-        // forward connection READY → chatRepo.setConnected so the outbox flushes
-        scope.launch { sdk.connection.collect { chatRepo.setConnected(it.status == READY) } }
-    }
+    val observeChat = ObserveChatUseCase(conversationRepository, clock)
+    val sendMessage = SendMessageUseCase(conversationRepository, sdk.currentSessionId)
+    val switchConversation = SwitchConversationUseCase(sessionsRepository)
+
+    suspend fun connect() = sdk.connect()
+    fun ensureConnected() = sdk.ensureConnected()
+    fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
 }
 ```
 
-## Lifecycle ops
+The repositories are stateless SDK passthroughs. Event folding and multi-source combination are cold, collection-owned usecase work. Per-conversation mutable optimistic state belongs to the native chat VM's `OutboundCache`, not to `ChatComponent`.
 
-```kotlin
-suspend fun open()  { sdk.connect() }                       // → READY; call in background from VM init
-fun pause()         { sdk.disconnect(clearSession = false) } // background: drop WS, KEEP scope
-fun resume()        { sdk.forceReconnect() }                 // foreground: re-arm reconnect (idempotent)
-fun close()         { sdk.disconnect(clearSession = false); scope.cancel() }  // screen exit: full teardown
-```
+## Android owner
 
-`pause` vs `close`: `pause` keeps the scope (and the in-memory outbox) alive so `resume` can reconnect via session-resume; only `close` cancels the scope.
+`UserSessionManager` is a Koin singleton whose contents are authenticated-scope resources, not process-global SDK state. It lazily builds one SDK/session scope plus `ChatComponent` and `SettingsComponent` for an explicit authenticated user id. Navigation and chat route recreation reuse that component. Logout, terminal auth, account replacement, and backend replacement tear it down before another authenticated scope is built.
 
-## Platform construction
+`ChatViewModel` receives the current `ChatComponent` and route `sessionId`. It switches/new-creates the active conversation and owns screen collectors/outbox only; `onCleared()` does not disconnect the authenticated connection.
 
-- **Android** — `SdkSessionFactory.create(...)` builds `SdkConfig` + `PlatformBundle` + `SentientSdk` + a scope, then `MobileSession(...)`. Held by `ChatViewModel`; `onCleared()` → `close()`.
-- **iOS** — `createMobileSession(...)` in `iosMain` does the same; held by a `@StateObject` ViewModel; the view teardown path calls `close()`.
+## iOS owner
 
-## PresenceCoordinator cold-start-skip (the double-connect bug)
+`UserSessionHost` holds Swift `UserSession` above the authenticated `NavigationStack`. `UserSession` owns one KMP `IosUserSession`, which builds one SDK/session scope and exposes its `ChatComponent` and `SettingsComponent`. Route-keyed `ChatView` recreation creates a fresh thin `ChatViewModel` while retaining the connection owner.
 
-`pause`/`resume` are driven by an app-scoped presence relay, NOT by the session:
+`UserSession.shutdown()` and the explicit logout/auth-expiry/replacement paths close the KMP boundary before auth state is cleared or replaced. A chat VM `deinit` cancels only that VM's collection tasks.
 
-- Android: `PresenceCoordinator` observes `ProcessLifecycleOwner`.
-- iOS: a `scenePhase` observer in the chat VM with a `hasBackgrounded` guard.
+## Foreground/background
 
-The relay MUST skip the first foreground after a cold start. Otherwise `ChatViewModel.init` calls `open()` AND the presence `onStart` fires `resume()`/`forceReconnect()` at the same time → racing WS opens, auth timeout, churn. The fix: only relay foreground→`resume` once a real background has happened.
+Routine backgrounding keeps the authenticated connection scope and socket; it does not destroy the component or outbox. Foreground after a real background transition uses the existing engagement/liveness path: a healthy READY socket is probed, and a dead or non-ready socket reconnects. The initial foreground event is skipped because the owner already opens the connection.
 
-## Gotchas
+A process kill is different: the SDK timeline, resume cursor default, and VM-owned outbox are in memory, so they do not survive cold relaunch. Authoritative conversation history is refetched from the gateway.
 
-- **Never make `MobileSession` a singleton.** One per chat identity; re-entry builds a fresh one. A cached session reuses a cancelled scope and a stale WS.
-- `open()` is backgrounded — the UI does not await it. Optimistic send (the outbox) is what lets the user type before READY.
-- `close()` cancels the scope, which cancels the `events`/`connection` collectors and the repositories. Do not hold references to a closed session's repos.
-- `pause` uses `clearSession = false` so the user stays "in session" and the gate stays on chat; only logout (`disconnect(clearSession = true)`) falls back to login.
+## Teardown invariants
+
+- Authenticated ownership survives navigation and conversation changes.
+- Route recreation resets per-conversation UI state without disconnecting the SDK.
+- Logout/replacement tears down the old authenticated scope before constructing its successor.
+- No screen, ViewModel, repository, or process-global helper may create a second SDK.
+- `ChatComponent.close()` is currently an idempotent composition hook; platform owners disconnect and cancel their SDK scope.

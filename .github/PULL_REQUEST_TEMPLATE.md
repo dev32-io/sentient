@@ -1,20 +1,23 @@
 ## What this changes
 
-(One paragraph.)
+(One focused paragraph.)
 
 ## Why
 
-(One paragraph. Link the related issue if there is one.)
+(Explain the outcome and link the related issue when one exists.)
 
-## How to test
+## How to verify
 
-(Bullet list of verification steps, including any docker-compose-up
-required.)
+- (List the narrow checks you ran.)
+- (State whether local-stack or device verification was required.)
 
 ## Checklist
 
 - [ ] Lint passes (`bun run lint`)
 - [ ] Typecheck passes (`bun run typecheck`)
-- [ ] Tests pass (`bun run test:unit`)
-- [ ] Docs / rules updated if behavior changed
-- [ ] Commits follow Conventional Commits + include `Co-Authored-By` for AI-assisted work
+- [ ] Relevant tests pass (`bun run test:unit` or narrower package checks)
+- [ ] `git diff --check` passes
+- [ ] Stable contracts, regressions, or security boundaries have appropriate tests
+- [ ] Active docs and agent rules match behavior changed by this PR
+- [ ] No credentials, private user data, message text, transcripts, or raw audio are included
+- [ ] Commits use Conventional Commits and include `Co-Authored-By` when applicable

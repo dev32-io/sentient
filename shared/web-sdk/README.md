@@ -1,41 +1,57 @@
 # @sentient/web-sdk
 
-Voice client SDK for Sentient. Handles voice mode, VAD, transport, and state management.
+Browser transport and state SDK for Sentient's native gateway wire contract.
+It owns WebSocket authentication/configuration, connectors, command binding,
+session resume, and client-side live state. It does not run the agent loop or
+decide authoritative utterance boundaries.
 
-## Dependencies
+## Core API
 
-- `@ricky0123/vad-web` — Silero VAD (ML-based voice activity detection)
-- `onnxruntime-web` — ONNX Runtime for Silero model inference (transitive via vad-web)
+- `SentientSDK` — connect/disconnect, reconnect and presence lifecycle,
+  interrupt, command binding, and connector registration.
+- `UserAudioInputConnector` — sends `audio.start`, binary audio, and
+  `audio.end`; closes the app's mic latch on a user-triggered `turn.started`.
+- `UserTextInputConnector` — sends `text.input`.
+- `AssistantAudioResponseConnector` — receives turn-bracketed audio.
+- `ConversationHistoryConnector` and `InFlightMessageConnector` — maintain
+  committed and streaming conversation projections.
+- `TaskListConnector`, `PermissionConfirmConnector`, and
+  `DelegationProgressConnector` — expose current native-gateway tool state.
+- `SessionsConnector` plus `createSessionsRest` — switch live sessions and load
+  the implemented session list/history REST surface.
 
-## Silero VAD Setup
+## Session and resume behavior
 
-Silero VAD requires ONNX Runtime WASM files served as static assets. The consuming application (e.g., `web/`) must:
+`SentientSDK` sends a stable `deviceId`, a per-tab `surfaceId`, client
+capabilities, and the active conversation/draft in `session.configure`.
+Session-lane frames use the gateway's session-scoped sequence space. The SDK
+keeps the highest applied cursor and requests replay after reconnect.
 
-1. Copy WASM + model files to a public directory (see `web/scripts/copy-vad-assets.sh`)
-2. Serve with COOP/COEP headers for `SharedArrayBuffer` support:
-   ```
-   Cross-Origin-Opener-Policy: same-origin
-   Cross-Origin-Embedder-Policy: credentialless
-   ```
-3. Optionally configure the asset path via `createSileroVadFilter({ assetPath: "/vad/" })`
+On `stream.resumed { recovered: true }`, connector session state is preserved
+and missed frames are applied idempotently. On a fresh or unrecoverable attach,
+`conversation.snapshot` replaces the committed mirror. `conversation.activate`
+switches the live attachment; message history is then loaded with
+`GET /api/v1/sessions/:id/messages`.
 
-If Silero fails to init (missing WASM, no SharedArrayBuffer), the SDK falls back to energy-only VAD with a console warning.
+## Audio utilities
 
-## VAD Chain
+The package provides transport-neutral pieces rather than a bundled VAD model:
 
+- `createSpeechGate` — sustained-speech latch with pre-roll; the consuming app
+  supplies the per-frame speech verdict.
+- `createEchoGate` — playback-state echo suppression state machine.
+- `createAudioPreRollRing` — capture pre-roll buffering.
+- `createTurnAudioQueue` — strict turn-keyed FIFO. A new turn never preempts
+  earlier audio; only barge-in/interrupt-driven cancellation flushes it.
+- PCM16/Float32 conversion and capture/playback adapter interfaces.
+
+The web UI currently supplies RNNoise speech probabilities and Opus encoding.
+The gateway forwards audio to native whisper-stt at `ws://127.0.0.1:8768`; the
+STT service owns VAD, semantic/manual turn handling, and transcription.
+
+## Package checks
+
+```bash
+bun run test
+bun run typecheck
 ```
-Microphone audio (PCM16 frames)
-  → Energy VAD filter (RMS threshold, ~0ms)
-  → Silero VAD filter (ML classifier, ~10ms)
-  → Trailing VAD filter (sends 1500ms of silence after speech)
-  → Transport → Gateway → Deepgram
-```
-
-Client-side VAD is a **cost optimization gate** — it reduces bandwidth to Deepgram. The gateway makes the authoritative turn boundary decision.
-
-## Key Interfaces
-
-- `VoiceClient` — main API surface (`connect`, `startVoiceMode`, `stopVoiceMode`)
-- `AudioCaptureAdapter` — mic input abstraction
-- `AudioPlaybackAdapter` — speaker output abstraction (WebRTC AEC loopback in `web/`)
-- `VadFilter` — pluggable VAD filter interface

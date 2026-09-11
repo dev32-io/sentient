@@ -15,6 +15,13 @@ pre-commit:
         fi
     secrets-content-scan:
       run: scripts/secrets-content-scan.sh
+    gitleaks:
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "🚨 BLOCKED: gitleaks is required (brew install gitleaks)." >&2
+          exit 1
+        fi
+        gitleaks git --staged --redact --no-banner --log-level warn
     lint:
       glob: "*.{ts,tsx}"
       run: scripts/quality-gate.sh lint

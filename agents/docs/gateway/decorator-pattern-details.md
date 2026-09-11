@@ -1,26 +1,45 @@
-# Decorator-Pattern Details — Gateway
+# Gateway Streaming Pipeline Details
 
-Gateway-specific applications of the decorator-pattern (root rule:
-`.claude/rules/decorator-pattern.md`).
+Current gateway streaming is native; it does not pass through Hermes ACP or a
+Cerebrum event translator.
 
-## Multi-Cycle TTS Boundaries (ACP Protocol)
+## Text-to-speech boundary
 
-Each Hermes ACP `session/update` carrying an assistant message is one
-agent micro-turn (intermediate narration → tool calls → final answer).
-The ACP event-translator (`hermes-adapter-client/event-translator.ts`)
-converts the update to an `InternalEvent`; the AcpHermesClient adapter
-maps that onto a `text.delta` HermesEvent with a trailing `\n`. The
-gateway's utterance-aggregator uses `\n` as a flush boundary:
+`gateway/src/tts/text-stream-synthesizer.ts` is the swappable seam between a
+turn's text fork and its TTS implementation:
 
-1. Hermes completes a cycle iteration, emits a `session/update` with the
-   assistant text.
-2. Gateway's translator emits `InternalEvent { assistant.message }`.
-3. AcpHermesClient maps to `text.delta { delta: "<text>\n" }`.
-4. Utterance-aggregator sees `\n`, flushes pending text to TTS.
-5. TTS plays per-cycle (snappy), not waiting for the final answer.
-6. Webui renders a paragraph break for the cycle.
+```typescript
+interface TextStreamSynthesizer {
+  synthesize(
+    textStream: AsyncIterable<TtsChunk>,
+    signal: AbortSignal,
+  ): AsyncIterable<AudioFrame>;
+}
+```
 
-`cycle.done` (mapped from the ACP `session/prompt` response) is the cycle
-terminator. Without per-cycle boundaries, intermediate narration sits
-buffered until the final answer arrives. The trailing `\n` is the
-contract — don't strip it in the translator.
+The input contains streamed text and explicit `FLUSH_SIGNAL` markers. The ReAct
+loop emits a flush marker before tool execution so speech can finish the current
+text stretch without inventing a protocol-level paragraph or waiting for the
+entire turn.
+
+The implementation owns sentence aggregation, text normalization, the provider
+session, and audio generation. `turn-voice.ts` owns turn cancellation, client
+audio brackets, echo-guard interaction, and aggregate lifecycle logging. It
+must not know provider-specific frame formats.
+
+## Composition rules
+
+- Streaming transforms consume and return async iterables.
+- Thread the turn's `AbortSignal` through every stage and close upstream
+  iterators on cancellation.
+- A stage changes only the part of the stream it owns.
+- Buffering is internal to the stage that needs it; callers do not special-case
+  buffered implementations.
+- Provider and socket lifecycle belongs to the adapter/synthesizer boundary,
+  not to text transforms.
+- Do not log text, chunks, frames, prompts, or audio. Record lengths and
+  aggregate counts only at lifecycle boundaries.
+
+The current implementation is under `gateway/src/tts/` and
+`gateway/src/runtime/turn-voice.ts`. The broader repository constraints are in
+`.claude/rules/gateway/core.md` and `agents/docs/decorator-pattern-details.md`.

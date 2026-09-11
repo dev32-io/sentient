@@ -1,62 +1,76 @@
-# Logging Details
+# Gateway Logging Details
 
-Companion to `gateway/.claude/rules/logging.md`. Examples and rationale live here.
+This document applies the repository-wide
+[logging rules](../../../agents/docs/logging-details.md) to gateway streams and
+state machines.
 
-## Why extensive DEBUG coverage
+## Privacy boundary
 
-Streaming pipelines fail in ways that are invisible from the outside: a
-chunk was dropped, a boundary detector fired early, an emotion-tag call
-timed out and fell back silently. The only useful post-mortem tool is a
-log trail that already captured each chunk consumed, each decision made,
-and each fallback taken. "We'll add logs once we see the bug" does not
-work for streams — the bug has already happened by the time it's
-reported.
+Use the tagged structured logger (`getLog`). Log lifecycle and control-plane
+facts only. Never log:
 
-Local development runs at `LOG_LEVEL=debug` (see
-`deploy/docker/docker-compose.yml`), so verbose logs have zero cost in
-the path where they're actually read. Pi / production defaults to INFO,
-so the same file is quiet in prod without any conditional code.
+- prompts, message text, transcripts, or streamed text deltas;
+- content previews, even when truncated;
+- tool arguments, tool results, permission argument values, or task previews;
+- provider response bodies, arbitrary exception bodies, tokens, or secrets;
+- raw JSON/binary frames or audio payloads.
 
-## Required entries per stage
+A sanitizer is defense in depth, not permission to pass content into a log.
+Browser and mobile logs follow the same rule because they may be uploaded.
 
-For every async generator, state machine, or stream processor:
+## Stream logging
 
-| Event                     | Level | Example fields                                             |
-|---------------------------|-------|-------------------------------------------------------------|
-| Stage start               | INFO  | inputs, options, caller id                                  |
-| Chunk / event consumed    | DEBUG | size, running totals, truncated preview (≤120 chars)        |
-| Emission                  | DEBUG | index, length, preview                                      |
-| Boundary / classifier hit | DEBUG | which rule fired, the value (terminator char, score)        |
-| Fallback / soft-failure   | WARN  | `reason` tag, the numbers that triggered it                 |
-| Abort / cancel            | DEBUG | where detected, what state was dropped                      |
-| Stage complete            | INFO  | totals, elapsed ms, terminal status                         |
+Do not log each token, audio chunk, frame, or generator yield, including at
+DEBUG. High-frequency logs create volume, timing distortion, and a content
+exposure surface.
 
-## Reference implementations
+Prefer one event at each meaningful lifecycle transition, with aggregate
+counters on completion:
 
-- `gateway/src/effects/utterance-aggregator.ts` — per-chunk intake,
-  per-block emission, abort detection, tail-flush logging.
-- `gateway/src/effects/emotion-tagger.ts` — batch start/complete,
-  LLM response preview, each fallback path tagged by reason,
-  per-block overrun / empty guards.
+| Event | Level | Safe fields |
+|---|---|---|
+| Start/open | INFO or DEBUG | `sessionId`, `turnId`, stage/type, provider/model, configured limits |
+| State transition | DEBUG | prior/next state, bounded reason code, queue depth |
+| Soft failure/fallback | WARN | safe failure class, timeout/limit, retry/fallback decision |
+| Abort/cancel | INFO or DEBUG | identifiers, cutoff kind, stage, aggregate dropped counts/bytes |
+| Completion | INFO or DEBUG | status, duration, text character count, audio byte count, frame count, tool count |
 
-Treat those files as the baseline. New stages in the same layer should
-match or exceed that density.
+For a long stream, maintain counters in memory and emit them once at a boundary.
+A journal reaching its byte cap should log the transition into eviction plus
+summary state, not one line for every evicted audio frame.
 
-## Preview-truncation pattern
+## Errors
 
-```ts
-function preview(s: string, n = 120): string {
-  return s.length <= n ? s : `${s.slice(0, n)}…`;
-}
+External errors can contain user content. Map them to a stable safe category or
+reason before logging. Log raw exception text only when the boundary guarantees
+it cannot contain prompts, transcripts, tool payloads, URLs with credentials,
+or response bodies. Otherwise retain the error for control flow and log its
+class plus sanitized context.
+
+Expected domain outcomes should use typed values. Catch and log failures at the
+process or adapter boundary where identifiers, timeout configuration, and
+cleanup outcome are known.
+
+## Examples
+
+```typescript
+log.info("turn.started", { sessionId, turnId, trigger });
+log.info("turn.completed", {
+  sessionId,
+  turnId,
+  durationMs,
+  textChars,
+  toolCalls,
+  audioBytes,
+});
+log.warn("provider.request.failed", {
+  sessionId,
+  turnId,
+  provider,
+  reason: "timeout",
+  timeoutMs,
+});
 ```
 
-Use structured payloads (object fields) rather than formatted strings.
-The sanitizer works on fields, and downstream tooling parses them.
-
-## Anti-patterns
-
-- `log.debug("got chunk")` — no size, no preview. Useless.
-- Full-buffer dumps — will blow up memory and log volume in long sessions.
-- Logging only on the happy path — the failure path is the one you need.
-- Silent fallbacks — every `catch`-and-return-default must log at WARN.
-- Console.* calls — bypass the sanitizer and tagged-log hierarchy.
+Do not add `preview`, `text`, `content`, `args`, `result`, `chunk`, or raw
+`error` fields merely to make a post-mortem more convenient.

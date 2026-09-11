@@ -1,8 +1,15 @@
-# STT Service
+# STT Service (retired SenseVoice implementation)
 
-Local speech-to-text on Raspberry Pi 5. Wraps Silero VAD + Smart-Turn v3 + SenseVoice-Small into a WebSocket service that consumes streamed PCM16 audio and emits structured turn events.
+> **RETIRED / HISTORICAL.** This Raspberry Pi/SenseVoice service is preserved as
+> implementation and protocol evidence. It is not built, installed, or managed
+> by the supported production deployment. Production uses the native
+> Apple-silicon [`WhisperSTTService`](../WhisperSTTService/) on port 8768; follow
+> [`deploy/mac-prod/README.md`](../../deploy/mac-prod/README.md). Commands and
+> paths below describe the retired container deployment only.
 
-The gateway connects to this service over a WebSocket, sends raw mic audio, and gets back `transcript_ready` events with the user's speech as text. The gateway never needs to know about VAD, turn detection, or STT internals — this service is a black box governed entirely by [CONTRACT.md](./CONTRACT.md).
+This service provided local speech-to-text on Raspberry Pi 5. It wrapped Silero VAD + Smart-Turn v3 + SenseVoice-Small into a WebSocket service that consumed streamed PCM16 audio and emitted structured turn events.
+
+In that retired design, the gateway connected over WebSocket, sent raw mic audio, and received `transcript_ready` events. The historical wire behavior is documented in [CONTRACT.md](./CONTRACT.md).
 
 ```
   gateway (Bun/TS)                    STT service (Python)
@@ -17,7 +24,7 @@ The gateway connects to this service over a WebSocket, sends raw mic audio, and 
 
 ---
 
-## Quick start — deploying to the Pi
+## Historical quick start — retired Pi deployment
 
 ### 1. First-boot setup (one time only)
 
@@ -62,8 +69,8 @@ INFO stt-service listening on ws://0.0.0.0:8766
 
 ### 4. Test with the PoC browser client
 
-The browser client at `pocs/localSTT/client/` works against a prod
-instance. Paste the Pi URL (`ws://raspberrypi.local:8766`) and an
+The browser client at `pocs/localSTT/client/` was used against a retired
+Pi instance. Paste the Pi URL (`ws://raspberrypi.local:8766`) and an
 inbound bearer token from the Pi's `~/.sentient/auth/tokens.yaml` into
 the two input fields, then click Connect. Under the hood the token
 rides on `Sec-WebSocket-Protocol: bearer, <token>` because browser
@@ -164,7 +171,7 @@ cat *-metrics.jsonl | jq '{ts: .ts, rss_mb: .rss_mb, cpu: .cpu_percent}'
 
 ---
 
-## Updating the service
+## Historical update process (retired)
 
 Models are baked into the Docker image. To update:
 
@@ -397,7 +404,7 @@ These are set in the Dockerfile and should NOT be changed:
 | `/app/recordings/` | Turn WAV files | `~/.sentient/stt-service/recordings/` |
 | `/app/models/` | ML model weights | Baked into image (not mounted) |
 
-To change the **host** paths, edit `deploy/mac-prod/docker-compose.yml`. The container-side paths are fixed.
+In the retired compose deployment, host volume paths were configured in its compose file. The current `deploy/mac-prod/docker-compose.yml` is an addon image bakery and has no `stt-service` volume or runtime service.
 
 ### Clearing disk space
 

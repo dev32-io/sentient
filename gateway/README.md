@@ -1,153 +1,129 @@
 # Gateway
 
-Bun/TypeScript voice gateway. The Hermes platform adapter — terminates
-the client WebSocket, runs STT/TTS, hosts gateway-side MCP tools, and
-translates Hermes events back into the SDK's wire protocol.
+Bun/TypeScript voice gateway for Sentient. The gateway is the native host
+process: it terminates client WebSockets, owns durable sessions and the LLM
+ReAct loop, mediates tools, and streams local STT/TTS.
 
-## What the gateway does
+## Runtime ownership
 
-The gateway does NOT run the LLM. Hermes (a separate runtime supervised
-by `supervisord` inside the `sentient-hermes` container, one worker
-per user) owns the LLM call, agent loop, tool execution, and per-user
-profile memory. The gateway dials each user's Hermes worker over
-WebSocket via `hermes-adapter-client/`, sends `user.message`, and
-handles the streamed `assistant.message` / `tool.started` / `cycle.done`
-frames coming back.
+Each durable, server-minted `sessionId` maps to one `SessionRuntime`; multiple
+browser or mobile connections can attach as windows onto that runtime. The
+append-only session store is authoritative for both model context and client
+conversation projections.
 
-What the gateway IS responsible for:
+For each user or background-completion stimulus, `SessionRuntime` starts at
+most one turn. `runtime/react-loop.ts` re-reads the store on every iteration,
+streams provider text, dispatches mediated tools, appends tool calls/results,
+and forces the last allowed iteration to be content-only. Input arriving while
+a turn is active is appended first and can steer the next iteration; input not
+consumed by that turn starts a back-to-back turn.
 
-- WebSocket termination for browser/mobile clients (binary audio + JSON control).
-- **STT**: dials the local STTService (Python service in
-  `capabilityServices/STTService/`) over WS; downsamples 48 kHz client
-  audio to 16 kHz, gates on energy, and streams PCM. STTService wraps
-  Silero VAD → Smart-Turn v3 → SenseVoice-Small and emits structured
-  turn events back. The gateway is its client and never knows about
-  the VAD / turn / STT internals.
-- **TTS**: streams text per cycle to the local-tts (LocalTTSService)
-  provider via a JSON+binary WebSocket; serializes overlapping cycles'
-  audio with a small fade for clean preempts.
-- **MCP host**: per-user unix sockets exposing gateway-side tools
-  (`identify_user`, `pause_audio`, `resume_audio`, `update_user_settings`).
-  Hermes calls them via standard MCP transport.
-- **AttentionGate**: decides WHEN a cycle should fire based on conversation
-  + ambient salience, then dispatches via `hermes-adapter-client`.
-- **Cerebrum mirrors**: `ConversationMirror` and `TaskMirror` are read-only
-  views of Hermes-owned state, used to translate events into the SDK
-  protocol the webui already speaks.
-- **Profile store**: renders each user's Hermes config + SOUL.md into
-  `<gatewayRoot>/<userId>/`, drives `supervisorctl reread && update`
-  to spawn/restart the user's worker.
-- **Auth**: PASETO v4.local browser session tokens issued by `user-auth/`.
-  Internal services (gateway ↔ STT, gateway ↔ Hermes worker) live on the
-  `sentient-internal` docker network and are not separately authenticated;
-  the gateway is the only externally-reachable service.
+Hermes is not the runtime. `delegateTask` may invoke Hermes as a bounded,
+one-shot background subprocess. Its completion returns later as a session
+stimulus and may start a new turn.
 
-## Pipeline
+## Live pipeline
 
-```
-Mic audio ─► STT adapter ─► (text)             ▲
-                                │              │
-                                ▼              │
-                         AttentionGate         │
-                         (cycle decision)      │
-                                │              │
-                                ▼              │ assistant.message
-                         hermes-adapter-client ┘ (per cycle, suffixed \n
-                                │                for utterance flush)
-                                ▼
-                                content-tts ─► local-tts
-                                                   │
-                                                   ▼
-                                            audio frames ─► client
+```mermaid
+flowchart LR
+    Client[Client<br/>text or microphone audio]
+    STT[Whisper STT]
+    Store[(Append-only<br/>session store)]
+    Runtime[SessionRuntime]
+    Loop[Native ReAct loop]
+    Provider[OpenAI-compatible<br/>provider]
+    Broker[ToolBroker]
+    Tools[Native and MCP tools]
+    TTS[Local TTS]
+
+    Client -->|Opus or PCM| STT
+    STT -->|final transcript| Store
+    Client -->|text| Store
+    Store --> Runtime
+    Runtime --> Loop
+    Loop <--> Provider
+    Loop --> Broker
+    Broker --> Tools
+    Tools -->|result| Loop
+    Loop -->|text deltas| TTS
+    TTS -->|Opus audio| Client
 ```
 
-A trailing `\n` on each `assistant.message` is the per-cycle TTS flush
-boundary — without it, intermediate narration sits buffered until the
-final answer and the run feels sluggish.
+- **WebSocket:** `/api/v1/ws` carries live input, `turn.*` output, TTS audio,
+  permissions, task state, delegation progress, and resume coordination.
+- **STT:** the native gateway dials whisper-stt at `ws://127.0.0.1:8768`.
+  The service owns VAD, semantic turn detection, and transcription. The gateway
+  downsamples PCM input to 16 kHz when needed; Opus input is forwarded for
+  service-side decoding.
+- **TTS:** the native gateway dials LocalTTSService at
+  `ws://127.0.0.1:8770`. Text is sent over JSON control frames and audio returns
+  as binary Opus at 48 kHz.
+- **Provider:** the native ReAct loop calls the configured OpenAI-compatible
+  provider directly.
+- **Tools:** `ToolBroker` enforces role, per-tool policy, capability, validation,
+  and timeout boundaries. Model output is never authorization.
 
-## Barge-in
+## Turns and cancellation
 
-`bargeInController` aborts the in-flight cycle and TTS when the
-client signals mic onset during playback. Tasks running in Hermes are
-NOT cancelled by barge-in — that's reserved for the explicit Stop
-gesture, which goes through `interruptController` and routes a
-task-cancel request to Hermes alongside the cycle/TTS abort.
+The wire unit is a turn (`turn.started`, `turn.text.delta`,
+`turn.completed`, `turn.aborted`) identified by `turnId`.
 
-## Session lifecycle
+Barge-in and explicit interrupt both abort the in-flight turn, stop that
+session's TTS, and emit `playback.stop`. The committed partial is marked with
+the corresponding cutoff. Neither gesture cancels background delegated work;
+its completion can still return as a later stimulus.
 
-1. Client connects on `wss://<host>:8888/ws` with a PASETO bearer.
-2. `ws-auth-gate` validates the token, looks up the user, attaches the
-   user's Hermes worker connection (already pre-warmed by the
-   per-profile-connection FSM).
-3. Client sends `session.configure` (REQUIRES a stable `deviceId`; an optional
-   `resume:{epoch,lastSeq}` on a reconnect); gateway replies `session.ready`
-   (and `stream.resumed` if a resume was requested).
-4. Audio + text flow until the client disconnects or idles.
-5. On disconnect the in-flight cycle keeps running and its frames are journaled
-   into the per-device replay buffer; the PersonSession + buffer survive
-   `session.retention_ttl_ms` (default 30 min), then evict. Reconnect within that
-   window resumes cheaply (replay frames `> lastSeq`); beyond it the client
-   REST-refetches history. Two timers, by design: the Bun socket idle-closes at
-   `session.ws_idle_timeout_ms` (≤255s, Bun's cap), but the app-level session
-   outlives the socket for the full 30-min TTL.
+A new turn never flushes earlier audio. Clients queue turn audio in order and
+flush only on `playback.stop`.
 
-## Transport boundary (WS vs REST)
+## Session and transport lifecycle
 
-The WebSocket carries the **live chat session only** — mic audio, TTS audio, the
-live conversation stream (`conversation.entry`, `cycle.*`, `cognition.status`,
-`task.update`), `ping`/`pong`, `interrupt`, and the resume handshake. Everything
-on the WS push channel is `seq`-stamped and replay-buffered. **Everything
-client-driven is REST**: session list, conversation history, search, rename,
-delete, preferences — under `/api/v1/sessions`. The old WS query RPCs
-(`session.switch` → `conversation.snapshot`, list, preferences) were removed; a
-lightweight WS `conversation.activate` focuses the live stream (no history
-payload). Full wire contract: [`../shared/protocol/WIRE.md`](../shared/protocol/WIRE.md).
+1. The client connects to `/api/v1/ws`, authenticates, then sends
+   `session.configure` with a stable `deviceId`, required `clientType`, and
+   optional conversation/resume state.
+2. A connection either attaches to an existing durable session or remains a
+   draft until its first message mints a session.
+3. Session-lane frames are allocated once in a session-scoped journal and
+   fanned out to every attached window. Connection-lane handshake/control
+   frames are not sequenced or journaled.
+4. A reconnect presenting the same journal epoch and a contiguous cursor gets
+   verbatim replay. Otherwise it receives a fresh committed snapshot.
+5. A runtime remains resident while a window or observable work holds it, then
+   expires after `session.retention_ms`.
 
-## TTS
+REST currently implements only:
 
-Live WebSocket streaming to the native local-tts (LocalTTSService)
-provider running on the host (Metal/MLX), reached via
-`ws://host.docker.internal:8770`. JSON text frames for control, raw
-binary frames for audio — see `local-tts-protocol.ts` and
-`capabilityServices/LocalTTSService/CONTRACT.md`. One TTS run per
-cycle: opens, streams the per-cycle text, finishes when the cycle's
-`\n` boundary is hit, closes. New cycle = new connection.
+- `GET /api/v1/sessions`
+- `GET /api/v1/sessions/:id/messages`
+
+Conversation activation remains a lightweight WebSocket control; clients load
+that session's history through the messages route. See
+[`../shared/protocol/WIRE.md`](../shared/protocol/WIRE.md).
+
+## Deployment
+
+The gateway runs natively on the Mac host. Production uses a compiled binary
+supervised by `launchd`; upgrades use the health-gated flow under
+`deploy/mac-prod/`. The gateway's system orchestrator supervises native addons
+and Docker-backed MCP/infrastructure dependencies. Addon access is through
+loopback or the configured ingress path, not Docker DNS.
 
 ## Configuration
 
-Tunables live in [`config.yaml`](config.yaml). Key sections:
-
-| Section | Covers |
-|---------|--------|
-| `server` | port, host, TLS hostnames |
-| `session` | WS idle timeout, per-user session cap |
-| `stt` | STTService URL, language, energy gate, sample rates |
-| `tts` | local-tts URL, voice, format, sample rate, connect timeout |
-| `webui` | server-authoritative client tunables (e.g. playback) |
-| `providers` | catalog cache TTLs, external fetch timeout |
-| `mcp_catalog` | operator-managed MCP server inventory + per-server `tools.include` curation |
-| `hermes` | sentient-hermes URL, per-user profile slot config |
-
-Per-user behavior (chat model, voice ID, persona, MCP toggles) lives in
-the rendered profile at `<gatewayRoot>/<userId>/config.yaml`, not in
-this file.
-
-## Stack
-
-- Runtime: Bun
-- Language: TypeScript (strict mode)
-- Test runner: `bun test` for unit; Vitest for integration (`test:int`)
-- WebSocket: Bun built-in
-- LLM: Hermes worker (per user, dialed over WebSocket)
-- STT: local STTService (Python: Silero VAD + Smart-Turn v3 + SenseVoice-Small)
-- TTS: local-tts (LocalTTSService, native Metal/MLX)
-- Validation: zod
+Operator tunables live in [`config.yaml`](config.yaml). Important sections are
+`session`, `orchestrator`, `stt`, `tts`, `access`, `store`, `providers`,
+`mcp_catalog`, and `managed_services`. Provider credentials remain in the
+secrets store rather than this file.
 
 ## Commands
 
+```bash
+bun run dev       # gateway only; bun --watch performs a full process restart
+bun run test      # gateway tests
+bun run build     # production build
+bun run typecheck # TypeScript strict check
 ```
-bun run dev       — Start gateway with hot reload
-bun run test      — Run all gateway tests
-bun run build     — Production build
-bun run typecheck — TypeScript strict check
-```
+
+The repository-root `bun run dev` starts the local stack. Never use
+`bun --hot` for the gateway: hot reload preserves in-process supervisors and
+can duplicate managed services.
