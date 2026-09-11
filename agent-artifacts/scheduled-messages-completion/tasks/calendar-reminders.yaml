@@ -1,0 +1,90 @@
+schemaVersion: 1
+id: calendar-reminders
+title: Complete personal calendar reminder integration and recovery
+dependsOn:
+  - gateway-surfaces
+description: Implement the calendar-to-schedule source adapter and its committed
+  mutation/recovery rules as one coherent boundary. Remind me is actor-personal
+  and defaults off, even on household events. A linked reminder creates an
+  ordinary future user message through the existing fresh-session path, not
+  canned notification text. Web/iOS and shared DTOs already provide or consume
+  the frozen optional reminder fields; complete the actual backend integration
+  without changing their meaning.
+scope: >-
+  Own reminder/subscription logic under `gateway/src/calendar/`, actor-scoped
+  persistence and calendar mutation/query changes,
+  `gateway/src/api/handlers/calendar.ts`,
+  `gateway/src/bootstrap/product-tools/calendar-provider.ts`, and
+  calendar-specific hooks in the composed gateway. Consume existing recurrence
+  utilities, schedule source/claim/finalization interfaces, current-user
+  authorizer callback and normal chat runner. Preserve public DTO fixtures,
+  existing calendar revisions/visibility, and native/web inputs.
+
+
+  Keep desired reminder intent in the calendar authority boundary, preferably
+  transactionally alongside a combined event-plus-reminder write, and reconcile
+  derived scheduled jobs idempotently. Do not pretend calendar and schedule
+  databases share an atomic transaction. Do not replace chat execution,
+  finalization/outbox or push delivery, create read-state/history
+  infrastructure, broaden scope to Android/FCM, or edit stopped workflow
+  state/resources.
+delivery: >-
+  - Implement actor-personal reminder reads/writes and optional model arguments.
+  Default off; omission on update preserves intent; explicit disable removes it.
+  Timed events default to their start with optional lead; all-day reminders
+  require chosen time. Subscribing to a visible household event never changes
+  another user's reminder or a household-wide notification switch.
+
+  - Persist stable event/occurrence-linked intent and source revision with
+  capability ownership. An explicit event-plus-reminder operation creates one
+  event and one linked subscription, including retry/partial-failure recovery.
+  Preserve reserved legacy notification-policy compatibility and current event
+  visibility/revision rules.
+
+  - Implement actual committed mutation notifications, prompt scheduler wake and
+  bounded durable reconciliation. Discover moved-earlier events before their old
+  wake time, not merely on the stale due timestamp. Reconcile
+  cancellation/exclusion, deletion, lost visibility, recurring splits/successor
+  identity and lead/all-day time changes. Revalidate current calendar truth
+  before the runner submits a message.
+
+  - Define mutation-versus-claim linearization: changes committed before message
+  submission must suppress/reschedule stale work; already-started conversations
+  remain intact. Preserve fired-occurrence deduplication and repair partial
+  calendar/job writes idempotently after restart. One-time reminders are
+  consumed; recurring subscriptions remain for future occurrences. Derived
+  entries appear in Scheduled messages without exposing other subscribers.
+
+  - Update both tool families' relevant guidance with accurate
+  event-versus-future-message, once/recurring and automatic-cleanup
+  descriptions. Appointment requests create calendar events,
+  chat-later/medicine/news requests create schedules, explicit
+  event-plus-reminder creates one linked reminder, and material ambiguity is
+  clarified rather than creating both resources.
+
+  - Prove two-user personal state, omitted/disabled updates, all-day/lead
+  timing, move-earlier and cancellation racing a claim, visibility loss,
+  event-plus-reminder retries, series splits, one-time cleanup and restart
+  reconciliation at domain and actual REST/provider boundaries. Exercise the
+  composed calendar-to-normal-session-to-card/outbox path with controlled
+  dependencies and temporary real stores; do not substitute description-string
+  tests for behavior.
+
+  - Leave the fully integrated web/iOS/gateway feature ready for every retained
+  real-local-stack E2E journey. Keep token/component compliance, existing
+  session resume and per-device privacy unchanged. Run affected regressions and
+  root checks; no production changes or raw user-content evidence.
+checks:
+  - bash -lc "source scripts/env.sh && bun test gateway/src/calendar
+    gateway/src/api/handlers/calendar.test.ts
+    gateway/src/bootstrap/product-tools/calendar-provider.test.ts
+    gateway/src/scheduling gateway/src/scheduled-chat"
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/gateway
+    test:unit && bun run typecheck && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: Calendar personal intent, committed mutation effects and
+    race/recovery proof stay with one owner consuming the already-composed
+    scheduler/chat path; unrelated platform and transport implementation is
+    excluded.
