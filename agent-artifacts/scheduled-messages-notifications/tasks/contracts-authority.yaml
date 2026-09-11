@@ -7,9 +7,12 @@ description: Establish executable public contracts and authority boundaries
   message submitted later in a fresh session. Support one-time absolute time or
   positive relative delay and recurring daily/weekly/monthly local time. The
   inbox is only bounded session-backed preview cards, not read/unread state.
-  Push preferences are per installation, hidden by default. Local logout may
-  complete while server unlink is pending, with a warning; new delivery binding
-  activation is fenced until the old binding is disabled.
+  Clients in scope are web and iOS; native registration/delivery contracts
+  support iOS/APNs only. Android is deprecated, so do not add Android/FCM
+  feature contracts or speculative provider variants. Push preferences are per
+  installation, hidden by default. Local logout may complete while server unlink
+  is pending, with a warning; new delivery binding activation is fenced until
+  the old binding is disabled.
 scope: >-
   Own new schemas and golden JSON fixtures under `shared/protocol/src/` for
   schedules, push registration/preferences/revocation, and scheduled-session
