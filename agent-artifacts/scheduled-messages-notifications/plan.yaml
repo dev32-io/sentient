@@ -5,7 +5,7 @@ stages:
       - contracts-authority
     mode: sequential
     checks:
-      - source scripts/env.sh && bun run typecheck && git diff --check
+      - bash -lc "source scripts/env.sh && bun run typecheck && git diff --check"
     review:
       mode: required
       focus: Review public once/recurring and actor-reminder contract compatibility,
