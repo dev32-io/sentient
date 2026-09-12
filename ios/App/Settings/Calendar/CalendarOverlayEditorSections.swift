@@ -1,6 +1,51 @@
 import SwiftUI
 import MobileData
 
+enum CalendarReminderEditSemantics {
+    static func changedAfterTimeKindEdit(
+        wasChanged: Bool,
+        reminderEnabled: Bool,
+        from oldValue: Bool,
+        to newValue: Bool
+    ) -> Bool {
+        wasChanged || (reminderEnabled && oldValue != newValue)
+    }
+
+    static func reminderInput(
+        enabled: Bool,
+        allDay: Bool,
+        usesLead: Bool,
+        leadMinutes: String,
+        reminderTime: Date,
+        timeZoneId: String,
+        fallbackTimeZone: TimeZone
+    ) -> CalendarReminderInput? {
+        guard enabled else { return nil }
+        if allDay {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            formatter.timeZone = TimeZone(identifier: timeZoneId) ?? fallbackTimeZone
+            return CalendarReminderInput(
+                enabled: true,
+                mode: .allDay,
+                leadMinutes: nil,
+                localTime: formatter.string(from: reminderTime),
+                timeZone: timeZoneId
+            )
+        }
+        if usesLead {
+            return CalendarReminderInput(
+                enabled: true,
+                mode: .lead,
+                leadMinutes: Int(leadMinutes).map { KotlinInt(int: Int32($0)) },
+                localTime: nil,
+                timeZone: nil
+            )
+        }
+        return CalendarReminderInput(enabled: true, mode: .atStart, leadMinutes: nil, localTime: nil, timeZone: nil)
+    }
+}
+
 struct CalendarDraftFields: View {
     @Binding var draft: CalendarMutationDraft
     let titleFocused: FocusState<Bool>.Binding
@@ -79,6 +124,7 @@ struct CalendarDraftFields: View {
         _reminderLeadMinutes = State(initialValue: String(Int(reminder?.leadMinutes?.intValue ?? 15)))
         _reminderTime = State(initialValue: reminder?.localTime.flatMap(reminderFormatter.date(from:)) ?? reminderFormatter.date(from: "09:00") ?? start)
         _reminderTimeZoneId = State(initialValue: reminderZoneId)
+        _reminderChanged = State(initialValue: value.reminderChanged)
     }
 
     var body: some View {
@@ -86,12 +132,12 @@ struct CalendarDraftFields: View {
             CalendarDraftDetailsSection(
                 title: $title,
                 details: $details,
-                allDay: $allDay,
+                allDay: controlledAllDayBinding,
                 titleFocused: titleFocused,
                 onChange: { emit() }
             )
             CalendarDraftScheduleSection(
-                allDay: $allDay,
+                allDay: controlledAllDayBinding,
                 startDate: $startDate,
                 endDate: $endDate,
                 hasEnd: $hasEnd,
@@ -133,6 +179,29 @@ struct CalendarDraftFields: View {
                 onChange: { emit() }
             )
         }
+    }
+
+    /// Changing event time-kind also changes the shape of an enabled reminder.
+    /// Treat that as an explicit reminder edit so the shared update builder does
+    /// not omission-preserve an incompatible server reminder. The existing local
+    /// all-day time/timezone controls always provide a concrete selection; the
+    /// reverse transition maps to the selected lead or at-start timed mode.
+    private var controlledAllDayBinding: Binding<Bool> {
+        Binding(
+            get: { allDay },
+            set: { value in
+                guard value != allDay else { return }
+                let prior = allDay
+                allDay = value
+                reminderChanged = CalendarReminderEditSemantics.changedAfterTimeKindEdit(
+                    wasChanged: reminderChanged,
+                    reminderEnabled: reminderEnabled,
+                    from: prior,
+                    to: value
+                )
+                emit()
+            }
+        )
     }
 
     private var scopeBinding: Binding<CalendarScope> {
@@ -208,29 +277,15 @@ struct CalendarDraftFields: View {
     }
 
     private var reminderInput: CalendarReminderInput? {
-        guard reminderEnabled else { return nil }
-        if allDay {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            formatter.timeZone = TimeZone(identifier: reminderTimeZoneId) ?? zone
-            return CalendarReminderInput(
-                enabled: true,
-                mode: .allDay,
-                leadMinutes: nil,
-                localTime: formatter.string(from: reminderTime),
-                timeZone: reminderTimeZoneId
-            )
-        }
-        if reminderUsesLead {
-            return CalendarReminderInput(
-                enabled: true,
-                mode: .lead,
-                leadMinutes: Int(reminderLeadMinutes).map { KotlinInt(int: Int32($0)) },
-                localTime: nil,
-                timeZone: nil
-            )
-        }
-        return CalendarReminderInput(enabled: true, mode: .atStart, leadMinutes: nil, localTime: nil, timeZone: nil)
+        CalendarReminderEditSemantics.reminderInput(
+            enabled: reminderEnabled,
+            allDay: allDay,
+            usesLead: reminderUsesLead,
+            leadMinutes: reminderLeadMinutes,
+            reminderTime: reminderTime,
+            timeZoneId: reminderTimeZoneId,
+            fallbackTimeZone: zone
+        )
     }
 }
 

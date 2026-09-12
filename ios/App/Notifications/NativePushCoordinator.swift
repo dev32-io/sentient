@@ -110,7 +110,9 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     private var deviceToken: String?
     private var registrationTask: Task<Void, Never>?
     private var accountTransitionTask: Task<Void, Never>?
+    private var transitionGeneration = 0
     private var pendingConfiguration: NativePushAccountConfiguration?
+    private var pendingLogout = false
     private let log = AppLog("push", "native")
 
     init(
@@ -158,6 +160,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         }
         if lifecycle != nil, ownerFence != nil {
             pendingConfiguration = account
+            pendingLogout = false
             beginAccountTransition()
             return
         }
@@ -208,8 +211,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     /// local account teardown remains immediate and network completion is async.
     func unlinkForLogout() {
         navigation.clear()
-        pendingConfiguration = nil
         guard lifecycle != nil, ownerFence != nil else { return }
+        // A replacement already queued by a newer authenticated host remains the
+        // latest desired configuration. Otherwise this transition ends unlinked.
+        pendingLogout = pendingConfiguration == nil
         registrationTask?.cancel()
         registrationPending = false
         binding = nil
@@ -223,10 +228,16 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     func dismissLifecycleWarning() { lifecycleWarning = nil }
 
     func retryPendingUnlink() {
-        guard let lifecycle else { return }
-        Task {
+        guard accountTransitionTask == nil, let lifecycle else { return }
+        transitionGeneration += 1
+        let operation = transitionGeneration
+        accountTransitionTask = Task {
+            defer {
+                if self.transitionGeneration == operation { self.accountTransitionTask = nil }
+            }
             do {
                 let result = try await lifecycle.retryPendingUnlink()
+                guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
                 if case .failure = result {
                     applyLifecycleState(lifecycle.state)
                     return
@@ -235,11 +246,19 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
                     finishAccountTransition(after: lifecycle)
                     return
                 }
+                if pendingLogout {
+                    closeTransitionLifecycle(lifecycle)
+                    return
+                }
                 if let ownerFence {
                     _ = try await lifecycle.reconcileActivation(ownerFence: ownerFence)
+                    guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
                 }
                 applyLifecycleState(lifecycle.state)
-            } catch { lifecycleWarning = "Notification unlink is still pending." }
+            } catch {
+                guard self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
+                lifecycleWarning = "Notification unlink is still pending."
+            }
         }
     }
 
@@ -259,12 +278,16 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     private func installLifecycle(_ configuration: NativePushAccountConfiguration) {
         lifecycle = lifecycleFactory(configuration)
         ownerFence = configuration.fence
+        pendingLogout = false
         if let lifecycle { applyLifecycleState(lifecycle.state) }
         Task { await refreshPermission() }
     }
 
     private func beginAccountTransition(logout: Bool = false) {
         guard accountTransitionTask == nil, let lifecycle, let ownerFence else { return }
+        if logout, pendingConfiguration == nil { pendingLogout = true }
+        transitionGeneration += 1
+        let operation = transitionGeneration
         registrationTask?.cancel()
         registrationPending = false
         binding = nil
@@ -272,22 +295,25 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
             ? "Notifications may continue until this device reconnects."
             : "Notification activation is waiting for the previous binding to be disabled."
         accountTransitionTask = Task {
-            defer { accountTransitionTask = nil }
+            defer {
+                if self.transitionGeneration == operation { self.accountTransitionTask = nil }
+            }
             do {
                 let result = try await lifecycle.unlink(ownerFence: ownerFence)
+                guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
                 switch result {
                 case .success:
                     if pendingConfiguration != nil {
                         finishAccountTransition(after: lifecycle)
-                    } else if self.lifecycle === lifecycle {
-                        lifecycle.close()
-                        self.lifecycle = nil
-                        self.ownerFence = nil
-                        lifecycleWarning = nil
+                    } else if pendingLogout {
+                        closeTransitionLifecycle(lifecycle)
+                    } else {
+                        applyLifecycleState(lifecycle.state)
                     }
                 case .failure: applyLifecycleState(lifecycle.state)
                 }
             } catch {
+                guard self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
                 lifecycleWarning = "Notifications may continue until this device reconnects."
             }
         }
@@ -296,10 +322,20 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     private func finishAccountTransition(after oldLifecycle: NativePushLifecycleClient) {
         guard lifecycle === oldLifecycle, let next = pendingConfiguration else { return }
         pendingConfiguration = nil
+        pendingLogout = false
         oldLifecycle.close()
         lifecycle = nil
         ownerFence = nil
         installLifecycle(next)
+    }
+
+    private func closeTransitionLifecycle(_ oldLifecycle: NativePushLifecycleClient) {
+        guard lifecycle === oldLifecycle else { return }
+        pendingLogout = false
+        oldLifecycle.close()
+        lifecycle = nil
+        ownerFence = nil
+        lifecycleWarning = nil
     }
 
     private func registerCurrentToken() {
@@ -310,7 +346,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
             defer { registrationPending = false }
             let request = lifecycle.makeRegistration(deviceToken: deviceToken, replacing: binding)
             do {
-                if let registered = try await lifecycle.register(ownerFence: ownerFence, request: request) {
+                let registered = try await lifecycle.register(ownerFence: ownerFence, request: request)
+                guard !Task.isCancelled, self.lifecycle === lifecycle,
+                      self.ownerFence == ownerFence, self.accountTransitionTask == nil else { return }
+                if let registered {
                     binding = registered
                 } else {
                     permission = .error

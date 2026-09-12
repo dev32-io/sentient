@@ -183,23 +183,23 @@ final class UserSession: ObservableObject {
 
     /// Notification/deep-link destinations must name a session visible to the
     /// authenticated account before the route can resume it.
-    func canResumeNotificationSession(_ sessionId: String) async -> Bool {
-        guard let destination = NotificationDestination(sessionId: sessionId) else { return false }
+    func validateNotificationSession(_ sessionId: String) async -> NotificationSessionValidation {
+        guard let destination = NotificationDestination(sessionId: sessionId) else { return .unavailable }
         do {
             let pageSize: Int32 = 100
             var offset: Int32 = 0
             while true {
                 try Task.checkCancellation()
                 let sessions = try await component.observeSessions.invoke(limit: pageSize, offset: offset)
-                if canResumeNotificationDestination(destination, sessionIds: sessions.map(\.id)) { return true }
-                if sessions.count < Int(pageSize) { return false }
+                if canResumeNotificationDestination(destination, sessionIds: sessions.map(\.id)) { return .authorized }
+                if sessions.count < Int(pageSize) { return .unavailable }
                 offset += pageSize
             }
         } catch is CancellationError {
-            return false
+            return .retryableFailure
         } catch {
             log.warn("notification destination validation failed code=transport")
-            return false
+            return .retryableFailure
         }
     }
 

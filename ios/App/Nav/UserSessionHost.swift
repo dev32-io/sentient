@@ -24,6 +24,7 @@ import MobileData
 struct UserSessionHost: View {
     /// User/Connection scope: the SDK + ChatComponent live here, above the stack.
     @StateObject private var userSession: UserSession
+    @StateObject private var notificationResume = NotificationResumeController()
     @ObservedObject private var notificationNavigation = NativePushCoordinator.shared.navigation
 
     /// Shared OTA-update state (owned by UpdateGate above). Forwarded to Settings
@@ -31,6 +32,7 @@ struct UserSessionHost: View {
     private let updateModel: UpdateModel
 
     let userName: String
+    private let accountFence: String
     /// Clears the token via AppConfig → RootView re-routes to login.
     let onLogout: () -> Void
 
@@ -60,6 +62,7 @@ struct UserSessionHost: View {
 
     init(appConfig: AppConfig, updateModel: UpdateModel) {
         userName = appConfig.displayName
+        accountFence = "\(appConfig.gatewayWsUrl)|\(appConfig.authenticatedUserId ?? "")"
         onLogout = { appConfig.logout() }
         self.updateModel = updateModel
         NativePushCoordinator.shared.configure(appConfig: appConfig)
@@ -112,6 +115,11 @@ struct UserSessionHost: View {
                 destination(for: route)
             }
         }
+        .overlay(alignment: .top) {
+            notificationResumeNotice
+                .padding(.horizontal, Space.lg)
+                .padding(.top, Space.md)
+        }
         .onReceive(notificationNavigation.$destination) { destination in
             guard destination != nil, let destination = notificationNavigation.take() else { return }
             resumeNotificationDestination(destination)
@@ -119,6 +127,7 @@ struct UserSessionHost: View {
         .onAppear {
             if let destination = notificationNavigation.take() { resumeNotificationDestination(destination) }
         }
+        .onDisappear { notificationResume.cancel() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
@@ -172,9 +181,37 @@ struct UserSessionHost: View {
     }
 
     private func resumeNotificationDestination(_ destination: NotificationDestination) {
-        Task {
-            guard await userSession.canResumeNotificationSession(destination.sessionId) else { return }
-            activateSession(destination.sessionId)
+        notificationResume.resume(
+            destination,
+            accountFence: accountFence,
+            validate: { await userSession.validateNotificationSession($0) },
+            activate: activateSession
+        )
+    }
+
+    @ViewBuilder
+    private var notificationResumeNotice: some View {
+        switch notificationResume.state {
+        case .idle, .pending:
+            EmptyView()
+        case .unavailable:
+            AsyncNotice(
+                kind: .warning,
+                title: "Message unavailable",
+                detail: "This message is no longer available.",
+                retry: notificationResume.dismiss,
+                accessibilityId: "notification-session-unavailable",
+                actionTitle: "Dismiss"
+            )
+        case .retryableFailure(let destination):
+            AsyncNotice(
+                kind: .warning,
+                title: "Couldn't open message",
+                detail: "Check your connection and try again.",
+                retry: { resumeNotificationDestination(destination) },
+                accessibilityId: "notification-session-retry",
+                actionTitle: "Try again"
+            )
         }
     }
 

@@ -206,6 +206,93 @@ describe("schedule persistence", () => {
     });
   });
 
+  test("unchanged calendar reconciliation preserves a due recurring occurrence before and after claim", async () => {
+    const { service, resource } = setup();
+    const reminder = {
+      eventId: "event-recurring",
+      reminderId: "event-recurring:u_aaaaaaaa",
+      enabled: true,
+      message: "Remind me about my calendar event.",
+      timing: { kind: "recurring" as const, frequency: "daily" as const, localTime: "09:00", timeZone: "UTC" },
+    };
+
+    expect(
+      (
+        await service.reconcileCalendarReminder(
+          resource,
+          { ...reminder, notBefore: new Date("2026-08-02T09:00:00Z") },
+          new Date("2026-08-02T08:59:00Z"),
+        )
+      ).ok,
+    ).toBe(true);
+    // The adapter's clock-dependent notBefore disappears after the first instant;
+    // this is still the same desired projection and must leave the due slot intact.
+    expect((await service.reconcileCalendarReminder(resource, reminder, new Date("2026-08-02T09:00:01Z"))).ok).toBe(
+      true,
+    );
+    const due = await service.claimDue(new Date("2026-08-02T09:00:01Z"), 1, 60_000);
+    if (!due.ok || !due.value[0]) throw new Error("claim failed");
+    const claim = due.value[0];
+    expect(claim.intendedAt).toBe("2026-08-02T09:00:00.000Z");
+
+    expect((await service.reconcileCalendarReminder(resource, reminder, new Date("2026-08-02T09:00:02Z"))).ok).toBe(
+      true,
+    );
+    expect((await service.associateSession(claim, "session-calendar-recurring")).ok).toBe(true);
+    const finalized = await service.finalizeClaim(
+      claim,
+      { outcome: "interrupted", sessionId: "session-calendar-recurring", completedAt: "2026-08-02T09:00:03.000Z" },
+      undefined,
+    );
+    expect(finalized.ok && finalized.value.nextRunAt).toBe("2026-08-03T09:00:00.000Z");
+
+    // A semantic edit still fences the old generation.
+    const next = await service.claimDue(new Date("2026-08-03T09:00:01Z"), 1, 60_000);
+    if (!next.ok || !next.value[0]) throw new Error("next claim failed");
+    expect(
+      (
+        await service.reconcileCalendarReminder(
+          resource,
+          { ...reminder, message: "Changed reminder." },
+          new Date("2026-08-03T09:00:02Z"),
+        )
+      ).ok,
+    ).toBe(true);
+    expect((await service.associateSession(next.value[0], "session-stale-calendar")).ok).toBe(false);
+  });
+
+  test("unchanged consumed one-time calendar reminder is not resurrected", async () => {
+    const { service, resource } = setup();
+    const reminder = {
+      eventId: "event-once",
+      reminderId: "event-once:u_aaaaaaaa",
+      enabled: true,
+      message: "Remind me about my appointment.",
+      timing: { kind: "once-at" as const, at: "2026-08-02T09:00:00Z" },
+    };
+    expect((await service.reconcileCalendarReminder(resource, reminder, new Date("2026-08-01T09:00:00Z"))).ok).toBe(
+      true,
+    );
+    const due = await service.claimDue(new Date("2026-08-02T09:00:01Z"), 1, 60_000);
+    if (!due.ok || !due.value[0]) throw new Error("claim failed");
+    const claim = due.value[0];
+    expect((await service.associateSession(claim, "session-calendar-once")).ok).toBe(true);
+    expect(
+      (
+        await service.finalizeClaim(
+          claim,
+          { outcome: "interrupted", sessionId: "session-calendar-once", completedAt: "2026-08-02T09:00:02Z" },
+          undefined,
+        )
+      ).ok,
+    ).toBe(true);
+
+    expect((await service.reconcileCalendarReminder(resource, reminder, new Date("2026-08-02T09:00:03Z"))).ok).toBe(
+      true,
+    );
+    expect(await service.list(resource, undefined, 10)).toEqual({ ok: true, value: { schedules: [] } });
+  });
+
   test("pause, edit, and delete fence already-issued claims", async () => {
     for (const operation of ["pause", "edit", "delete"] as const) {
       const { service, resource } = setup();

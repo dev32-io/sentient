@@ -360,9 +360,35 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             return fail("validation");
           }
           if (existing) {
+            const timingJson = JSON.stringify(timing);
+            // Reconciliation is a projection, not an edit. In particular, its clock
+            // must not fence a due/claimed occurrence or advance recurring timing.
+            // `notBefore` is only a first-occurrence calculation aid and deliberately
+            // is not part of this stable comparison.
+            if (
+              !existing.deleted &&
+              existing.enabled === 1 &&
+              existing.message === input.message &&
+              existing.timing_json === timingJson
+            ) {
+              return { ok: true, value: undefined };
+            }
+            // A terminal one-time reminder is consumed by the scheduler. An
+            // unchanged source projection observed afterwards must not resurrect it.
+            const consumedOnce =
+              existing.deleted === 1 &&
+              existing.message === input.message &&
+              existing.timing_json === timingJson &&
+              timing.kind === "once" &&
+              db
+                .query<{ n: number }, [string]>(
+                  "SELECT count(*) n FROM occurrences WHERE schedule_id=? AND outcome IS NOT NULL",
+                )
+                .get(existing.schedule_id)?.n;
+            if (consumedOnce) return { ok: true, value: undefined };
             db.query(
               "UPDATE schedules SET revision=revision+1,generation=generation+1,message=?,timing_json=?,enabled=1,next_run_at=?,updated_at=?,deleted=0,deleted_revision=NULL WHERE schedule_id=?",
-            ).run(input.message, JSON.stringify(timing), run, at, existing.schedule_id);
+            ).run(input.message, timingJson, run, at, existing.schedule_id);
             return { ok: true, value: undefined };
           }
           if (

@@ -28,6 +28,44 @@ final class NotificationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testResumeControllerExposesUnavailableAndActivatesOnlyAuthorizedSession() async {
+        let controller = NotificationResumeController()
+        let unavailable = NotificationDestination(sessionId: "missing")!
+        controller.resume(unavailable, accountFence: "account-a", validate: { _ in .unavailable }, activate: { _ in
+            XCTFail("unavailable destination activated")
+        })
+        await Task.yield()
+        XCTAssertEqual(controller.state, .unavailable(unavailable))
+
+        let available = NotificationDestination(sessionId: "available")!
+        var activated: String?
+        controller.resume(available, accountFence: "account-a", validate: { _ in .authorized }, activate: { activated = $0 })
+        await Task.yield()
+        XCTAssertEqual(activated, "available")
+        XCTAssertEqual(controller.state, .idle)
+    }
+
+    @MainActor
+    func testResumeControllerFencesSuspendedValidationAcrossAccountChange() async {
+        let started = expectation(description: "validation started")
+        let validation = SuspendedNotificationValidation(started: started)
+        let controller = NotificationResumeController()
+        var activated: String?
+        controller.resume(
+            NotificationDestination(sessionId: "old-session")!,
+            accountFence: "account-old",
+            validate: { _ in await validation.wait() },
+            activate: { activated = $0 }
+        )
+        await fulfillment(of: [started])
+        controller.setAccountFence("account-new")
+        validation.complete(.authorized)
+        await Task.yield()
+        XCTAssertNil(activated)
+        XCTAssertEqual(controller.state, .idle)
+    }
+
+    @MainActor
     func testLogoutClearsStaleAccountTargetImmediately() {
         let coordinator = NativePushCoordinator(permissions: FakePermission(status: .denied, granted: false))
         coordinator.navigation.receive(NotificationDestination(sessionId: "old-account-session")!)
@@ -142,6 +180,47 @@ final class NotificationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testConfigurationAndLogoutDuringRetryRemainSerializedBehindOldAcknowledgement() async {
+        let unlinkStarted = expectation(description: "logout unlink started")
+        let retryStarted = expectation(description: "pending unlink retry started")
+        let replacementInstalled = expectation(description: "replacement installed")
+        let old = FakeNativePushLifecycle(unlinkStarted: unlinkStarted, retryStarted: retryStarted)
+        let replacement = FakeNativePushLifecycle()
+        var installed: [String] = []
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .denied, granted: false),
+            lifecycleFactory: { configuration in
+                installed.append(configuration.fence)
+                if configuration.fence == "account-new" { replacementInstalled.fulfill(); return replacement }
+                return old
+            }
+        )
+
+        coordinator.configure(account: account("account-old"))
+        coordinator.unlinkForLogout()
+        await fulfillment(of: [unlinkStarted])
+        old.completeUnlink(.failure)
+        await Task.yield()
+
+        coordinator.retryPendingUnlink()
+        await fulfillment(of: [retryStarted])
+        coordinator.configure(account: account("account-new"))
+        coordinator.unlinkForLogout() // Local teardown must not start a competing old-account operation.
+        XCTAssertEqual(old.unlinkCalls, 1)
+        XCTAssertEqual(old.retryCalls, 1)
+        XCTAssertFalse(old.closed)
+        XCTAssertEqual(installed, ["account-old"])
+        XCTAssertNotNil(coordinator.lifecycleWarning)
+
+        old.completeRetry(.success)
+        await fulfillment(of: [replacementInstalled])
+        XCTAssertEqual(old.unlinkCalls, 1)
+        XCTAssertEqual(old.retryCalls, 1)
+        XCTAssertTrue(old.closed)
+        XCTAssertEqual(installed, ["account-old", "account-new"])
+    }
+
+    @MainActor
     func testStaleOldBindingAcknowledgementKeepsReplacementFencedUntilRetrySucceeds() async {
         let unlinkStarted = expectation(description: "old unlink attempted")
         let retryStarted = expectation(description: "old unlink retried")
@@ -174,6 +253,22 @@ final class NotificationIntegrationTests: XCTestCase {
     }
 }
 
+@MainActor
+private final class SuspendedNotificationValidation {
+    private let started: XCTestExpectation
+    private var continuation: CheckedContinuation<NotificationSessionValidation, Never>?
+
+    init(started: XCTestExpectation) { self.started = started }
+    func wait() async -> NotificationSessionValidation {
+        started.fulfill()
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func complete(_ result: NotificationSessionValidation) {
+        continuation?.resume(returning: result)
+        continuation = nil
+    }
+}
+
 private func account(_ fence: String) -> NativePushAccountConfiguration {
     NativePushAccountConfiguration(fence: fence, gatewayWsUrl: "wss://gateway.test", allowSelfSignedDevHost: false, token: { "" })
 }
@@ -200,6 +295,7 @@ private final class FakeNativePushLifecycle: NativePushLifecycleClient {
     private var retryContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
     private(set) var closed = false
     private(set) var unlinkCalls = 0
+    private(set) var retryCalls = 0
 
     init(unlinkStarted: XCTestExpectation? = nil, retryStarted: XCTestExpectation? = nil) {
         self.unlinkStarted = unlinkStarted
@@ -220,6 +316,7 @@ private final class FakeNativePushLifecycle: NativePushLifecycleClient {
     }
 
     func retryPendingUnlink() async throws -> NativePushLifecycleResult {
+        retryCalls += 1
         retryStarted?.fulfill()
         return await withCheckedContinuation { retryContinuation = $0 }
     }

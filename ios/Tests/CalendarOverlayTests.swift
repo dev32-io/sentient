@@ -77,6 +77,45 @@ struct CalendarOverlayTests {
         #expect(disabled.reminderChanged)
     }
 
+    @Test func timeKindEditsMarkEnabledReminderWithoutLosingPriorDirtyIntent() {
+        #expect(CalendarReminderEditSemantics.changedAfterTimeKindEdit(
+            wasChanged: false, reminderEnabled: true, from: false, to: true
+        ))
+        #expect(CalendarReminderEditSemantics.changedAfterTimeKindEdit(
+            wasChanged: false, reminderEnabled: true, from: true, to: false
+        ))
+        #expect(!CalendarReminderEditSemantics.changedAfterTimeKindEdit(
+            wasChanged: false, reminderEnabled: false, from: false, to: true
+        ))
+        #expect(CalendarReminderEditSemantics.changedAfterTimeKindEdit(
+            wasChanged: true, reminderEnabled: false, from: true, to: false
+        ))
+    }
+
+    @Test func editorTimeKindTransitionBuildsCompatibleSharedReminderInput() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        let nine = Date(timeIntervalSince1970: 9 * 60 * 60)
+        let allDay = try #require(CalendarReminderEditSemantics.reminderInput(
+            enabled: true, allDay: true, usesLead: false, leadMinutes: "15",
+            reminderTime: nine, timeZoneId: "UTC", fallbackTimeZone: utc
+        ))
+        #expect(allDay.mode == .allDay)
+        #expect(allDay.localTime == "09:00")
+        #expect(allDay.timeZone == "UTC")
+
+        let timed = try #require(CalendarReminderEditSemantics.reminderInput(
+            enabled: true, allDay: false, usesLead: false, leadMinutes: "15",
+            reminderTime: nine, timeZoneId: "UTC", fallbackTimeZone: utc
+        ))
+        #expect(timed.mode == .atStart)
+        #expect(timed.localTime == nil)
+        #expect(timed.timeZone == nil)
+        #expect(CalendarReminderEditSemantics.reminderInput(
+            enabled: false, allDay: false, usesLead: false, leadMinutes: "15",
+            reminderTime: nine, timeZoneId: "UTC", fallbackTimeZone: utc
+        ) == nil)
+    }
+
     @Test func allDayReminderRequiresLocalTimeAndTimeZone() {
         let base = CalendarMutationDraft(
             title: "School holiday", description: nil, allDay: true,

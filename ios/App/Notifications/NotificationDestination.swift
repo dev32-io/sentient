@@ -33,6 +33,77 @@ func canResumeNotificationDestination(_ destination: NotificationDestination, se
     sessionIds.contains(destination.sessionId)
 }
 
+enum NotificationSessionValidation: Equatable {
+    case authorized
+    case unavailable
+    case retryableFailure
+}
+
+enum NotificationResumeState: Equatable {
+    case idle
+    case pending(NotificationDestination)
+    case unavailable(NotificationDestination)
+    case retryableFailure(NotificationDestination)
+
+    var destination: NotificationDestination? {
+        switch self {
+        case .idle: nil
+        case .pending(let destination), .unavailable(let destination), .retryableFailure(let destination): destination
+        }
+    }
+}
+
+/// Owns destination authorization work and fences its completion to the active
+/// authenticated account. A destination is never activated merely because it
+/// arrived in a trusted APNs envelope.
+@MainActor
+final class NotificationResumeController: ObservableObject {
+    @Published private(set) var state: NotificationResumeState = .idle
+    private var validationTask: Task<Void, Never>?
+    private var accountFence: String?
+    private var generation = 0
+
+    func setAccountFence(_ fence: String?) {
+        guard accountFence != fence else { return }
+        generation += 1
+        validationTask?.cancel()
+        validationTask = nil
+        accountFence = fence
+        state = .idle
+    }
+
+    func resume(
+        _ destination: NotificationDestination,
+        accountFence: String,
+        validate: @escaping @MainActor (String) async -> NotificationSessionValidation,
+        activate: @escaping @MainActor (String) -> Void
+    ) {
+        setAccountFence(accountFence)
+        generation += 1
+        let operation = generation
+        validationTask?.cancel()
+        state = .pending(destination)
+        validationTask = Task { [weak self] in
+            let result = await validate(destination.sessionId)
+            guard !Task.isCancelled, let self,
+                  self.generation == operation, self.accountFence == accountFence else { return }
+            self.validationTask = nil
+            switch result {
+            case .authorized:
+                self.state = .idle
+                activate(destination.sessionId)
+            case .unavailable:
+                self.state = .unavailable(destination)
+            case .retryableFailure:
+                self.state = .retryableFailure(destination)
+            }
+        }
+    }
+
+    func dismiss() { state = .idle }
+    func cancel() { setAccountFence(nil) }
+}
+
 /// Keeps one supported destination across cold launch and login. A newer user
 /// action replaces the older pending intent; authorization is still checked by
 /// the existing session-resume path after authentication.
