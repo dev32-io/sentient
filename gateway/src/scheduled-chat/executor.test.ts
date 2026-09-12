@@ -103,6 +103,7 @@ describe("scheduled chat consumer boundary", () => {
       accessManager,
       registry,
       associateSession: (claim, sessionId) => service.associateSession(claim, sessionId),
+      reauthorize: (claim, signal) => trackingAuthorizer.authorize(claim, signal),
       makeSessionId: () => "s_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       now: () => new Date("2026-08-01T15:01:01Z"),
       buildHandles(current, sessionId) {
@@ -199,7 +200,7 @@ describe("scheduled chat consumer boundary", () => {
     role = "child";
     simulateCrash = false;
     expect(await runner.runOnce()).toEqual({ ok: true, value: { claimed: 1, finalized: 1 } });
-    expect(authorizedRoles).toEqual(["adult", "child"]);
+    expect(authorizedRoles).toEqual(["adult", "adult", "child"]);
     expect(runtimeSubmissions).toBe(1);
 
     const store = openSessionStore(accessManager.grant(principal, "session-store"));
@@ -301,6 +302,47 @@ describe("scheduled chat consumer boundary", () => {
     const queued = await service.claim(new Date("2026-08-01T11:00:00Z"), 10, 1_000);
     expect(queued.ok && queued.value).toHaveLength(1);
     expect(submissions).toBe(2);
+    service.close();
+  });
+
+  test("fences mutation committed after initial association but before append", async () => {
+    const { accessManager, principal, resource, service } = setup();
+    const schedule = await createOneTime(service, resource);
+    const due = await service.claimDue(new Date("2026-08-01T15:01:00Z"), 1, 60_000);
+    expect(due.ok).toBe(true);
+    if (!due.ok || !due.value[0]) return;
+    const claim = due.value[0];
+    let associations = 0;
+    let runtimeBuilt = false;
+    const submitter = createScheduledMessageSubmitter({
+      accessManager,
+      registry: createSessionRegistry(() => {}),
+      makeSessionId: () => "s_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      associateSession: async (candidate, sessionId) => {
+        const result = await service.associateSession(candidate, sessionId);
+        associations++;
+        if (associations === 1) {
+          const paused = await service.patch(
+            resource,
+            schedule.scheduleId,
+            { expectedRevision: schedule.revision, changes: { enabled: false } },
+            new Date("2026-08-01T15:01:01Z"),
+          );
+          expect(paused.ok).toBe(true);
+        }
+        return result;
+      },
+      reauthorize: async (candidate) => ({ ok: true, value: { claim: candidate, principal, resource } }),
+      buildHandles: () => {
+        runtimeBuilt = true;
+        throw new Error("stale occurrence must not allocate runtime");
+      },
+    });
+
+    const result = await submitter.submit({ claim, principal, resource }, new AbortController().signal);
+    expect(result).toMatchObject({ ok: false, error: { code: "claim_lost" } });
+    expect(associations).toBe(2);
+    expect(runtimeBuilt).toBe(false);
     service.close();
   });
 

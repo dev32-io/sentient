@@ -69,6 +69,11 @@ export interface ScheduledMessageSubmitterDeps {
     claim: AuthorizedScheduledExecution["claim"],
     sessionId: string,
   ) => Promise<SchedulingResult<{ occurrenceId: string; sessionId: string; replayed: boolean }>>;
+  /** Re-resolve current user and source authority at submission boundary. */
+  readonly reauthorize: (
+    claim: AuthorizedScheduledExecution["claim"],
+    signal: AbortSignal,
+  ) => Promise<SchedulingResult<AuthorizedScheduledExecution>>;
   readonly buildHandles: (
     principal: AuthorizedScheduledExecution["principal"],
     sessionId: string,
@@ -186,8 +191,16 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
 
       try {
         if (signal.aborted) return cancelled();
+        // Repeat schedule CAS as final pre-submit transition, then resolve
+        // calendar/account truth. Mutations before transition lose either CAS
+        // or following authority check; later mutations are already-started.
+        const confirmed = await deps.associateSession(claim, sessionId);
+        if (!confirmed.ok) return confirmed;
+        const current = await deps.reauthorize(claim, signal);
+        if (!current.ok) return current;
+        if (signal.aborted) return cancelled();
         const handles = deps.registry.ensure(sessionId, () =>
-          deps.buildHandles(principal, sessionId, `scheduled:${claim.occurrenceId}`),
+          deps.buildHandles(current.value.principal, sessionId, `scheduled:${claim.occurrenceId}`),
         );
         const interrupt = () => handles.runtime.interrupt();
         signal.addEventListener("abort", interrupt, { once: true });

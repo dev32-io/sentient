@@ -240,17 +240,19 @@ describe("calendar reminder scheduling boundary", () => {
         claims: Parameters<typeof createScheduledChatRunner>[0]["claims"] = service,
       ) => {
         const registry = createSessionRegistry(() => {});
+        const authorizer = makeAuthorizer();
         const submitter = createScheduledMessageSubmitter({
           accessManager,
           registry,
           associateSession: (claim, id) => service.associateSession(claim, id),
+          reauthorize: (claim, signal) => authorizer.authorize(claim, signal),
           makeSessionId: () => sessionId,
           now: () => now,
           buildHandles: runtimeFixture.buildHandles,
         });
         const runner = createScheduledChatRunner({
           claims,
-          authorizer: makeAuthorizer(),
+          authorizer,
           submitter,
           finalizer,
           claimLimit: 1,
@@ -422,6 +424,7 @@ describe("calendar reminder scheduling boundary", () => {
         accessManager,
         registry,
         associateSession: (claim, id) => schedules.associateSession(claim, id),
+        reauthorize: (claim, signal) => authorizer.authorize(claim, signal),
         makeSessionId: () => sessionId,
         now: () => new Date(due.getTime() + 60_000),
         buildHandles: runtimeFixture.buildHandles,
@@ -1087,6 +1090,77 @@ describe("calendar reminder scheduling boundary", () => {
     expect(
       replenished.value.schedules.some((item) => item.timing.kind === "once" && targetTimes.has(item.timing.at)),
     ).toBe(false);
+    scheduler.close();
+    schedules.close();
+    persistence.close();
+  });
+
+  test("uses occurrence title companion and rejects stale base wake", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-title-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
+    const schedules = createScheduleService({ userDataRoot: root, id: () => crypto.randomUUID() });
+    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const created = createCalendarEvent(
+      {
+        title: "Medicine",
+        start: "2026-05-01T10:00:00-04:00" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        recurrence: { frequency: "daily", count: 3 },
+        reminder: { enabled: true, mode: "at-start" },
+      },
+      persistence,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const changed = mutateCalendarEvent(
+      {
+        operation: "update",
+        eventId: created.value.eventId,
+        applyTo: "this_occurrence",
+        originalStart: "2026-05-02T10:00:00-04:00",
+        changes: { title: "Travel medicine" },
+      } as CalendarMutationCommand,
+      persistence,
+      config,
+    );
+    expect(changed.ok).toBe(true);
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-01-01T00:00:00Z"))).ok,
+    ).toBe(true);
+
+    const claims = await schedules.claimDue(new Date("2026-05-02T14:00:01Z"), 10, 60_000);
+    expect(claims.ok).toBe(true);
+    if (!claims.ok) return;
+    expect(claims.value).toHaveLength(2);
+    const decisions = await Promise.all(
+      claims.value.map(async (claim) => ({
+        claim,
+        result: await authorizeCalendarReminderExecution(
+          {
+            claim,
+            principal,
+            resource: new PrivateScheduleResource(accessManager.grant(principal, "schedule-private")),
+          },
+          { accessManager, calendarConfig: config },
+          new AbortController().signal,
+        ),
+      })),
+    );
+    const base = decisions.find(
+      ({ claim }) => claim.source.kind === "calendar-reminder" && !claim.source.reminderId.includes("2026-"),
+    );
+    const companion = decisions.find(
+      ({ claim }) => claim.source.kind === "calendar-reminder" && claim.source.reminderId.includes("2026-"),
+    );
+    expect(base?.result.ok).toBe(false);
+    expect(companion?.result.ok).toBe(true);
+    expect(companion?.claim.message).toContain("Travel medicine");
     scheduler.close();
     schedules.close();
     persistence.close();

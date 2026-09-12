@@ -891,6 +891,11 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
             current.owner_user_id !== claim.ownerUserId
           )
             return fail("claim_lost");
+          // Replayed association doubles as pre-submit CAS. Mutations which
+          // advanced generation, paused, or deleted schedule must win even
+          // after session was first associated during crash reconciliation.
+          if (current.generation !== current.current_generation || current.enabled !== 1 || current.deleted === 1)
+            return fail("claim_lost");
           if (current.session_id)
             return current.session_id === sessionId
               ? {
@@ -902,8 +907,6 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                   },
                 }
               : fail("claim_lost");
-          if (current.generation !== current.current_generation || current.enabled !== 1 || current.deleted === 1)
-            return fail("claim_lost");
           const changed = database
             .query("UPDATE occurrences SET session_id=? WHERE occurrence_id=? AND claim_token=? AND session_id IS NULL")
             .run(sessionId, claim.occurrenceId, claim.claimToken);

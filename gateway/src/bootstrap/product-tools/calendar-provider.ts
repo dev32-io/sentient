@@ -540,13 +540,12 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
             { persistence: selected.persistence, config: calendarConfig, signal: ctx.signal },
           );
           if (result.ok && supplied.reminders) {
-            const reconciled = await supplied.reminders.reconcile(
-              selected.persistence,
-              result.value.eventId,
-              p.scope ?? "private",
-            );
-            if (!reconciled.ok)
-              return failure("io_error", "The event was saved, but its reminder could not be scheduled yet.");
+            // Mutation and reminder intent are already durable. Best-effort
+            // prompt reconciliation must never turn committed success into a
+            // retryable tool failure that can duplicate calendar mutations.
+            await supplied.reminders
+              .reconcile(selected.persistence, result.value.eventId, p.scope ?? "private")
+              .catch(() => undefined);
           }
           return domainResult(result, calendarConfig);
         },
@@ -582,15 +581,9 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
             );
             for (const id of ids) {
               const original = id === p.eventId && p.applyTo === "this_occurrence" ? p.originalStart : undefined;
-              const reconciled = await supplied.reminders.reconcile(
-                selected.persistence,
-                id,
-                p.scope ?? "private",
-                undefined,
-                original,
-              );
-              if (!reconciled.ok)
-                return failure("io_error", "The event was saved, but its reminder could not be rescheduled yet.");
+              await supplied.reminders
+                .reconcile(selected.persistence, id, p.scope ?? "private", undefined, original)
+                .catch(() => undefined);
             }
           }
           return domainResult(result, calendarConfig);
@@ -618,15 +611,15 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
             signal: ctx.signal,
           });
           if (result.ok && supplied.reminders) {
-            const reconciled = await supplied.reminders.reconcile(
-              selected.persistence,
-              p.eventId,
-              p.scope ?? "private",
-              undefined,
-              p.applyTo === "this_occurrence" ? p.originalStart : undefined,
-            );
-            if (!reconciled.ok)
-              return failure("io_error", "The event was deleted, but its pending reminder could not be cancelled yet.");
+            await supplied.reminders
+              .reconcile(
+                selected.persistence,
+                p.eventId,
+                p.scope ?? "private",
+                undefined,
+                p.applyTo === "this_occurrence" ? p.originalStart : undefined,
+              )
+              .catch(() => undefined);
           }
           return domainResult(result, calendarConfig);
         },

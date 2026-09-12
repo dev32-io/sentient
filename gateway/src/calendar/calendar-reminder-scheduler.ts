@@ -476,6 +476,7 @@ export function createCalendarReminderScheduler(deps: {
             // authorization rejects the stale base wake.
             if (
               recurringTiming &&
+              occurrence.title === event.title &&
               canonicalOriginalKey(occurrence.start) === canonicalOriginalKey(occurrence.originalStart) &&
               recurringTimingMatchesInstant(recurringTiming, instant)
             )
@@ -508,6 +509,7 @@ export function createCalendarReminderScheduler(deps: {
               if (instant === undefined || instant < now.getTime() - deps.schedules.graceMs) continue;
               if (
                 recurringTiming &&
+                occurrence.title === event.title &&
                 canonicalOriginalKey(occurrence.start) === canonicalOriginalKey(exception.occurrence) &&
                 recurringTimingMatchesInstant(recurringTiming, instant)
               )
@@ -696,6 +698,9 @@ export async function authorizeCalendarReminderExecution(
         }
         const occurrence = effectiveOccurrenceAt(event, original, zone, deps.calendarConfig.recurrence, true);
         if (!occurrence || (occurrence.visibility === "adults" && execution.principal.role === "child")) continue;
+        // Title-edited slots are owned by occurrence companion schedule. Deny
+        // base recurring wake to prevent duplicate stale-title conversation.
+        if (source.reminderId === seriesId && occurrence.title !== event.title) continue;
         const reminder = reminderFor(occurrence, execution.principal.userId);
         const instant = reminder && reminderInstant(occurrence.start, reminder);
         if (instant !== undefined && Math.abs(instant - intended) < 60_000) return { ok: true, value: undefined };

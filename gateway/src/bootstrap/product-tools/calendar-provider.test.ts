@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { Capability } from "../../access/capability.js";
 import { openCalendarPersistence } from "../../calendar/calendar-store.js";
 import type { CalendarConfig } from "../../calendar/types.js";
-import { calendarProductToolProvider } from "./calendar-provider.js";
+import { type CalendarProductToolConfig, calendarProductToolProvider } from "./calendar-provider.js";
 
 const config: CalendarConfig = {
   query: { maxDays: 366, maxOccurrences: 100, pageSize: 100 },
@@ -26,7 +26,7 @@ const config: CalendarConfig = {
 function cap(rootPath: string, resource: Capability["resource"], role: Capability["role"]): Capability {
   return { ownerUserId: "user" as Capability["ownerUserId"], resource, role, rootPath };
 }
-function harness(role: Capability["role"] = "adult") {
+function harness(role: Capability["role"] = "adult", reminders?: CalendarProductToolConfig["reminders"]) {
   const root = mkdtempSync(join(tmpdir(), "calendar-tool-v2-"));
   const privateCap = cap(root, "calendar-private", role);
   const householdCap = cap(root, "calendar-household", role);
@@ -40,6 +40,7 @@ function harness(role: Capability["role"] = "adult") {
         calendarConfig: config,
         privateCap,
         householdCap,
+        ...(reminders ? { reminders } : {}),
       })
       .map((tool) => [tool.definition.name, tool]),
   );
@@ -168,6 +169,32 @@ describe("calendar V2 product tools", () => {
         { signal: controller.signal },
       );
       expect(JSON.parse(result.content)).toMatchObject({ outcome: "error", code: "aborted" });
+    } finally {
+      h.close();
+    }
+  });
+
+  it("reports committed mutations successful when prompt reminder reconciliation fails", async () => {
+    const reminders = {
+      reconcile: async () => ({ ok: false as const, error: { code: "unavailable" as const, retryable: true } }),
+      reconcilePending: async () => ({ ok: true as const, value: undefined }),
+      async close() {},
+    };
+    const h = harness("adult", reminders);
+    try {
+      const signal = new AbortController().signal;
+      const created = await tool(h, "calendar_create").run({ title: "Durable event", start: timed }, { signal });
+      expect(created.isError).toBe(false);
+      const eventId = JSON.parse(created.content).eventId as string;
+
+      const updated = await tool(h, "calendar_update").run(
+        { eventId, applyTo: "entire_series", changes: { title: "Updated durable event" } },
+        { signal },
+      );
+      expect(updated.isError).toBe(false);
+
+      const deleted = await tool(h, "calendar_delete").run({ eventId, applyTo: "entire_series" }, { signal });
+      expect(deleted.isError).toBe(false);
     } finally {
       h.close();
     }

@@ -317,30 +317,32 @@ const pushStore = config.push
   : undefined;
 
 const calendarConfig = services.calendarConfig;
+const scheduledExecutionAuthorizer = createScheduledExecutionAuthorizer({
+  users: services.auth.users,
+  accessManager: services.accessManager,
+  householdId: "home",
+  ...(calendarConfig
+    ? {
+        authorizeCalendarReminder: (execution, signal) =>
+          authorizeCalendarReminderExecution(
+            execution,
+            { accessManager: services.accessManager, calendarConfig },
+            signal,
+          ),
+      }
+    : {}),
+});
 const scheduledRunner =
   schedules && services.createSessionRuntime && config.scheduling
     ? createScheduledChatRunner({
         claims: schedules,
-        authorizer: createScheduledExecutionAuthorizer({
-          users: services.auth.users,
-          accessManager: services.accessManager,
-          householdId: "home",
-          ...(calendarConfig
-            ? {
-                authorizeCalendarReminder: (execution, signal) =>
-                  authorizeCalendarReminderExecution(
-                    execution,
-                    { accessManager: services.accessManager, calendarConfig },
-                    signal,
-                  ),
-              }
-            : {}),
-        }),
+        authorizer: scheduledExecutionAuthorizer,
         submitter: createScheduledMessageSubmitter({
           accessManager: services.accessManager,
           dbFileName: services.dbFileName,
           registry: services.sessionRegistry,
           associateSession: (claim, sessionId) => schedules.associateSession(claim, sessionId),
+          reauthorize: (claim, signal) => scheduledExecutionAuthorizer.authorize(claim, signal),
           buildHandles: (principal, sessionId, correlationId) =>
             buildSessionHandles(services, principal, sessionId, correlationId),
         }),
