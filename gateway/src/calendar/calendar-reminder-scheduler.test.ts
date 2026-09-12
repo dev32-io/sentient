@@ -1028,7 +1028,7 @@ describe("calendar reminder scheduling boundary", () => {
     roots.push(root);
     const accessManager = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
-    const creationConfig = { ...config, recurrence: { maxOccurrences: 500, maxDays: 4_000 } };
+    const creationConfig = { ...config, recurrence: { maxOccurrences: 500, maxDays: 6_000 } };
     const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), creationConfig);
     let sequence = 0;
     const schedules = createScheduleService({ userDataRoot: root, id: () => `rolling-${++sequence}` });
@@ -1040,7 +1040,7 @@ describe("calendar reminder scheduling boundary", () => {
         visibility: "everyone",
         importance: "normal",
         tags: [],
-        recurrence: { frequency: "monthly", until: "2029-01-01" as never },
+        recurrence: { frequency: "monthly", until: "2035-01-01" as never },
         reminder: { enabled: true, mode: "lead", leadMinutes: 1_440 },
       },
       persistence,
@@ -1064,6 +1064,29 @@ describe("calendar reminder scheduling boundary", () => {
     expect((await scheduler.reconcile(persistence, created.value.eventId, "private", now)).ok).toBe(true);
     const repeated = await schedules.list(resource, undefined, 100);
     expect(repeated.ok && repeated.value.schedules).toHaveLength(first.value.schedules.length);
+
+    // Reconciliation must move its bounded window with time. Keeping only the
+    // first projected jobs would still pass the old-series assertion above but
+    // lose reminders once that projection expires.
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2031-02-01T00:00:00Z"))).ok,
+    ).toBe(true);
+    const replenished = await schedules.list(resource, undefined, 100);
+    expect(replenished.ok).toBe(true);
+    if (!replenished.ok) return;
+    const replenishedTargets = new Set([
+      "2031-02-28T15:00:00.000Z",
+      "2031-03-31T14:00:00.000Z",
+      "2031-04-30T14:00:00.000Z",
+    ]);
+    expect(
+      replenished.value.schedules.filter(
+        (item) => item.timing.kind === "once" && replenishedTargets.has(item.timing.at),
+      ),
+    ).toHaveLength(3);
+    expect(
+      replenished.value.schedules.some((item) => item.timing.kind === "once" && targetTimes.has(item.timing.at)),
+    ).toBe(false);
     scheduler.close();
     schedules.close();
     persistence.close();
