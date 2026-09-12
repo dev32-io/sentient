@@ -35,7 +35,7 @@ qa/scheduled-messages/run-model-probe.sh /tmp/model-probe-$(date +%s).json \
 
 Report distinguishes ordinary input submission, observed model tool JSON, native rejection, permission request/resolution, task terminal state, allowlisted broker diagnostics, and schedule count before/after. `service.code` is `success` only when durable count increases; otherwise it remains `null` rather than inventing a failure code. Submit reviewed, selected sanitized witnesses through current `e2e_workspace` evidence/report capability; do not copy output into canonical reports or choose retained filenames manually.
 
-For each E2E-002 phrase, provision a fresh fixture or first delete its disposable schedules. Record one report per phrase. If task fails, retain matching `toolCallId` and allowlisted stages. Do not add aliases without a witness identifying rejected shape or service code.
+For each E2E-002 phrase, provision a fresh fixture or first delete its disposable schedules. Record one report per phrase. If task fails, retain matching `toolCallId`, allowlisted issue paths/codes and stages, permission outcome, safe domain error code, event/reminder/job counts, and intended timing. Do not add aliases without a witness identifying rejected shape or service code. Exercise list/edit/pause/resume/delete through ordinary model chat and approval; direct REST calls may corroborate state but do not satisfy model-driven lifecycle proof.
 
 ## Authenticated account isolation
 
@@ -58,8 +58,9 @@ Provision two disposable household adults with `bun run calendar:fixture provisi
 2. Enable A only. Confirm B remains off and has no derived schedule.
 3. Update title with reminder omitted; A reminder ID/timing persists. Update `enabled:false`; derived pending schedule disappears.
 4. Re-enable with near-term recurring event. Move one occurrence earlier and verify old wake suppresses while new wake creates one session.
-5. Cancel another occurrence, delete event, then remove B visibility before due. Each must produce zero new session/provider submission.
-6. Create all-day event with explicit `localTime` and IANA zone. Verify derived intended instant and one A-only session.
+5. For visibility loss, enable a reminder for the eventual subscriber while the event is visible. Use supported fixture role update so that subscriber no longer qualifies for `adults`, then change event visibility to `adults` before due. Prove the subscriber still has an authenticated API baseline but can no longer read the event and produces zero new session/card/provider submission. Changing `everyone` to `adults` while the subscriber is still an adult proves nothing.
+6. Cancel another occurrence and delete an event before due; each must produce zero new session/provider submission.
+7. Create all-day event with explicit `localTime` and IANA zone. Verify derived intended instant and one A-only session.
 
 Use fixture cleanup command in an exit trap. Never remove unrelated users/events.
 
@@ -89,7 +90,7 @@ curl -ksS -o /dev/null -w 'door ready %{http_code}\n' https://localhost/api/v1/r
 curl -ksS -o /dev/null -w 'install %{http_code}\n' https://localhost/api/v1/install-state
 ```
 
-Prepare distinct near-term disposable schedules: once pending across restart, inside-grace missed, outside-grace missed, recurring due, and a schedule with push enabled. Stop/start through stack script around intended times; stop managed Gorush through its supported local supervisor only, then restore. Pass requires direct+door ready recovery, one session for eligible work, no old backlog, consumed once/interrupted entries, recurring next run, and cards/chats surviving push outage.
+Record the isolated `scheduling.missedGraceMs` value before the run. Create distinct future disposable schedules through normal APIs: once pending across restart, inside-grace missed, outside-grace missed, recurring due, and a schedule with push enabled. Stop before due and leave each intended instant to age naturally; never change host time or backdate storage. Allow measured stack startup margin, then start only through the stack script. Stop managed Gorush through its supported local supervisor only, then restore. Pass requires direct+door ready recovery, one session for eligible work, no old backlog, consumed once/interrupted entries, recurring next run, and cards/chats surviving push outage. If managed push outage cannot be executed, record exact missing local supervisor/addon prerequisite rather than claiming it passed.
 
 ## Deterministic proof commands
 

@@ -197,17 +197,67 @@ function failure(code: string, message: string): ToolResult {
 function aborted(): ToolResult {
   return failure("aborted", "The calendar operation was cancelled; retry it.");
 }
+const safeArgumentFields = new Set([
+  "applyTo",
+  "changes",
+  "count",
+  "description",
+  "enabled",
+  "end",
+  "eventId",
+  "expectedRevision",
+  "frequency",
+  "from",
+  "group",
+  "importance",
+  "interval",
+  "leadMinutes",
+  "localTime",
+  "mode",
+  "originalStart",
+  "query",
+  "recurrence",
+  "reminder",
+  "scope",
+  "start",
+  "tags",
+  "timeZone",
+  "title",
+  "to",
+  "until",
+  "visibility",
+  "weekdays",
+]);
 function invalidArguments(error: z.ZodError): ToolResult {
-  const diagnostics = error.issues.map((issue) => {
-    const path = issue.path.length
-      ? issue.path.map((part) => (typeof part === "number" ? "item" : part)).join(".")
-      : "arguments";
-    // Zod's unrecognized_keys diagnostic includes the supplied key names. Do
-    // not echo those names: model input can contain private calendar content.
-    const message = issue.code === "unrecognized_keys" ? "unsupported field; remove it" : issue.message;
-    return `${path}: ${message}`;
-  });
-  return failure("invalid_arguments", `Correct the calendar arguments. ${diagnostics.join("; ")}`);
+  const issues: Array<{ path: string; code: string }> = [];
+  const seen = new Set<string>();
+  const pending = [...error.issues];
+  while (pending.length > 0 && issues.length < 8) {
+    const issue = pending.shift();
+    if (!issue) break;
+    if (issue.code === "invalid_union") {
+      for (const unionError of issue.unionErrors) pending.push(...unionError.issues);
+      continue;
+    }
+    const path =
+      issue.path
+        .map((part) => (typeof part === "number" ? "item" : safeArgumentFields.has(part) ? part : "field"))
+        .join(".") || "arguments";
+    const key = `${path}:${issue.code}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    issues.push({ path, code: issue.code });
+  }
+  return {
+    content: JSON.stringify({
+      outcome: "error",
+      code: "invalid_arguments",
+      ...(issues.length > 0 ? { issues } : {}),
+      expected:
+        "Use reminder {enabled:true, mode:'at-start'}, {enabled:true, mode:'lead', leadMinutes}, or for all-day events {enabled:true, mode:'all-day', localTime:'HH:mm', timeZone:'IANA zone'}. Only calendar_update may use {enabled:false}. Occurrence-scoped mutations require originalStart; entire_series must omit it.",
+    }),
+    isError: true,
+  };
 }
 function parse<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T | ToolResult {
   const parsed = schema.safeParse(args);
@@ -265,37 +315,46 @@ const filtersParameter = {
   tags: { type: "array", items: { type: "string" } },
   importance: importanceParameter,
 };
-const reminderParameter = {
-  description: "Optional acting-user reminder linked to this event; use enabled:false on update to remove it.",
+const reminderEnabledVariants = [
+  {
+    type: "object",
+    properties: { enabled: { const: true }, mode: { const: "at-start" } },
+    required: ["enabled", "mode"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: {
+      enabled: { const: true },
+      mode: { const: "lead" },
+      leadMinutes: { type: "integer", minimum: 1, maximum: 43200 },
+    },
+    required: ["enabled", "mode", "leadMinutes"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: {
+      enabled: { const: true },
+      mode: { const: "all-day" },
+      localTime: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$", description: "HH:mm" },
+      timeZone: { type: "string", minLength: 1, description: "IANA timezone" },
+    },
+    required: ["enabled", "mode", "localTime", "timeZone"],
+    additionalProperties: false,
+  },
+] as const;
+const createReminderParameter = {
+  description:
+    "Optional acting-user reminder linked to this event. Omit it to create no reminder. Timed starts use at-start or lead; date-only/all-day starts require all-day localTime and timeZone.",
+  oneOf: reminderEnabledVariants,
+};
+const updateReminderParameter = {
+  description:
+    "Optional acting-user reminder change. Omit to preserve it; use enabled:false to remove it. Timed starts use at-start or lead; date-only/all-day starts require all-day localTime and timeZone.",
   oneOf: [
+    ...reminderEnabledVariants,
     { type: "object", properties: { enabled: { const: false } }, required: ["enabled"], additionalProperties: false },
-    {
-      type: "object",
-      properties: { enabled: { const: true }, mode: { const: "at-start" } },
-      required: ["enabled", "mode"],
-      additionalProperties: false,
-    },
-    {
-      type: "object",
-      properties: {
-        enabled: { const: true },
-        mode: { const: "lead" },
-        leadMinutes: { type: "integer", minimum: 1, maximum: 43200 },
-      },
-      required: ["enabled", "mode", "leadMinutes"],
-      additionalProperties: false,
-    },
-    {
-      type: "object",
-      properties: {
-        enabled: { const: true },
-        mode: { const: "all-day" },
-        localTime: { type: "string", description: "HH:mm" },
-        timeZone: { type: "string", description: "IANA timezone" },
-      },
-      required: ["enabled", "mode", "localTime", "timeZone"],
-      additionalProperties: false,
-    },
   ],
 };
 const changesParameter = {
@@ -310,7 +369,7 @@ const changesParameter = {
     importance: importanceParameter,
     group: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
-    reminder: reminderParameter,
+    reminder: updateReminderParameter,
   },
   additionalProperties: false,
 };
@@ -326,7 +385,7 @@ const createParameters = {
     importance: importanceParameter,
     group: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
-    reminder: reminderParameter,
+    reminder: createReminderParameter,
     scope: writeScopeParameter,
   },
   required: ["title", "start"],
@@ -358,22 +417,39 @@ const getParameters = {
 };
 const mutationTargetParameters = {
   eventId: { type: "string" },
-  applyTo: { type: "string", enum: ["this_occurrence", "this_and_following", "entire_series"] },
-  originalStart: timeParameter,
   expectedRevision: { type: "integer", minimum: 1 },
   scope: writeScopeParameter,
 };
+function mutationParameterVariant(
+  applyTo: "this_occurrence" | "this_and_following" | "entire_series",
+  changes?: Record<string, unknown>,
+): Record<string, unknown> {
+  const occurrenceScoped = applyTo !== "entire_series";
+  return {
+    type: "object",
+    properties: {
+      ...mutationTargetParameters,
+      applyTo: { const: applyTo },
+      ...(occurrenceScoped ? { originalStart: timeParameter } : {}),
+      ...(changes ? { changes } : {}),
+    },
+    required: ["eventId", "applyTo", ...(occurrenceScoped ? ["originalStart"] : []), ...(changes ? ["changes"] : [])],
+    additionalProperties: false,
+  };
+}
 const updateParameters = {
-  type: "object",
-  properties: { ...mutationTargetParameters, changes: changesParameter },
-  required: ["eventId", "applyTo", "changes"],
-  additionalProperties: false,
+  oneOf: [
+    mutationParameterVariant("this_occurrence", changesParameter),
+    mutationParameterVariant("this_and_following", changesParameter),
+    mutationParameterVariant("entire_series", changesParameter),
+  ],
 };
 const deleteParameters = {
-  type: "object",
-  properties: mutationTargetParameters,
-  required: ["eventId", "applyTo"],
-  additionalProperties: false,
+  oneOf: [
+    mutationParameterVariant("this_occurrence"),
+    mutationParameterVariant("this_and_following"),
+    mutationParameterVariant("entire_series"),
+  ],
 };
 
 function runner(
