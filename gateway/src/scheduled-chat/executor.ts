@@ -210,7 +210,15 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
           return settled.ok ? { ok: true, value: { outcome: "expired", completedAt } } : settled;
         }
         const current = await deps.reauthorize(claim, signal);
-        if (!current.ok) return current;
+        if (!current.ok) {
+          // Transient authority failures remain retryable. Durable denial after
+          // association means this unstarted occurrence can never execute and
+          // must not remain a recoverable null-outcome row.
+          if (signal.aborted || current.error.retryable || current.error.code === "closed") return current;
+          const completedAt = (deps.now?.() ?? new Date()).toISOString();
+          const settled = await deps.settleStaleAssociation(claim, completedAt);
+          return settled.ok ? { ok: true, value: { outcome: "expired", completedAt } } : settled;
+        }
         if (signal.aborted) return cancelled();
         const handles = deps.registry.ensure(sessionId, () =>
           deps.buildHandles(current.value.principal, sessionId, `scheduled:${claim.occurrenceId}`),

@@ -365,6 +365,47 @@ describe("scheduled chat consumer boundary", () => {
     service.close();
   });
 
+  test("settles final authority denial and does not starve valid work", async () => {
+    const { accessManager, principal, resource, service } = setup();
+    await createOneTime(service, resource);
+    const valid = await service.create(
+      resource,
+      {
+        idempotencyKey: crypto.randomUUID(),
+        message: "Still authorized",
+        enabled: true,
+        timing: { kind: "once-at", at: "2026-08-01T15:00:30Z" },
+      },
+      new Date("2026-08-01T14:00:00Z"),
+    );
+    if (!valid.ok) throw new Error("valid create failed");
+    const due = await service.claimDue(new Date("2026-08-01T15:01:00Z"), 1, 60_000);
+    expect(due.ok).toBe(true);
+    if (!due.ok || !due.value[0]) return;
+    const claim = due.value[0];
+    let runtimeBuilt = false;
+    const submitter = createScheduledMessageSubmitter({
+      accessManager,
+      registry: createSessionRegistry(() => {}),
+      makeSessionId: () => "s_cccccccccccccccccccccccccccccccc",
+      associateSession: (candidate, sessionId) => service.associateSession(candidate, sessionId),
+      reauthorize: async () => ({ ok: false, error: { code: "forbidden", retryable: false } }),
+      settleStaleAssociation: (candidate, completedAt) =>
+        service.finalizeClaim(candidate, { outcome: "expired", completedAt }, undefined),
+      buildHandles: () => {
+        runtimeBuilt = true;
+        throw new Error("denied occurrence must not allocate runtime");
+      },
+    });
+
+    const result = await submitter.submit({ claim, principal, resource }, new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, value: { outcome: "expired" } });
+    expect(runtimeBuilt).toBe(false);
+    const next = await service.claimDue(new Date("2026-08-01T15:01:02Z"), 1, 60_000);
+    expect(next.ok && next.value.map((candidate) => candidate.scheduleId)).toEqual([valid.value.scheduleId]);
+    service.close();
+  });
+
   test("does not overlap concurrent runner acquisitions", async () => {
     let claims = 0;
     let release!: () => void;
