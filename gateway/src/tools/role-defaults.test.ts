@@ -146,6 +146,17 @@ describe("the shipped catalog seeds a complete table", () => {
     ).toEqual([]);
   });
 
+  it("seeds scheduled-message permissions from native metadata", () => {
+    expect(defaultPermissionsFor("adult", shippedCatalog, { includeFoundationTools: true }).scheduled).toEqual({
+      scheduled_message_list: "allow",
+      scheduled_message_create: "ask",
+      scheduled_message_edit: "ask",
+      scheduled_message_pause: "ask",
+      scheduled_message_resume: "ask",
+      scheduled_message_delete: "ask",
+    });
+  });
+
   it("leaves no tool an adult can execute out of an adult's table", () => {
     const reachable = [...catalogTools(shippedCatalog), ...foundationProductToolMetadata()]
       .filter((tool) => canExecute("adult", tool.tier) && tool.defaultExposure === "standard")
