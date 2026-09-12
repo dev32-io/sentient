@@ -143,9 +143,11 @@ const emitter: TurnEmitter = {
 
 export function createTextRuntimeFixture(accessManager: AccessManager): {
   readonly providerCalls: ProviderRequest[];
+  readonly buildHandlesCalls: () => number;
   readonly buildHandles: (principal: UserPrincipal, sessionId: string) => SessionHandles;
 } {
   const providerCalls: ProviderRequest[] = [];
+  let builds = 0;
   const provider: ProviderClient = {
     stream(request) {
       providerCalls.push(request);
@@ -157,7 +159,9 @@ export function createTextRuntimeFixture(accessManager: AccessManager): {
   };
   return {
     providerCalls,
+    buildHandlesCalls: () => builds,
     buildHandles(principal, sessionId) {
+      builds++;
       const runtime = createSessionRuntime({
         principal,
         sessionId,
