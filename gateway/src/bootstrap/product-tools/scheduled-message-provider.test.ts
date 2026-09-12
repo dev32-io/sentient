@@ -73,6 +73,51 @@ describe("scheduled-message product tools", () => {
     ).toBe(true);
   });
 
+  test("normalizes observed provider recurring spellings before confirmation and execution", async () => {
+    const created: ScheduleCreateRequest[] = [];
+    const tools = scheduledMessageProductToolProvider.create({
+      schedules: {
+        ...commands,
+        create: async (_resource: PrivateScheduleResource, request: ScheduleCreateRequest) => {
+          created.push(request);
+          return { ok: false, error: { code: "internal", retryable: false } };
+        },
+      },
+      resource,
+    });
+    const create = tools.find((tool) => tool.definition.name === "scheduled_message_create");
+    const fields = { frequency: "daily", time: "08:30", timezone: "America/Vancouver" } as const;
+    const variants = [
+      { type: "recurring", ...fields },
+      fields,
+      { recurring: fields },
+      { recurrence: fields },
+      { daily: { time: fields.time, timezone: fields.timezone } },
+    ];
+    for (let index = 0; index < variants.length; index += 1) {
+      const args = { idempotencyKey: `recurring-${index}`, message: "daily check-in", timing: variants[index] };
+      expect(create?.validate?.(args)).toBeNull();
+      await create?.run(args, { signal: new AbortController().signal });
+    }
+    expect(created).toHaveLength(5);
+    for (const request of created) {
+      expect(request.timing).toEqual({
+        kind: "recurring",
+        frequency: "daily",
+        localTime: "08:30",
+        timeZone: "America/Vancouver",
+      });
+    }
+
+    for (const timing of [
+      { type: "recurring", ...fields, extra: true },
+      { recurring: { ...fields, frequency: "yearly" } },
+      { daily: { time: "8:30", timezone: fields.timezone } },
+    ]) {
+      expect(create?.validate?.({ idempotencyKey: "bad", message: "daily check-in", timing })?.isError).toBe(true);
+    }
+  });
+
   test("publish mediated tiers and explain once, recurring, cleanup, and calendar contrast", () => {
     const tools = scheduledMessageProductToolProvider.create({ schedules: commands, resource });
     expect(tools.map((tool) => [tool.definition.name, tool.definition.tier])).toEqual(

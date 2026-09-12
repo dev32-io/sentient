@@ -157,37 +157,83 @@ const legacyOnceAfterTimingSchema = z.union([
     })
     .strict(),
 ]);
+const legacyRecurringFieldsSchema = z
+  .object({
+    frequency: z.enum(["daily", "weekly", "monthly"]),
+    time: z.string().min(1),
+    timezone: z.string().min(1),
+    weekdays: z
+      .array(z.enum(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]))
+      .optional(),
+    dayOfMonth: z.number().int().optional(),
+  })
+  .strict();
+const legacyRecurringTimingSchema = z.union([
+  legacyRecurringFieldsSchema.extend({ type: z.literal("recurring") }).strict(),
+  legacyRecurringFieldsSchema,
+  z.object({ recurring: legacyRecurringFieldsSchema }).strict(),
+  z.object({ recurrence: legacyRecurringFieldsSchema }).strict(),
+  z
+    .object({
+      daily: z.object({ time: z.string().min(1), timezone: z.string().min(1) }).strict(),
+    })
+    .strict(),
+]);
+const legacyTimingSchema = z.union([legacyOnceAfterTimingSchema, legacyRecurringTimingSchema]);
 const legacyCreateSchema = z
   .object({
     idempotencyKey: z.string().min(1).max(200),
     message: z.string().min(1).max(12_000),
-    timing: legacyOnceAfterTimingSchema,
+    timing: legacyTimingSchema,
     enabled: z.boolean().default(true),
   })
   .strict();
 
-function legacyDelaySeconds(timing: z.infer<typeof legacyOnceAfterTimingSchema>): number {
-  const amount = "seconds" in timing ? timing.seconds : "interval" in timing ? timing.interval : timing.value;
-  const unit = "unit" in timing ? timing.unit : undefined;
-  if (unit === "minute" || unit === "minutes") return amount * 60;
-  if (unit === "hour" || unit === "hours") return amount * 3_600;
-  return amount;
+function normalizeLegacyTiming(timing: z.infer<typeof legacyTimingSchema>): Record<string, unknown> {
+  if ("type" in timing && timing.type === "once_after") {
+    const amount = "seconds" in timing ? timing.seconds : "interval" in timing ? timing.interval : timing.value;
+    const unit = "unit" in timing ? timing.unit : undefined;
+    const afterSeconds =
+      unit === "minute" || unit === "minutes"
+        ? amount * 60
+        : unit === "hour" || unit === "hours"
+          ? amount * 3_600
+          : amount;
+    return { kind: "once-after", afterSeconds };
+  }
+  const recurring = "recurring" in timing ? timing.recurring : "recurrence" in timing ? timing.recurrence : timing;
+  if ("daily" in recurring) {
+    return {
+      kind: "recurring",
+      frequency: "daily",
+      localTime: recurring.daily.time,
+      timeZone: recurring.daily.timezone,
+    };
+  }
+  const { frequency, time, timezone, weekdays, dayOfMonth } = recurring;
+  return {
+    kind: "recurring",
+    frequency,
+    localTime: time,
+    timeZone: timezone,
+    ...(weekdays === undefined ? {} : { weekdays }),
+    ...(dayOfMonth === undefined ? {} : { dayOfMonth }),
+  };
 }
 
-/** Some OpenAI-compatible providers emit their learned `once_after` spelling
- * despite receiving our canonical `kind: once-after` schema. Keep REST/KMP
- * contracts strict, but normalize these observed model-only shapes at this
- * tool boundary before authorization and execution. */
+/** Some OpenAI-compatible providers emit learned timing spellings despite
+ * receiving our canonical discriminated schema. Keep REST/KMP contracts strict,
+ * but normalize only observed model shapes at this tool boundary before
+ * authorization and execution. */
 function parseCreateArgs(args: Record<string, unknown>): ScheduleCreateRequest | null {
   const canonical = scheduleCreateRequestSchema.safeParse(args);
   if (canonical.success) return canonical.data;
   const legacy = legacyCreateSchema.safeParse(args);
   if (!legacy.success) return null;
-  const afterSeconds = legacyDelaySeconds(legacy.data.timing);
   const normalized = scheduleCreateRequestSchema.safeParse({
     idempotencyKey: legacy.data.idempotencyKey,
     message: legacy.data.message,
-    timing: { kind: "once-after", afterSeconds },
+    timing: normalizeLegacyTiming(legacy.data.timing),
     enabled: legacy.data.enabled,
   });
   return normalized.success ? normalized.data : null;
