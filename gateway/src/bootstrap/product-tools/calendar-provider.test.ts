@@ -128,6 +128,53 @@ describe("calendar V2 product tools", () => {
     }
   });
 
+  it("normalizes observed model reminder spellings before validation and mutation", async () => {
+    const h = harness();
+    try {
+      const signal = new AbortController().signal;
+      const create = tool(h, "calendar_create");
+      const update = tool(h, "calendar_update");
+
+      for (const reminder of [{ minutes: 0 }, { enabled: true, when: timed }]) {
+        const input = { title: "Appointment", start: timed, reminder };
+        expect(create.validate?.(input)).toBeNull();
+        const created = await create.run(input, { signal });
+        expect(created.isError).toBe(false);
+        expect(JSON.parse(created.content).reminder).toMatchObject({ enabled: true, mode: "at-start" });
+      }
+
+      const created = await create.run({ title: "Updated appointment", start: timed }, { signal });
+      const createdBody = JSON.parse(created.content) as { eventId: string; revision: number };
+      for (const reminder of [{ offset_minutes: 0 }, { minutes_before: 15 }]) {
+        const input = {
+          eventId: createdBody.eventId,
+          applyTo: "entire_series",
+          expectedRevision: createdBody.revision,
+          changes: { reminder },
+        };
+        expect(update.validate?.(input)).toBeNull();
+        const updated = await update.run(input, { signal });
+        expect(updated.isError).toBe(false);
+        const body = JSON.parse(updated.content) as { revision: number };
+        const fetched = await tool(h, "calendar_get").run({ eventId: createdBody.eventId }, { signal });
+        expect(JSON.parse(fetched.content).reminder).toMatchObject(
+          "minutes_before" in reminder ? { mode: "lead", leadMinutes: 15 } : { mode: "at-start" },
+        );
+        createdBody.revision = body.revision;
+      }
+
+      const mismatchedWhen = {
+        title: "Appointment",
+        start: timed,
+        reminder: { enabled: true, when: "2026-01-01T11:00:00Z" },
+      };
+      expect(create.validate?.(mismatchedWhen)).toMatchObject({ isError: true });
+      expect((await create.run(mismatchedWhen, { signal })).isError).toBe(true);
+    } finally {
+      h.close();
+    }
+  });
+
   it("requires bounded search and occurrence mutation scope", () => {
     const h = harness();
     try {

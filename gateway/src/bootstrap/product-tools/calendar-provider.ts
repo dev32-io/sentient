@@ -134,6 +134,63 @@ function validateMutationTarget(value: { applyTo: string; originalStart?: unknow
 const updateSchema = updateSchemaBase.superRefine(validateMutationTarget);
 const deleteSchema = deleteSchemaBase.superRefine(validateMutationTarget);
 
+const legacyMinuteReminderSchema = z.union([
+  z.object({ minutes: z.number().int().min(0).max(43_200) }).strict(),
+  z.object({ minutes_before: z.number().int().min(0).max(43_200) }).strict(),
+  z.object({ offset_minutes: z.literal(0) }).strict(),
+]);
+const legacyWhenReminderSchema = z.object({ enabled: z.literal(true), when: z.string().min(1) }).strict();
+
+function normalizeModelReminder(value: unknown, eventStart: unknown): unknown {
+  const minuteReminder = legacyMinuteReminderSchema.safeParse(value);
+  if (minuteReminder.success) {
+    const minutes =
+      "minutes" in minuteReminder.data
+        ? minuteReminder.data.minutes
+        : "minutes_before" in minuteReminder.data
+          ? minuteReminder.data.minutes_before
+          : minuteReminder.data.offset_minutes;
+    return minutes === 0 ? { enabled: true, mode: "at-start" } : { enabled: true, mode: "lead", leadMinutes: minutes };
+  }
+  const whenReminder = legacyWhenReminderSchema.safeParse(value);
+  if (whenReminder.success && typeof eventStart === "string" && whenReminder.data.when === eventStart) {
+    return { enabled: true, mode: "at-start" };
+  }
+  return value;
+}
+
+/** Providers occasionally retain older reminder field names despite receiving
+ * the canonical schema. Normalize only observed, unambiguous model-tool forms;
+ * REST and shared calendar contracts remain strict. */
+function parseCreateArgs(args: Record<string, unknown>): z.infer<typeof createSchema> | ToolResult {
+  const canonical = createSchema.safeParse(args);
+  if (canonical.success) return canonical.data;
+  if (!("reminder" in args)) return invalidArguments(canonical.error);
+  const normalized = createSchema.safeParse({
+    ...args,
+    reminder: normalizeModelReminder(args.reminder, args.start),
+  });
+  return normalized.success ? normalized.data : invalidArguments(normalized.error);
+}
+
+function parseUpdateArgs(args: Record<string, unknown>): z.infer<typeof updateSchema> | ToolResult {
+  const canonical = updateSchema.safeParse(args);
+  if (canonical.success) return canonical.data;
+  const changes = args.changes;
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || !("reminder" in changes)) {
+    return invalidArguments(canonical.error);
+  }
+  const changeRecord = changes as Record<string, unknown>;
+  const normalized = updateSchema.safeParse({
+    ...args,
+    changes: {
+      ...changeRecord,
+      reminder: normalizeModelReminder(changeRecord.reminder, changeRecord.start),
+    },
+  });
+  return normalized.success ? normalized.data : invalidArguments(normalized.error);
+}
+
 function failure(code: string, message: string): ToolResult {
   return { content: JSON.stringify({ outcome: "error", code, message }), isError: true };
 }
@@ -437,6 +494,17 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         const gate = writeGate(value.scope as CalendarScope | undefined);
         return gate ?? preflight?.(value) ?? null;
       };
+    const validateParsedWrite =
+      <T extends Record<string, unknown>>(
+        parser: (args: Record<string, unknown>) => T | ToolResult,
+        preflight?: (value: Record<string, unknown>) => ToolResult | null,
+      ) =>
+      (args: Record<string, unknown>): ToolResult | null => {
+        const parsed = parser(args);
+        if (isToolResult(parsed)) return parsed;
+        const gate = writeGate(parsed.scope as CalendarScope | undefined);
+        return gate ?? preflight?.(parsed) ?? null;
+      };
 
     return [
       runner(
@@ -525,12 +593,12 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         CALENDAR_TOOL_SETTINGS[3].description,
         WRITE,
         createParameters,
-        validateWrite(createSchema, validateCreate),
+        validateParsedWrite(parseCreateArgs, validateCreate),
         async (args, ctx) => {
           if (ctx.signal.aborted) return aborted();
-          const parsed = parse(createSchema, args);
+          const parsed = parseCreateArgs(args);
           if (isToolResult(parsed)) return parsed;
-          const p = parsed as z.infer<typeof createSchema>;
+          const p = parsed;
           const gate = writeGate(p.scope);
           if (gate) return gate;
           const selected = target(p.scope);
@@ -555,12 +623,12 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         CALENDAR_TOOL_SETTINGS[4].description,
         WRITE,
         updateParameters,
-        validateWrite(updateSchema, validateChanges),
+        validateParsedWrite(parseUpdateArgs, validateChanges),
         async (args, ctx) => {
           if (ctx.signal.aborted) return aborted();
-          const parsed = parse(updateSchema, args);
+          const parsed = parseUpdateArgs(args);
           if (isToolResult(parsed)) return parsed;
-          const p = parsed as z.infer<typeof updateSchema>;
+          const p = parsed;
           const gate = writeGate(p.scope);
           if (gate) return gate;
           const selected = target(p.scope);
