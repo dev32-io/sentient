@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { expandRecurrence } from "./expand-recurrence.js";
+import { expandRecurrence, verifyGeneratedSlot } from "./expand-recurrence.js";
 import type { StoredCalendarEvent, UtcInstant } from "./types.js";
 
 const timed = (instant: string, timeZoneId = "UTC") => ({
@@ -29,6 +29,55 @@ describe("expandRecurrence", () => {
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toHaveLength(10);
+  });
+
+  test("matches skipped monthly, leap-year, and DST-gap COUNT slot ordinals", () => {
+    const fixtures = [
+      {
+        value: event(timed("2028-01-31T14:00:00.000Z"), "FREQ=MONTHLY;COUNT=3"),
+        end: "2028-06-01T00:00:00.000Z",
+        expected: ["2028-01-31T14:00:00.000Z", "2028-03-31T14:00:00.000Z", "2028-05-31T14:00:00.000Z"],
+        rejected: "2028-07-31T14:00:00.000Z",
+        zone: "UTC",
+      },
+      {
+        value: event(timed("2020-02-29T14:00:00.000Z"), "FREQ=YEARLY;COUNT=2"),
+        end: "2028-03-01T00:00:00.000Z",
+        expected: ["2020-02-29T14:00:00.000Z", "2024-02-29T14:00:00.000Z"],
+        rejected: "2028-02-29T14:00:00.000Z",
+        zone: "UTC",
+      },
+      {
+        value: event(timed("2026-03-07T07:30:00.000Z", "America/New_York"), "FREQ=DAILY;COUNT=2"),
+        end: "2026-03-10T00:00:00.000Z",
+        expected: ["2026-03-07T07:30:00.000Z", "2026-03-09T06:30:00.000Z"],
+        rejected: "2026-03-10T06:30:00.000Z",
+        zone: "America/New_York",
+      },
+    ] as const;
+    for (const fixture of fixtures) {
+      const limits = { maxOccurrences: 100, maxDays: 4_000, timeZoneId: fixture.zone };
+      const expanded = expandRecurrence(fixture.value, fixture.value.start, timed(fixture.end, fixture.zone), limits);
+      expect(expanded.ok).toBe(true);
+      if (!expanded.ok) continue;
+      expect(
+        expanded.value.map((item) => item.originalStart.kind === "timed" && String(item.originalStart.instant)),
+      ).toEqual([...fixture.expected]);
+      for (const [index, instant] of fixture.expected.entries())
+        expect(verifyGeneratedSlot(fixture.value, timed(instant, fixture.zone), limits)).toEqual({
+          ok: true,
+          ordinal: index + 1,
+        });
+      expect(verifyGeneratedSlot(fixture.value, timed(fixture.rejected, fixture.zone), limits).ok).toBe(false);
+    }
+    const monthly = fixtures[0];
+    const excluded = { ...monthly.value, exdates: [timed(monthly.expected[0], monthly.zone)] };
+    const limits = { maxOccurrences: 100, maxDays: 4_000, timeZoneId: monthly.zone };
+    expect(verifyGeneratedSlot(excluded, timed(monthly.expected[2], monthly.zone), limits)).toEqual({
+      ok: true,
+      ordinal: 3,
+    });
+    expect(verifyGeneratedSlot(excluded, timed(monthly.rejected, monthly.zone), limits).ok).toBe(false);
   });
 
   test("resolves the household timezone sentinel during expansion", () => {

@@ -6,7 +6,7 @@ import type { AuthorizedScheduledExecution, SchedulingResult } from "../scheduli
 import { instantForScheduleLocal } from "../scheduling/recurrence.js";
 import type { ScheduleService } from "../scheduling/service.js";
 import { type CalendarPersistence, openCalendarPersistence } from "./calendar-store.js";
-import { canonicalOriginalKey, expandRecurrence } from "./expand-recurrence.js";
+import { canonicalOriginalKey, expandRecurrence, verifyGeneratedSlot } from "./expand-recurrence.js";
 import type {
   CalendarConfig,
   CalendarEventId,
@@ -219,101 +219,21 @@ function allDayParts(date: string): {
   };
 }
 
-function generatedOrdinal(event: CalendarPersistenceEvent, candidate: CalendarTime, zone: string): number | undefined {
-  const rule = event.recurrence?.rule;
-  if (!rule || event.start.kind !== candidate.kind) return undefined;
-  const startLocal =
-    event.start.kind === "timed"
-      ? localDateParts(Date.parse(event.start.instant), zone)
-      : allDayParts(event.start.date);
-  const targetLocal =
-    candidate.kind === "timed" ? localDateParts(Date.parse(candidate.instant), zone) : allDayParts(candidate.date);
-  if (event.start.kind === "timed" && candidate.kind === "timed") {
-    const candidateInstant = Date.parse(candidate.instant);
-    if (!Number.isFinite(candidateInstant)) return undefined;
-    const start = localDateParts(Date.parse(event.start.instant), zone);
-    const target = localDateParts(candidateInstant, zone);
-    if (
-      start.hour !== target.hour ||
-      start.minute !== target.minute ||
-      start.second !== target.second ||
-      start.millisecond !== target.millisecond
-    )
-      return undefined;
-    // Recurrence expansion skips nonexistent wall times and chooses the first
-    // instant when a wall time repeats. Reject a forged second DST instance.
-    const canonicalInstant = instantForScheduleLocal(
-      {
-        year: target.year,
-        month: target.month,
-        day: target.day,
-        hour: target.hour,
-        minute: target.minute,
-        second: target.second,
-      },
-      zone,
-    );
-    if (canonicalInstant === undefined || canonicalInstant + target.millisecond !== candidateInstant) return undefined;
-  }
-  const startDay = Date.UTC(startLocal.year, startLocal.month - 1, startLocal.day);
-  const targetDay = Date.UTC(targetLocal.year, targetLocal.month - 1, targetLocal.day);
-  const deltaDays = Math.round((targetDay - startDay) / 86_400_000);
-  if (deltaDays < 0) return undefined;
-  const interval = rule.interval ?? 1;
-  let ordinal: number | undefined;
-  if (rule.freq === "DAILY") {
-    if (deltaDays % interval === 0) ordinal = deltaDays / interval + 1;
-  } else if (rule.freq === "WEEKLY") {
-    const codes = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
-    const allowed = (rule.byDay ?? [codes[new Date(startDay).getUTCDay()] ?? "MO"])
-      .map((code) => codes.indexOf(code))
-      .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
-    const startMonday = startDay - ((new Date(startDay).getUTCDay() + 6) % 7) * 86_400_000;
-    const week = Math.floor((targetDay - startMonday) / (7 * 86_400_000));
-    const targetWeekday = new Date(targetDay).getUTCDay();
-    const position = allowed.indexOf(targetWeekday);
-    if (week >= 0 && week % interval === 0 && position >= 0) {
-      const first = allowed.filter((weekday) => startMonday + ((weekday + 6) % 7) * 86_400_000 >= startDay).length;
-      ordinal =
-        week === 0
-          ? allowed
-              .slice(0, position + 1)
-              .filter((weekday) => startMonday + ((weekday + 6) % 7) * 86_400_000 >= startDay).length
-          : first + (week / interval - 1) * allowed.length + position + 1;
-    }
-  } else if (rule.freq === "MONTHLY") {
-    const months = (targetLocal.year - startLocal.year) * 12 + targetLocal.month - startLocal.month;
-    if (months >= 0 && months % interval === 0 && targetLocal.day === startLocal.day) ordinal = months / interval + 1;
-  } else {
-    const years = targetLocal.year - startLocal.year;
-    if (
-      years >= 0 &&
-      years % interval === 0 &&
-      targetLocal.month === startLocal.month &&
-      targetLocal.day === startLocal.day
-    )
-      ordinal = years / interval + 1;
-  }
-  if (!ordinal || (rule.count !== undefined && ordinal > rule.count)) return undefined;
-  if (rule.until && candidate.kind === "timed" && Date.parse(candidate.instant) > Date.parse(rule.until))
-    return undefined;
-  if (rule.until && candidate.kind === "all-day") {
-    const until = localDateParts(Date.parse(rule.until), zone);
-    const untilDate = Date.UTC(until.year, until.month - 1, until.day);
-    if (targetDay > untilDate) return undefined;
-  }
-  return ordinal;
-}
-
 function effectiveOccurrenceAt(
   event: CalendarPersistenceEvent,
   original: CalendarTime,
   zone: string,
+  limits: CalendarConfig["recurrence"],
+  membershipVerified = false,
 ): Pick<CalendarPersistenceEvent, "start" | "title" | "visibility" | "notification"> | undefined {
-  const isGenerated = event.recurrence
-    ? generatedOrdinal(event, original, zone) !== undefined
-    : sameCalendarTime(event.start, original);
-  if (!isGenerated || event.exclusions.some((excluded) => sameCalendarTime(excluded, original))) return undefined;
+  const isGenerated =
+    !event.recurrence || membershipVerified || verifyGeneratedSlot(event, original, { ...limits, timeZoneId: zone }).ok;
+  if (
+    !isGenerated ||
+    (!event.recurrence && !sameCalendarTime(event.start, original)) ||
+    event.exclusions.some((excluded) => sameCalendarTime(excluded, original))
+  )
+    return undefined;
   const exception = event.exceptions.find((candidate) => sameCalendarTime(candidate.occurrence, original));
   if (exception?.cancelled) return undefined;
   const notification = exception?.notification === null ? undefined : (exception?.notification ?? event.notification);
@@ -576,7 +496,12 @@ export function createCalendarReminderScheduler(deps: {
                   ? baseReminder.timeZone
                   : deps.calendarConfig.defaultEventTimeZoneId;
             for (const exception of event.exceptions) {
-              const occurrence = effectiveOccurrenceAt(event, exception.occurrence, zone);
+              const occurrence = effectiveOccurrenceAt(
+                event,
+                exception.occurrence,
+                zone,
+                deps.calendarConfig.recurrence,
+              );
               if (!occurrence || (occurrence.visibility === "adults" && resolved?.role === "child")) continue;
               const reminder = reminderFor(occurrence, owner);
               const instant = reminder && reminderInstant(occurrence.start, reminder);
@@ -759,14 +684,22 @@ export async function authorizeCalendarReminderExecution(
           if (original) originals.push(original);
         }
       }
-      const allowed = originals.some((original) => {
-        const occurrence = effectiveOccurrenceAt(event, original, zone);
-        if (!occurrence || (occurrence.visibility === "adults" && execution.principal.role === "child")) return false;
+      for (const original of originals) {
+        const membership = verifyGeneratedSlot(event, original, {
+          ...deps.calendarConfig.recurrence,
+          timeZoneId: zone,
+        });
+        if (!membership.ok) {
+          if (membership.error.code === "recurrence-limit")
+            return { ok: false, error: { code: "unavailable", retryable: true } };
+          continue;
+        }
+        const occurrence = effectiveOccurrenceAt(event, original, zone, deps.calendarConfig.recurrence, true);
+        if (!occurrence || (occurrence.visibility === "adults" && execution.principal.role === "child")) continue;
         const reminder = reminderFor(occurrence, execution.principal.userId);
         const instant = reminder && reminderInstant(occurrence.start, reminder);
-        return instant !== undefined && Math.abs(instant - intended) < 60_000;
-      });
-      if (allowed) return { ok: true, value: undefined };
+        if (instant !== undefined && Math.abs(instant - intended) < 60_000) return { ok: true, value: undefined };
+      }
     } catch {
       // Fail closed without disclosing which calendar scope exists.
     } finally {

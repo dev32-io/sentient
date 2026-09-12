@@ -149,12 +149,12 @@ describe("calendar reminder scheduling boundary", () => {
     const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
     const created = createCalendarEvent(
       {
-        title: "Interval medicine",
-        start: "2026-05-01T14:00:00-04:00" as never,
+        title: "Month-end medicine",
+        start: "2028-01-31T14:00:00-05:00" as never,
         visibility: "everyone",
         importance: "normal",
         tags: [],
-        recurrence: { frequency: "daily", interval: 2, count: 3 },
+        recurrence: { frequency: "monthly", count: 3 },
         reminder: { enabled: true, mode: "lead", leadMinutes: 30 },
       },
       persistence,
@@ -163,7 +163,7 @@ describe("calendar reminder scheduling boundary", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     expect(
-      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-05-03T17:29:00Z"))).ok,
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2028-05-31T17:29:00Z"))).ok,
     ).toBe(true);
 
     const authorizer = createScheduledExecutionAuthorizer({
@@ -200,7 +200,7 @@ describe("calendar reminder scheduling boundary", () => {
             value: {
               outcome: "completed" as const,
               sessionId: "s_generated",
-              completedAt: "2026-05-03T17:31:01.000Z",
+              completedAt: "2028-05-31T17:31:01.000Z",
               content: {
                 ownerUserId: principal.userId,
                 sessionId: "s_generated",
@@ -215,13 +215,13 @@ describe("calendar reminder scheduling boundary", () => {
       claimLimit: 1,
       leaseMs: 60_000,
       pollMs: 10,
-      now: () => new Date("2026-05-03T17:31:00Z"),
+      now: () => new Date("2028-05-31T17:31:00Z"),
     });
 
     expect(await runner.runOnce()).toEqual({ ok: true, value: { claimed: 1, finalized: 1 } });
     expect(submittedSource).toMatchObject({
       kind: "calendar-reminder",
-      reminderId: `${created.value.eventId}:u_aaaaaaaa:2026-05-03T18:00:00.000Z`,
+      reminderId: `${created.value.eventId}:u_aaaaaaaa:2028-05-31T18:00:00.000Z`,
     });
     const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
     const listed = await schedules.list(resource, undefined, 10);
@@ -230,7 +230,7 @@ describe("calendar reminder scheduling boundary", () => {
         listed.value.schedules.some(
           (item) =>
             item.source.kind === "calendar-reminder" &&
-            item.source.reminderId === `${created.value.eventId}:u_aaaaaaaa:2026-05-03T18:00:00.000Z`,
+            item.source.reminderId === `${created.value.eventId}:u_aaaaaaaa:2028-05-31T18:00:00.000Z`,
         ),
     ).toBe(false);
     await scheduler.close();

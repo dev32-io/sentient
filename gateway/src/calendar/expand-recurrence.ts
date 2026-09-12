@@ -671,22 +671,114 @@ export function verifyGeneratedSlot(
   originalStart: CalendarTime,
   limits: RecurrenceExpansionLimits = DEFAULT_RECURRENCE_LIMITS,
 ): { ok: true; ordinal: number } | { ok: false; error: RecurrenceExpansionError } {
-  if (event.start.kind !== originalStart.kind)
+  const notGenerated = (): { ok: false; error: RecurrenceExpansionError } => ({
+    ok: false,
+    error: {
+      kind: "recurrence-error",
+      code: "invalid-window",
+      message: "originalStart is not a generated recurrence slot",
+    },
+  });
+  if (event.start.kind !== originalStart.kind) return notGenerated();
+  if (
+    !Number.isInteger(limits.maxOccurrences) ||
+    limits.maxOccurrences < 1 ||
+    !Number.isInteger(limits.maxDays) ||
+    limits.maxDays < 1
+  )
     return {
       ok: false,
-      error: { kind: "recurrence-error", code: "invalid-window", message: "occurrence time kind differs from event" },
+      error: { kind: "recurrence-error", code: "recurrence-limit", message: "invalid recurrence membership limits" },
     };
-  const slots = enumerateGeneratedSlots(event, limits);
-  if (!slots.ok) return slots;
-  const found = slots.value.find((slot) => sameTime(slot.originalStart, originalStart));
-  return found
-    ? { ok: true, ordinal: found.ordinal }
+  if (!event.recurrence) return sameTime(event.start, originalStart) ? { ok: true, ordinal: 1 } : notGenerated();
+  const parsed = parseRRule(event.recurrence.rrule);
+  if (!parsed.ok)
+    return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "malformed RRULE" } };
+  const rule = parsed.value;
+  if (rule.count === undefined && rule.until === undefined)
+    return {
+      ok: false,
+      error: { kind: "recurrence-error", code: "unbounded-rrule", message: "RRULE requires COUNT or UNTIL" },
+    };
+  const allDay = event.start.kind === "all-day";
+  const timedStart = event.start.kind === "timed" ? event.start : undefined;
+  const resolvedZone = expansionZone(event.start, limits);
+  if (!resolvedZone.ok) return resolvedZone;
+  const zone = resolvedZone.value;
+  const startMs = comparableMillis(event.start);
+  const targetMs = comparableMillis(originalStart);
+  const until = rule.until ? Date.parse(rule.until) : Number.POSITIVE_INFINITY;
+  if (
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(targetMs) ||
+    targetMs < startMs ||
+    (rule.until !== undefined && !Number.isFinite(until))
+  )
+    return notGenerated();
+  const anchor: Date | Parts = allDay ? dayDate(startMs) : parts(startMs, zone);
+  const anchorDate = allDay
+    ? (anchor as Date)
+    : new Date(Date.UTC((anchor as Parts).year, (anchor as Parts).month - 1, (anchor as Parts).day));
+  const targetDay = allDay ? dayDate(targetMs) : dayDate(Date.parse(`${dateKey(parts(targetMs, zone))}T00:00:00Z`));
+  const untilMs = allDay && Number.isFinite(until) ? Date.parse(`${dateKey(parts(until, zone))}T00:00:00Z`) : until;
+  const initialCursor = rule.count === undefined ? seekCursor(anchorDate, rule, targetDay) : 0;
+  const cursorCeiling = rule.count === undefined ? initialCursor + 8 : 1_000_000;
+  let ordinal = 0;
+  for (let cursor = initialCursor; cursor < cursorCeiling; cursor++) {
+    for (const date of candidateDates(anchorDate, rule, cursor)) {
+      const local: CalendarTime | undefined = allDay
+        ? { kind: "all-day", date: date.toISOString().slice(0, 10) as LocalDate }
+        : (() => {
+            const a = anchor as Parts;
+            const instant = instantForLocal(
+              {
+                year: date.getUTCFullYear(),
+                month: date.getUTCMonth() + 1,
+                day: date.getUTCDate(),
+                hour: a.hour,
+                minute: a.minute,
+                second: a.second,
+                millisecond: a.millisecond,
+              },
+              zone,
+            );
+            return instant === undefined
+              ? undefined
+              : {
+                  kind: "timed",
+                  instant: new Date(instant).toISOString() as UtcInstant,
+                  timeZoneId: timedStart!.timeZoneId,
+                };
+          })();
+      // Invalid calendar dates and DST gaps do not consume COUNT.
+      if (!local) continue;
+      const localMs = comparableMillis(local);
+      if (cursor === 0 && localMs < startMs) continue;
+      if (localMs > untilMs || localMs > targetMs || (rule.count !== undefined && ordinal >= rule.count))
+        return notGenerated();
+      if (ordinal >= limits.maxOccurrences)
+        return {
+          ok: false,
+          error: {
+            kind: "recurrence-error",
+            code: "recurrence-limit",
+            message: "recurrence membership exceeds maxOccurrences",
+          },
+        };
+      // Exclusions and cancellations intentionally do not participate here:
+      // every valid generated slot consumes COUNT before effective state.
+      ordinal++;
+      if (sameTime(local, originalStart)) return { ok: true, ordinal };
+    }
+  }
+  return rule.count !== undefined && ordinal >= rule.count
+    ? notGenerated()
     : {
         ok: false,
         error: {
           kind: "recurrence-error",
-          code: "invalid-window",
-          message: "originalStart is not a generated recurrence slot",
+          code: "recurrence-limit",
+          message: "recurrence membership exceeded its safety limit",
         },
       };
 }
