@@ -1,1 +1,1 @@
-export type MessageChronologyStatus = "ready" | "loading" | "error";
+export type MessageChronologyStatus = "ready" | "loading" | "error" | "unavailable";

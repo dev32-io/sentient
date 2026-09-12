@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-TARGET="${SCHEDULE_QA_TARGET:-http://127.0.0.1:3000}"
+TARGET="${SCHEDULE_QA_TARGET:-https://localhost:8888}"
 OUTPUT="${1:?usage: run-model-probe.sh OUTPUT_JSON [GATEWAY_LOG]}"
 GATEWAY_LOG="${2:-}"
 : "${SCHEDULE_QA_ADMIN_USER_ID:?required disposable-fixture admin id}"

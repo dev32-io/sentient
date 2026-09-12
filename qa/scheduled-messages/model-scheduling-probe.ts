@@ -55,9 +55,12 @@ async function status(path: string): Promise<number> {
   return (await localFetch(path)).status;
 }
 
+const readiness = { health: await status("/api/v1/health"), ready: await status("/api/v1/ready") };
+if (readiness.health !== 200 || readiness.ready !== 200) {
+  throw new Error(`gateway not ready: health=${readiness.health} ready=${readiness.ready}`);
+}
 const token = await login();
 const before = await scheduleCount(token);
-const readiness = { health: await status("/health"), ready: await status("/ready") };
 const wsUrl = new URL("/api/v1/ws", target);
 wsUrl.protocol = target.protocol === "https:" ? "wss:" : "ws:";
 

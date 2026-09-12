@@ -35,6 +35,7 @@ export class SessionsConnector implements Connector {
   private listeners: Set<(e: SessionsChangeEvent) => void> = new Set();
   private unsubs: (() => void)[] = [];
   private send: (msg: Record<string, unknown>) => void = () => {};
+  private pendingSwitch: { reject(error: Error): void } | null = null;
 
   constructor(cfg: SessionsConnectorConfig) {
     this.rest = cfg.rest;
@@ -54,6 +55,23 @@ export class SessionsConnector implements Connector {
     };
     this.unsubs.push(sdk.onMessage("session.created", dispatchLifecycle("created")));
     this.unsubs.push(sdk.onMessage("session.switched", dispatchLifecycle("switched")));
+    this.unsubs.push(
+      sdk.onMessage("sessions.error", (raw: unknown) => {
+        const message = raw as { requestId?: unknown; code?: unknown };
+        const pending = this.pendingSwitch;
+        // conversation.activate is the only session command whose errors have
+        // no requestId. Request-bound errors belong to session.new or another
+        // command and must not reject an unrelated activation.
+        if (pending === null || message.requestId !== undefined || typeof message.code !== "string") return;
+        pending.reject(
+          new Error(
+            message.code === "not_found" || message.code === "forbidden"
+              ? "conversation unavailable"
+              : "could not open conversation",
+          ),
+        );
+      }),
+    );
     this.unsubs.push(
       sdk.onMessage("session.draft", (raw: unknown) => {
         const m = raw as { draftKey: string; ts: number };
@@ -76,6 +94,7 @@ export class SessionsConnector implements Connector {
   detach(): void {
     for (const u of this.unsubs) u();
     this.unsubs = [];
+    this.pendingSwitch?.reject(new Error("session connection closed"));
     // NOTE: do NOT clear `this.listeners` — those are user-registered
     // handlers (e.g. the webui's use-sessions hook subscribes once at
     // create), and they must survive WS reconnect. The SDK calls
@@ -120,23 +139,27 @@ export class SessionsConnector implements Connector {
    * resolves when the gateway broadcasts `session.switched`.
    */
   switchTo(sessionId: string): Promise<void> {
+    if (this.pendingSwitch !== null) return Promise.reject(new Error("session switch already pending"));
     return new Promise((resolve, reject) => {
-      const onSwitched = (e: SessionsChangeEvent): void => {
-        if (e.kind === "switched" && e.sessionId === sessionId) {
-          cleanup();
-          resolve();
-        }
-      };
-      this.listeners.add(onSwitched);
-      const timer = setTimeout(() => {
-        cleanup();
-        log.warn("switchTo.timeout", { reason: "timeout waiting for session.switched", sessionId });
-        reject(new Error("timeout waiting for session.switched"));
-      }, this.timeoutMs);
       const cleanup = (): void => {
         clearTimeout(timer);
         this.listeners.delete(onSwitched);
+        if (this.pendingSwitch === pending) this.pendingSwitch = null;
       };
+      const settle = (action: () => void): void => {
+        cleanup();
+        action();
+      };
+      const onSwitched = (e: SessionsChangeEvent): void => {
+        if (e.kind === "switched" && e.sessionId === sessionId) settle(resolve);
+      };
+      const pending = { reject: (error: Error) => settle(() => reject(error)) };
+      this.pendingSwitch = pending;
+      this.listeners.add(onSwitched);
+      const timer = setTimeout(() => {
+        log.warn("switchTo.timeout", { reason: "timeout waiting for session.switched", sessionId });
+        pending.reject(new Error("timeout waiting for session.switched"));
+      }, this.timeoutMs);
       this.send({ type: "conversation.activate", sessionId });
     });
   }

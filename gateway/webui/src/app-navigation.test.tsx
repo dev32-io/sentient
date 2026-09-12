@@ -7,12 +7,12 @@ import { ROUTE_STORAGE_KEY } from "./components/shell/route-state.ts";
 import type { AuthApi } from "./services/auth-api.ts";
 import { App } from "./app.tsx";
 
-const observed = vi.hoisted(() => ({ startClient: vi.fn(), createDraft: vi.fn(), dispose: vi.fn(), client: null as unknown }));
+const observed = vi.hoisted(() => ({ startClient: vi.fn(), createDraft: vi.fn(), dispose: vi.fn(), client: null as unknown, sessions: null as unknown }));
 vi.mock("./hooks/use-install-state.ts", () => ({ useInstallState: () => ({ state: { bootstrap_complete: true }, loading: false, error: null }) }));
 vi.mock("./hooks/use-voice-client.ts", () => ({ useVoiceClient: () => { observed.startClient(); return observed.client; } }));
-vi.mock("./hooks/use-sessions.ts", () => ({ createUseSessions: () => ({ dispose: observed.dispose }) }));
+vi.mock("./hooks/use-sessions.ts", () => ({ createUseSessions: () => observed.sessions }));
 vi.mock("./components/common/sentient-mark.tsx", () => ({ SentientMark: () => <span aria-hidden="true">Mark</span> }));
-vi.mock("./components/chat/chat-view.tsx", () => ({ ChatView: () => <h1>Chat fixture</h1> }));
+vi.mock("./components/chat/chat-view.tsx", () => ({ ChatView: ({ messages, status }: { messages: unknown[]; status: string }) => <section><h1>Chat fixture</h1><p>Conversation state: {status}</p><p>Message count: {messages.length}</p></section> }));
 vi.mock("./components/calendar/calendar-view.tsx", () => ({ CalendarView: () => <h1>Calendar fixture</h1> }));
 vi.mock("./components/dock/composer.tsx", () => ({ ChatComposer: () => null }));
 vi.mock("./components/settings/settings-view.tsx", () => ({
@@ -27,7 +27,7 @@ vi.mock("./components/settings/settings-view.tsx", () => ({
 // focus behavior is covered by drawer.test.tsx and use-sessions.test.ts.
 vi.mock("./components/sessions/drawer.tsx", () => ({
   Drawer: ({ open, onClose, onBeforeSessionChange, onSessionSelected }: { open: boolean; onClose: () => void; onBeforeSessionChange: () => Promise<boolean>; onSessionSelected: () => void }) => open ?
-    <button type="button" onClick={async () => { if (await onBeforeSessionChange()) { observed.createDraft(); onSessionSelected(); onClose(); } }}>Create draft fixture</button> : null,
+    <div><button type="button" onClick={async () => { if (await onBeforeSessionChange()) { observed.createDraft(); onSessionSelected(); onClose(); } }}>Create draft fixture</button><button type="button" onClick={() => { onSessionSelected(); onClose(); }}>Select session fixture</button></div> : null,
 }));
 vi.mock("./components/auth/login-screen.tsx", () => ({
   LoginScreen: ({ auth }: { auth: { login: AuthApi["login"] } }) => <button type="button" onClick={() => void auth.login({ userId: "synthetic", pin: "1234" })}>Verify fixture PIN</button>,
@@ -51,6 +51,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
   localStorage.clear();
+  observed.sessions = {
+    dispose: observed.dispose,
+    switchTo: vi.fn(async () => true),
+    newChat: vi.fn(async () => true),
+    error: signal(null), currentId: signal(null), items: signal([]), searchHits: signal(null), loading: signal(false),
+  };
   observed.client = {
     sessionsConnector: {}, cycleStatus: signal("idle"), tasks: signal([]), messages: signal([]), currentTurnId: signal(null),
     sdkStatus: signal("ready"), connectionLost: signal(false), authExpired: signal(false), commandRejection: signal(null),
@@ -59,6 +65,7 @@ beforeEach(() => {
   };
   // Profile seeding is incidental to shell navigation. No real I/O in this test.
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ audio: { ttsEnabled: false, channel: "text" } }), { status: 200 })));
+  history.replaceState({}, "", "/");
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -113,6 +120,38 @@ describe("shell navigation protects settings and conversation identity", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
     await screen.findByText("Chat fixture");
     expect(observed.createDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a cold session link after login even when parent route state changes while activation is pending", async () => {
+    let finishSwitch: (() => void) | undefined;
+    (observed.sessions as { switchTo: ReturnType<typeof vi.fn> }).switchTo.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { finishSwitch = () => resolve(true); }),
+    );
+    history.replaceState({}, "", "/?sessionId=s_cold");
+    render(<App api={api()} />);
+
+    fireEvent.click(await screen.findByText("Verify fixture PIN"));
+
+    await waitFor(() => expect((observed.sessions as { switchTo: ReturnType<typeof vi.fn> }).switchTo).toHaveBeenCalledWith("s_cold"));
+    expect(screen.getByText("Conversation state: loading")).toBeTruthy();
+    finishSwitch?.();
+    await screen.findByText("Conversation state: ready");
+    expect(location.search).toBe("");
+  });
+
+  it("hides prior conversation when a linked session is unavailable and recovers through explicit selection", async () => {
+    history.replaceState({}, "", "/?sessionId=s_missing");
+    (observed.client as { messages: { value: unknown[] } }).messages.value = [{ id: "old" }];
+    (observed.sessions as { switchTo: ReturnType<typeof vi.fn> }).switchTo.mockResolvedValueOnce(false);
+    mountStored("chat");
+
+    await screen.findByText("Conversation state: unavailable");
+    expect(screen.getByText("Message count: 0")).toBeTruthy();
+    expect(location.search).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Past chats" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select session fixture" }));
+    await screen.findByText("Conversation state: ready");
   });
 
   it("fresh verification enters chat without initializing authenticated effects early; hydrate keeps route", async () => {

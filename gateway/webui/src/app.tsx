@@ -194,6 +194,10 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   }, []);
   const sessions = sessionsRef.current.hook;
   const pendingSessionRef = useRef<string | null>(loadPendingSession());
+  const [sessionRouteState, setSessionRouteState] = useState<"idle" | "loading" | "unavailable">(
+    pendingSessionRef.current === null ? "idle" : "loading",
+  );
+  const sessionRouteAttemptRef = useRef(0);
   // Gate against double-click: skip if a TTS toggle PUT is already in flight.
   const togglingRef = useRef(false);
   const cycleStatus = client.cycleStatus.value;
@@ -223,15 +227,26 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   const connectionLost = client.connectionLost.value;
   const authExpired = client.authExpired.value;
   const connectionReady = sdkStatus === "ready";
+  useEffect(() => () => { sessionRouteAttemptRef.current += 1; }, []);
   useEffect(() => {
     const target = pendingSessionRef.current;
     if (!target || sdkStatus !== "ready") return;
+    const attempt = ++sessionRouteAttemptRef.current;
     pendingSessionRef.current = null;
+    setSessionRouteState("loading");
     void sessions.switchTo(target).then((opened) => {
+      if (sessionRouteAttemptRef.current !== attempt) return;
       clearPendingSession();
+      setSessionRouteState(opened ? "idle" : "unavailable");
       if (opened) onRouteChange("chat");
     });
   }, [sessions, sdkStatus, onRouteChange]);
+
+  const recoverSessionRoute = () => {
+    sessionRouteAttemptRef.current += 1;
+    setSessionRouteState("idle");
+    onRouteChange("chat");
+  };
 
   // Profile API instance — also used by SettingsView via its own factory call,
   // which is fine: createProfileApi() is stateless (just wraps fetch). Held
@@ -324,12 +339,12 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
         main={
           route === "chat" ? (
             <ChatView
-              messages={messages}
-              transcript={client.transcript.value}
+              messages={sessionRouteState === "idle" ? messages : []}
+              transcript={sessionRouteState === "idle" ? client.transcript.value : ""}
               currentTurnId={currentTurnId}
               activeCycleState={activeCycleState}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
-              status={connectionLost ? "error" : connectionReady ? "ready" : "loading"}
+              status={sessionRouteState === "unavailable" ? "unavailable" : sessionRouteState === "loading" ? "loading" : connectionLost ? "error" : connectionReady ? "ready" : "loading"}
             />
           ) : route === "calendar" ? (
             <CalendarView token={token} />
@@ -348,7 +363,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
           route === "chat" ? (
             <ChatComposer
               cycleStatus={cycleStatus}
-              connectionReady={connectionReady}
+              connectionReady={connectionReady && sessionRouteState === "idle"}
               captureActive={client.voiceMode.value === "active"}
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
@@ -401,12 +416,12 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
           ) : undefined
         }
       />
-      <MessageInbox open={inboxOpen} token={token} onClose={() => setInboxOpen(false)} onOpenedSession={() => onRouteChange("chat")} />
+      <MessageInbox open={inboxOpen} token={token} onClose={() => setInboxOpen(false)} onOpenedSession={recoverSessionRoute} />
       <Drawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         onBeforeSessionChange={departure.request}
-        onSessionSelected={() => onRouteChange("chat")}
+        onSessionSelected={recoverSessionRoute}
       />
       {departure.dialog}
       {connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}

@@ -23,8 +23,9 @@ Uses existing disposable-user admin lifecycle, ordinary WebSocket chat, real mod
 ```bash
 source scripts/env.sh
 bun run stack:down && bun run dev
-# In another shell after both direct and door /ready return 200:
-export SCHEDULE_QA_TARGET=http://127.0.0.1:3000
+# In another shell after both direct and door /api/v1/ready return 200:
+# Override only for an explicitly configured isolated loopback endpoint.
+export SCHEDULE_QA_TARGET=https://localhost:8888
 export SCHEDULE_QA_ADMIN_USER_ID=... SCHEDULE_QA_ADMIN_PIN=...
 export SCHEDULE_QA_USER_PIN=1234
 export SCHEDULE_QA_PROMPT='synthetic disposable scheduling request'
@@ -32,7 +33,7 @@ qa/scheduled-messages/run-model-probe.sh /tmp/model-probe-$(date +%s).json \
   "$HOME/.sentient/gateway/logs/$(date +%F).log"
 ```
 
-Report distinguishes ordinary input submission, observed model tool JSON, native rejection, permission request/resolution, task terminal state, allowlisted broker diagnostics, and schedule count before/after. `service.code` is `success` only when durable count increases; otherwise it remains `null` rather than inventing a failure code. Preserve report as evidence only after reviewing keys and moving it to a distinct workflow evidence filename.
+Report distinguishes ordinary input submission, observed model tool JSON, native rejection, permission request/resolution, task terminal state, allowlisted broker diagnostics, and schedule count before/after. `service.code` is `success` only when durable count increases; otherwise it remains `null` rather than inventing a failure code. Submit reviewed, selected sanitized witnesses through current `e2e_workspace` evidence/report capability; do not copy output into canonical reports or choose retained filenames manually.
 
 For each E2E-002 phrase, provision a fresh fixture or first delete its disposable schedules. Record one report per phrase. If task fails, retain matching `toolCallId` and allowlisted stages. Do not add aliases without a witness identifying rejected shape or service code.
 
@@ -42,7 +43,7 @@ Create disposable A and B through existing fixture controller. Create A schedule
 
 ```bash
 SCHEDULE_QA_USER_PIN_B=1234 bun qa/scheduled-messages/auth-isolation-probe.ts \
-  --target http://127.0.0.1:3000 --user-id-b "$B_ID" \
+  --target https://localhost:8888 --user-id-b "$B_ID" \
   --schedule-id-a "$A_SCHEDULE_ID" --schedule-revision-a "$A_REVISION" \
   --session-id-a "$A_SESSION_ID" --output /tmp/auth-isolation-$(date +%s).json
 ```
@@ -64,12 +65,12 @@ Use fixture cleanup command in an exit trap. Never remove unrelated users/events
 
 ## Native session links and scheduling
 
-Use current iPhone 16 / iOS 18.3.1 simulator and accessibility IDs `schedule-add`, `schedule-editor`, `schedule-message`, `schedule-save`, and `schedule-cancel`. Enter synthetic text, dismiss focus by tapping `schedule-save`, and require exactly one visible saved row. Exercise invalid correction and retain/retry after stopped local gateway before claiming native create/edit.
+Use current iPhone 16 / iOS 18.3.1 simulator and accessibility IDs `schedule-add`, `schedule-editor`, `schedule-message`, `schedule-delay`, `schedule-save`, and `schedule-cancel`. With Maestro `eraseText` or XCUITest select-all/delete, replace delay contents, type a decimal such as `1`, and assert field value is exactly `1` before Save. First prove malformed input stays in editor with validation, then correct it; require editor dismissal and exactly one visible saved row. Retain sanitized field value/type, validation state, and resulting row count. Retain/retry after stopped local gateway before claiming native create/edit.
 
 Cold-link proof needs no APNs:
 
 ```bash
-xcrun simctl terminate 'iPhone 16' com.sentient.app
+xcrun simctl terminate 'iPhone 16' io.dev32.sentient.debug
 xcrun simctl openurl 'iPhone 16' "sentient://session/$DISPOSABLE_SESSION_ID"
 ```
 
@@ -81,10 +82,10 @@ Use only `scripts/stack.sh` lifecycle. Before and after each restart record stat
 
 ```bash
 scripts/stack.sh status
-curl -ksS -o /dev/null -w 'direct health %{http_code}\n' http://127.0.0.1:3000/health
-curl -ksS -o /dev/null -w 'direct ready %{http_code}\n' http://127.0.0.1:3000/ready
-curl -ksS -o /dev/null -w 'door health %{http_code}\n' https://localhost/health
-curl -ksS -o /dev/null -w 'door ready %{http_code}\n' https://localhost/ready
+curl -ksS -o /dev/null -w 'direct health %{http_code}\n' https://localhost:8888/api/v1/health
+curl -ksS -o /dev/null -w 'direct ready %{http_code}\n' https://localhost:8888/api/v1/ready
+curl -ksS -o /dev/null -w 'door health %{http_code}\n' https://localhost/api/v1/health
+curl -ksS -o /dev/null -w 'door ready %{http_code}\n' https://localhost/api/v1/ready
 curl -ksS -o /dev/null -w 'install %{http_code}\n' https://localhost/api/v1/install-state
 ```
 
