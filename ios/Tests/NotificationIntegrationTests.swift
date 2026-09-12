@@ -112,6 +112,36 @@ final class NotificationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testLogoutThenLoginSerializesUnlinkBeforeInstallingReplacement() async {
+        let unlinkStarted = expectation(description: "logout unlink started")
+        let replacementInstalled = expectation(description: "replacement installed")
+        let old = FakeNativePushLifecycle(unlinkStarted: unlinkStarted)
+        let replacement = FakeNativePushLifecycle()
+        var installed: [String] = []
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .denied, granted: false),
+            lifecycleFactory: { configuration in
+                installed.append(configuration.fence)
+                if configuration.fence == "account-new" { replacementInstalled.fulfill(); return replacement }
+                return old
+            }
+        )
+
+        coordinator.configure(account: account("account-old"))
+        coordinator.unlinkForLogout()
+        await fulfillment(of: [unlinkStarted])
+        coordinator.configure(account: account("account-new"))
+        XCTAssertEqual(old.unlinkCalls, 1)
+        XCTAssertEqual(installed, ["account-old"])
+
+        old.completeUnlink(.success)
+        await fulfillment(of: [replacementInstalled])
+        XCTAssertEqual(old.unlinkCalls, 1)
+        XCTAssertEqual(installed, ["account-old", "account-new"])
+        XCTAssertTrue(old.closed)
+    }
+
+    @MainActor
     func testStaleOldBindingAcknowledgementKeepsReplacementFencedUntilRetrySucceeds() async {
         let unlinkStarted = expectation(description: "old unlink attempted")
         let retryStarted = expectation(description: "old unlink retried")
@@ -169,6 +199,7 @@ private final class FakeNativePushLifecycle: NativePushLifecycleClient {
     private var unlinkContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
     private var retryContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
     private(set) var closed = false
+    private(set) var unlinkCalls = 0
 
     init(unlinkStarted: XCTestExpectation? = nil, retryStarted: XCTestExpectation? = nil) {
         self.unlinkStarted = unlinkStarted
@@ -176,6 +207,7 @@ private final class FakeNativePushLifecycle: NativePushLifecycleClient {
     }
 
     func unlink(ownerFence: String) async throws -> NativePushLifecycleResult {
+        unlinkCalls += 1
         state = .pendingUnlink
         unlinkStarted?.fulfill()
         return await withCheckedContinuation { unlinkContinuation = $0 }

@@ -209,7 +209,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     func unlinkForLogout() {
         navigation.clear()
         pendingConfiguration = nil
-        guard let lifecycle, let ownerFence else { return }
+        guard lifecycle != nil, ownerFence != nil else { return }
         registrationTask?.cancel()
         registrationPending = false
         binding = nil
@@ -217,15 +217,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
             lifecycleWarning = "Notifications may continue until this device reconnects."
             return
         }
-        Task {
-            do {
-                let result = try await lifecycle.unlink(ownerFence: ownerFence)
-                applyLifecycleState(lifecycle.state)
-                if case .failure = result { lifecycleWarning = "Notifications may continue until this device reconnects." }
-            } catch {
-                lifecycleWarning = "Notifications may continue until this device reconnects."
-            }
-        }
+        beginAccountTransition(logout: true)
     }
 
     func dismissLifecycleWarning() { lifecycleWarning = nil }
@@ -271,12 +263,14 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         Task { await refreshPermission() }
     }
 
-    private func beginAccountTransition() {
+    private func beginAccountTransition(logout: Bool = false) {
         guard accountTransitionTask == nil, let lifecycle, let ownerFence else { return }
         registrationTask?.cancel()
         registrationPending = false
         binding = nil
-        lifecycleWarning = "Notification activation is waiting for the previous binding to be disabled."
+        lifecycleWarning = logout
+            ? "Notifications may continue until this device reconnects."
+            : "Notification activation is waiting for the previous binding to be disabled."
         accountTransitionTask = Task {
             defer { accountTransitionTask = nil }
             do {

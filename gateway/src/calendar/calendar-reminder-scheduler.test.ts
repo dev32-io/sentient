@@ -7,7 +7,7 @@ import { PrivateScheduleResource } from "../access/private-schedule-resource.js"
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { createScheduleService } from "../scheduling/service.js";
 import { createCalendarEvent, mutateCalendarEvent } from "./calendar-mutations.js";
-import { createCalendarReminderScheduler } from "./calendar-reminder-scheduler.js";
+import { authorizeCalendarReminderExecution, createCalendarReminderScheduler } from "./calendar-reminder-scheduler.js";
 import { openCalendarPersistence } from "./calendar-store.js";
 import type { CalendarConfig, CalendarMutationCommand } from "./types.js";
 
@@ -144,7 +144,10 @@ describe("calendar reminder scheduling boundary", () => {
     const accessManager = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     let persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
-    const schedules = createScheduleService({ userDataRoot: root, id: () => "recovered" });
+    const schedules = createScheduleService({
+      userDataRoot: root,
+      id: () => "recovered",
+    });
     const created = createCalendarEvent(
       {
         title: "Recovery appointment",
@@ -174,7 +177,11 @@ describe("calendar reminder scheduling boundary", () => {
     persistence.close();
 
     persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
-    const recovered = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const recovered = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+    });
     expect((await recovered.reconcilePending(persistence, "private")).ok).toBe(true);
     const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
     const listed = await schedules.list(resource, undefined, 10);
@@ -189,7 +196,10 @@ describe("calendar reminder scheduling boundary", () => {
     const accessManager = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
-    const schedules = createScheduleService({ userDataRoot: root, id: () => "generation" });
+    const schedules = createScheduleService({
+      userDataRoot: root,
+      id: () => "generation",
+    });
     const created = createCalendarEvent(
       {
         title: "Original title",
@@ -437,6 +447,117 @@ describe("calendar reminder scheduling boundary", () => {
     schedules.close();
     adultStore.close();
     childStore.close();
+  });
+
+  test("shutdown waits for the active reminder recovery pass", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-close-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const schedules = createScheduleService({ userDataRoot: root });
+    let releaseUsers: (users: readonly []) => void = () => {};
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const users = new Promise<readonly []>((resolve) => {
+      releaseUsers = resolve;
+    });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+      listUsers: async () => {
+        markStarted();
+        return users;
+      },
+    });
+
+    await started;
+    let closed = false;
+    const closing = scheduler.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    releaseUsers([]);
+    await closing;
+    expect(closed).toBe(true);
+    schedules.close();
+  });
+
+  test("retains an older recurring reminder beyond the bounded expansion horizon", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-horizon-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const creationConfig = {
+      ...config,
+      recurrence: { maxOccurrences: 200, maxDays: 4_000 },
+    };
+    const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), creationConfig);
+    const schedules = createScheduleService({
+      userDataRoot: root,
+      id: () => "linked-horizon",
+    });
+    const scheduler = createCalendarReminderScheduler({
+      schedules,
+      accessManager,
+      calendarConfig: config,
+    });
+    const created = createCalendarEvent(
+      {
+        title: "Long running meeting",
+        start: "2020-01-01T10:00:00-05:00" as never,
+        end: "2020-01-01T11:00:00-05:00" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        recurrence: { frequency: "monthly", count: 100 },
+        reminder: { enabled: true, mode: "at-start" },
+      },
+      persistence,
+      creationConfig,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-01-15T00:00:00Z"))).ok,
+    ).toBe(true);
+    const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
+    const listed = await schedules.list(resource, undefined, 10);
+    expect(listed.ok && listed.value.schedules).toEqual([
+      expect.objectContaining({
+        source: expect.objectContaining({
+          reminderId: `${created.value.eventId}:u_aaaaaaaa`,
+        }),
+      }),
+    ]);
+    if (!listed.ok || !listed.value.schedules[0]) return;
+    const scheduled = listed.value.schedules[0];
+    const authorized = await authorizeCalendarReminderExecution(
+      {
+        principal,
+        resource,
+        claim: {
+          claimToken: "claim",
+          scheduleId: scheduled.scheduleId,
+          occurrenceId: "occurrence",
+          ownerUserId: principal.userId,
+          source: scheduled.source,
+          intendedAt: "2026-02-01T15:00:00.000Z",
+          claimedUntil: "2026-02-01T15:01:00.000Z",
+          message: scheduled.message,
+          oneTime: false,
+        },
+      },
+      { accessManager, calendarConfig: config },
+      new AbortController().signal,
+    );
+    expect(authorized.ok).toBe(true);
+    scheduler.close();
+    schedules.close();
+    persistence.close();
   });
 
   test("moves a recurring occurrence reminder without leaving the base wake eligible", async () => {

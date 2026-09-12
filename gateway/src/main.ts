@@ -311,7 +311,9 @@ services.delegatedExternalTool.sealEmpty(
 // ---------------------------------------------------------------------------
 const schedules = services.schedules;
 const pushStore = config.push
-  ? openPushStore(join(gatewayStateDir("push"), "push.db"), { revocationTtlMs: config.push.revocationTtlMs })
+  ? openPushStore(join(gatewayStateDir("push"), "push.db"), {
+      revocationTtlMs: config.push.revocationTtlMs,
+    })
   : undefined;
 
 const calendarConfig = services.calendarConfig;
@@ -366,14 +368,21 @@ if (schedules && pushStore && config.push && config.scheduling) {
       async resolve(reference, signal) {
         if (signal.aborted) return { ok: false, error: { code: "closed", retryable: false } };
         const user = await services.auth.users.get(reference.ownerUserId);
-        if (!user.ok) return { ok: false, error: { code: "provider_unavailable", retryable: true } };
+        if (!user.ok)
+          return {
+            ok: false,
+            error: { code: "provider_unavailable", retryable: true },
+          };
         if (!user.value) return { ok: false, error: { code: "forbidden", retryable: false } };
         const principal = createUserPrincipal(reference.ownerUserId, user.value.role, "home");
         const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
         try {
           const metadata = store.getSession(reference.sessionId);
           if (!metadata?.scheduled || metadata.scheduled.entryId !== reference.entryId)
-            return { ok: false, error: { code: "not_found", retryable: false } };
+            return {
+              ok: false,
+              error: { code: "not_found", retryable: false },
+            };
           const entry = store
             .readSession(reference.sessionId)
             .find((candidate) => String(candidate.seq) === reference.entryId && candidate.kind === "assistant");
@@ -451,6 +460,7 @@ async function shutdown(signal: string): Promise<never> {
   services.systemOrchestrator?.stopHealthWatch();
   pushController?.abort();
   await Promise.all([scheduledRunner?.stop(), pushLoop]);
+  await server.closeOwnedResources();
   schedules?.close();
   pushStore?.close();
   if (mcpHost) await mcpHost.stop();

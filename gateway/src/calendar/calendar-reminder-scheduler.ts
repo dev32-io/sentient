@@ -66,10 +66,19 @@ function reminderInstant(start: CalendarTime, reminder: CalendarReminderCreateIn
 function localDateParts(
   instant: number,
   timeZone: string,
-): { day: number; hour: number; minute: number; weekday: (typeof WEEKDAYS)[number] } {
+): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: (typeof WEEKDAYS)[number];
+} {
   const parts: Record<string, string> = {};
   for (const part of new Intl.DateTimeFormat("en-US", {
     timeZone,
+    year: "numeric",
+    month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
@@ -78,6 +87,8 @@ function localDateParts(
   }).formatToParts(new Date(instant)))
     parts[part.type] = part.value;
   return {
+    year: Number(parts.year),
+    month: Number(parts.month),
     day: Number(parts.day),
     hour: Number(parts.hour),
     minute: Number(parts.minute),
@@ -111,12 +122,24 @@ function recurringReminderTiming(
       const eventIndex = WEEKDAYS.indexOf(eventWeekday);
       return WEEKDAYS[(index + reminderIndex - eventIndex + 7) % 7] ?? "monday";
     }) ?? [local.weekday];
-    return { kind: "recurring", frequency: "weekly", localTime, timeZone: zone, weekdays: [...new Set(weekdays)] };
+    return {
+      kind: "recurring",
+      frequency: "weekly",
+      localTime,
+      timeZone: zone,
+      weekdays: [...new Set(weekdays)],
+    };
   }
   // The public schedule contract intentionally has no yearly/interval rule.
   // Use its monthly/daily/weekly superset as a durable wake subscription;
   // execution authorization below admits only real event occurrences.
-  return { kind: "recurring", frequency: "monthly", localTime, timeZone: zone, dayOfMonth: local.day };
+  return {
+    kind: "recurring",
+    frequency: "monthly",
+    localTime,
+    timeZone: zone,
+    dayOfMonth: local.day,
+  };
 }
 
 function recurringTimingMatchesInstant(
@@ -129,6 +152,156 @@ function recurringTimingMatchesInstant(
   if (timing.frequency === "weekly") return timing.weekdays?.includes(local.weekday) === true;
   if (timing.frequency === "monthly") return timing.dayOfMonth === local.day;
   return true;
+}
+
+function recurrenceMayStillWake(
+  event: CalendarPersistenceEvent,
+  reminder: CalendarReminderCreateInput,
+  now: number,
+): boolean {
+  const rule = event.recurrence?.rule;
+  const first = reminderInstant(event.start, reminder);
+  if (!rule || first === undefined) return false;
+  if (rule.until) return Date.parse(rule.until) >= now;
+  const count = rule.count ?? 1;
+  const interval = rule.interval ?? 1;
+  // This is deliberately a conservative upper bound. The recurring schedule
+  // is cheap to retain slightly beyond the final slot; authorization still
+  // admits only a real occurrence, and the periodic reconciliation removes it.
+  const daysPerOccurrence =
+    rule.freq === "DAILY"
+      ? interval
+      : rule.freq === "WEEKLY"
+        ? interval * 7
+        : rule.freq === "MONTHLY"
+          ? interval * 31
+          : interval * 366;
+  return first + Math.max(0, count - 1) * daysPerOccurrence * 86_400_000 >= now;
+}
+
+function sameCalendarTime(a: CalendarTime, b: CalendarTime): boolean {
+  return a.kind === b.kind && canonicalOriginalKey(a) === canonicalOriginalKey(b);
+}
+
+function allDayParts(date: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: (typeof WEEKDAYS)[number];
+} {
+  const [year = Number.NaN, month = Number.NaN, day = Number.NaN] = date.split("-").map(Number);
+  return {
+    year,
+    month,
+    day,
+    hour: 0,
+    minute: 0,
+    weekday: WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] ?? "monday",
+  };
+}
+
+function generatedOrdinal(event: CalendarPersistenceEvent, candidate: CalendarTime, zone: string): number | undefined {
+  const rule = event.recurrence?.rule;
+  if (!rule || event.start.kind !== candidate.kind) return undefined;
+  const startLocal =
+    event.start.kind === "timed"
+      ? localDateParts(Date.parse(event.start.instant), zone)
+      : allDayParts(event.start.date);
+  const targetLocal =
+    candidate.kind === "timed" ? localDateParts(Date.parse(candidate.instant), zone) : allDayParts(candidate.date);
+  if (event.start.kind === "timed" && candidate.kind === "timed") {
+    const start = localDateParts(Date.parse(event.start.instant), zone);
+    const target = localDateParts(Date.parse(candidate.instant), zone);
+    if (start.hour !== target.hour || start.minute !== target.minute) return undefined;
+  }
+  const startDay = Date.UTC(startLocal.year, startLocal.month - 1, startLocal.day);
+  const targetDay = Date.UTC(targetLocal.year, targetLocal.month - 1, targetLocal.day);
+  const deltaDays = Math.round((targetDay - startDay) / 86_400_000);
+  if (deltaDays < 0) return undefined;
+  const interval = rule.interval ?? 1;
+  let ordinal: number | undefined;
+  if (rule.freq === "DAILY") {
+    if (deltaDays % interval === 0) ordinal = deltaDays / interval + 1;
+  } else if (rule.freq === "WEEKLY") {
+    const codes = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
+    const allowed = (rule.byDay ?? [codes[new Date(startDay).getUTCDay()] ?? "MO"])
+      .map((code) => codes.indexOf(code))
+      .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+    const startMonday = startDay - ((new Date(startDay).getUTCDay() + 6) % 7) * 86_400_000;
+    const week = Math.floor((targetDay - startMonday) / (7 * 86_400_000));
+    const targetWeekday = new Date(targetDay).getUTCDay();
+    const position = allowed.indexOf(targetWeekday);
+    if (week >= 0 && week % interval === 0 && position >= 0) {
+      const first = allowed.filter((weekday) => startMonday + ((weekday + 6) % 7) * 86_400_000 >= startDay).length;
+      ordinal =
+        week === 0
+          ? allowed
+              .slice(0, position + 1)
+              .filter((weekday) => startMonday + ((weekday + 6) % 7) * 86_400_000 >= startDay).length
+          : first + (week / interval - 1) * allowed.length + position + 1;
+    }
+  } else if (rule.freq === "MONTHLY") {
+    const months = (targetLocal.year - startLocal.year) * 12 + targetLocal.month - startLocal.month;
+    if (months >= 0 && months % interval === 0 && targetLocal.day === startLocal.day) ordinal = months / interval + 1;
+  } else {
+    const years = targetLocal.year - startLocal.year;
+    if (
+      years >= 0 &&
+      years % interval === 0 &&
+      targetLocal.month === startLocal.month &&
+      targetLocal.day === startLocal.day
+    )
+      ordinal = years / interval + 1;
+  }
+  if (!ordinal || (rule.count !== undefined && ordinal > rule.count)) return undefined;
+  if (rule.until && candidate.kind === "timed" && Date.parse(candidate.instant) > Date.parse(rule.until))
+    return undefined;
+  if (rule.until && candidate.kind === "all-day") {
+    const until = localDateParts(Date.parse(rule.until), zone);
+    const untilDate = Date.UTC(until.year, until.month - 1, until.day);
+    if (targetDay > untilDate) return undefined;
+  }
+  return ordinal;
+}
+
+function effectiveOccurrenceAt(
+  event: CalendarPersistenceEvent,
+  original: CalendarTime,
+  zone: string,
+): Pick<CalendarPersistenceEvent, "start" | "title" | "visibility" | "notification"> | undefined {
+  if (
+    !generatedOrdinal(event, original, zone) ||
+    event.exclusions.some((excluded) => sameCalendarTime(excluded, original))
+  )
+    return undefined;
+  const exception = event.exceptions.find((candidate) => sameCalendarTime(candidate.occurrence, original));
+  if (exception?.cancelled) return undefined;
+  const notification = exception?.notification === null ? undefined : (exception?.notification ?? event.notification);
+  return {
+    start: exception?.start ?? original,
+    title: exception?.title ?? event.title,
+    visibility: exception?.visibility ?? event.visibility,
+    ...(notification ? { notification } : {}),
+  };
+}
+
+function originalForReminderWake(
+  event: CalendarPersistenceEvent,
+  reminder: CalendarReminderCreateInput,
+  intended: number,
+): CalendarTime | undefined {
+  if (event.start.kind === "timed") {
+    const start = reminder.mode === "lead" ? intended + reminder.leadMinutes * 60_000 : intended;
+    return { ...event.start, instant: new Date(start).toISOString() as never };
+  }
+  if (reminder.mode !== "all-day") return undefined;
+  const local = localDateParts(intended, reminder.timeZone);
+  return {
+    kind: "all-day",
+    date: `${String(local.year).padStart(4, "0")}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}` as never,
+  };
 }
 
 function eventOccurrences(event: CalendarPersistenceEvent, config: CalendarConfig): SchedulingResult<Occurrence[]> {
@@ -196,7 +369,7 @@ export interface CalendarReminderScheduler {
     scope: CalendarScope,
     limit?: number,
   ): Promise<SchedulingResult<void>>;
-  close(): void;
+  close(): Promise<void>;
 }
 
 type ResolvedUser = Readonly<{ role: UserRole; householdId?: string }>;
@@ -265,13 +438,19 @@ export function createCalendarReminderScheduler(deps: {
           const baseReminder = reminderFor(event, owner);
           const recurringTiming = baseReminder && recurringReminderTiming(event, baseReminder);
           const occurrences = eventOccurrences(event, deps.calendarConfig);
-          if (!occurrences.ok) return occurrences;
-          const hasFutureOccurrence = occurrences.value.some((occurrence) => {
+          if (!occurrences.ok && !event.recurrence) return occurrences;
+          const occurrenceValues = occurrences.ok ? occurrences.value : [];
+          const hasFutureOccurrence = occurrenceValues.some((occurrence) => {
             const occurrenceReminder = reminderFor(occurrence, owner);
             const instant = occurrenceReminder && reminderInstant(occurrence.start, occurrenceReminder);
             return instant !== undefined && instant >= now.getTime();
           });
-          if (event.recurrence && recurringTiming && baseReminder && hasFutureOccurrence) {
+          if (
+            event.recurrence &&
+            recurringTiming &&
+            baseReminder &&
+            (hasFutureOccurrence || recurrenceMayStillWake(event, baseReminder, now.getTime()))
+          ) {
             const first = reminderInstant(event.start, baseReminder);
             desired.set(`${eventId}:${owner}`, {
               timing: recurringTiming,
@@ -279,7 +458,7 @@ export function createCalendarReminderScheduler(deps: {
               ...(first !== undefined && first > now.getTime() ? { notBefore: new Date(first) } : {}),
             });
           }
-          for (const occurrence of occurrences.value) {
+          for (const occurrence of occurrenceValues) {
             if (occurrence.visibility === "adults" && resolved?.role === "child") continue;
             const reminder = reminderFor(occurrence, owner);
             const instant = reminder && reminderInstant(occurrence.start, reminder);
@@ -300,6 +479,34 @@ export function createCalendarReminderScheduler(deps: {
               timing: { kind: "once-at", at: new Date(instant).toISOString() },
               title: occurrence.title,
             });
+          }
+          if (event.recurrence) {
+            const zone =
+              event.start.kind === "timed"
+                ? event.start.timeZoneId
+                : baseReminder?.mode === "all-day"
+                  ? baseReminder.timeZone
+                  : deps.calendarConfig.defaultEventTimeZoneId;
+            for (const exception of event.exceptions) {
+              const occurrence = effectiveOccurrenceAt(event, exception.occurrence, zone);
+              if (!occurrence || (occurrence.visibility === "adults" && resolved?.role === "child")) continue;
+              const reminder = reminderFor(occurrence, owner);
+              const instant = reminder && reminderInstant(occurrence.start, reminder);
+              if (instant === undefined || instant < now.getTime()) continue;
+              if (
+                recurringTiming &&
+                canonicalOriginalKey(occurrence.start) === canonicalOriginalKey(exception.occurrence) &&
+                recurringTimingMatchesInstant(recurringTiming, instant)
+              )
+                continue;
+              desired.set(`${eventId}:${owner}:${canonicalOriginalKey(exception.occurrence)}`, {
+                timing: {
+                  kind: "once-at",
+                  at: new Date(instant).toISOString(),
+                },
+                title: occurrence.title,
+              });
+            }
           }
         }
         if (!resource) continue;
@@ -366,53 +573,55 @@ export function createCalendarReminderScheduler(deps: {
         if (pending.value.length < limit) return { ok: true, value: undefined };
       }
     },
-    close() {
+    async close() {
       closed = true;
       if (retryTimer) clearInterval(retryTimer);
+      await recoveryPromise;
     },
   };
 
-  let recoveryRunning = false;
   const recoverAll = async (): Promise<void> => {
-    if (closed || recoveryRunning || !deps.listUsers) return;
-    recoveryRunning = true;
+    if (closed || !deps.listUsers) return;
+    let users: readonly (ResolvedUser & { userId: string })[];
     try {
-      let users: readonly (ResolvedUser & { userId: string })[];
+      users = await deps.listUsers();
+    } catch {
+      return;
+    }
+    for (const user of users) {
+      if (closed) return;
+      let principal: ReturnType<typeof createUserPrincipal>;
       try {
-        users = await deps.listUsers();
+        principal = createUserPrincipal(user.userId as never, user.role, "home");
       } catch {
-        return;
+        continue;
       }
-      for (const user of users) {
-        if (closed) return;
-        let principal: ReturnType<typeof createUserPrincipal>;
+      for (const scope of ["private", "household"] as const) {
+        let store: CalendarPersistence | undefined;
         try {
-          principal = createUserPrincipal(user.userId as never, user.role, "home");
+          store = openCalendarPersistence(
+            deps.accessManager.grant(principal, scope === "private" ? "calendar-private" : "calendar-household"),
+            deps.calendarConfig,
+          );
+          await scheduler.reconcilePending(store, scope);
         } catch {
-          continue;
-        }
-        for (const scope of ["private", "household"] as const) {
-          let store: CalendarPersistence | undefined;
-          try {
-            store = openCalendarPersistence(
-              deps.accessManager.grant(principal, scope === "private" ? "calendar-private" : "calendar-household"),
-              deps.calendarConfig,
-            );
-            await scheduler.reconcilePending(store, scope);
-          } catch {
-            // The durable row remains due and the periodic worker retries it.
-          } finally {
-            store?.close();
-          }
+          // The durable row remains due and the periodic worker retries it.
+        } finally {
+          store?.close();
         }
       }
-    } finally {
-      recoveryRunning = false;
     }
   };
-  const retryTimer = deps.listUsers ? setInterval(() => void recoverAll(), RECONCILIATION_INTERVAL_MS) : undefined;
+  let recoveryPromise: Promise<void> | undefined;
+  const startRecovery = (): void => {
+    if (closed || recoveryPromise || !deps.listUsers) return;
+    recoveryPromise = recoverAll().finally(() => {
+      recoveryPromise = undefined;
+    });
+  };
+  const retryTimer = deps.listUsers ? setInterval(startRecovery, RECONCILIATION_INTERVAL_MS) : undefined;
   retryTimer?.unref();
-  if (deps.listUsers) queueMicrotask(() => void recoverAll());
+  if (deps.listUsers) queueMicrotask(startRecovery);
   return scheduler;
 }
 
@@ -439,20 +648,32 @@ export async function authorizeCalendarReminderExecution(
       if (!consented.ok || !consented.value.includes(execution.principal.userId)) continue;
       const found = store.read(source.eventId as CalendarEventId);
       if (!found.ok) continue;
-      const occurrences = eventOccurrences(found.value, deps.calendarConfig);
-      if (!occurrences.ok) return occurrences;
+      const event = found.value;
       const intended = Date.parse(execution.claim.intendedAt);
-      const allowed = occurrences.value.some((occurrence) => {
-        if (occurrence.visibility === "adults" && execution.principal.role === "child") return false;
+      const baseReminder = reminderFor(event, execution.principal.userId);
+      const zone =
+        event.start.kind === "timed"
+          ? event.start.timeZoneId
+          : baseReminder?.mode === "all-day"
+            ? baseReminder.timeZone
+            : deps.calendarConfig.defaultEventTimeZoneId;
+      const seriesId = `${source.eventId}:${execution.principal.userId}`;
+      const originals: CalendarTime[] = [];
+      if (source.reminderId === seriesId && baseReminder) {
+        const original = originalForReminderWake(event, baseReminder, intended);
+        if (original) originals.push(original);
+      } else {
+        for (const exception of event.exceptions) {
+          if (source.reminderId === `${seriesId}:${canonicalOriginalKey(exception.occurrence)}`)
+            originals.push(exception.occurrence);
+        }
+      }
+      const allowed = originals.some((original) => {
+        const occurrence = effectiveOccurrenceAt(event, original, zone);
+        if (!occurrence || (occurrence.visibility === "adults" && execution.principal.role === "child")) return false;
         const reminder = reminderFor(occurrence, execution.principal.userId);
         const instant = reminder && reminderInstant(occurrence.start, reminder);
-        const seriesId = `${source.eventId}:${execution.principal.userId}`;
-        const occurrenceId = `${seriesId}:${canonicalOriginalKey(occurrence.originalStart)}`;
-        return (
-          (source.reminderId === seriesId || source.reminderId === occurrenceId) &&
-          instant !== undefined &&
-          Math.abs(instant - intended) < 60_000
-        );
+        return instant !== undefined && Math.abs(instant - intended) < 60_000;
       });
       if (allowed) return { ok: true, value: undefined };
     } catch {
