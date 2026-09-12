@@ -52,12 +52,35 @@ export interface ScheduledMessageProductToolConfig extends Readonly<Record<strin
 
 const timingDescription =
   "Choose once-at for one future instant, once-after for a relative delay resolved once when accepted, or recurring for daily/weekly/monthly local wall time. This schedules chat, not a calendar event.";
+const localTimeParameter = {
+  type: "string",
+  pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",
+  description: "HH:mm local wall time",
+};
+const timeZoneParameter = {
+  type: "string",
+  minLength: 1,
+  maxLength: 128,
+  description: "IANA timezone, e.g. America/Toronto; runtime validation checks the identifier",
+};
+const weekdayItems = {
+  type: "string",
+  enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+};
+const recurringProperties = {
+  kind: { const: "recurring" },
+  localTime: localTimeParameter,
+  timeZone: timeZoneParameter,
+};
 const timingParameters = {
   description: timingDescription,
   oneOf: [
     {
       type: "object",
-      properties: { kind: { const: "once-at" }, at: { type: "string", description: "RFC 3339 instant with offset" } },
+      properties: {
+        kind: { const: "once-at" },
+        at: { type: "string", format: "date-time", description: "RFC 3339 instant with an explicit offset" },
+      },
       required: ["kind", "at"],
       additionalProperties: false,
     },
@@ -77,21 +100,28 @@ const timingParameters = {
     },
     {
       type: "object",
+      properties: { ...recurringProperties, frequency: { const: "daily" } },
+      required: ["kind", "frequency", "localTime", "timeZone"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
       properties: {
-        kind: { const: "recurring" },
-        frequency: { type: "string", enum: ["daily", "weekly", "monthly"] },
-        localTime: { type: "string", description: "HH:mm local wall time" },
-        timeZone: { type: "string", description: "IANA timezone, e.g. America/Toronto" },
-        weekdays: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-          },
-        },
+        ...recurringProperties,
+        frequency: { const: "weekly" },
+        weekdays: { type: "array", items: weekdayItems, minItems: 1, maxItems: 7, uniqueItems: true },
+      },
+      required: ["kind", "frequency", "localTime", "timeZone", "weekdays"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        ...recurringProperties,
+        frequency: { const: "monthly" },
         dayOfMonth: { type: "integer", minimum: 1, maximum: 31 },
       },
-      required: ["kind", "frequency", "localTime", "timeZone"],
+      required: ["kind", "frequency", "localTime", "timeZone", "dayOfMonth"],
       additionalProperties: false,
     },
   ],
@@ -101,10 +131,14 @@ const createParameters = {
   properties: {
     idempotencyKey: {
       type: "string",
+      minLength: 1,
+      maxLength: 200,
       description: "Stable unique key for this logical create; reuse it only when retrying the same request",
     },
     message: {
       type: "string",
+      minLength: 1,
+      maxLength: 12_000,
       description:
         "The complete ordinary user instruction Sentient will submit later; do not rely on replaying this conversation",
     },
@@ -116,13 +150,18 @@ const createParameters = {
 };
 const changesParameters = {
   type: "object",
-  properties: { message: { type: "string" }, timing: timingParameters, enabled: { type: "boolean" } },
+  properties: {
+    message: { type: "string", minLength: 1, maxLength: 12_000 },
+    timing: timingParameters,
+    enabled: { type: "boolean" },
+  },
+  minProperties: 1,
   additionalProperties: false,
 };
 const editParameters = {
   type: "object",
   properties: {
-    scheduleId: { type: "string" },
+    scheduleId: { type: "string", minLength: 1 },
     expectedRevision: { type: "integer", minimum: 1 },
     changes: changesParameters,
   },
@@ -131,7 +170,7 @@ const editParameters = {
 };
 const mutationParameters = {
   type: "object",
-  properties: { scheduleId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1 } },
+  properties: { scheduleId: { type: "string", minLength: 1 }, expectedRevision: { type: "integer", minimum: 1 } },
   required: ["scheduleId", "expectedRevision"],
   additionalProperties: false,
 };
@@ -225,18 +264,22 @@ function normalizeLegacyTiming(timing: z.infer<typeof legacyTimingSchema>): Reco
  * receiving our canonical discriminated schema. Keep REST/KMP contracts strict,
  * but normalize only observed model shapes at this tool boundary before
  * authorization and execution. */
-function parseCreateArgs(args: Record<string, unknown>): ScheduleCreateRequest | null {
+type CreateArgsResult =
+  | { readonly ok: true; readonly value: ScheduleCreateRequest }
+  | { readonly ok: false; readonly error: z.ZodError };
+
+function parseCreateArgs(args: Record<string, unknown>): CreateArgsResult {
   const canonical = scheduleCreateRequestSchema.safeParse(args);
-  if (canonical.success) return canonical.data;
+  if (canonical.success) return { ok: true, value: canonical.data };
   const legacy = legacyCreateSchema.safeParse(args);
-  if (!legacy.success) return null;
+  if (!legacy.success) return { ok: false, error: canonical.error };
   const normalized = scheduleCreateRequestSchema.safeParse({
     idempotencyKey: legacy.data.idempotencyKey,
     message: legacy.data.message,
     timing: normalizeLegacyTiming(legacy.data.timing),
     enabled: legacy.data.enabled,
   });
-  return normalized.success ? normalized.data : null;
+  return normalized.success ? { ok: true, value: normalized.data } : { ok: false, error: normalized.error };
 }
 
 const editSchema = z
@@ -258,8 +301,33 @@ function output<T>(result: SchedulingResult<T>): ToolResult {
         isError: true,
       };
 }
-function invalid(): ToolResult {
-  return { content: JSON.stringify({ outcome: "error", code: "invalid_arguments" }), isError: true };
+function invalid(error?: z.ZodError): ToolResult {
+  const issues: Array<{ path: string; code: string }> = [];
+  const seen = new Set<string>();
+  const pending = error ? [...error.issues] : [];
+  while (pending.length > 0 && issues.length < 8) {
+    const issue = pending.shift();
+    if (!issue) break;
+    if (issue.code === "invalid_union") {
+      for (const unionError of issue.unionErrors) pending.push(...unionError.issues);
+      continue;
+    }
+    const path = issue.path.map((part) => (typeof part === "number" ? "item" : part)).join(".") || "arguments";
+    const key = `${path}:${issue.code}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    issues.push({ path, code: issue.code });
+  }
+  return {
+    content: JSON.stringify({
+      outcome: "error",
+      code: "invalid_arguments",
+      ...(issues.length > 0 ? { issues } : {}),
+      expected:
+        "Use canonical timing: once-at {at}, once-after {afterSeconds}, or recurring {frequency, localTime, timeZone}; weekly also requires weekdays and monthly also requires dayOfMonth.",
+    }),
+    isError: true,
+  };
 }
 function runner(
   setting: (typeof SCHEDULED_MESSAGE_TOOL_SETTINGS)[number],
@@ -301,24 +369,35 @@ export const scheduledMessageProductToolProvider: ProductToolProvider<"scheduled
         async (args, ctx) => {
           if (ctx.signal.aborted) return invalid();
           const request = parseCreateArgs(args);
-          if (!request) return invalid();
-          return output(await commands.create(resource, request, now()));
+          if (!request.ok) return invalid(request.error);
+          return output(await commands.create(resource, request.value, now()));
         },
-        (args) => (parseCreateArgs(args) ? null : invalid()),
+        (args) => {
+          const request = parseCreateArgs(args);
+          return request.ok ? null : invalid(request.error);
+        },
       ),
-      runner(SCHEDULED_MESSAGE_TOOL_SETTINGS[2], editParameters, async (args, ctx) => {
-        if (ctx.signal.aborted) return invalid();
-        const p = editSchema.safeParse(args);
-        if (!p.success) return invalid();
-        return output(
-          await commands.patch(
-            resource,
-            p.data.scheduleId,
-            { expectedRevision: p.data.expectedRevision, changes: p.data.changes },
-            now(),
-          ),
-        );
-      }),
+      runner(
+        SCHEDULED_MESSAGE_TOOL_SETTINGS[2],
+        editParameters,
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return invalid();
+          const p = editSchema.safeParse(args);
+          if (!p.success) return invalid(p.error);
+          return output(
+            await commands.patch(
+              resource,
+              p.data.scheduleId,
+              { expectedRevision: p.data.expectedRevision, changes: p.data.changes },
+              now(),
+            ),
+          );
+        },
+        (args) => {
+          const parsed = editSchema.safeParse(args);
+          return parsed.success ? null : invalid(parsed.error);
+        },
+      ),
       runner(SCHEDULED_MESSAGE_TOOL_SETTINGS[3], mutationParameters, async (args, ctx) => {
         if (ctx.signal.aborted) return invalid();
         const p = mutationSchema.safeParse(args);
