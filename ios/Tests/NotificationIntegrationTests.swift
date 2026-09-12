@@ -122,6 +122,61 @@ final class NotificationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsUnlinkThenExplicitEnableRegistersExactlyOnceWithoutReplacingLifecycle() async {
+        let unlinkStarted = expectation(description: "settings unlink started")
+        let registered = expectation(description: "fresh binding registered")
+        let lifecycle = FakeNativePushLifecycle(unlinkStarted: unlinkStarted, registrationCompleted: registered)
+        let registrar = FakeRegistrar()
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .authorized, granted: true),
+            registrar: registrar,
+            lifecycleFactory: { _ in lifecycle }
+        )
+        coordinator.configure(account: account("account-a"))
+        coordinator.unlinkFromSettings()
+        await fulfillment(of: [unlinkStarted])
+        lifecycle.completeUnlink(.success)
+        await Task.yield()
+
+        await coordinator.enable()
+        coordinator.didRegister(deviceToken: Data([0x01, 0x02]))
+        await fulfillment(of: [registered])
+        XCTAssertEqual(registrar.calls, 1)
+        XCTAssertEqual(lifecycle.registerCalls, 1)
+        XCTAssertFalse(lifecycle.closed)
+        XCTAssertNotNil(coordinator.binding)
+    }
+
+    @MainActor
+    func testFailedSettingsUnlinkRetryFencesEnableAndLogoutStillTearsDown() async {
+        let unlinkStarted = expectation(description: "settings unlink started")
+        let retryStarted = expectation(description: "settings retry started")
+        let lifecycle = FakeNativePushLifecycle(unlinkStarted: unlinkStarted, retryStarted: retryStarted)
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .authorized, granted: true),
+            registrar: FakeRegistrar(),
+            lifecycleFactory: { _ in lifecycle }
+        )
+        coordinator.configure(account: account("account-a"))
+        coordinator.unlinkFromSettings()
+        await fulfillment(of: [unlinkStarted])
+        lifecycle.completeUnlink(.failure)
+        await Task.yield()
+
+        await coordinator.enable()
+        coordinator.didRegister(deviceToken: Data([0x03]))
+        XCTAssertEqual(lifecycle.registerCalls, 0)
+        coordinator.retryPendingUnlink()
+        await fulfillment(of: [retryStarted])
+        coordinator.unlinkForLogout()
+        lifecycle.completeRetry(.success)
+        await Task.yield()
+        XCTAssertTrue(lifecycle.closed)
+        XCTAssertEqual(lifecycle.registerCalls, 0)
+        XCTAssertNil(coordinator.binding)
+    }
+
+    @MainActor
     func testAccountReplacementWaitsForExactOldLifecycleAcknowledgement() async {
         let unlinkStarted = expectation(description: "old binding disable started")
         let replacementInstalled = expectation(description: "replacement lifecycle installed")
@@ -293,13 +348,20 @@ private final class FakeNativePushLifecycle: NativePushLifecycleClient {
     private let retryStarted: XCTestExpectation?
     private var unlinkContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
     private var retryContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
+    private let registrationCompleted: XCTestExpectation?
     private(set) var closed = false
     private(set) var unlinkCalls = 0
     private(set) var retryCalls = 0
+    private(set) var registerCalls = 0
 
-    init(unlinkStarted: XCTestExpectation? = nil, retryStarted: XCTestExpectation? = nil) {
+    init(
+        unlinkStarted: XCTestExpectation? = nil,
+        retryStarted: XCTestExpectation? = nil,
+        registrationCompleted: XCTestExpectation? = nil
+    ) {
         self.unlinkStarted = unlinkStarted
         self.retryStarted = retryStarted
+        self.registrationCompleted = registrationCompleted
     }
 
     func unlink(ownerFence: String) async throws -> NativePushLifecycleResult {
@@ -328,7 +390,35 @@ private final class FakeNativePushLifecycle: NativePushLifecycleClient {
     }
 
     func reconcileActivation(ownerFence: String) async throws -> NativePushLifecycleResult { .success }
-    func makeRegistration(deviceToken: String, replacing: PushBinding?) -> PushRegistrationRequest { fatalError("unused") }
-    func register(ownerFence: String, request: PushRegistrationRequest) async throws -> PushBinding? { nil }
+    func makeRegistration(deviceToken: String, replacing: PushBinding?) -> PushRegistrationRequest {
+        PushRegistrationRequest(
+            idempotencyKey: "test-registration",
+            installationId: "installation",
+            platform: "ios",
+            apnsDeviceToken: deviceToken,
+            replaces: nil
+        )
+    }
+    func register(ownerFence: String, request: PushRegistrationRequest) async throws -> PushBinding? {
+        registerCalls += 1
+        let value = pushBinding(generation: Int32(registerCalls))
+        state = .linked(value, activationPending: false)
+        registrationCompleted?.fulfill()
+        return value
+    }
     func close() { closed = true }
+}
+
+private func pushBinding(generation: Int32) -> PushBinding {
+    PushBinding(
+        bindingId: "binding-\(generation)",
+        installationId: "installation",
+        platform: "ios",
+        generation: generation,
+        state: .active,
+        replaces: nil,
+        preferences: PushPreferences(enabled: true, previewMode: .hidden, revision: 1),
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z"
+    )
 }

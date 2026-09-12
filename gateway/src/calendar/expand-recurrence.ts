@@ -391,6 +391,20 @@ function expansionZone(
     };
   return { ok: true, value: zone };
 }
+function seekCursor(anchor: Date, rule: RRule, fromDay: Date): number {
+  const interval = rule.interval ?? 1;
+  const dayDelta = Math.floor((fromDay.getTime() - anchor.getTime()) / MS_DAY);
+  if (dayDelta <= 0) return 0;
+  if (rule.freq === "DAILY") return Math.max(0, Math.floor(dayDelta / interval) - 1);
+  if (rule.freq === "WEEKLY") return Math.max(0, Math.floor(dayDelta / (7 * interval)) - 1);
+  if (rule.freq === "MONTHLY") {
+    const months =
+      (fromDay.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + fromDay.getUTCMonth() - anchor.getUTCMonth();
+    return Math.max(0, Math.floor(months / interval) - 1);
+  }
+  return Math.max(0, Math.floor((fromDay.getUTCFullYear() - anchor.getUTCFullYear()) / interval) - 1);
+}
+
 function expand(
   event: StoredCalendarEvent,
   rule: RRule,
@@ -418,16 +432,24 @@ function expand(
   )
     return failure("invalid-rrule", "recurrence dates are invalid");
   const startDayMs = allDay ? startMs : Date.parse(`${dateKey(parts(startMs, zone))}T00:00:00Z`);
+  const fromDayMs = allDay ? fromMs : Date.parse(`${dateKey(parts(fromMs, zone))}T00:00:00Z`);
+  const toDayMs = allDay ? toMs : Date.parse(`${dateKey(parts(toMs, zone))}T00:00:00Z`);
   const untilDayMs = allDay && Number.isFinite(until) ? Date.parse(`${dateKey(parts(until, zone))}T00:00:00Z`) : until;
+  if (!Number.isFinite(fromDayMs) || !Number.isFinite(toDayMs) || toDayMs - fromDayMs > limits.maxDays * MS_DAY)
+    return failure("recurrence-limit", "recurrence exceeds maxDays");
   const exdates = new Set((event.exdates ?? []).map(canonicalOriginalKey));
   const out: Occurrence[] = [];
   let ordinal = 0;
   let lastGeneratedMs = Number.NEGATIVE_INFINITY;
   const max = rule.count ?? Number.MAX_SAFE_INTEGER;
-  // maxDays bounds the amount of recurrence time we will inspect. The explicit
-  // cursor ceiling remains a last line of defence for malformed sparse rules.
-  const cursorCeiling = Math.min(1_000_000, Math.max(1, limits.maxDays) + 1);
-  for (let cursor = 0; ordinal < max && cursor < cursorCeiling; cursor++) {
+  // COUNT requires its original ordinal, so bounded finite series begin at
+  // DTSTART. UNTIL series can seek directly to the requested rolling window.
+  const anchorDate = allDay
+    ? (anchor as Date)
+    : new Date(Date.UTC((anchor as Parts).year, (anchor as Parts).month - 1, (anchor as Parts).day));
+  const initialCursor = rule.count === undefined ? seekCursor(anchorDate, rule, new Date(fromDayMs)) : 0;
+  const cursorCeiling = Math.min(1_000_000, initialCursor + Math.max(1, limits.maxDays) + 2);
+  for (let cursor = initialCursor; ordinal < max && cursor < cursorCeiling; cursor++) {
     const dates: Date[] = [];
     if (allDay) dates.push(...candidateDates(anchor as Date, rule, cursor));
     else {
@@ -465,12 +487,10 @@ function expand(
       if (cursor === 0 && localMs < startMs) continue;
       if (localMs > untilDayMs || localMs > toMs) return { ok: true, value: out };
       const localDayMs = allDay ? localMs : Date.parse(`${dateKey(parts(localMs, zone))}T00:00:00Z`);
-      if (
-        !Number.isFinite(startDayMs) ||
-        !Number.isFinite(localDayMs) ||
-        localDayMs - startDayMs > limits.maxDays * MS_DAY
-      )
-        return failure("recurrence-limit", "recurrence exceeds maxDays");
+      if (!Number.isFinite(startDayMs) || !Number.isFinite(localDayMs))
+        return failure("invalid-rrule", "recurrence dates are invalid");
+      // maxOccurrences bounds inspected candidates in this request. A finite
+      // COUNT series still starts at DTSTART so its ordinal is never reset.
       if (ordinal >= limits.maxOccurrences) return failure("recurrence-limit", "recurrence exceeds maxOccurrences");
       ordinal++;
       lastGeneratedMs = localMs;

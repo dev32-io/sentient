@@ -114,6 +114,35 @@ describe("expandRecurrence", () => {
     if (!result.ok) expect(result.error.code).toBe("recurrence-limit");
   });
 
+  test("seeks an old UNTIL series without resetting its DTSTART phase", () => {
+    const e = event(timed("2020-01-01T15:00:00.000Z", "America/Toronto"), "FREQ=MONTHLY;UNTIL=20290101T235959Z");
+    const result = expandRecurrence(
+      e,
+      timed("2028-02-01T00:00:00.000Z", "America/Toronto"),
+      timed("2028-05-31T23:59:59.000Z", "America/Toronto"),
+      { maxOccurrences: 20, maxDays: 366 },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
+        "2028-02-01T15:00:00.000Z" as UtcInstant,
+        "2028-03-01T15:00:00.000Z" as UtcInstant,
+        "2028-04-01T14:00:00.000Z" as UtcInstant,
+        "2028-05-01T14:00:00.000Z" as UtcInstant,
+      ]);
+  });
+
+  test("does not reset finite COUNT when querying long after termination", () => {
+    const e = event(timed("2020-01-01T15:00:00.000Z", "UTC"), "FREQ=MONTHLY;COUNT=3");
+    const result = expandRecurrence(
+      e,
+      timed("2028-01-01T00:00:00.000Z", "UTC"),
+      timed("2028-12-31T23:59:59.000Z", "UTC"),
+      { maxOccurrences: 3, maxDays: 366 },
+    );
+    expect(result).toEqual({ ok: true, value: [] });
+  });
+
   test("preserves fractional seconds in every generated originalStart", () => {
     const e = event(timed("2026-01-01T14:00:00.125Z", "UTC"), "FREQ=DAILY;COUNT=3");
     const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-10T00:00:00.000Z"));

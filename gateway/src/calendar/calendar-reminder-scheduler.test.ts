@@ -275,7 +275,7 @@ describe("calendar reminder scheduling boundary", () => {
         importance: "normal",
         tags: [],
         recurrence: { frequency: "weekly", weekdays: ["monday"], count: 10 },
-        reminder: { enabled: true, mode: "lead", leadMinutes: 30 },
+        reminder: { enabled: true, mode: "at-start" },
       },
       persistence,
       config,
@@ -296,12 +296,12 @@ describe("calendar reminder scheduling boundary", () => {
       timing: {
         kind: "recurring",
         frequency: "weekly",
-        weekdays: ["sunday"],
-        localTime: "23:45",
+        weekdays: ["monday"],
+        localTime: "00:15",
         timeZone: "America/Toronto",
       },
       source: { reminderId: `${created.value.eventId}:u_aaaaaaaa` },
-      nextRunAt: "2026-05-04T03:45:00.000Z",
+      nextRunAt: "2026-05-04T04:15:00.000Z",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     schedules.close();
@@ -555,6 +555,52 @@ describe("calendar reminder scheduling boundary", () => {
       new AbortController().signal,
     );
     expect(authorized.ok).toBe(true);
+    scheduler.close();
+    schedules.close();
+    persistence.close();
+  });
+
+  test("replenishes shifted monthly reminders from the original long-running series phase", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-rolling-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const creationConfig = { ...config, recurrence: { maxOccurrences: 500, maxDays: 4_000 } };
+    const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), creationConfig);
+    let sequence = 0;
+    const schedules = createScheduleService({ userDataRoot: root, id: () => `rolling-${++sequence}` });
+    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const created = createCalendarEvent(
+      {
+        title: "Month opening",
+        start: "2020-01-01T10:00:00-05:00" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        recurrence: { frequency: "monthly", until: "2029-01-01" as never },
+        reminder: { enabled: true, mode: "lead", leadMinutes: 1_440 },
+      },
+      persistence,
+      creationConfig,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const now = new Date("2028-02-01T00:00:00Z");
+    expect((await scheduler.reconcile(persistence, created.value.eventId, "private", now)).ok).toBe(true);
+    const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
+    const first = await schedules.list(resource, undefined, 100);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const targetTimes = new Set(["2028-02-29T15:00:00.000Z", "2028-03-31T14:00:00.000Z", "2028-04-30T14:00:00.000Z"]);
+    expect(
+      first.value.schedules.filter((item) => item.timing.kind === "once" && targetTimes.has(item.timing.at)),
+    ).toHaveLength(3);
+    expect(first.value.schedules.every((item) => item.timing.kind === "once")).toBe(true);
+
+    expect((await scheduler.reconcile(persistence, created.value.eventId, "private", now)).ok).toBe(true);
+    const repeated = await schedules.list(resource, undefined, 100);
+    expect(repeated.ok && repeated.value.schedules).toHaveLength(first.value.schedules.length);
     scheduler.close();
     schedules.close();
     persistence.close();

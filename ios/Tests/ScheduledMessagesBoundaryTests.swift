@@ -22,6 +22,36 @@ final class ScheduledMessagesBoundaryTests: XCTestCase {
         XCTAssertEqual(recurring.weekdays, [.monday])
     }
 
+    func testRecurringSaveValidationPublishesErrorsAndKeepsDraftUntilCorrected() {
+        var draft = ScheduleDraft(message: "Morning update", mode: .recurring)
+        let original = draft.localTime
+        var fields = ScheduleEditorFields(
+            absolute: "",
+            delay: "30",
+            recurringTime: "9:00",
+            dayOfMonth: "1",
+            timeZone: "Not/AZone"
+        )
+        var errors = fields.apply(to: &draft)
+        XCTAssertEqual(errors.timeZone, "Enter a valid IANA time zone.")
+        XCTAssertEqual(draft.localTime, original)
+        XCTAssertNil(draft.createRequest)
+
+        fields.timeZone = "America/Los_Angeles"
+        errors = fields.apply(to: &draft)
+        XCTAssertEqual(errors.recurringTime, "Enter time as HH:mm, for example 09:00.")
+        XCTAssertEqual(draft.localTime, original)
+
+        fields.recurringTime = "24:00"
+        errors = fields.apply(to: &draft)
+        XCTAssertNotNil(errors.recurringTime)
+        fields.recurringTime = "09:00"
+        errors = fields.apply(to: &draft)
+        XCTAssertTrue(errors.isEmpty)
+        XCTAssertNil(draft.validationMessage)
+        XCTAssertNotNil(draft.createRequest)
+    }
+
     func testDraftRejectsInvalidUserInputBeforeCrossingSharedBoundary() {
         var draft = ScheduleDraft()
         XCTAssertNotNil(draft.validationMessage)

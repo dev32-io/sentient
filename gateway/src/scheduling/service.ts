@@ -135,6 +135,8 @@ export interface ScheduleService
     ScheduleClaimTransactions,
     AtomicScheduleFinalizer,
     ScheduledContentOutbox {
+  /** Operator-configured missed-occurrence grace used by linked projections. */
+  readonly graceMs: number;
   createDetailed(
     resource: PrivateScheduleResource,
     request: ScheduleCreateRequest,
@@ -1147,6 +1149,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
   }
 
   return {
+    graceMs,
     create,
     createDetailed,
     reconcileCalendarReminder,

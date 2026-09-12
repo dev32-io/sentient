@@ -87,6 +87,63 @@ final class ScheduledMessagesViewModel {
 enum ScheduleDraftMode: String, CaseIterable { case once = "Once", delay = "After delay", recurring = "Recurring" }
 enum ScheduleDraftFrequency: String, CaseIterable { case daily = "Daily", weekly = "Weekly", monthly = "Monthly" }
 
+struct ScheduleEditorFieldErrors: Equatable {
+    var absolute: String?
+    var recurringTime: String?
+    var timeZone: String?
+    var isEmpty: Bool { absolute == nil && recurringTime == nil && timeZone == nil }
+}
+
+struct ScheduleEditorFields {
+    var absolute: String
+    var delay: String
+    var recurringTime: String
+    var dayOfMonth: String
+    var timeZone: String
+
+    @discardableResult
+    func apply(to draft: inout ScheduleDraft) -> ScheduleEditorFieldErrors {
+        var errors = ScheduleEditorFieldErrors()
+        draft.delayMinutes = Int(delay) ?? 0
+        draft.dayOfMonth = Int(dayOfMonth) ?? 0
+        draft.timeZone = timeZone
+
+        if draft.mode == .once {
+            guard let parsed = try? Date(absolute, strategy: .iso8601) else {
+                errors.absolute = "Enter a valid ISO 8601 date and time."
+                return errors
+            }
+            draft.date = parsed
+        }
+        if draft.mode == .recurring {
+            guard let zone = TimeZone(identifier: timeZone) else {
+                errors.timeZone = "Enter a valid IANA time zone."
+                return errors
+            }
+            guard let match = recurringTime.wholeMatch(of: /([01][0-9]|2[0-3]):([0-5][0-9])/) else {
+                errors.recurringTime = "Enter time as HH:mm, for example 09:00."
+                return errors
+            }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = zone
+            let components = DateComponents(
+                timeZone: zone,
+                year: 2001,
+                month: 1,
+                day: 15,
+                hour: Int(match.1),
+                minute: Int(match.2)
+            )
+            guard let parsed = calendar.date(from: components) else {
+                errors.recurringTime = "Enter a valid local time."
+                return errors
+            }
+            draft.localTime = parsed
+        }
+        return errors
+    }
+}
+
 struct ScheduleDraft {
     var message = ""
     var mode = ScheduleDraftMode.once

@@ -89,7 +89,7 @@ private struct ScheduleEditor: View {
     @State private var day = "1"
     @State private var absolute = ""
     @State private var recurringTime = "09:00"
-    @State private var absoluteError: String?
+    @State private var fieldErrors = ScheduleEditorFieldErrors()
 
     var body: some View {
         NavigationStack {
@@ -97,7 +97,7 @@ private struct ScheduleEditor: View {
                 DesignMultilineEditor(title: "Message", text: $draft.message, error: draft.validationMessage)
                 DesignSegmentedPicker(title: "Timing", options: ScheduleDraftMode.allCases.map { ($0, $0.rawValue) }, selection: $draft.mode)
                 timingFields
-                DesignField(title: "Time zone", text: $draft.timeZone, accessibilityId: "schedule-time-zone")
+                DesignField(title: "Time zone", text: $draft.timeZone, error: fieldErrors.timeZone, accessibilityId: "schedule-time-zone")
                 DesignActionButton(title: isSaving ? "Saving…" : "Save", state: isSaving ? .loading : .normal) {
                     guard applyFields() else { return }
                     Task { await onSave() }
@@ -116,31 +116,26 @@ private struct ScheduleEditor: View {
     @ViewBuilder private var timingFields: some View {
         switch draft.mode {
         case .once:
-            DesignField(title: "Run at", prompt: "2026-08-01T15:30:00-07:00", text: $absolute, error: absoluteError, accessibilityId: "schedule-once-at")
+            DesignField(title: "Run at", prompt: "2026-08-01T15:30:00-07:00", text: $absolute, error: fieldErrors.absolute, accessibilityId: "schedule-once-at")
         case .delay:
             DesignField(title: "Minutes from now", text: $delay, accessibilityId: "schedule-delay")
         case .recurring:
             DesignSelect(title: "Frequency", options: ScheduleDraftFrequency.allCases.map { ($0, $0.rawValue) }, selection: $draft.frequency)
-            DesignField(title: "Local time", prompt: "09:00", text: $recurringTime, accessibilityId: "schedule-local-time")
+            DesignField(title: "Local time", prompt: "09:00", text: $recurringTime, error: fieldErrors.recurringTime, accessibilityId: "schedule-local-time")
             DesignSelect(title: "Weekday", options: weekdayOptions, selection: $draft.weekday, isEnabled: draft.frequency == .weekly)
             DesignField(title: "Day of month", text: $day, accessibilityId: "schedule-month-day", isEnabled: draft.frequency == .monthly)
         }
     }
 
     private func applyFields() -> Bool {
-        draft.delayMinutes = Int(delay) ?? 0; draft.dayOfMonth = Int(day) ?? 0
-        guard draft.mode != .once || (try? Date(absolute, strategy: .iso8601)) != nil else {
-            absoluteError = "Enter a valid ISO 8601 date and time."
-            return false
-        }
-        absoluteError = nil
-        if let parsed = try? Date(absolute, strategy: .iso8601) { draft.date = parsed }
-        if draft.mode == .recurring {
-            let formatter = DateFormatter(); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: draft.timeZone)
-            guard let parsed = formatter.date(from: recurringTime), formatter.string(from: parsed) == recurringTime else { return false }
-            draft.localTime = parsed
-        }
-        return true
+        fieldErrors = ScheduleEditorFields(
+            absolute: absolute,
+            delay: delay,
+            recurringTime: recurringTime,
+            dayOfMonth: day,
+            timeZone: draft.timeZone
+        ).apply(to: &draft)
+        return fieldErrors.isEmpty
     }
 
     private var weekdayOptions: [(Int, String)] {

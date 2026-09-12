@@ -67,7 +67,7 @@ struct PushNotificationsScreen: View {
                         isEnabled: !vm.isSaving
                     )
                 }
-                DesignActionButton(title: "Disable and unlink this device", role: .destructive) { native.unlinkForLogout(); vm.sync() }
+                DesignActionButton(title: "Disable and unlink this device", role: .destructive) { native.unlinkFromSettings(); vm.sync() }
             } else if canOfferPushEnable(permission: native.permission, hasBinding: false) {
                 DesignActionButton(title: "Enable notifications", accessibilityId: "push-enable") { Task { await native.enable(); vm.sync() } }
             }

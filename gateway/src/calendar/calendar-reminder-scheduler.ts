@@ -106,7 +106,16 @@ function recurringReminderTiming(
     event.start.kind === "timed" ? event.start.timeZoneId : reminder.mode === "all-day" ? reminder.timeZone : undefined;
   const first = reminderInstant(event.start, reminder);
   if (!zone || first === undefined) return undefined;
+  // Only use the compact recurring schedule when it is calendar-equivalent.
+  // Interval/yearly rules and lead offsets need actual occurrence instants;
+  // transforming only the first slot can drift across month lengths or DST.
+  if ((rule.interval ?? 1) !== 1 || (reminder.mode !== "at-start" && reminder.mode !== "all-day")) return undefined;
   const local = localDateParts(first, zone);
+  const eventLocal =
+    event.start.kind === "timed"
+      ? localDateParts(Date.parse(event.start.instant), zone)
+      : allDayParts(event.start.date);
+  if (rule.freq === "MONTHLY" && local.day !== eventLocal.day) return undefined;
   const localTime = `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`;
   if (rule.freq === "DAILY") return { kind: "recurring", frequency: "daily", localTime, timeZone: zone };
   if (rule.freq === "WEEKLY") {
@@ -130,16 +139,15 @@ function recurringReminderTiming(
       weekdays: [...new Set(weekdays)],
     };
   }
-  // The public schedule contract intentionally has no yearly/interval rule.
-  // Use its monthly/daily/weekly superset as a durable wake subscription;
-  // execution authorization below admits only real event occurrences.
-  return {
-    kind: "recurring",
-    frequency: "monthly",
-    localTime,
-    timeZone: zone,
-    dayOfMonth: local.day,
-  };
+  if (rule.freq === "MONTHLY")
+    return {
+      kind: "recurring",
+      frequency: "monthly",
+      localTime,
+      timeZone: zone,
+      dayOfMonth: local.day,
+    };
+  return undefined;
 }
 
 function recurringTimingMatchesInstant(
@@ -304,7 +312,13 @@ function originalForReminderWake(
   };
 }
 
-function eventOccurrences(event: CalendarPersistenceEvent, config: CalendarConfig): SchedulingResult<Occurrence[]> {
+function eventOccurrences(
+  event: CalendarPersistenceEvent,
+  config: CalendarConfig,
+  now: Date,
+  reminder: CalendarReminderCreateInput | undefined,
+  graceMs: number,
+): SchedulingResult<Occurrence[]> {
   const materialized = {
     ...event,
     exdates: event.exclusions,
@@ -325,27 +339,47 @@ function eventOccurrences(event: CalendarPersistenceEvent, config: CalendarConfi
       ],
     };
   }
-  // Keep the expansion window strictly within the configured span even when
-  // a DST offset makes equal local dates differ by an hour in UTC.
-  const days = Math.max(0, config.recurrence.maxDays - 1);
+  // Replenish a rolling reminder-time horizon. Map its bounds back to source
+  // event time so lead reminders crossing a month/day boundary are expanded
+  // from their true DTSTART phase rather than a transformed first occurrence.
+  const rule = event.recurrence.rule;
+  const interval = rule.interval ?? 1;
+  const boundedOccurrences = Math.max(1, config.recurrence.maxOccurrences - 3);
+  const occurrenceBoundDays =
+    rule.freq === "DAILY"
+      ? Math.max(0, boundedOccurrences - 1) * interval
+      : rule.freq === "WEEKLY"
+        ? Math.max(1, Math.floor(boundedOccurrences / Math.max(1, rule.byDay?.length ?? 1))) * 7 * interval
+        : rule.freq === "MONTHLY"
+          ? boundedOccurrences * 31 * interval
+          : boundedOccurrences * 366 * interval;
+  const days = Math.max(0, Math.min(config.recurrence.maxDays - 1, occurrenceBoundDays));
+  const leadMs = reminder?.mode === "lead" ? reminder.leadMinutes * 60_000 : 0;
+  const reminderFrom = now.getTime() - graceMs;
+  const reminderTo = now.getTime() + days * 86_400_000;
   const window =
     event.start.kind === "timed"
       ? {
-          from: event.start,
+          from: {
+            ...event.start,
+            instant: new Date(reminderFrom + leadMs).toISOString() as never,
+          },
           to: {
             ...event.start,
-            instant: new Date(Date.parse(event.start.instant) + days * 86_400_000).toISOString() as never,
+            instant: new Date(reminderTo + leadMs).toISOString() as never,
           },
         }
-      : {
-          from: event.start,
-          to: {
-            kind: "all-day" as const,
-            date: new Date(Date.parse(`${event.start.date}T00:00:00Z`) + days * 86_400_000)
-              .toISOString()
-              .slice(0, 10) as never,
-          },
-        };
+      : (() => {
+          const zone = reminder?.mode === "all-day" ? reminder.timeZone : config.defaultEventTimeZoneId;
+          const from = localDateParts(reminderFrom, zone);
+          const to = localDateParts(reminderTo, zone);
+          const date = (parts: { year: number; month: number; day: number }) =>
+            `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}` as never;
+          return {
+            from: { kind: "all-day" as const, date: date(from) },
+            to: { kind: "all-day" as const, date: date(to) },
+          };
+        })();
   const expanded = expandRecurrence(materialized, window.from, window.to, {
     maxOccurrences: config.recurrence.maxOccurrences,
     maxDays: config.recurrence.maxDays,
@@ -437,13 +471,13 @@ export function createCalendarReminderScheduler(deps: {
         if (event && resource) {
           const baseReminder = reminderFor(event, owner);
           const recurringTiming = baseReminder && recurringReminderTiming(event, baseReminder);
-          const occurrences = eventOccurrences(event, deps.calendarConfig);
-          if (!occurrences.ok && !event.recurrence) return occurrences;
-          const occurrenceValues = occurrences.ok ? occurrences.value : [];
+          const occurrences = eventOccurrences(event, deps.calendarConfig, now, baseReminder, deps.schedules.graceMs);
+          if (!occurrences.ok) return occurrences;
+          const occurrenceValues = occurrences.value;
           const hasFutureOccurrence = occurrenceValues.some((occurrence) => {
             const occurrenceReminder = reminderFor(occurrence, owner);
             const instant = occurrenceReminder && reminderInstant(occurrence.start, occurrenceReminder);
-            return instant !== undefined && instant >= now.getTime();
+            return instant !== undefined && instant >= now.getTime() - deps.schedules.graceMs;
           });
           if (
             event.recurrence &&
@@ -462,7 +496,7 @@ export function createCalendarReminderScheduler(deps: {
             if (occurrence.visibility === "adults" && resolved?.role === "child") continue;
             const reminder = reminderFor(occurrence, owner);
             const instant = reminder && reminderInstant(occurrence.start, reminder);
-            if (instant === undefined || instant < now.getTime()) continue;
+            if (instant === undefined || instant < now.getTime() - deps.schedules.graceMs) continue;
             // A canonical recurring subscription owns ordinary slots. Moved
             // occurrences need a one-time companion at their effective start;
             // authorization rejects the stale base wake.
@@ -492,7 +526,7 @@ export function createCalendarReminderScheduler(deps: {
               if (!occurrence || (occurrence.visibility === "adults" && resolved?.role === "child")) continue;
               const reminder = reminderFor(occurrence, owner);
               const instant = reminder && reminderInstant(occurrence.start, reminder);
-              if (instant === undefined || instant < now.getTime()) continue;
+              if (instant === undefined || instant < now.getTime() - deps.schedules.graceMs) continue;
               if (
                 recurringTiming &&
                 canonicalOriginalKey(occurrence.start) === canonicalOriginalKey(exception.occurrence) &&
