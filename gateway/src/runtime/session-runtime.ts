@@ -852,20 +852,26 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // Ordinary chat pays no extra projection read. Only a caller explicitly
     // observing this turn (the scheduled adapter) needs the durable reference.
     if (terminalObservers.has(turnId)) {
-      const terminalOutcome: TurnTerminalRecord["outcome"] = result.completed
-        ? "completed"
-        : signal.aborted
-          ? "interrupted"
-          : "failed";
       const terminalEntry = store
         .readSession(sessionId)
-        .filter((entry) => entry.turnId === turnId && entry.kind === "assistant")
+        .filter(
+          (entry) =>
+            entry.turnId === turnId &&
+            entry.kind === "assistant" &&
+            typeof entry.text === "string" &&
+            entry.text.trim().length > 0,
+        )
         .at(-1);
+      // A completed scheduled turn must reference usable assistant content.
+      // Without it, persist failure provenance so cards and recovery never
+      // advertise a completed response that cannot be resumed or previewed.
+      const terminalOutcome: TurnTerminalRecord["outcome"] =
+        result.completed && terminalEntry ? "completed" : signal.aborted ? "interrupted" : "failed";
       const terminalRecord: TurnTerminalRecord = {
         turnId,
         outcome: terminalOutcome,
         completedAt: new Date().toISOString(),
-        entryId: terminalEntry ? String(terminalEntry.seq) : null,
+        entryId: terminalOutcome === "completed" && terminalEntry ? String(terminalEntry.seq) : null,
       };
       // Persist before notifying. A restarted schedule runner reconciles this
       // record directly and never submits the occurrence again.

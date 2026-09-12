@@ -122,6 +122,75 @@ describe("schedule persistence", () => {
     }
   });
 
+  test("keeps malformed and contentless terminal rows from poisoning valid card pages", async () => {
+    const { service, resource, root } = setup();
+    const sessionStore = openSessionStore(
+      Object.freeze({
+        ownerUserId: "u_aaaaaaaa",
+        resource: "session-store",
+        rootPath: join(root, "u_aaaaaaaa"),
+        role: "adult",
+      }),
+    );
+    const seed = (sessionId: string, occurrenceId: string, completedAt: string, text?: string) => {
+      sessionStore.createSession(sessionId, `scheduled:${occurrenceId}`);
+      sessionStore.setScheduledProvenance?.(
+        sessionId,
+        `schedule-${occurrenceId}`,
+        occurrenceId,
+        "2026-08-01T15:00:00.000Z",
+        "2026-08-01T15:00:01.000Z",
+      );
+      sessionStore.setScheduledTurn?.(sessionId, occurrenceId, `turn-${occurrenceId}`);
+      const entry =
+        text === undefined
+          ? undefined
+          : sessionStore.append({
+              sessionId,
+              turnId: `turn-${occurrenceId}`,
+              replyId: `reply-${occurrenceId}`,
+              kind: "assistant",
+              createdAt: Date.parse(completedAt),
+              text,
+              toolCallId: null,
+              toolName: null,
+              toolArgs: null,
+              cutoff: null,
+              compactedThroughSeq: null,
+              pendingId: null,
+            });
+      sessionStore.recordScheduledTerminal?.(
+        sessionId,
+        `turn-${occurrenceId}`,
+        "completed",
+        completedAt,
+        entry ? String(entry.seq) : null,
+      );
+    };
+    seed("session-unicode", "occurrence-unicode", "2026-08-01T15:00:05.000Z", "😀".repeat(200));
+    seed("session-blank", "occurrence-blank", "2026-08-01T15:00:04.000Z", "   \n  ");
+    seed("session-missing", "occurrence-missing", "2026-08-01T15:00:03.000Z");
+    seed("session-malformed", "occurrence-malformed", "2026-08-01T15:00:02.000Z", "ignored");
+    sessionStore.close();
+
+    const db = new Database(join(root, "u_aaaaaaaa", "sessions.db"));
+    db.query("UPDATE sessions SET scheduled_completed_at='not-an-instant' WHERE session_id='session-malformed'").run();
+    db.close();
+
+    const cards = await service.cards(resource, undefined, 20);
+    expect(cards.ok).toBe(true);
+    if (cards.ok) {
+      expect(cards.value.cards.map((card) => [card.sessionId, card.status])).toEqual([
+        ["session-unicode", "completed"],
+        ["session-blank", "failed"],
+        ["session-missing", "failed"],
+      ]);
+      const preview = cards.value.cards[0]?.preview ?? "";
+      expect(preview.length).toBe(280);
+      expect(Array.from(preview)).toHaveLength(140);
+    }
+  });
+
   test("cleans an expired once entry without yielding work", async () => {
     const { service, resource } = setup();
     await service.create(resource, once("old", "2026-08-01T15:00:00Z"), new Date("2026-08-01T14:00:00Z"));

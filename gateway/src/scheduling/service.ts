@@ -10,6 +10,7 @@ import {
   type ScheduledSessionCard,
   scheduleSchema,
   scheduleSourceSchema,
+  scheduledSessionCardSchema,
 } from "@sentient/protocol";
 import type { PrivateScheduleResource } from "../access/private-schedule-resource.js";
 import { type UserId, isValidUserId } from "../user-auth/user-id.js";
@@ -552,17 +553,37 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
         `,
         )
         .all(bounded + 1, offset);
-      const parsed: ScheduledSessionCard[] = rows.slice(0, bounded).map((row) => {
-        const preview = row.preview?.replace(/\s+/gu, " ").trim();
-        return {
+      const parsed: ScheduledSessionCard[] = rows.slice(0, bounded).flatMap((row) => {
+        const normalized = row.preview?.replace(/\s+/gu, " ").trim();
+        let preview = "";
+        if (normalized) {
+          // Protocol max length follows JavaScript string length (UTF-16 code
+          // units). Keep full code points while respecting that exact bound.
+          for (const point of normalized) {
+            if (preview.length + point.length > 280) break;
+            preview += point;
+          }
+        }
+        // Old or interrupted writes can contain completed provenance without a
+        // usable terminal assistant entry. Such rows are safe failures, never
+        // fabricated completed responses. Unknown/malformed rows are omitted so
+        // one damaged session cannot invalidate the whole authenticated page.
+        const status =
+          row.outcome === "completed" && preview
+            ? "completed"
+            : row.outcome === "interrupted"
+              ? "interrupted"
+              : "failed";
+        const card = scheduledSessionCardSchema.safeParse({
           sessionId: row.session_id,
           scheduleId: row.schedule_id,
           occurrenceId: row.occurrence_id,
           intendedAt: row.intended_at,
           completedAt: row.completed_at,
-          status: row.outcome,
-          ...(row.outcome === "completed" && preview ? { preview: Array.from(preview).slice(0, 280).join("") } : {}),
-        };
+          status,
+          ...(status === "completed" ? { preview } : {}),
+        });
+        return card.success ? [card.data] : [];
       });
       return {
         ok: true,

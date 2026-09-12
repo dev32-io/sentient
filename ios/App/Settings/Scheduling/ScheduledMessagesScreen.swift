@@ -23,7 +23,12 @@ struct ScheduledMessagesScreen: View {
             scheduleContent
         }
         .sheet(isPresented: Binding(get: { editing != nil || presentingNew }, set: { if !$0 { editing = nil; presentingNew = false } })) {
-            ScheduleEditor(draft: $draft, isSaving: vm.isMutating, onCancel: { editing = nil; presentingNew = false }) {
+            ScheduleEditor(
+                draft: $draft,
+                isSaving: vm.isMutating,
+                saveError: vm.mutationError,
+                onCancel: { editing = nil; presentingNew = false }
+            ) {
                 let saved: Bool
                 if let editing { saved = await vm.update(editing, draft: draft) }
                 else { saved = await vm.create(draft) }
@@ -83,6 +88,7 @@ private struct ScheduleSummaryCard: View {
 private struct ScheduleEditor: View {
     @Binding var draft: ScheduleDraft
     let isSaving: Bool
+    let saveError: String?
     let onCancel: () -> Void
     let onSave: () async -> Void
     @State private var delay = "30"
@@ -90,19 +96,40 @@ private struct ScheduleEditor: View {
     @State private var absolute = ""
     @State private var recurringTime = "09:00"
     @State private var fieldErrors = ScheduleEditorFieldErrors()
+    @FocusState private var messageFocused: Bool
 
     var body: some View {
         NavigationStack {
             DesignPageChrome(title: "Schedule message", accessibilityId: "schedule-editor", showsBack: false) {
-                DesignMultilineEditor(title: "Message", text: $draft.message, error: draft.validationMessage)
+                if let saveError {
+                    AsyncNotice(kind: .error, title: "Schedule not saved", detail: saveError)
+                }
+                DesignMultilineEditor(
+                    title: "Message",
+                    text: $draft.message,
+                    error: draft.validationMessage,
+                    accessibilityId: "schedule-message",
+                    focused: $messageFocused
+                )
                 DesignSegmentedPicker(title: "Timing", options: ScheduleDraftMode.allCases.map { ($0, $0.rawValue) }, selection: $draft.mode)
                 timingFields
                 DesignField(title: "Time zone", text: $draft.timeZone, error: fieldErrors.timeZone, accessibilityId: "schedule-time-zone")
-                DesignActionButton(title: isSaving ? "Saving…" : "Save", state: isSaving ? .loading : .normal) {
+                DesignActionButton(
+                    title: isSaving ? "Saving…" : "Save",
+                    state: isSaving ? .loading : .normal,
+                    accessibilityId: "schedule-save"
+                ) {
+                    messageFocused = false
                     guard applyFields() else { return }
                     Task { await onSave() }
                 }
-                DesignActionButton(title: "Cancel", role: .quiet, state: isSaving ? .disabled : .normal, action: onCancel)
+                DesignActionButton(
+                    title: "Cancel",
+                    role: .quiet,
+                    state: isSaving ? .disabled : .normal,
+                    accessibilityId: "schedule-cancel",
+                    action: onCancel
+                )
             }
         }
         .onAppear {
