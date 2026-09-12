@@ -71,7 +71,10 @@ let approvalResolved: "allowed" | "denied" | "timeout" | null = null;
 let toolStatus: "running" | "done" | "error" | null = null;
 let settled = false;
 
-const socket = new WebSocket(wsUrl);
+// Local stack serves a self-signed certificate. `fetch` above opts out of
+// certificate verification for this already loopback-validated target; apply
+// same local-only policy to WebSocket or every HTTPS probe fails before auth.
+const socket = new WebSocket(wsUrl, target.protocol === "https:" ? { tls: { rejectUnauthorized: false } } : undefined);
 const completed = new Promise<void>((resolve, reject) => {
   const fail = (error: Error) => {
     if (settled) return;

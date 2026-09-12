@@ -28,8 +28,13 @@ CONFIG="${GATEWAY_CONFIG_PATH:-$REPO_ROOT/gateway/config.yaml}"
 
 # ── constants ───────────────────────────────────────────────────────────────
 
-RUN_DIR="$HOME/.sentient/run"
-# ~/.sentient/run/<svc>.pid — written by gateway/src/system-orchestrator/native-driver.ts.
+# Keep lifecycle ownership beside gateway state. SENTIENT_HOME is the supported
+# local-isolation root used by gateway bootstrap and native-driver; ignoring it
+# here makes `down` miss isolated pid files and lets later stacks inherit live
+# fixture processes.
+SENTIENT_STATE_HOME="${SENTIENT_HOME:-$HOME/.sentient}"
+RUN_DIR="$SENTIENT_STATE_HOME/run"
+# <SENTIENT_HOME>/run/<svc>.pid — written by gateway/src/system-orchestrator/native-driver.ts.
 NATIVE_ADDON_SERVICES=(whisper-stt local-tts)
 # STACK_RUN_DIR is deliberately its OWN subdirectory, not $RUN_DIR directly.
 # native-io.ts#readPidFiles does an unfiltered readdir($RUN_DIR) and treats
@@ -319,7 +324,7 @@ wait_ready() {
         "docker logs sentient-inbound-proxy"
   fi
   die "gateway did not become healthy within $((READY_TIMEOUT_MS / 1000))s" \
-      "tail -n 50 ~/.sentient/gateway/logs/\$(date +%F).log"
+      "tail -n 50 \"$SENTIENT_STATE_HOME/gateway/logs/\$(date +%F).log\""
 }
 
 # ── commands ────────────────────────────────────────────────────────────────
