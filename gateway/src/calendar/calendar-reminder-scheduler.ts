@@ -72,6 +72,8 @@ function localDateParts(
   day: number;
   hour: number;
   minute: number;
+  second: number;
+  millisecond: number;
   weekday: (typeof WEEKDAYS)[number];
 } {
   const parts: Record<string, string> = {};
@@ -82,6 +84,7 @@ function localDateParts(
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     weekday: "long",
     hourCycle: "h23",
   }).formatToParts(new Date(instant)))
@@ -92,6 +95,8 @@ function localDateParts(
     day: Number(parts.day),
     hour: Number(parts.hour),
     minute: Number(parts.minute),
+    second: Number(parts.second),
+    millisecond: new Date(instant).getUTCMilliseconds(),
     weekday: (parts.weekday?.toLowerCase() ?? "monday") as (typeof WEEKDAYS)[number],
   };
 }
@@ -197,6 +202,8 @@ function allDayParts(date: string): {
   day: number;
   hour: number;
   minute: number;
+  second: number;
+  millisecond: number;
   weekday: (typeof WEEKDAYS)[number];
 } {
   const [year = Number.NaN, month = Number.NaN, day = Number.NaN] = date.split("-").map(Number);
@@ -206,6 +213,8 @@ function allDayParts(date: string): {
     day,
     hour: 0,
     minute: 0,
+    second: 0,
+    millisecond: 0,
     weekday: WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] ?? "monday",
   };
 }
@@ -220,9 +229,31 @@ function generatedOrdinal(event: CalendarPersistenceEvent, candidate: CalendarTi
   const targetLocal =
     candidate.kind === "timed" ? localDateParts(Date.parse(candidate.instant), zone) : allDayParts(candidate.date);
   if (event.start.kind === "timed" && candidate.kind === "timed") {
+    const candidateInstant = Date.parse(candidate.instant);
+    if (!Number.isFinite(candidateInstant)) return undefined;
     const start = localDateParts(Date.parse(event.start.instant), zone);
-    const target = localDateParts(Date.parse(candidate.instant), zone);
-    if (start.hour !== target.hour || start.minute !== target.minute) return undefined;
+    const target = localDateParts(candidateInstant, zone);
+    if (
+      start.hour !== target.hour ||
+      start.minute !== target.minute ||
+      start.second !== target.second ||
+      start.millisecond !== target.millisecond
+    )
+      return undefined;
+    // Recurrence expansion skips nonexistent wall times and chooses the first
+    // instant when a wall time repeats. Reject a forged second DST instance.
+    const canonicalInstant = instantForScheduleLocal(
+      {
+        year: target.year,
+        month: target.month,
+        day: target.day,
+        hour: target.hour,
+        minute: target.minute,
+        second: target.second,
+      },
+      zone,
+    );
+    if (canonicalInstant === undefined || canonicalInstant + target.millisecond !== candidateInstant) return undefined;
   }
   const startDay = Date.UTC(startLocal.year, startLocal.month - 1, startLocal.day);
   const targetDay = Date.UTC(targetLocal.year, targetLocal.month - 1, targetLocal.day);
@@ -279,11 +310,10 @@ function effectiveOccurrenceAt(
   original: CalendarTime,
   zone: string,
 ): Pick<CalendarPersistenceEvent, "start" | "title" | "visibility" | "notification"> | undefined {
-  if (
-    !generatedOrdinal(event, original, zone) ||
-    event.exclusions.some((excluded) => sameCalendarTime(excluded, original))
-  )
-    return undefined;
+  const isGenerated = event.recurrence
+    ? generatedOrdinal(event, original, zone) !== undefined
+    : sameCalendarTime(event.start, original);
+  if (!isGenerated || event.exclusions.some((excluded) => sameCalendarTime(excluded, original))) return undefined;
   const exception = event.exceptions.find((candidate) => sameCalendarTime(candidate.occurrence, original));
   if (exception?.cancelled) return undefined;
   const notification = exception?.notification === null ? undefined : (exception?.notification ?? event.notification);
@@ -293,6 +323,30 @@ function effectiveOccurrenceAt(
     visibility: exception?.visibility ?? event.visibility,
     ...(notification ? { notification } : {}),
   };
+}
+
+function parseCanonicalOriginalKey(event: CalendarPersistenceEvent, key: string): CalendarTime | undefined {
+  if (event.start.kind === "timed") {
+    const instant = Date.parse(key);
+    if (!Number.isFinite(instant) || new Date(instant).toISOString() !== key) return undefined;
+    return { kind: "timed", instant: key as never, timeZoneId: event.start.timeZoneId };
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!match) return undefined;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day ||
+    date.toISOString().slice(0, 10) !== key
+  )
+    return undefined;
+  return { kind: "all-day", date: key as never };
 }
 
 function originalForReminderWake(
@@ -697,9 +751,12 @@ export async function authorizeCalendarReminderExecution(
         const original = originalForReminderWake(event, baseReminder, intended);
         if (original) originals.push(original);
       } else {
-        for (const exception of event.exceptions) {
-          if (source.reminderId === `${seriesId}:${canonicalOriginalKey(exception.occurrence)}`)
-            originals.push(exception.occurrence);
+        const occurrencePrefix = `${seriesId}:`;
+        if (event.recurrence && source.reminderId.startsWith(occurrencePrefix)) {
+          // ISO keys contain colons. Remove only exact trusted prefix, then
+          // parse and canonicalize full suffix before recurrence validation.
+          const original = parseCanonicalOriginalKey(event, source.reminderId.slice(occurrencePrefix.length));
+          if (original) originals.push(original);
         }
       }
       const allowed = originals.some((original) => {

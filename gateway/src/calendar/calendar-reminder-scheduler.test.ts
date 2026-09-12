@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createAccessManager } from "../access/access-manager.js";
 import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { createScheduledExecutionAuthorizer } from "../scheduled-chat/executor.js";
+import { createScheduledChatRunner } from "../scheduled-chat/runner.js";
 import { createScheduleService } from "../scheduling/service.js";
 import { createCalendarEvent, mutateCalendarEvent } from "./calendar-mutations.js";
 import { authorizeCalendarReminderExecution, createCalendarReminderScheduler } from "./calendar-reminder-scheduler.js";
@@ -75,6 +77,48 @@ describe("calendar reminder scheduling boundary", () => {
         reminderId: `${created.value.eventId}:u_aaaaaaaa`,
       },
     });
+    if (!listed.ok || !listed.value.schedules[0]) return;
+    const scheduled = listed.value.schedules[0];
+    if (scheduled.source.kind !== "calendar-reminder") return;
+    const execution = {
+      principal,
+      resource,
+      claim: {
+        claimToken: "claim",
+        scheduleId: scheduled.scheduleId,
+        occurrenceId: "occurrence",
+        ownerUserId: principal.userId,
+        source: scheduled.source,
+        intendedAt: "2026-05-01T13:30:00.000Z",
+        claimedUntil: "2026-05-01T13:31:00.000Z",
+        message: scheduled.message,
+        oneTime: true,
+      },
+    } as const;
+    expect(
+      (
+        await authorizeCalendarReminderExecution(
+          execution,
+          { accessManager, calendarConfig: config },
+          new AbortController().signal,
+        )
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await authorizeCalendarReminderExecution(
+          {
+            ...execution,
+            claim: {
+              ...execution.claim,
+              source: { ...scheduled.source, reminderId: `${created.value.eventId}:u_victim:2026-05-01T14:00:00.000Z` },
+            },
+          },
+          { accessManager, calendarConfig: config },
+          new AbortController().signal,
+        )
+      ).ok,
+    ).toBe(false);
 
     const disabled = mutateCalendarEvent(
       {
@@ -90,6 +134,106 @@ describe("calendar reminder scheduling boundary", () => {
     expect((await scheduler.reconcile(persistence, created.value.eventId, "private")).ok).toBe(true);
     listed = await schedules.list(resource, undefined, 10);
     expect(listed.ok && listed.value.schedules).toEqual([]);
+    schedules.close();
+    persistence.close();
+  });
+
+  test("executes and consumes a materialized generated recurring reminder through the scheduled-chat runner", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-execution-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
+    let sequence = 0;
+    const schedules = createScheduleService({ userDataRoot: root, id: () => `generated-${++sequence}` });
+    const scheduler = createCalendarReminderScheduler({ schedules, accessManager, calendarConfig: config });
+    const created = createCalendarEvent(
+      {
+        title: "Interval medicine",
+        start: "2026-05-01T14:00:00-04:00" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        recurrence: { frequency: "daily", interval: 2, count: 3 },
+        reminder: { enabled: true, mode: "lead", leadMinutes: 30 },
+      },
+      persistence,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-05-03T17:29:00Z"))).ok,
+    ).toBe(true);
+
+    const authorizer = createScheduledExecutionAuthorizer({
+      users: {
+        get: async () => ({
+          ok: true as const,
+          value: {
+            userId: principal.userId,
+            role: "adult" as const,
+            displayName: "Owner",
+            pinHash: "test-only",
+            avatarTint: "sage" as const,
+            createdAt: "2026-01-01T00:00:00Z",
+            credentialsValidFrom: "2026-01-01T00:00:00Z",
+          },
+        }),
+      },
+      accessManager,
+      householdId: "home",
+      authorizeCalendarReminder: (execution, signal) =>
+        authorizeCalendarReminderExecution(execution, { accessManager, calendarConfig: config }, signal),
+    });
+    let submittedSource: unknown;
+    const runner = createScheduledChatRunner({
+      claims: schedules,
+      authorizer,
+      submitter: {
+        async submit(execution) {
+          submittedSource = execution.claim.source;
+          const associated = await schedules.associateSession(execution.claim, "s_generated");
+          if (!associated.ok) return associated;
+          return {
+            ok: true as const,
+            value: {
+              outcome: "completed" as const,
+              sessionId: "s_generated",
+              completedAt: "2026-05-03T17:31:01.000Z",
+              content: {
+                ownerUserId: principal.userId,
+                sessionId: "s_generated",
+                occurrenceId: execution.claim.occurrenceId,
+                entryId: "1",
+              },
+            },
+          };
+        },
+      },
+      finalizer: schedules,
+      claimLimit: 1,
+      leaseMs: 60_000,
+      pollMs: 10,
+      now: () => new Date("2026-05-03T17:31:00Z"),
+    });
+
+    expect(await runner.runOnce()).toEqual({ ok: true, value: { claimed: 1, finalized: 1 } });
+    expect(submittedSource).toMatchObject({
+      kind: "calendar-reminder",
+      reminderId: `${created.value.eventId}:u_aaaaaaaa:2026-05-03T18:00:00.000Z`,
+    });
+    const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
+    const listed = await schedules.list(resource, undefined, 10);
+    expect(
+      listed.ok &&
+        listed.value.schedules.some(
+          (item) =>
+            item.source.kind === "calendar-reminder" &&
+            item.source.reminderId === `${created.value.eventId}:u_aaaaaaaa:2026-05-03T18:00:00.000Z`,
+        ),
+    ).toBe(false);
+    await scheduler.close();
     schedules.close();
     persistence.close();
   });
