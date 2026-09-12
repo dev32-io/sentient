@@ -99,7 +99,7 @@ inbound_proxy:
 # stack — dev launcher budgets (scripts/stack.sh)
 # ---------------------------------------------------------------------------
 stack:
-  readiness_timeout_ms: 60000   # total wait for gateway health AND https://localhost/. Range 5000-300000.
+  readiness_timeout_ms: 120000  # total wait for cold managed-service reconcile AND https://localhost/. Range 5000-300000.
   readiness_poll_ms: 500        # retry interval within that budget. Range 100-5000.
   docker_wait_s: 30             # seconds to wait for the docker daemon before refusing. Range 0-120.
 

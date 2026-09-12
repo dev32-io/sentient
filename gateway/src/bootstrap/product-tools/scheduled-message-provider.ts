@@ -1,4 +1,9 @@
-import { scheduleCreateRequestSchema, scheduleListQuerySchema, schedulePatchRequestSchema } from "@sentient/protocol";
+import {
+  type ScheduleCreateRequest,
+  scheduleCreateRequestSchema,
+  scheduleListQuerySchema,
+  schedulePatchRequestSchema,
+} from "@sentient/protocol";
 import { z } from "zod";
 import type { PrivateScheduleResource } from "../../access/private-schedule-resource.js";
 import type { ScheduleCommands, SchedulingResult } from "../../scheduling/contracts.js";
@@ -135,6 +140,59 @@ const listParameters = {
   properties: { cursor: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 } },
   additionalProperties: false,
 };
+const legacyOnceAfterTimingSchema = z.union([
+  z.object({ type: z.literal("once_after"), seconds: z.number().int().positive() }).strict(),
+  z
+    .object({
+      type: z.literal("once_after"),
+      value: z.number().int().positive(),
+      unit: z.enum(["second", "seconds", "minute", "minutes", "hour", "hours"]).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("once_after"),
+      interval: z.number().int().positive(),
+      unit: z.enum(["second", "seconds", "minute", "minutes", "hour", "hours"]),
+    })
+    .strict(),
+]);
+const legacyCreateSchema = z
+  .object({
+    idempotencyKey: z.string().min(1).max(200),
+    message: z.string().min(1).max(12_000),
+    timing: legacyOnceAfterTimingSchema,
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+function legacyDelaySeconds(timing: z.infer<typeof legacyOnceAfterTimingSchema>): number {
+  const amount = "seconds" in timing ? timing.seconds : "interval" in timing ? timing.interval : timing.value;
+  const unit = "unit" in timing ? timing.unit : undefined;
+  if (unit === "minute" || unit === "minutes") return amount * 60;
+  if (unit === "hour" || unit === "hours") return amount * 3_600;
+  return amount;
+}
+
+/** Some OpenAI-compatible providers emit their learned `once_after` spelling
+ * despite receiving our canonical `kind: once-after` schema. Keep REST/KMP
+ * contracts strict, but normalize these observed model-only shapes at this
+ * tool boundary before authorization and execution. */
+function parseCreateArgs(args: Record<string, unknown>): ScheduleCreateRequest | null {
+  const canonical = scheduleCreateRequestSchema.safeParse(args);
+  if (canonical.success) return canonical.data;
+  const legacy = legacyCreateSchema.safeParse(args);
+  if (!legacy.success) return null;
+  const afterSeconds = legacyDelaySeconds(legacy.data.timing);
+  const normalized = scheduleCreateRequestSchema.safeParse({
+    idempotencyKey: legacy.data.idempotencyKey,
+    message: legacy.data.message,
+    timing: { kind: "once-after", afterSeconds },
+    enabled: legacy.data.enabled,
+  });
+  return normalized.success ? normalized.data : null;
+}
+
 const editSchema = z
   .object({
     scheduleId: z.string().min(1),
@@ -161,6 +219,7 @@ function runner(
   setting: (typeof SCHEDULED_MESSAGE_TOOL_SETTINGS)[number],
   parameters: Record<string, unknown>,
   run: NativeToolRunner["run"],
+  validate?: NativeToolRunner["validate"],
 ): NativeToolRunner {
   return {
     definition: {
@@ -171,6 +230,7 @@ function runner(
       defaultExposure: "standard",
     },
     run,
+    ...(validate ? { validate } : {}),
   };
 }
 
@@ -189,12 +249,17 @@ export const scheduledMessageProductToolProvider: ProductToolProvider<"scheduled
         if (!p.success) return invalid();
         return output(await commands.list(resource, p.data.cursor, p.data.limit ?? 50));
       }),
-      runner(SCHEDULED_MESSAGE_TOOL_SETTINGS[1], createParameters, async (args, ctx) => {
-        if (ctx.signal.aborted) return invalid();
-        const p = scheduleCreateRequestSchema.safeParse(args);
-        if (!p.success) return invalid();
-        return output(await commands.create(resource, p.data, now()));
-      }),
+      runner(
+        SCHEDULED_MESSAGE_TOOL_SETTINGS[1],
+        createParameters,
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return invalid();
+          const request = parseCreateArgs(args);
+          if (!request) return invalid();
+          return output(await commands.create(resource, request, now()));
+        },
+        (args) => (parseCreateArgs(args) ? null : invalid()),
+      ),
       runner(SCHEDULED_MESSAGE_TOOL_SETTINGS[2], editParameters, async (args, ctx) => {
         if (ctx.signal.aborted) return invalid();
         const p = editSchema.safeParse(args);
