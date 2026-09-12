@@ -342,6 +342,8 @@ const scheduledRunner =
           dbFileName: services.dbFileName,
           registry: services.sessionRegistry,
           associateSession: (claim, sessionId) => schedules.associateSession(claim, sessionId),
+          settleStaleAssociation: (claim, completedAt) =>
+            schedules.finalizeClaim(claim, { outcome: "expired", completedAt }, undefined),
           reauthorize: (claim, signal) => scheduledExecutionAuthorizer.authorize(claim, signal),
           buildHandles: (principal, sessionId, correlationId) =>
             buildSessionHandles(services, principal, sessionId, correlationId),

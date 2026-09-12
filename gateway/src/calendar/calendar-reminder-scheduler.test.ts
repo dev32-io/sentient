@@ -245,6 +245,8 @@ describe("calendar reminder scheduling boundary", () => {
           accessManager,
           registry,
           associateSession: (claim, id) => service.associateSession(claim, id),
+          settleStaleAssociation: (claim, completedAt) =>
+            service.finalizeClaim(claim, { outcome: "expired", completedAt }, undefined),
           reauthorize: (claim, signal) => authorizer.authorize(claim, signal),
           makeSessionId: () => sessionId,
           now: () => now,
@@ -424,6 +426,8 @@ describe("calendar reminder scheduling boundary", () => {
         accessManager,
         registry,
         associateSession: (claim, id) => schedules.associateSession(claim, id),
+        settleStaleAssociation: (claim, completedAt) =>
+          schedules.finalizeClaim(claim, { outcome: "expired", completedAt }, undefined),
         reauthorize: (claim, signal) => authorizer.authorize(claim, signal),
         makeSessionId: () => sessionId,
         now: () => new Date(due.getTime() + 60_000),

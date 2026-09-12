@@ -74,6 +74,11 @@ export interface ScheduledMessageSubmitterDeps {
     claim: AuthorizedScheduledExecution["claim"],
     signal: AbortSignal,
   ) => Promise<SchedulingResult<AuthorizedScheduledExecution>>;
+  /** Atomically marks associated work stale after pre-submit CAS loses. */
+  readonly settleStaleAssociation: (
+    claim: AuthorizedScheduledExecution["claim"],
+    completedAt: string,
+  ) => Promise<SchedulingResult<unknown>>;
   readonly buildHandles: (
     principal: AuthorizedScheduledExecution["principal"],
     sessionId: string,
@@ -195,7 +200,15 @@ export function createScheduledMessageSubmitter(deps: ScheduledMessageSubmitterD
         // calendar/account truth. Mutations before transition lose either CAS
         // or following authority check; later mutations are already-started.
         const confirmed = await deps.associateSession(claim, sessionId);
-        if (!confirmed.ok) return confirmed;
+        if (!confirmed.ok) {
+          // Generation/pause/delete can win after initial association. Hand
+          // stale unstarted occurrence to atomic finalizer instead of leaving
+          // associated null-outcome row reclaimable forever.
+          if (confirmed.error.code !== "claim_lost") return confirmed;
+          const completedAt = (deps.now?.() ?? new Date()).toISOString();
+          const settled = await deps.settleStaleAssociation(claim, completedAt);
+          return settled.ok ? { ok: true, value: { outcome: "expired", completedAt } } : settled;
+        }
         const current = await deps.reauthorize(claim, signal);
         if (!current.ok) return current;
         if (signal.aborted) return cancelled();

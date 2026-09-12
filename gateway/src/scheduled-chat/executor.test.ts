@@ -103,6 +103,8 @@ describe("scheduled chat consumer boundary", () => {
       accessManager,
       registry,
       associateSession: (claim, sessionId) => service.associateSession(claim, sessionId),
+      settleStaleAssociation: (claim, completedAt) =>
+        service.finalizeClaim(claim, { outcome: "expired", completedAt }, undefined),
       reauthorize: (claim, signal) => trackingAuthorizer.authorize(claim, signal),
       makeSessionId: () => "s_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       now: () => new Date("2026-08-01T15:01:01Z"),
@@ -308,6 +310,17 @@ describe("scheduled chat consumer boundary", () => {
   test("fences mutation committed after initial association but before append", async () => {
     const { accessManager, principal, resource, service } = setup();
     const schedule = await createOneTime(service, resource);
+    const valid = await service.create(
+      resource,
+      {
+        idempotencyKey: crypto.randomUUID(),
+        message: "Still valid",
+        enabled: true,
+        timing: { kind: "once-at", at: "2026-08-01T15:00:30Z" },
+      },
+      new Date("2026-08-01T14:00:00Z"),
+    );
+    if (!valid.ok) throw new Error("valid create failed");
     const due = await service.claimDue(new Date("2026-08-01T15:01:00Z"), 1, 60_000);
     expect(due.ok).toBe(true);
     if (!due.ok || !due.value[0]) return;
@@ -333,6 +346,8 @@ describe("scheduled chat consumer boundary", () => {
         return result;
       },
       reauthorize: async (candidate) => ({ ok: true, value: { claim: candidate, principal, resource } }),
+      settleStaleAssociation: (candidate, completedAt) =>
+        service.finalizeClaim(candidate, { outcome: "expired", completedAt }, undefined),
       buildHandles: () => {
         runtimeBuilt = true;
         throw new Error("stale occurrence must not allocate runtime");
@@ -340,9 +355,13 @@ describe("scheduled chat consumer boundary", () => {
     });
 
     const result = await submitter.submit({ claim, principal, resource }, new AbortController().signal);
-    expect(result).toMatchObject({ ok: false, error: { code: "claim_lost" } });
+    expect(result).toMatchObject({ ok: true, value: { outcome: "expired" } });
+    if (!result.ok) return;
     expect(associations).toBe(2);
     expect(runtimeBuilt).toBe(false);
+
+    const next = await service.claimDue(new Date("2026-08-01T15:01:02Z"), 1, 60_000);
+    expect(next.ok && next.value.map((candidate) => candidate.scheduleId)).toEqual([valid.value.scheduleId]);
     service.close();
   });
 
