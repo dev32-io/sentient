@@ -61,7 +61,8 @@ CREATE TABLE reminder_consents (
 CREATE TABLE reminder_reconciliation (
   event_id TEXT PRIMARY KEY,
   requested_at TEXT NOT NULL,
-  attempt_count INTEGER NOT NULL DEFAULT 0
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  generation INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX idx_events_start_instant ON events (start_instant);
@@ -80,5 +81,6 @@ export const CALENDAR_MIGRATIONS = [
     requested_at TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0
   );`,
+  "ALTER TABLE reminder_reconciliation ADD COLUMN generation INTEGER NOT NULL DEFAULT 1;",
 ] as const;
-export const CALENDAR_SCHEMA_VERSION = 2;
+export const CALENDAR_SCHEMA_VERSION = 3;

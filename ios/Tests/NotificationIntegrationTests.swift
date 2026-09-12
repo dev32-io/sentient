@@ -1,5 +1,6 @@
 import XCTest
 import UserNotifications
+import MobileData
 @testable import SentientApp
 
 final class NotificationIntegrationTests: XCTestCase {
@@ -81,6 +82,70 @@ final class NotificationIntegrationTests: XCTestCase {
         XCTAssertFalse(coordinator.tokenAvailable)
         XCTAssertFalse(coordinator.registrationPending)
     }
+
+    @MainActor
+    func testAccountReplacementWaitsForExactOldLifecycleAcknowledgement() async {
+        let unlinkStarted = expectation(description: "old binding disable started")
+        let replacementInstalled = expectation(description: "replacement lifecycle installed")
+        let old = FakeNativePushLifecycle(unlinkStarted: unlinkStarted)
+        let replacement = FakeNativePushLifecycle()
+        var installed: [String] = []
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .denied, granted: false),
+            lifecycleFactory: { configuration in
+                installed.append(configuration.fence)
+                if configuration.fence == "account-new" { replacementInstalled.fulfill(); return replacement }
+                return old
+            }
+        )
+
+        coordinator.configure(account: account("account-old"))
+        coordinator.configure(account: account("account-new"))
+        await fulfillment(of: [unlinkStarted])
+        XCTAssertEqual(installed, ["account-old"])
+        XCTAssertNotNil(coordinator.lifecycleWarning)
+
+        old.completeUnlink(.success)
+        await fulfillment(of: [replacementInstalled])
+        XCTAssertEqual(installed, ["account-old", "account-new"])
+        XCTAssertTrue(old.closed)
+    }
+
+    @MainActor
+    func testStaleOldBindingAcknowledgementKeepsReplacementFencedUntilRetrySucceeds() async {
+        let unlinkStarted = expectation(description: "old unlink attempted")
+        let retryStarted = expectation(description: "old unlink retried")
+        let replacementInstalled = expectation(description: "replacement installed after retry")
+        let old = FakeNativePushLifecycle(unlinkStarted: unlinkStarted, retryStarted: retryStarted)
+        let replacement = FakeNativePushLifecycle()
+        var installed: [String] = []
+        let coordinator = NativePushCoordinator(
+            permissions: FakePermission(status: .denied, granted: false),
+            lifecycleFactory: { configuration in
+                installed.append(configuration.fence)
+                if configuration.fence == "account-new" { replacementInstalled.fulfill(); return replacement }
+                return old
+            }
+        )
+
+        coordinator.configure(account: account("account-old"))
+        coordinator.configure(account: account("account-new"))
+        await fulfillment(of: [unlinkStarted])
+        old.completeUnlink(.failure) // Models the shared coordinator rejecting a stale acknowledgement.
+        await Task.yield()
+        XCTAssertEqual(installed, ["account-old"])
+        XCTAssertNotNil(coordinator.lifecycleWarning)
+
+        coordinator.retryPendingUnlink()
+        await fulfillment(of: [retryStarted])
+        old.completeRetry(.success)
+        await fulfillment(of: [replacementInstalled])
+        XCTAssertEqual(installed, ["account-old", "account-new"])
+    }
+}
+
+private func account(_ fence: String) -> NativePushAccountConfiguration {
+    NativePushAccountConfiguration(fence: fence, gatewayWsUrl: "wss://gateway.test", allowSelfSignedDevHost: false, token: { "" })
 }
 
 private final class FakeRegistrar: RemoteNotificationRegistering {
@@ -94,4 +159,47 @@ private final class FakePermission: NotificationPermissionProviding {
     init(status: UNAuthorizationStatus, granted: Bool) { self.status = status; self.granted = granted }
     func authorizationStatus() async -> UNAuthorizationStatus { status }
     func requestAuthorization() async throws -> Bool { granted }
+}
+
+@MainActor
+private final class FakeNativePushLifecycle: NativePushLifecycleClient {
+    var state: NativePushLifecycleSnapshot = .unlinked
+    private let unlinkStarted: XCTestExpectation?
+    private let retryStarted: XCTestExpectation?
+    private var unlinkContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
+    private var retryContinuation: CheckedContinuation<NativePushLifecycleResult, Never>?
+    private(set) var closed = false
+
+    init(unlinkStarted: XCTestExpectation? = nil, retryStarted: XCTestExpectation? = nil) {
+        self.unlinkStarted = unlinkStarted
+        self.retryStarted = retryStarted
+    }
+
+    func unlink(ownerFence: String) async throws -> NativePushLifecycleResult {
+        state = .pendingUnlink
+        unlinkStarted?.fulfill()
+        return await withCheckedContinuation { unlinkContinuation = $0 }
+    }
+
+    func completeUnlink(_ result: NativePushLifecycleResult) {
+        if case .success = result { state = .unlinked }
+        unlinkContinuation?.resume(returning: result)
+        unlinkContinuation = nil
+    }
+
+    func retryPendingUnlink() async throws -> NativePushLifecycleResult {
+        retryStarted?.fulfill()
+        return await withCheckedContinuation { retryContinuation = $0 }
+    }
+
+    func completeRetry(_ result: NativePushLifecycleResult) {
+        if case .success = result { state = .unlinked }
+        retryContinuation?.resume(returning: result)
+        retryContinuation = nil
+    }
+
+    func reconcileActivation(ownerFence: String) async throws -> NativePushLifecycleResult { .success }
+    func makeRegistration(deviceToken: String, replacing: PushBinding?) -> PushRegistrationRequest { fatalError("unused") }
+    func register(ownerFence: String, request: PushRegistrationRequest) async throws -> PushBinding? { nil }
+    func close() { closed = true }
 }

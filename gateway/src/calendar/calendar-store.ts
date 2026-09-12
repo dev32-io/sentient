@@ -98,9 +98,16 @@ export interface CalendarPersistence {
     options?: CalendarTransactionOptions,
   ): CalendarResult<T>;
   trustedReminderOwners?(eventId: CalendarEventId): CalendarResult<readonly string[]>;
-  pendingReminderReconciliations?(limit: number): CalendarResult<readonly CalendarEventId[]>;
-  acknowledgeReminderReconciliation?(eventId: CalendarEventId): CalendarResult<void>;
+  reminderReconciliation?(eventId: CalendarEventId): CalendarResult<ReminderReconciliation | undefined>;
+  pendingReminderReconciliations?(limit: number, dueAt?: Date): CalendarResult<readonly ReminderReconciliation[]>;
+  acknowledgeReminderReconciliation?(eventId: CalendarEventId, generation: number): CalendarResult<void>;
+  deferReminderReconciliation?(eventId: CalendarEventId, generation: number, retryAt: Date): CalendarResult<void>;
   close(): void;
+}
+
+export interface ReminderReconciliation {
+  readonly eventId: CalendarEventId;
+  readonly generation: number;
 }
 
 interface EventRow {
@@ -653,7 +660,8 @@ export function openCalendarPersistence(
                 );
             }
             db.query(
-              "INSERT INTO reminder_reconciliation VALUES (?,?,0) ON CONFLICT(event_id) DO UPDATE SET requested_at=excluded.requested_at,attempt_count=0",
+              `INSERT INTO reminder_reconciliation(event_id,requested_at,attempt_count,generation) VALUES (?,?,0,1)
+               ON CONFLICT(event_id) DO UPDATE SET requested_at=excluded.requested_at,attempt_count=0,generation=generation+1`,
             ).run(eventId, requestedAt);
           }
           touch("commit");
@@ -718,22 +726,43 @@ export function openCalendarPersistence(
           .all(eventId)
           .map((row) => row.owner_user_id),
       })),
-    pendingReminderReconciliations: (limit) =>
+    reminderReconciliation: (eventId) =>
       usable(() => {
-        if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { ok: false, error: "invalid" };
+        const row = db
+          .query<{ event_id: string; generation: number }, [string]>(
+            "SELECT event_id,generation FROM reminder_reconciliation WHERE event_id=?",
+          )
+          .get(eventId);
+        return {
+          ok: true,
+          value: row ? { eventId: row.event_id as CalendarEventId, generation: row.generation } : undefined,
+        };
+      }),
+    pendingReminderReconciliations: (limit, dueAt = new Date()) =>
+      usable(() => {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isFinite(dueAt.getTime()))
+          return { ok: false, error: "invalid" };
         return {
           ok: true,
           value: db
-            .query<{ event_id: string }, [number]>(
-              "SELECT event_id FROM reminder_reconciliation ORDER BY requested_at LIMIT ?",
+            .query<{ event_id: string; generation: number }, [string, number]>(
+              "SELECT event_id,generation FROM reminder_reconciliation WHERE requested_at<=? ORDER BY requested_at LIMIT ?",
             )
-            .all(limit)
-            .map((row) => row.event_id as CalendarEventId),
+            .all(dueAt.toISOString(), limit)
+            .map((row) => ({ eventId: row.event_id as CalendarEventId, generation: row.generation })),
         };
       }),
-    acknowledgeReminderReconciliation: (eventId) =>
+    acknowledgeReminderReconciliation: (eventId, generation) =>
       usable(() => {
-        db.query("DELETE FROM reminder_reconciliation WHERE event_id=?").run(eventId);
+        db.query("DELETE FROM reminder_reconciliation WHERE event_id=? AND generation=?").run(eventId, generation);
+        return { ok: true, value: undefined };
+      }),
+    deferReminderReconciliation: (eventId, generation, retryAt) =>
+      usable(() => {
+        if (!Number.isFinite(retryAt.getTime())) return { ok: false, error: "invalid" };
+        db.query(
+          "UPDATE reminder_reconciliation SET requested_at=?,attempt_count=attempt_count+1 WHERE event_id=? AND generation=?",
+        ).run(retryAt.toISOString(), eventId, generation);
         return { ok: true, value: undefined };
       }),
     close: () => {

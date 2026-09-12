@@ -126,6 +126,8 @@ export type CalendarReminderScheduleInput = Readonly<{
   enabled: boolean;
   message?: string;
   timing?: ScheduleTimingInput;
+  /** Internal calendar projection fence; does not alter the public timing contract. */
+  notBefore?: Date;
 }>;
 export interface ScheduleService
   extends ScheduleCommands,
@@ -349,7 +351,11 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
           let run: string | null;
           try {
             timing = timingAt(input.timing, acceptedAt);
-            run = nextRun(timing, acceptedAt, true);
+            const runAfter =
+              input.notBefore && Number.isFinite(input.notBefore.getTime()) && input.notBefore > acceptedAt
+                ? new Date(input.notBefore.getTime() - 1)
+                : acceptedAt;
+            run = nextRun(timing, runAfter, true);
           } catch {
             return fail("validation");
           }

@@ -183,7 +183,65 @@ describe("calendar reminder scheduling boundary", () => {
     persistence.close();
   });
 
-  test("projects exact finite recurrence occurrences when lead time crosses a date boundary", async () => {
+  test("does not acknowledge a newer mutation completed during reconciliation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-generation-"));
+    roots.push(root);
+    const accessManager = createAccessManager({ userDataRoot: root });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const persistence = openCalendarPersistence(accessManager.grant(principal, "calendar-private"), config);
+    const schedules = createScheduleService({ userDataRoot: root, id: () => "generation" });
+    const created = createCalendarEvent(
+      {
+        title: "Original title",
+        start: "2026-12-10T14:00:00Z" as never,
+        visibility: "everyone",
+        importance: "normal",
+        tags: [],
+        reminder: { enabled: true, mode: "at-start" },
+      },
+      persistence,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    let mutated = false;
+    const scheduler = createCalendarReminderScheduler({
+      schedules: {
+        ...schedules,
+        reconcileCalendarReminder: async (...args) => {
+          if (!mutated) {
+            mutated = true;
+            expect(
+              mutateCalendarEvent(
+                {
+                  operation: "update",
+                  eventId: created.value.eventId,
+                  applyTo: "entire_series",
+                  changes: { title: "Newer title" },
+                } as CalendarMutationCommand,
+                persistence,
+                config,
+              ).ok,
+            ).toBe(true);
+          }
+          return schedules.reconcileCalendarReminder(...args);
+        },
+      },
+      accessManager,
+      calendarConfig: config,
+    });
+    expect(
+      (await scheduler.reconcile(persistence, created.value.eventId, "private", new Date("2026-01-01T00:00:00Z"))).ok,
+    ).toBe(true);
+    expect(persistence.reminderReconciliation?.(created.value.eventId as never)).toMatchObject({
+      ok: true,
+      value: { generation: 2 },
+    });
+    schedules.close();
+    persistence.close();
+  });
+
+  test("projects a recurring calendar reminder as one persistent subscription", async () => {
     const root = mkdtempSync(join(tmpdir(), "calendar-reminder-boundary-"));
     roots.push(root);
     const accessManager = createAccessManager({ userDataRoot: root });
@@ -223,10 +281,18 @@ describe("calendar reminder scheduling boundary", () => {
     expect(reconciliation.ok).toBe(true);
     const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
     const listed = await schedules.list(resource, undefined, 10);
-    expect(listed.ok && listed.value.schedules).toHaveLength(10);
-    expect(listed.ok && listed.value.schedules.map((item) => item.timing)).toContainEqual({
-      kind: "once",
-      at: "2026-05-04T03:45:00.000Z",
+    expect(listed.ok && listed.value.schedules).toHaveLength(1);
+    expect(listed.ok && listed.value.schedules[0]).toMatchObject({
+      timing: {
+        kind: "recurring",
+        frequency: "weekly",
+        weekdays: ["sunday"],
+        localTime: "23:45",
+        timeZone: "America/Toronto",
+      },
+      source: { reminderId: `${created.value.eventId}:u_aaaaaaaa` },
+      nextRunAt: "2026-05-04T03:45:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
     });
     schedules.close();
     persistence.close();
