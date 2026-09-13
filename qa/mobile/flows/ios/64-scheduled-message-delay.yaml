@@ -2,8 +2,8 @@ appId: io.dev32.sentient.debug
 tags:
   - scheduled-messages
 ---
-# Numeric-input regression: replacement must not leave the prior "30" suffix
-# (the observed failure produced "1T"), and invalid input must keep the editor.
+# Numeric-input regression: replacement must not leave the prior "30" suffix.
+# Number-pad dismissal must precede each Save so keyboard cannot intercept tap.
 - runFlow: _helpers/open-settings.yaml
 - scrollUntilVisible:
     element: { id: "settings-cat-scheduled-messages" }
@@ -16,14 +16,32 @@ tags:
 - assertVisible: { id: "schedule-editor" }
 - tapOn: { id: "schedule-message" }
 - inputText: "${SCHEDULE_MESSAGE}"
+- assertVisible:
+    id: "schedule-message"
+    text: "${SCHEDULE_MESSAGE}"
 - tapOn: { text: "After delay" }
 - assertVisible: { id: "schedule-delay" }
 - tapOn: { id: "schedule-delay" }
 - eraseText
+- assertVisible:
+    id: "schedule-delay"
+    text: ""
 - inputText: "0"
 - assertVisible:
     id: "schedule-delay"
     text: "0"
+- assertVisible: { id: "schedule-keyboard-done" }
+- tapOn: { id: "schedule-keyboard-done" }
+- extendedWaitUntil:
+    notVisible: { id: "schedule-keyboard-done" }
+    timeout: 3000
+- assertVisible:
+    id: "schedule-delay"
+    text: "0"
+- scrollUntilVisible:
+    element: { id: "schedule-save" }
+    direction: DOWN
+- assertVisible: { id: "schedule-save" }
 - tapOn: { id: "schedule-save" }
 - assertVisible: { id: "schedule-editor" }
 - assertVisible: { text: "Choose a delay from one minute to one year." }
@@ -33,10 +51,18 @@ tags:
 - assertVisible:
     id: "schedule-delay"
     text: "1"
-- hideKeyboard
+- assertVisible: { id: "schedule-keyboard-done" }
+- tapOn: { id: "schedule-keyboard-done" }
+- extendedWaitUntil:
+    notVisible: { id: "schedule-keyboard-done" }
+    timeout: 3000
 - assertVisible:
     id: "schedule-delay"
     text: "1"
+- scrollUntilVisible:
+    element: { id: "schedule-save" }
+    direction: DOWN
+- assertVisible: { id: "schedule-save" }
 - tapOn: { id: "schedule-save" }
 - extendedWaitUntil:
     notVisible: { id: "schedule-editor" }

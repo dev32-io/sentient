@@ -97,6 +97,7 @@ private struct ScheduleEditor: View {
     @State private var recurringTime = "09:00"
     @State private var fieldErrors = ScheduleEditorFieldErrors()
     @FocusState private var messageFocused: Bool
+    @FocusState private var numericFieldFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -120,6 +121,7 @@ private struct ScheduleEditor: View {
                     accessibilityId: "schedule-save"
                 ) {
                     messageFocused = false
+                    numericFieldFocused = false
                     guard applyFields() else { return }
                     Task { await onSave() }
                 }
@@ -130,6 +132,16 @@ private struct ScheduleEditor: View {
                     accessibilityId: "schedule-cancel",
                     action: onCancel
                 )
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    messageFocused = false
+                    numericFieldFocused = false
+                }
+                .accessibilityIdentifier("schedule-keyboard-done")
             }
         }
         .onAppear {
@@ -145,14 +157,25 @@ private struct ScheduleEditor: View {
         case .once:
             DesignField(title: "Run at", prompt: "2026-08-01T15:30:00-07:00", text: $absolute, error: fieldErrors.absolute, accessibilityId: "schedule-once-at")
         case .delay:
-            DesignField(title: "Minutes from now", text: $delay, accessibilityId: "schedule-delay")
-                .keyboardType(.numberPad)
+            DesignField(
+                title: "Minutes from now",
+                text: $delay,
+                accessibilityId: "schedule-delay",
+                focused: $numericFieldFocused
+            )
+            .keyboardType(.numberPad)
         case .recurring:
             DesignSelect(title: "Frequency", options: ScheduleDraftFrequency.allCases.map { ($0, $0.rawValue) }, selection: $draft.frequency)
             DesignField(title: "Local time", prompt: "09:00", text: $recurringTime, error: fieldErrors.recurringTime, accessibilityId: "schedule-local-time")
             DesignSelect(title: "Weekday", options: weekdayOptions, selection: $draft.weekday, isEnabled: draft.frequency == .weekly)
-            DesignField(title: "Day of month", text: $day, accessibilityId: "schedule-month-day", isEnabled: draft.frequency == .monthly)
-                .keyboardType(.numberPad)
+            DesignField(
+                title: "Day of month",
+                text: $day,
+                accessibilityId: "schedule-month-day",
+                isEnabled: draft.frequency == .monthly,
+                focused: $numericFieldFocused
+            )
+            .keyboardType(.numberPad)
         }
     }
 

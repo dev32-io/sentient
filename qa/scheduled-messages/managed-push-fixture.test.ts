@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { migrateOperatorConfigYamlSync } from "../../gateway/src/config/operator-config-migrator.ts";
 import { buildServiceRegistry } from "../../gateway/src/system-orchestrator/service-registry.ts";
 
 const roots: string[] = [];
@@ -31,11 +32,13 @@ test("fixture config replaces credential-bound Gorush with loopback native stand
   ]);
   expect(run.exitCode).toBe(0);
   const parsed = Bun.YAML.parse(readFileSync(output, "utf8"));
+  expect(parsed.schema_version).toBe("qa-managed-push-v1");
   const entry = parsed.managed_services.gorush;
   expect(entry).toMatchObject({
     launch: "native",
     healthcheck: { url: "http://127.0.0.1:8088/healthz" },
     optional: true,
+    infra: true,
   });
   expect(Object.keys(parsed.managed_services).sort()).toEqual(["gorush", "inbound-proxy"]);
   expect(parsed.access).toEqual({
@@ -49,7 +52,7 @@ test("fixture config replaces credential-bound Gorush with loopback native stand
   expect(readFileSync(entry.exec[2], "utf8")).toContain("(deny network-outbound)");
 });
 
-test("generated real config builds public-door and managed-push registry", async () => {
+test("fresh-install infra selection includes public door and managed-push fixture", async () => {
   const root = mkdtempSync(join(tmpdir(), "push-qa-registry-"));
   roots.push(root);
   const output = join(root, "fixture.yaml");
@@ -64,7 +67,9 @@ test("generated real config builds public-door and managed-push registry", async
     root,
   ]);
   expect(run.exitCode).toBe(0);
+  migrateOperatorConfigYamlSync(output);
   const config = Bun.YAML.parse(readFileSync(output, "utf8"));
+  expect(config.schema_version).toBe("qa-managed-push-v1");
   const registry = await buildServiceRegistry({
     config: config.managed_services,
     readTemplate: (name) => readFile(join(import.meta.dir, "../../gateway/templates/services", name), "utf8"),
@@ -75,7 +80,15 @@ test("generated real config builds public-door and managed-push registry", async
     },
   });
   expect(registry.ok).toBe(true);
-  if (registry.ok) expect([...registry.value.keys()].sort()).toEqual(["gorush", "inbound-proxy"]);
+  if (registry.ok) {
+    expect([...registry.value.keys()].sort()).toEqual(["gorush", "inbound-proxy"]);
+    expect(
+      [...registry.value.values()]
+        .filter((service) => service.config.infra)
+        .map((service) => service.name)
+        .sort(),
+    ).toEqual(["gorush", "inbound-proxy"]);
+  }
 });
 
 test("fixture config refuses output outside disposable state root", () => {

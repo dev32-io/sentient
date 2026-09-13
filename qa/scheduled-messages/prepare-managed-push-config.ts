@@ -22,6 +22,9 @@ const config = Bun.YAML.parse(await readFile(source, "utf8"));
 if (!config || typeof config !== "object" || !config.managed_services || !config.access) {
   throw new Error("invalid gateway config");
 }
+// Ephemeral fixture config is projected from current validated source. Keep
+// operator migrations from re-adding production-only services after projection.
+config.schema_version = "qa-managed-push-v1";
 config.access.user_data_root = resolve(stateRoot, "gateway/users");
 config.access.shared_data_root = resolve(stateRoot, "gateway/shared");
 const inboundProxy = config.managed_services["inbound-proxy"];
@@ -45,6 +48,9 @@ config.managed_services = {
     healthcheck: { url: "http://127.0.0.1:8088/healthz", timeout_ms: 10_000 },
     depends_on: [],
     optional: true,
+    // Fresh isolated roots are pre-wizard. This QA transport must join only
+    // that fixture's infra-only boot; production Gorush remains non-infra.
+    infra: true,
   },
 };
 await writeFile(output, Bun.YAML.stringify(config), { flag: "wx", mode: 0o600 });

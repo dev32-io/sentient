@@ -92,12 +92,19 @@ curl -ksS -o /dev/null -w 'install %{http_code}\n' https://localhost/api/v1/inst
 
 Record the isolated `scheduling.missedGraceMs` value before the run. Create distinct future disposable schedules through normal APIs: once pending across restart, inside-grace missed, outside-grace missed, recurring due, and a schedule with push enabled. Stop before due and leave each intended instant to age naturally; never change host time or backdate storage. Allow measured stack startup margin, then start only through the stack script.
 
-Credential-free macOS runs may generate an isolated config containing only public-door infrastructure plus a local `gorush` stand-in. Generator rewrites user/shared storage under disposable root, fails closed unless `sandbox-exec` is available, and installs a profile denying all outbound network before launch. `SENTIENT_GATEWAY_ROOT` must use same root so auth/profile storage is isolated too. Stand-in proves gateway/provider/supervisor outage and recovery only—not Gorush or APNs compatibility:
+Credential-free macOS runs may generate an isolated config containing only public-door infrastructure plus a local `gorush` stand-in. Generator marks only this QA stand-in as infrastructure so fresh pre-wizard fixture roots start it through normal infra-only boot; production Gorush stays unchanged. Generated projection uses a QA-only schema marker so startup operator migrations cannot repopulate stripped production services. Generator rewrites user/shared storage under disposable root, fails closed unless `sandbox-exec` is available, and installs a profile denying all outbound network before launch. `SENTIENT_GATEWAY_ROOT` and `HOST_CONFIG_DIR` must use same root so auth/profile and rendered addon config stay isolated too. Stand-in proves gateway/provider/supervisor outage and recovery only—not Gorush or APNs compatibility:
 
 ```bash
 export SENTIENT_HOME="$(mktemp -d /tmp/sentient-push-e2e.XXXXXX)"
 export SENTIENT_GATEWAY_ROOT="$SENTIENT_HOME/gateway"
+export HOST_CONFIG_DIR="$SENTIENT_HOME/gateway/config"
 export GATEWAY_CONFIG_PATH="$SENTIENT_HOME/push-fixture-config.yaml"
+# Refuse any existing listener. Native supervisor also rejects—not adopts or
+# signals—an unowned holder, but failing before boot gives cleaner evidence.
+if lsof -nP -iTCP:8088 -sTCP:LISTEN | grep -q .; then
+  echo "refusing occupied managed-push fixture port 8088" >&2
+  exit 1
+fi
 bun qa/scheduled-messages/prepare-managed-push-config.ts \
   --source gateway/config.yaml --output "$GATEWAY_CONFIG_PATH" --state-root "$SENTIENT_HOME"
 scripts/stack.sh up
