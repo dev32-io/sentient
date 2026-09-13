@@ -90,7 +90,24 @@ curl -ksS -o /dev/null -w 'door ready %{http_code}\n' https://localhost/api/v1/r
 curl -ksS -o /dev/null -w 'install %{http_code}\n' https://localhost/api/v1/install-state
 ```
 
-Record the isolated `scheduling.missedGraceMs` value before the run. Create distinct future disposable schedules through normal APIs: once pending across restart, inside-grace missed, outside-grace missed, recurring due, and a schedule with push enabled. Stop before due and leave each intended instant to age naturally; never change host time or backdate storage. Allow measured stack startup margin, then start only through the stack script. Stop managed Gorush through its supported local supervisor only, then restore. Pass requires direct+door ready recovery, one session for eligible work, no old backlog, consumed once/interrupted entries, recurring next run, and cards/chats surviving push outage. If managed push outage cannot be executed, record exact missing local supervisor/addon prerequisite rather than claiming it passed.
+Record the isolated `scheduling.missedGraceMs` value before the run. Create distinct future disposable schedules through normal APIs: once pending across restart, inside-grace missed, outside-grace missed, recurring due, and a schedule with push enabled. Stop before due and leave each intended instant to age naturally; never change host time or backdate storage. Allow measured stack startup margin, then start only through the stack script.
+
+Credential-free macOS runs may generate an isolated config containing only public-door infrastructure plus a local `gorush` stand-in. Generator rewrites user/shared storage under disposable root, fails closed unless `sandbox-exec` is available, and installs a profile denying all outbound network before launch. `SENTIENT_GATEWAY_ROOT` must use same root so auth/profile storage is isolated too. Stand-in proves gateway/provider/supervisor outage and recovery only—not Gorush or APNs compatibility:
+
+```bash
+export SENTIENT_HOME="$(mktemp -d /tmp/sentient-push-e2e.XXXXXX)"
+export SENTIENT_GATEWAY_ROOT="$SENTIENT_HOME/gateway"
+export GATEWAY_CONFIG_PATH="$SENTIENT_HOME/push-fixture-config.yaml"
+bun qa/scheduled-messages/prepare-managed-push-config.ts \
+  --source gateway/config.yaml --output "$GATEWAY_CONFIG_PATH" --state-root "$SENTIENT_HOME"
+scripts/stack.sh up
+curl -fsS http://127.0.0.1:8088/healthz >/dev/null
+# After push work is pending, fixture-owned stop simulates transport loss.
+curl -fsS -X POST http://127.0.0.1:8088/qa/stop >/dev/null
+# Observe optional service failure then watchdog-owned restart via status/health.
+```
+
+Pass requires direct+door ready recovery, one session for eligible work, no old backlog, consumed once/interrupted entries, recurring next run, and cards/chats surviving push outage. Never claim Gorush/APNs compatibility from stand-in. If sandbox or managed fixture cannot execute, record exact prerequisite instead of claiming outage passed.
 
 ## Deterministic proof commands
 

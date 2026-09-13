@@ -1,0 +1,44 @@
+appId: io.dev32.sentient.debug
+tags:
+  - scheduled-messages
+---
+# Numeric-input regression: replacement must not leave the prior "30" suffix
+# (the observed failure produced "1T"), and invalid input must keep the editor.
+- runFlow: _helpers/open-settings.yaml
+- scrollUntilVisible:
+    element: { id: "settings-cat-scheduled-messages" }
+    direction: DOWN
+- tapOn: { id: "settings-cat-scheduled-messages" }
+- extendedWaitUntil:
+    visible: { id: "scheduled-messages-screen" }
+    timeout: 5000
+- tapOn: { id: "schedule-add" }
+- assertVisible: { id: "schedule-editor" }
+- tapOn: { id: "schedule-message" }
+- inputText: "${SCHEDULE_MESSAGE}"
+- tapOn: { text: "After delay" }
+- assertVisible: { id: "schedule-delay" }
+- tapOn: { id: "schedule-delay" }
+- eraseText
+- inputText: "0"
+- assertVisible:
+    id: "schedule-delay"
+    text: "0"
+- tapOn: { id: "schedule-save" }
+- assertVisible: { id: "schedule-editor" }
+- assertVisible: { text: "Choose a delay from one minute to one year." }
+- tapOn: { id: "schedule-delay" }
+- eraseText
+- inputText: "1"
+- assertVisible:
+    id: "schedule-delay"
+    text: "1"
+- hideKeyboard
+- assertVisible:
+    id: "schedule-delay"
+    text: "1"
+- tapOn: { id: "schedule-save" }
+- extendedWaitUntil:
+    notVisible: { id: "schedule-editor" }
+    timeout: 10000
+- assertVisible: { text: "${SCHEDULE_MESSAGE}" }

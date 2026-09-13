@@ -146,11 +146,13 @@ private struct ScheduleEditor: View {
             DesignField(title: "Run at", prompt: "2026-08-01T15:30:00-07:00", text: $absolute, error: fieldErrors.absolute, accessibilityId: "schedule-once-at")
         case .delay:
             DesignField(title: "Minutes from now", text: $delay, accessibilityId: "schedule-delay")
+                .keyboardType(.numberPad)
         case .recurring:
             DesignSelect(title: "Frequency", options: ScheduleDraftFrequency.allCases.map { ($0, $0.rawValue) }, selection: $draft.frequency)
             DesignField(title: "Local time", prompt: "09:00", text: $recurringTime, error: fieldErrors.recurringTime, accessibilityId: "schedule-local-time")
             DesignSelect(title: "Weekday", options: weekdayOptions, selection: $draft.weekday, isEnabled: draft.frequency == .weekly)
             DesignField(title: "Day of month", text: $day, accessibilityId: "schedule-month-day", isEnabled: draft.frequency == .monthly)
+                .keyboardType(.numberPad)
         }
     }
 
