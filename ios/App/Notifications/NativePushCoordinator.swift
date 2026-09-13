@@ -110,6 +110,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     private var deviceToken: String?
     private var registrationTask: Task<Void, Never>?
     private var accountTransitionTask: Task<Void, Never>?
+    private var retryAfterAccountTransition = false
     private var transitionGeneration = 0
     private var pendingConfiguration: NativePushAccountConfiguration?
     private var pendingLogout = false
@@ -244,13 +245,15 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     func dismissLifecycleWarning() { lifecycleWarning = nil }
 
     func retryPendingUnlink() {
-        guard accountTransitionTask == nil, let lifecycle else { return }
+        guard let lifecycle else { return }
+        guard accountTransitionTask == nil else {
+            retryAfterAccountTransition = true
+            return
+        }
         transitionGeneration += 1
         let operation = transitionGeneration
         accountTransitionTask = Task {
-            defer {
-                if self.transitionGeneration == operation { self.accountTransitionTask = nil }
-            }
+            defer { finishAccountTransitionTask(operation: operation, lifecycle: lifecycle) }
             do {
                 let result = try await lifecycle.retryPendingUnlink()
                 guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
@@ -318,9 +321,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
             ? "Notifications may continue until this device reconnects."
             : "Notification activation is waiting for the previous binding to be disabled."
         accountTransitionTask = Task {
-            defer {
-                if self.transitionGeneration == operation { self.accountTransitionTask = nil }
-            }
+            defer { finishAccountTransitionTask(operation: operation, lifecycle: lifecycle) }
             do {
                 let result = try await lifecycle.unlink(ownerFence: ownerFence)
                 guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
@@ -341,6 +342,16 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
                 guard self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
                 lifecycleWarning = "Notifications may continue until this device reconnects."
             }
+        }
+    }
+
+    private func finishAccountTransitionTask(operation: Int, lifecycle: NativePushLifecycleClient) {
+        guard transitionGeneration == operation else { return }
+        accountTransitionTask = nil
+        let retry = retryAfterAccountTransition
+        retryAfterAccountTransition = false
+        if retry, self.lifecycle === lifecycle, case .pendingUnlink = lifecycle.state {
+            retryPendingUnlink()
         }
     }
 

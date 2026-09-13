@@ -133,15 +133,15 @@ private struct ScheduleEditor: View {
                     action: onCancel
                 )
             }
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    messageFocused = false
-                    numericFieldFocused = false
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        messageFocused = false
+                        numericFieldFocused = false
+                    }
+                    .accessibilityIdentifier("schedule-keyboard-done")
                 }
-                .accessibilityIdentifier("schedule-keyboard-done")
             }
         }
         .onAppear {
