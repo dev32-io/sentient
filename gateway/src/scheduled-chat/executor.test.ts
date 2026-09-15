@@ -46,7 +46,11 @@ function setup() {
   const accessManager = createAccessManager({ userDataRoot: root });
   const principal = createUserPrincipal("u_aaaaaaaa", "adult", "actual-home");
   const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
-  const service = createScheduleService({ userDataRoot: root, id: () => crypto.randomUUID() });
+  const service = createScheduleService({
+    userDataRoot: root,
+    id: () => crypto.randomUUID(),
+    clock: () => new Date("2026-08-01T15:02:00Z"),
+  });
   return { root, accessManager, principal, resource, service };
 }
 
@@ -218,16 +222,16 @@ describe("scheduled chat consumer boundary", () => {
     expect(await service.list(resource, undefined, 10)).toEqual({ ok: true, value: { schedules: [] } });
     const queued = await service.claim(new Date("2026-08-01T15:02:00Z"), 10, 1_000);
     expect(queued.ok && queued.value).toHaveLength(1);
-    const schedulingDb = new Database(join(root, principal.userId, "scheduling-v1", "schedules.db"));
-    expect(schedulingDb.query<{ count: number }, []>("SELECT count(*) count FROM scheduled_cards").get()?.count).toBe(
-      0,
-    );
+    const schedulingDb = new Database(join(root, principal.userId, "sessions.db"));
+    expect(
+      schedulingDb.query<{ count: number }, []>("SELECT count(*) count FROM notification_cards").get()?.count,
+    ).toBe(1);
     schedulingDb.close();
     service.close();
   });
 
   test("fences an edited generation, then advances the current recurring generation after interruption", async () => {
-    const { principal, resource, service } = setup();
+    const { accessManager, principal, resource, service } = setup();
     const created = await service.create(
       resource,
       {
@@ -254,6 +258,9 @@ describe("scheduled chat consumer boundary", () => {
           const sessionId = `session-${submissions}`;
           const associated = await service.associateSession(execution.claim, sessionId);
           if (!associated.ok) return associated;
+          const store = openSessionStore(accessManager.grant(principal, "session-store"));
+          store.createSession(sessionId, `scheduled:${execution.claim.occurrenceId}`);
+          store.close();
           if (submissions === 1) {
             const edited = await service.patch(
               resource,

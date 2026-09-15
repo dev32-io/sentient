@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+
 // Merge the just-deployed platform block into the existing manifest JSON.
-// Inputs via env (see deploy-mobile.sh). Prints the merged manifest to stdout.
+// Version inputs use env; Release identity always comes from shared constants.
+// Prints the merged manifest to stdout.
+const releaseBundleId = JSON.parse(
+  readFileSync(new URL("../shared/config/build-variants.json", import.meta.url), "utf8"),
+).Release.bundleId;
 const prev = JSON.parse(process.env.EXISTING || "{}");
 const plat = process.env.PLAT;
 if (plat === "android") {
@@ -15,7 +21,7 @@ if (plat === "android") {
     bundleVersion: Number(process.env.IOS_BUNDLE_VERSION),
     shortVersion: process.env.IOS_SHORT_VERSION,
     minSupportedBuild: Number(process.env.IOS_MIN_BUILD || 0),
-    bundleId: process.env.IOS_BUNDLE_ID,
+    bundleId: releaseBundleId,
     url: "/download/ios/latest.ipa",
     manifestUrl: "/download/ios/manifest.plist",
     notes: "",

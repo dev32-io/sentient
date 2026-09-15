@@ -101,6 +101,8 @@ data class Schedule(
     val preview: String? = null,
 )
 @Serializable data class ScheduledSessionCardPage(val cards: List<ScheduledSessionCard>, val nextCursor: String? = null)
+@Serializable data class ScheduledSessionCardsClearRequest(val occurrenceIds: List<String>)
+@Serializable data class ScheduledSessionCardsClearResponse(val cleared: Boolean)
 
 internal fun ScheduleCreateRequest.validate() {
     require(idempotencyKey.isNotBlank() && idempotencyKey.length <= 200)
@@ -135,6 +137,11 @@ internal fun ScheduledSessionCard.validate() {
     require(intendedAt.isWireInstant() && completedAt.isWireInstant())
     require(if (status == ScheduledSessionStatus.COMPLETED) !preview.isNullOrBlank() && preview.length <= 280 else preview == null)
 }
+internal fun ScheduledSessionCardsClearRequest.validate() {
+    require(occurrenceIds.size in 1..10_000)
+    require(occurrenceIds.all(String::isNotEmpty) && occurrenceIds.distinct().size == occurrenceIds.size)
+}
+internal fun ScheduledSessionCardsClearResponse.validate() { require(cleared) }
 private fun validateRecurrence(frequency: ScheduleFrequency, localTime: String, timeZone: String, weekdays: List<ScheduleWeekday>?, dayOfMonth: Int?) {
     require(Regex("^(?:[01]\\d|2[0-3]):[0-5]\\d$").matches(localTime) && timeZone.isNotBlank() && timeZone.length <= 128)
     TimeZone.of(timeZone)

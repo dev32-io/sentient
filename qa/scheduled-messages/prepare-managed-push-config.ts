@@ -9,6 +9,10 @@ const value = (name: string): string => {
   if (!result) throw new Error(`missing ${name}`);
   return result;
 };
+const port = process.argv.includes("--port") ? Number(value("--port")) : 18088;
+if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === 8088) {
+  throw new Error("managed-push fixture port must be 1024–65535, excluding real Gorush port 8088");
+}
 const source = resolve(value("--source"));
 const output = resolve(value("--output"));
 const stateRootInput = value("--state-root");
@@ -27,6 +31,10 @@ if (!config || typeof config !== "object" || !config.managed_services || !config
 config.schema_version = "qa-managed-push-v1";
 config.access.user_data_root = resolve(stateRoot, "gateway/users");
 config.access.shared_data_root = resolve(stateRoot, "gateway/shared");
+config.push = {
+  ...config.push,
+  provider_url: `http://127.0.0.1:${port}/api/push`,
+};
 const inboundProxy = config.managed_services["inbound-proxy"];
 if (!inboundProxy) throw new Error("gateway config has no inbound-proxy policy");
 
@@ -45,7 +53,8 @@ config.managed_services = {
       process.execPath,
       resolve(import.meta.dir, "managed-push-fixture.ts"),
     ],
-    healthcheck: { url: "http://127.0.0.1:8088/healthz", timeout_ms: 10_000 },
+    env: { PUSH_QA_PORT: String(port) },
+    healthcheck: { url: `http://127.0.0.1:${port}/healthz`, timeout_ms: 10_000 },
     depends_on: [],
     optional: true,
     // Fresh isolated roots are pre-wizard. This QA transport must join only

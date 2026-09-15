@@ -158,7 +158,8 @@ export function createSessionMetadataOps(db: Database, userId: string): SessionM
     RETURNING *
   `);
   const setScheduledTerminal = db.query<SessionRow, [string, string, string | null, string, string]>(`
-    UPDATE sessions SET scheduled_outcome=?, scheduled_completed_at=?, scheduled_entry_id=?
+    UPDATE sessions
+    SET scheduled_outcome=?, scheduled_completed_at=?, scheduled_entry_id=?
     WHERE session_id=? AND scheduled_turn_id=? AND scheduled_outcome IS NULL
     RETURNING *
   `);

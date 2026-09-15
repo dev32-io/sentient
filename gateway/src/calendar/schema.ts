@@ -1,86 +1,93 @@
-/**
- * V2 is a fresh cutover.  Unlike the other per-user stores, this schema is
- * intentionally not a migration ladder: an old `calendar/calendar.db` is
- * outside the V2 location and an old database copied into the V2 location is
- * not interpreted by this module.
- */
-export const CALENDAR_DDL = `
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA foreign_keys = ON;
+import type { StoreMigration } from "../store/schema.js";
 
-CREATE TABLE events (
-  id TEXT PRIMARY KEY,
-  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
-  title TEXT NOT NULL,
-  description TEXT,
-  start_instant TEXT,
-  start_time_zone_id TEXT,
-  start_all_day INTEGER NOT NULL DEFAULT 0 CHECK (start_all_day IN (0, 1)),
-  start_date TEXT,
-  end_instant TEXT,
-  end_time_zone_id TEXT,
-  end_all_day INTEGER NOT NULL DEFAULT 0 CHECK (end_all_day IN (0, 1)),
-  end_date TEXT,
-  recurrence TEXT,
-  visibility TEXT NOT NULL DEFAULT 'everyone',
-  importance TEXT NOT NULL DEFAULT 'normal',
-  "group" TEXT,
-  notification_policy TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE exceptions (
-  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  occurrence_key TEXT NOT NULL,
-  cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
-  override_json TEXT,
-  PRIMARY KEY (event_id, occurrence_key)
-);
-
-CREATE TABLE exclusions (
-  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  occurrence_key TEXT NOT NULL,
-  PRIMARY KEY (event_id, occurrence_key)
-);
-
-CREATE TABLE tags (
-  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  tag TEXT NOT NULL,
-  PRIMARY KEY (event_id, tag)
-);
-
-CREATE TABLE reminder_consents (
-  event_id TEXT NOT NULL,
-  owner_user_id TEXT NOT NULL,
-  consented_at TEXT NOT NULL,
-  PRIMARY KEY (event_id, owner_user_id)
-);
-
-CREATE TABLE reminder_reconciliation (
-  event_id TEXT PRIMARY KEY,
-  requested_at TEXT NOT NULL,
-  attempt_count INTEGER NOT NULL DEFAULT 0,
-  generation INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE INDEX idx_events_start_instant ON events (start_instant);
-CREATE INDEX idx_events_start_date ON events (start_date);
-`;
-
-export const CALENDAR_MIGRATIONS = [
+export const CALENDAR_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    title TEXT NOT NULL,
+    description TEXT,
+    start_instant TEXT,
+    start_time_zone_id TEXT,
+    start_all_day INTEGER NOT NULL DEFAULT 0 CHECK (start_all_day IN (0, 1)),
+    start_date TEXT,
+    end_instant TEXT,
+    end_time_zone_id TEXT,
+    end_all_day INTEGER NOT NULL DEFAULT 0 CHECK (end_all_day IN (0, 1)),
+    end_date TEXT,
+    recurrence TEXT,
+    visibility TEXT NOT NULL DEFAULT 'everyone',
+    importance TEXT NOT NULL DEFAULT 'normal',
+    "group" TEXT,
+    notification_policy TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS exceptions (
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL,
+    cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
+    override_json TEXT,
+    PRIMARY KEY (event_id, occurrence_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS exclusions (
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL,
+    PRIMARY KEY (event_id, occurrence_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS tags (
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (event_id, tag)
+  )`,
   `CREATE TABLE IF NOT EXISTS reminder_consents (
     event_id TEXT NOT NULL,
     owner_user_id TEXT NOT NULL,
     consented_at TEXT NOT NULL,
     PRIMARY KEY (event_id, owner_user_id)
-  );
-  CREATE TABLE IF NOT EXISTS reminder_reconciliation (
+  )`,
+  `CREATE TABLE IF NOT EXISTS reminder_reconciliation (
     event_id TEXT PRIMARY KEY,
     requested_at TEXT NOT NULL,
-    attempt_count INTEGER NOT NULL DEFAULT 0
-  );`,
-  "ALTER TABLE reminder_reconciliation ADD COLUMN generation INTEGER NOT NULL DEFAULT 1;",
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    generation INTEGER NOT NULL DEFAULT 1
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_events_start_instant ON events (start_instant)",
+  "CREATE INDEX IF NOT EXISTS idx_events_start_date ON events (start_date)",
 ] as const;
+
+export const CALENDAR_DDL = `
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = ON;
+${CALENDAR_SCHEMA_STATEMENTS.join(";\n")};
+`;
+
+export const CALENDAR_MIGRATIONS: readonly StoreMigration[] = [
+  {
+    version: 1,
+    name: "calendar-v2.base",
+    statements: CALENDAR_SCHEMA_STATEMENTS.slice(0, 4),
+  },
+  {
+    version: 2,
+    name: "calendar-v2.reminders",
+    statements: [
+      CALENDAR_SCHEMA_STATEMENTS[4],
+      `CREATE TABLE IF NOT EXISTS reminder_reconciliation (
+        event_id TEXT PRIMARY KEY,
+        requested_at TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0
+      )`,
+    ],
+  },
+  {
+    version: 3,
+    name: "calendar-v2.reconciliation-generation",
+    statements: [
+      "ALTER TABLE reminder_reconciliation ADD COLUMN generation INTEGER NOT NULL DEFAULT 1",
+      CALENDAR_SCHEMA_STATEMENTS[6],
+      CALENDAR_SCHEMA_STATEMENTS[7],
+    ],
+  },
+];
 export const CALENDAR_SCHEMA_VERSION = 3;

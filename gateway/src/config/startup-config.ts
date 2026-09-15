@@ -22,6 +22,7 @@ import type {
   TlsConfig as TlsYaml,
   WebuiConfig as WebuiYaml,
 } from "@sentient/config";
+import { getBuildVariant } from "@sentient/config";
 import { getLog } from "../logging/logger.ts";
 import { resolveWebDistDir } from "./asset-root.ts";
 import { loadGatewayConfig } from "./gateway-config.ts";
@@ -88,11 +89,16 @@ export interface SchedulingStartupConfig {
   maxMessageChars: number;
   cardsDefaultPageSize: number;
   cardsMaxPageSize: number;
+  inboxMaxEntries: number;
+  inboxRetentionMs: number;
   outboxClaimLimit: number;
   outboxLeaseMs: number;
 }
 
 export interface PushStartupConfig {
+  providerUrl: string;
+  apnsTopic: string;
+  apnsSandbox: boolean;
   requestTimeoutMs: number;
   drainIntervalMs: number;
   drainClaimLimit: number;
@@ -214,14 +220,22 @@ function mapSchedulingConfig(value: SchedulingYaml | undefined): SchedulingStart
     maxMessageChars: value.max_message_chars,
     cardsDefaultPageSize: value.cards_default_page_size,
     cardsMaxPageSize: value.cards_max_page_size,
+    inboxMaxEntries: value.inbox_max_entries,
+    inboxRetentionMs: value.inbox_retention_ms,
     outboxClaimLimit: value.outbox_claim_limit,
     outboxLeaseMs: value.outbox_lease_ms,
   };
 }
 
-function mapPushConfig(value: PushYaml | undefined): PushStartupConfig | undefined {
+function mapPushConfig(
+  value: PushYaml | undefined,
+  identity: ReturnType<typeof getBuildVariant>,
+): PushStartupConfig | undefined {
   if (!value) return undefined;
   return {
+    providerUrl: value.provider_url ?? "http://127.0.0.1:8088/api/push",
+    apnsTopic: identity.bundleId,
+    apnsSandbox: identity.apnsSandbox,
     requestTimeoutMs: value.request_timeout_ms,
     drainIntervalMs: value.drain_interval_ms,
     drainClaimLimit: value.drain_claim_limit,
@@ -300,7 +314,7 @@ export function loadStartupConfig(): StartupConfig {
     store: cfg.store,
     orchestrator: cfg.orchestrator,
     scheduling: mapSchedulingConfig(cfg.scheduling),
-    push: mapPushConfig(cfg.push),
+    push: mapPushConfig(cfg.push, getBuildVariant()),
 
     language: cfg.stt.language,
 

@@ -64,11 +64,8 @@
 .s-nav-copy {
   min-width: 0;
   display: grid;
-  overflow: hidden;
   font-size: 14px;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .s-nav-copy > small {
   overflow: hidden;

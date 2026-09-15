@@ -51,7 +51,7 @@ export interface ScheduledMessageProductToolConfig extends Readonly<Record<strin
 }
 
 const timingDescription =
-  "Choose once-at for one future instant, once-after for a relative delay resolved once when accepted, or recurring for daily/weekly/monthly local wall time. This schedules chat, not a calendar event.";
+  "Use a complete canonical timing object: {kind:'once-at',at:'RFC 3339 instant'}, {kind:'once-after',afterSeconds:300}, or {kind:'recurring',frequency:'daily',localTime:'09:00',timeZone:'America/Toronto'}. Weekly also requires weekdays; monthly also requires dayOfMonth. This schedules chat, not a calendar event.";
 const localTimeParameter = {
   type: "string",
   pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",
@@ -68,17 +68,17 @@ const weekdayItems = {
   enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
 };
 const recurringProperties = {
-  kind: { const: "recurring" },
+  kind: { type: "string", enum: ["recurring"] },
   localTime: localTimeParameter,
   timeZone: timeZoneParameter,
 };
 const timingParameters = {
   description: timingDescription,
-  oneOf: [
+  anyOf: [
     {
       type: "object",
       properties: {
-        kind: { const: "once-at" },
+        kind: { type: "string", enum: ["once-at"] },
         at: { type: "string", format: "date-time", description: "RFC 3339 instant with an explicit offset" },
       },
       required: ["kind", "at"],
@@ -87,12 +87,12 @@ const timingParameters = {
     {
       type: "object",
       properties: {
-        kind: { const: "once-after" },
+        kind: { type: "string", enum: ["once-after"] },
         afterSeconds: {
           type: "integer",
           minimum: 1,
           maximum: 31_536_000,
-          description: "Positive delay resolved once at acceptance; e.g. 1800 means chat in 30 minutes",
+          description: "Positive delay resolved once at acceptance; e.g. 300 means chat in 5 minutes",
         },
       },
       required: ["kind", "afterSeconds"],
@@ -100,7 +100,7 @@ const timingParameters = {
     },
     {
       type: "object",
-      properties: { ...recurringProperties, frequency: { const: "daily" } },
+      properties: { ...recurringProperties, frequency: { type: "string", enum: ["daily"] } },
       required: ["kind", "frequency", "localTime", "timeZone"],
       additionalProperties: false,
     },
@@ -108,7 +108,7 @@ const timingParameters = {
       type: "object",
       properties: {
         ...recurringProperties,
-        frequency: { const: "weekly" },
+        frequency: { type: "string", enum: ["weekly"] },
         weekdays: { type: "array", items: weekdayItems, minItems: 1, maxItems: 7, uniqueItems: true },
       },
       required: ["kind", "frequency", "localTime", "timeZone", "weekdays"],
@@ -118,7 +118,7 @@ const timingParameters = {
       type: "object",
       properties: {
         ...recurringProperties,
-        frequency: { const: "monthly" },
+        frequency: { type: "string", enum: ["monthly"] },
         dayOfMonth: { type: "integer", minimum: 1, maximum: 31 },
       },
       required: ["kind", "frequency", "localTime", "timeZone", "dayOfMonth"],
@@ -324,7 +324,7 @@ function invalid(error?: z.ZodError): ToolResult {
       code: "invalid_arguments",
       ...(issues.length > 0 ? { issues } : {}),
       expected:
-        "Use canonical timing: once-at {at}, once-after {afterSeconds}, or recurring {frequency, localTime, timeZone}; weekly also requires weekdays and monthly also requires dayOfMonth.",
+        "Use complete canonical timing: {kind:'once-at',at:'2026-09-12T05:00:00Z'}, {kind:'once-after',afterSeconds:300}, or {kind:'recurring',frequency:'daily',localTime:'09:00',timeZone:'America/Toronto'}; weekly also requires weekdays and monthly also requires dayOfMonth.",
     }),
     isError: true,
   };

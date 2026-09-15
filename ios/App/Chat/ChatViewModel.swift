@@ -12,9 +12,8 @@
 // VM teardown on conversation switch must NEVER disconnect the SDK. deinit only
 // cancels this VM's collection tasks.
 //
-// Flush gate (web-sdk / Android parity): queued sends drain on the rising edge to
-// READY; a send while already-READY flushes immediately. Reconcile-by-pendingId
-// drops the optimistic copy once its committed echo arrives.
+// Shared drain observes real connection, route authority, and pending entries in
+// this VM's scope. Reconcile-by-pendingId removes committed optimistic copies.
 //
 // SKIE bridges Kotlin Flows as AsyncSequence (for await) and usecases'
 // `operator fun invoke` as `.invoke(...)`. @MainActor: all @Published mutation on
@@ -62,6 +61,7 @@ final class ChatViewModel: ObservableObject {
     private let cache = createOutboundCache()
 
     private var chatTask: Task<Void, Never>?
+    private var outboundTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var talkModeTask: Task<Void, Never>?
     private var micLevelsTask: Task<Void, Never>?
@@ -83,21 +83,23 @@ final class ChatViewModel: ObservableObject {
     /// Task.sleep(nanoseconds:) duration.
     private static let nsPerMs: UInt64 = 1_000_000
 
-    init(component: ChatComponent, sessionId: String?) {
+    init(component: ChatComponent, sessionId: String?, activateOnInit: Bool = true) {
         self.component = component
         log.info("init sessionId=\(sessionId ?? "<new>")")
 
-        // A null route entry is a cold/new-chat boundary, not an implicit reattach.
-        // Explicit preparation is fire-and-forget, so the composer is usable while
-        // the gateway prepares the draft/attachment for the first queued message.
-        if let sessionId {
-            component.switchConversation.invoke(sessionId: sessionId)
-        } else {
-            component.switchConversation.startFreshChat()
-        }
+        // Bind this VM-owned cache to one route generation. Notification/deep-link
+        // routes reuse the generation claimed by their acknowledged activation.
+        component.bindChatRoute(cache: cache, sessionId: sessionId, activate: activateOnInit)
 
         startChatCollecting()
         startConnectionCollecting()
+        let outbound = component.observeOutbound(cache: cache)
+        outboundTask = Task { [weak self] in
+            for await _ in outbound {
+                guard let self else { return }
+                self.component.flushOutbound(cache: self.cache)
+            }
+        }
         startTalkModeCollecting()
         startMicLevelsCollecting()
         startColdReplaceCollecting()
@@ -106,24 +108,16 @@ final class ChatViewModel: ObservableObject {
         startPermissionCollecting()
     }
 
-    private var isReady: Bool { connection.status == .ready }
-
     // ── Public actions ────────────────────────────────────────────────────────
 
-    /// Enqueue an optimistic send; the outbox shows the bubble immediately. Flush
-    /// now if READY, otherwise it drains on the next rising edge to READY (the
-    /// connection collector re-fires flushIfReady on every emission).
+    /// Enqueue immediately; shared authority observation drives the drain.
     func send(_ text: String) {
         let id = UUID().uuidString
         log.info("send len=\(text.count) pendingId=\(id)")
         cache.enqueue(id: id, text: text)
-        if isReady {
-            component.sendMessage.flushIfReady(cache: cache, status: connection.status)
-        }
     }
 
-    /// Re-queue a FAILED pending message. If transport is down, force a reconnect so
-    /// the rising edge to READY drains it; then attempt an immediate ready-gated flush.
+    /// Re-queue a FAILED message and verify connectivity. Shared drain keeps its id.
     func retry(_ pendingId: String) {
         log.info("retry pendingId=\(pendingId)")
         cache.retry(id: pendingId)
@@ -131,7 +125,6 @@ final class ChatViewModel: ObservableObject {
         // after a silent path change still reports READY, so a bare re-send would fail
         // again. ensureConnected() probes (READY→ping→reconnect-if-dead) or reconnects.
         component.ensureConnected()
-        component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
     /// Composer capture intents are semantic UI commands. Capture IDs, terminals,
@@ -235,11 +228,10 @@ final class ChatViewModel: ObservableObject {
         log.debug("chat committed=\(model.committed.count) pending=\(model.pending.count) live=\(model.live != nil) historyLoading=\(model.historyLoading)")
     }
 
-    // ── Connection stream collection + flush-on-READY ─────────────────────────
+    // ── Connection stream collection ─────────────────────────────────────────
 
     private func startConnectionCollecting() {
-        // connection.state is a SkieSwiftFlow<ConnectionState>. Folds the latest
-        // value into @Published connection and flushes the outbox on READY.
+        // UI projection only; shared outbound observation uses real SDK authority.
         connectionTask = Task { [weak self] in
             guard let self else { return }
             for await conn in self.component.connection.state {
@@ -251,10 +243,6 @@ final class ChatViewModel: ObservableObject {
     private func applyConnection(_ conn: ConnectionState) {
         connection = conn
         log.debug("connection status=\(conn.status.name)")
-        // flushIfReady is a no-op off the READY edge and when nothing is queued —
-        // safe + idempotent to fire on every emission. It drains the outbox on the
-        // rising edge into READY (reconnect / first-connect).
-        component.sendMessage.flushIfReady(cache: cache, status: conn.status)
         // Sweep unacked timeouts on every connection event (idempotent; guarded so we
         // only touch the cache when something is in flight). The cache owns the
         // clock + timeout — we only DRIVE the sweep.
@@ -415,6 +403,7 @@ final class ChatViewModel: ObservableObject {
     deinit {
         chatTask?.cancel()
         connectionTask?.cancel()
+        outboundTask?.cancel()
         talkModeTask?.cancel()
         micLevelsTask?.cancel()
         coldReplaceTask?.cancel()

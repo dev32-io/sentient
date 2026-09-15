@@ -15,6 +15,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.sentient.mobilesdk.log.Log
 import io.sentient.mobilesdk.log.createLogger
+import kotlinx.coroutines.CancellationException
 
 // ── Named path constants relative to the /api/v1 base URL ──
 // baseUrl already ends at /api/v1 (derived from wss://host/api/v1/ws).
@@ -112,7 +113,7 @@ class AuthClient(
      * GET /api/v1/auth/me
      *
      * Validates the token and returns a refreshed [AuthResponse]. The gateway
-     * calls tokens.refresh(token) so the returned token is always a new one.
+     * issues a fresh identity token, so the returned token is always a new one.
      * Sends Authorization: Bearer <token>. Token value is NEVER logged.
      * On any 401 returns [AuthError.InvalidCredentials].
      */
@@ -165,6 +166,7 @@ class AuthClient(
         log.info("changePin.start")
         return safeCall {
             val response = httpClient.put("$baseUrl$PATH_CHANGE_PIN") {
+                domainUnauthorized()
                 header(HttpHeaders.Authorization, "Bearer $token")
                 contentType(ContentType.Application.Json)
                 setBody(ChangePinRequest(currentPin = currentPin, newPin = newPin))
@@ -201,20 +203,32 @@ class AuthClient(
         parse: suspend (HttpResponse) -> T,
     ): AuthResult<T> {
         if (!response.status.value.toString().startsWith("2")) {
-            val body = runCatching { response.bodyAsText() }.getOrDefault("")
+            val body = try {
+                response.bodyAsText()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                ""
+            }
             log.warn("http.error", mapOf("status" to response.status.value, "code" to "server-response"))
             return AuthResult.Failure(AuthError.Server(status = response.status.value, body = body))
         }
-        return runCatching { AuthResult.Success(parse(response)) }
-            .getOrElse {
-                log.warn("parse.error", mapOf("code" to "decode-failure"))
-                AuthResult.Failure(AuthError.Unknown(cause = "decode-failure"))
-            }
+        return try {
+            AuthResult.Success(parse(response))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            log.warn("parse.error", mapOf("code" to "decode-failure"))
+            AuthResult.Failure(AuthError.Unknown(cause = "decode-failure"))
+        }
     }
 
-    private suspend fun <T> safeCall(block: suspend () -> AuthResult<T>): AuthResult<T> =
-        runCatching { block() }.getOrElse {
-            log.warn("network.error", mapOf("code" to "transport-failure"))
-            AuthResult.Failure(AuthError.Network(cause = "transport-failure"))
-        }
+    private suspend fun <T> safeCall(block: suspend () -> AuthResult<T>): AuthResult<T> = try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        log.warn("network.error", mapOf("code" to "transport-failure"))
+        AuthResult.Failure(AuthError.Network(cause = "transport-failure"))
+    }
 }

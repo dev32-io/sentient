@@ -67,6 +67,31 @@ open class ScheduleHttpClient(
         }
     }
 
+    open suspend fun clearCard(sessionId: String): AuthResult<ScheduledSessionCardsClearResponse> = call {
+        require(sessionId.isNotBlank())
+        decode(
+            httpClient.delete("$baseUrl$CARDS_PATH/${sessionId.encodeURLPathPart()}") { bearer() },
+            ScheduledSessionCardsClearResponse.serializer(),
+            ScheduledSessionCardsClearResponse::validate,
+        )
+    }
+
+    open suspend fun clearCards(occurrenceIds: List<String>): AuthResult<ScheduledSessionCardsClearResponse> {
+        if (occurrenceIds.isEmpty()) return AuthResult.Success(ScheduledSessionCardsClearResponse(true))
+        val request = ScheduledSessionCardsClearRequest(occurrenceIds.toList())
+        return call {
+            request.validate()
+            decode(
+                httpClient.delete("$baseUrl$CARDS_PATH") {
+                    bearer()
+                    body(ScheduledSessionCardsClearRequest.serializer(), request)
+                },
+                ScheduledSessionCardsClearResponse.serializer(),
+                ScheduledSessionCardsClearResponse::validate,
+            )
+        }
+    }
+
     private suspend fun <T> call(block: suspend () -> AuthResult<T>): AuthResult<T> = safeSettingsCall(log) { withTimeout(requestTimeoutMillis) { block() } }
     private suspend fun <T> decode(response: HttpResponse, serializer: KSerializer<T>, validate: (T) -> Unit): AuthResult<T> {
         if (!response.status.isSuccess()) return mapSettingsResponse(log, response) { error("unreachable") }

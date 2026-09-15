@@ -29,10 +29,6 @@ struct NotificationDestination: Equatable, Sendable {
     }
 }
 
-func canResumeNotificationDestination(_ destination: NotificationDestination, sessionIds: [String]) -> Bool {
-    sessionIds.contains(destination.sessionId)
-}
-
 enum NotificationSessionValidation: Equatable {
     case authorized
     case unavailable
@@ -42,32 +38,41 @@ enum NotificationSessionValidation: Equatable {
 enum NotificationResumeState: Equatable {
     case idle
     case pending(NotificationDestination)
+    case clearing(NotificationDestination)
     case unavailable(NotificationDestination)
     case retryableFailure(NotificationDestination)
+    case clearFailure(NotificationDestination)
 
     var destination: NotificationDestination? {
         switch self {
         case .idle: nil
-        case .pending(let destination), .unavailable(let destination), .retryableFailure(let destination): destination
+        case .pending(let destination), .clearing(let destination), .unavailable(let destination),
+             .retryableFailure(let destination), .clearFailure(let destination): destination
+        }
+    }
+
+    var isBusy: Bool {
+        switch self {
+        case .pending, .clearing: true
+        case .idle, .unavailable, .retryableFailure, .clearFailure: false
         }
     }
 }
 
-/// Owns destination authorization work and fences its completion to the active
-/// authenticated account. A destination is never activated merely because it
-/// arrived in a trusted APNs envelope.
+/// Owns acknowledged activation work and fences completion to active account.
+/// A destination is never routed merely because it arrived in trusted APNs data.
 @MainActor
 final class NotificationResumeController: ObservableObject {
     @Published private(set) var state: NotificationResumeState = .idle
-    private var validationTask: Task<Void, Never>?
+    private var activationTask: Task<Void, Never>?
     private var accountFence: String?
     private var generation = 0
 
     func setAccountFence(_ fence: String?) {
         guard accountFence != fence else { return }
         generation += 1
-        validationTask?.cancel()
-        validationTask = nil
+        activationTask?.cancel()
+        activationTask = nil
         accountFence = fence
         state = .idle
     }
@@ -75,28 +80,53 @@ final class NotificationResumeController: ObservableObject {
     func resume(
         _ destination: NotificationDestination,
         accountFence: String,
-        validate: @escaping @MainActor (String) async -> NotificationSessionValidation,
-        activate: @escaping @MainActor (String) -> Void
+        activate: @escaping @MainActor (String) async -> NotificationSessionValidation,
+        route: @escaping @MainActor (String) -> Void,
+        clear: @escaping @MainActor (String) async -> Bool = { _ in true }
     ) {
         setAccountFence(accountFence)
         generation += 1
         let operation = generation
-        validationTask?.cancel()
+        activationTask?.cancel()
         state = .pending(destination)
-        validationTask = Task { [weak self] in
-            let result = await validate(destination.sessionId)
+        activationTask = Task { [weak self] in
+            let result = await activate(destination.sessionId)
             guard !Task.isCancelled, let self,
                   self.generation == operation, self.accountFence == accountFence else { return }
-            self.validationTask = nil
             switch result {
             case .authorized:
-                self.state = .idle
-                activate(destination.sessionId)
+                self.state = .clearing(destination)
+                route(destination.sessionId)
+                let cleared = await clear(destination.sessionId)
+                guard !Task.isCancelled, self.generation == operation, self.accountFence == accountFence else { return }
+                self.activationTask = nil
+                self.state = cleared ? .idle : .clearFailure(destination)
             case .unavailable:
+                self.activationTask = nil
                 self.state = .unavailable(destination)
             case .retryableFailure:
+                self.activationTask = nil
                 self.state = .retryableFailure(destination)
             }
+        }
+    }
+
+    func retryClear(
+        _ destination: NotificationDestination,
+        accountFence: String,
+        clear: @escaping @MainActor (String) async -> Bool
+    ) {
+        setAccountFence(accountFence)
+        generation += 1
+        let operation = generation
+        activationTask?.cancel()
+        state = .clearing(destination)
+        activationTask = Task { [weak self] in
+            let cleared = await clear(destination.sessionId)
+            guard !Task.isCancelled, let self,
+                  self.generation == operation, self.accountFence == accountFence else { return }
+            self.activationTask = nil
+            self.state = cleared ? .idle : .clearFailure(destination)
         }
     }
 
@@ -110,12 +140,35 @@ final class NotificationResumeController: ObservableObject {
 @MainActor
 final class PendingNotificationNavigation: ObservableObject {
     @Published private(set) var destination: NotificationDestination?
+    private var requiredAccountFence: String?
 
-    func receive(_ destination: NotificationDestination) { self.destination = destination }
-    func take() -> NotificationDestination? {
-        defer { destination = nil }
+    func receive(_ destination: NotificationDestination, requiredAccountFence: String? = nil) {
+        self.requiredAccountFence = requiredAccountFence
+        self.destination = destination
+    }
+
+    func bindPending(to accountFence: String) {
+        guard destination != nil else { return }
+        requiredAccountFence = accountFence
+    }
+
+    /// Keeps newer app-scoped intent when one arrived while expiry was starting.
+    func preserve(_ fallback: NotificationDestination?, for accountFence: String) {
+        if destination != nil {
+            requiredAccountFence = accountFence
+        } else if let fallback {
+            receive(fallback, requiredAccountFence: accountFence)
+        }
+    }
+
+    func take(accountFence: String? = nil) -> NotificationDestination? {
+        defer { clear() }
+        guard requiredAccountFence == nil || requiredAccountFence == accountFence else { return nil }
         return destination
     }
 
-    func clear() { destination = nil }
+    func clear() {
+        requiredAccountFence = nil
+        destination = nil
+    }
 }

@@ -36,7 +36,8 @@ test("fixture config replaces credential-bound Gorush with loopback native stand
   const entry = parsed.managed_services.gorush;
   expect(entry).toMatchObject({
     launch: "native",
-    healthcheck: { url: "http://127.0.0.1:8088/healthz" },
+    env: { PUSH_QA_PORT: "18088" },
+    healthcheck: { url: "http://127.0.0.1:18088/healthz" },
     optional: true,
     infra: true,
   });
@@ -45,6 +46,7 @@ test("fixture config replaces credential-bound Gorush with loopback native stand
     user_data_root: join(root, "gateway/users"),
     shared_data_root: join(root, "gateway/shared"),
   });
+  expect(parsed.push).toEqual({ provider_url: "http://127.0.0.1:18088/api/push" });
   expect(entry.secrets).toBeUndefined();
   expect(entry.exec[0]).toBe("/usr/bin/sandbox-exec");
   expect(entry.exec[2]).toEndWith("qa/scheduled-messages/no-outbound-network.sb");
@@ -88,6 +90,16 @@ test("fresh-install infra selection includes public door and managed-push fixtur
         .map((service) => service.name)
         .sort(),
     ).toEqual(["gorush", "inbound-proxy"]);
+  }
+});
+
+test("fixture refuses implicit or real-provider ports before starting", () => {
+  for (const port of [undefined, "8088", "0", "70000"]) {
+    const env = { ...process.env };
+    delete env.PUSH_QA_PORT;
+    if (port !== undefined) env.PUSH_QA_PORT = port;
+    const run = Bun.spawnSync([process.execPath, join(import.meta.dir, "managed-push-fixture.ts")], { env });
+    expect(run.exitCode).not.toBe(0);
   }
 });
 

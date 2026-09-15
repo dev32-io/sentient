@@ -336,6 +336,13 @@ class SdkVoice internal constructor(
         return ordered
     }
 
+    /** A route replacement invalidates queued starts and packet callbacks immediately.
+     * Native stop remains ordered on the existing voice lane. */
+    internal fun invalidateCaptureForRoute() {
+        requestCancel()
+        forceLocalTerminalCleanup()
+    }
+
     private fun forceLocalTerminalCleanup() {
         forceClosedGeneration = nextCaptureGeneration
         requestedCapture = null

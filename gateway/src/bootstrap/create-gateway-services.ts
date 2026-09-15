@@ -233,7 +233,10 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
         userDataRoot: cfg.access.user_data_root,
         graceMs: cfg.scheduling.missedGraceMs,
         sessionDbFileName: cfg.store.db_filename,
+        cardsDefaultPageSize: cfg.scheduling.cardsDefaultPageSize,
         cardsMaxPageSize: cfg.scheduling.cardsMaxPageSize,
+        inboxMaxEntries: cfg.scheduling.inboxMaxEntries,
+        inboxRetentionMs: cfg.scheduling.inboxRetentionMs,
       })
     : undefined;
 

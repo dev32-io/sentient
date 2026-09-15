@@ -57,6 +57,9 @@
       "dayOfMonth": 31
     }
   },
+  "cardsClear": {
+    "occurrenceIds": ["occ_once_20260801", "occ_weekly_20260725"]
+  },
   "cards": {
     "cards": [
       {

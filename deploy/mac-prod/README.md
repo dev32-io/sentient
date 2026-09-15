@@ -117,6 +117,14 @@ For either domain, the installer:
 A failed health gate rolls back to the previous release. Operator state and
 configuration are shared across releases and are not rolled back.
 
+**Private calendar storage cutover:** startup imports private calendars into
+`store.db_filename` in each user's data directory, verifies and durably flushes
+the import, then removes the legacy `calendar-v2/calendar.db`. Household calendar
+storage is unchanged. There is no compatibility alias or reverse migration:
+rolling back to a binary that expects the old private-calendar path does not
+restore calendar access. Treat recovery after this cutover as a forward repair,
+not a guaranteed binary rollback.
+
 ## Configuration and state
 
 The installer seeds, but never overwrites:

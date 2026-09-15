@@ -143,6 +143,19 @@ class SessionsConnectorTest {
     }
 
     @Test
+    fun switchTo_maps_uncorrelated_sessions_error_to_the_only_activation() = runTest {
+        val c = connector(mutableListOf())
+        val captured = async { runCatching { c.switchTo("missing") } }
+        runCurrent()
+
+        c.handle(ServerMessage.SessionsError(requestId = null, code = "not_found", message = "missing"))
+
+        val failure = captured.await().exceptionOrNull()
+        assertIs<SessionsRequestException>(failure)
+        assertEquals("not_found", failure.code)
+    }
+
+    @Test
     fun switchTo_times_out_and_throws_typed_exception() = runTest {
         val sent = mutableListOf<ClientMessage>()
         val c = connector(sent, timeoutMs = 50L)

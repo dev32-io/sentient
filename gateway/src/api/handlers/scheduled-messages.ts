@@ -10,29 +10,38 @@ import {
   schedulePatchRequestSchema,
   schedulePatchResponseSchema,
   scheduledSessionCardPageSchema,
+  scheduledSessionCardsClearRequestSchema,
+  scheduledSessionCardsClearResponseSchema,
 } from "@sentient/protocol";
 import type { AccessManager } from "../../access/access-manager.js";
 import { PrivateScheduleResource } from "../../access/private-schedule-resource.js";
 import { createUserPrincipal } from "../../identity/user-principal.js";
-import type { ScheduleCommands, SchedulingFailure, SchedulingResult } from "../../scheduling/contracts.js";
+import type {
+  ScheduleCommands,
+  ScheduledSessionCardCommands,
+  SchedulingFailure,
+  SchedulingResult,
+} from "../../scheduling/contracts.js";
 import type { ScheduleCreateOutcome } from "../../scheduling/service.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 import type { UserStore } from "../../user-auth/user-store.js";
 
 const ITEM = new RegExp(`^${SCHEDULES_ROUTE}/([^/]+)$`);
+const CARD_ITEM = new RegExp(`^${SCHEDULE_CARDS_ROUTE}/([^/]+)$`);
 const HOUSEHOLD_ID = "home";
 
 export interface ScheduledMessagesHandlerDeps {
   readonly tokens: { validate(token: string): Promise<TokenResult<TokenPayload>> };
   readonly users: Pick<UserStore, "get">;
   readonly accessManager: AccessManager;
-  readonly schedules: ScheduleCommands & {
-    createDetailed?(
-      resource: PrivateScheduleResource,
-      request: Parameters<ScheduleCommands["create"]>[1],
-      acceptedAt: Date,
-    ): Promise<SchedulingResult<ScheduleCreateOutcome>>;
-  };
+  readonly schedules: ScheduleCommands &
+    ScheduledSessionCardCommands & {
+      createDetailed?(
+        resource: PrivateScheduleResource,
+        request: Parameters<ScheduleCommands["create"]>[1],
+        acceptedAt: Date,
+      ): Promise<SchedulingResult<ScheduleCreateOutcome>>;
+    };
   readonly clock?: () => Date;
 }
 
@@ -70,6 +79,7 @@ async function handle(deps: ScheduledMessagesHandlerDeps, request: Request): Pro
 
   const url = new URL(request.url);
   const item = ITEM.exec(url.pathname);
+  const cardItem = CARD_ITEM.exec(url.pathname);
   try {
     if (url.pathname === SCHEDULES_ROUTE) {
       if (request.method === "GET") {
@@ -98,11 +108,32 @@ async function handle(deps: ScheduledMessagesHandlerDeps, request: Request): Pro
       return failure(405, "validation", false, "Method is not supported");
     }
     if (url.pathname === SCHEDULE_CARDS_ROUTE) {
-      if (request.method !== "GET") return failure(405, "validation", false, "Method is not supported");
-      const parsed = scheduleListQuerySchema.safeParse(query(url));
-      if (!parsed.success) return failure(422, "validation", false, "Card list query is invalid");
-      const result = await deps.schedules.cards(resource, parsed.data.cursor, parsed.data.limit ?? 50);
-      return result.ok ? checked(scheduledSessionCardPageSchema, result.value) : domainFailure(result.error);
+      if (request.method === "GET") {
+        const parsed = scheduleListQuerySchema.safeParse(query(url));
+        if (!parsed.success) return failure(422, "validation", false, "Card list query is invalid");
+        const result = await deps.schedules.cards(resource, parsed.data.cursor, parsed.data.limit);
+        return result.ok ? checked(scheduledSessionCardPageSchema, result.value) : domainFailure(result.error);
+      }
+      if (request.method === "DELETE") {
+        const body = await json(request);
+        if (body instanceof Response) return body;
+        const parsed = scheduledSessionCardsClearRequestSchema.safeParse(body);
+        if (!parsed.success) return failure(422, "validation", false, "Card clear targets are invalid");
+        const result = await deps.schedules.clearCards(resource, parsed.data.occurrenceIds);
+        return result.ok
+          ? checked(scheduledSessionCardsClearResponseSchema, { cleared: true })
+          : domainFailure(result.error);
+      }
+      return failure(405, "validation", false, "Method is not supported");
+    }
+    if (cardItem) {
+      const sessionId = decode(cardItem[1] ?? "");
+      if (!sessionId || sessionId.includes("/")) return failure(404, "not_found", false, "Session was not found");
+      if (request.method !== "DELETE") return failure(405, "validation", false, "Method is not supported");
+      const result = await deps.schedules.clearCard(resource, sessionId);
+      return result.ok
+        ? checked(scheduledSessionCardsClearResponseSchema, { cleared: true })
+        : domainFailure(result.error);
     }
     if (item) {
       const scheduleId = decode(item[1] ?? "");

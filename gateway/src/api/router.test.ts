@@ -69,9 +69,10 @@ describe("createApiRouter — scheduled message routes", () => {
     const router = createApiRouter(makeDeps({ handleScheduledMessages, handlePush, handleStatic }));
 
     await router(new Request("http://host/api/v1/scheduled-session-cards"));
+    await router(new Request("http://host/api/v1/scheduled-session-cards/session-1", { method: "DELETE" }));
     await router(new Request("http://host/api/v1/push/registrations", { method: "POST" }));
 
-    expect(handleScheduledMessages).toHaveBeenCalledOnce();
+    expect(handleScheduledMessages).toHaveBeenCalledTimes(2);
     expect(handlePush).toHaveBeenCalledOnce();
     expect(handleStatic).not.toHaveBeenCalled();
   });

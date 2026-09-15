@@ -1089,11 +1089,20 @@ describe("calendar mutation boundary", () => {
     });
     failing.close();
 
+    const householdWriter = openCalendarPersistence(cap(base, "calendar-household", "adult"), config);
+    const householdCreated = createCalendarEvent(
+      createInput({ recurrence: { frequency: "daily", count: 3 }, scope: "household" }),
+      householdWriter,
+      config,
+    );
+    expect(householdCreated.ok).toBe(true);
+    householdWriter.close();
+    if (!householdCreated.ok) return;
     const household = openCalendarPersistence(cap(base, "calendar-household", "child"), config);
     const denied = mutateCalendarEvent(
       mutation({
         operation: "delete",
-        eventId,
+        eventId: householdCreated.value.eventId,
         applyTo: "this_and_following",
         originalStart: "2026-01-07T14:00:00.000Z",
         scope: "household",

@@ -1,14 +1,14 @@
 // ---------------------------------------------------------------------------
-// RootView — 3-way gate: unconfigured → setup, configured+no-token → login,
-//             configured+token-present → chat.
+// RootView — startup gate: setup, cold bearer validation/retry, login, or
+// authenticated shell. Stored credentials never mount shell before validation.
 //
 // Config is checked FIRST so auth state is never evaluated while unconfigured.
 // showSetupOverride lets the gear button on LoginView re-open setup at any time
 // (without clearing the persisted config); after save, the override is cleared
 // and the auth gate resumes normal routing.
 //
-// The auth gate keys on appConfig.hasToken (token + display name + explicit
-// server-authenticated userId), cleared on logout. Gating on transport
+// Cold launch first validates appConfig's stored token + identity. Successful
+// login enters directly because login already established server authority. Gating on transport
 // status would unmount ChatView on every WS drop and fall back to login, hiding
 // the in-chat connection-lost banner. hasToken is set on first login and
 // PRESERVED across drops / idle-disconnect / reconnect, cleared only on logout
@@ -16,9 +16,9 @@
 // Mirrors web-sdk: AUTH gates the screen, status drives the banner.
 //
 // UserSessionHost owns the User/Connection-scoped UserSession (@StateObject) once
-// per authed entry: ONE ChatComponent + SDK that survives navigation. Logout
-// (UserSessionHost.logout → appConfig.logout → hasToken=false) exits the authed
-// branch → the UserSession @StateObject deinits → its KMP session is shut down.
+// per authed entry: ONE ChatComponent + SDK that survives navigation. Logout runs
+// UserSession's bounded push/session/auth boundary; clearing auth exits the authed
+// branch and releases the KMP session.
 //
 // The authed branch is wrapped in UpdateGate: it owns the shared UpdateModel, runs
 // the cold-start OTA check, and renders the force-update gate (blocking, ahead of
@@ -52,14 +52,38 @@ struct RootView: View {
                 BackendSetupView(
                     model: BackendSetupViewModel(
                         existing: BackendConfigStore().load(),
-                        reconfigure: { appConfig.reconfigure($0) }
+                        reconfigure: {
+                            push.navigation.clear()
+                            appConfig.reconfigure($0)
+                        }
                     ),
                     onSaved: { showSetupOverride = false }
                 )
-            } else if appConfig.hasToken {
+            } else if appConfig.startupAuthentication == .authenticated {
                 UpdateGate(appConfig: appConfig)
                     .transition(.opacity)
                     .zIndex(1)
+            } else if appConfig.startupAuthentication == .retry {
+                VStack(spacing: Space.lg) {
+                    Text("Can't verify your account")
+                        .designText(.title)
+                    Text("Check your connection, then try again.")
+                        .designText(.body)
+                        .foregroundStyle(DuskColors.ink2)
+                    DesignActionButton(
+                        title: "Retry",
+                        accessibilityId: "startup-auth-retry",
+                        fillsWidth: false
+                    ) { Task { await validateStoredAuthentication() } }
+                }
+                .padding(Space.lg)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DuskColors.bg.ignoresSafeArea())
+                .zIndex(1)
+            } else if appConfig.startupAuthentication == .validating {
+                ProgressView("Verifying account…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DuskColors.bg.ignoresSafeArea())
             } else {
                 LoginView(
                     onAuthenticatedUser: { userId in
@@ -88,11 +112,16 @@ struct RootView: View {
         .task(id: appConfig.configGeneration) {
             startup.begin()
             log.info("startup.begin generation=\(appConfig.configGeneration)")
-            // Setup is immediately actionable. An authenticated shell is also
-            // usable while its connection resolves because it owns recovery UI.
-            // Login resolves separately after its initial user-list terminal result.
-            if !appConfig.isConfigured || appConfig.hasToken {
+            if !appConfig.isConfigured {
                 startup.rootDidResolve()
+            } else if appConfig.startupAuthentication == .validating {
+                await validateStoredAuthentication()
+            }
+            // Login resolves after its initial user-list terminal result.
+        }
+        .task(id: appConfig.hasToken) {
+            if !appConfig.hasToken {
+                push.configureForLoggedOutCleanup(appConfig: appConfig)
             }
         }
         .task(id: startup.isCovering) {
@@ -119,5 +148,13 @@ struct RootView: View {
         } message: {
             Text(push.lifecycleWarning ?? "This device could not be unlinked yet.")
         }
+    }
+
+    private func validateStoredAuthentication() async {
+        let result = await appConfig.validateStartupAuthentication(
+            beforeInvalidation: { accountFence in push.navigation.bindPending(to: accountFence) },
+            beforeAccountChange: { push.navigation.clear() }
+        )
+        if result != .login { startup.rootDidResolve() }
     }
 }

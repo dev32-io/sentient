@@ -17,14 +17,9 @@
 // still a throw (a use-after-close is a caller bug, never a recoverable
 // condition to swallow), but one that says what failed and who owns it.
 
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { type Capability, capabilityCoversPath } from "../access/capability.js";
+import type { Capability } from "../access/capability.js";
 import { getLog } from "../logging/logger.js";
 import type { NewSessionEntry, SessionEntry } from "./entry-types.js";
-import { migrateStore } from "./migrate-store.js";
-import { STORE_DDL } from "./schema.js";
 import {
   type ScheduledSessionExecution,
   type ScheduledSessionOutcome,
@@ -32,6 +27,7 @@ import {
   type TitleProvenance,
   createSessionMetadataOps,
 } from "./session-metadata.js";
+import { DEFAULT_USER_DB_FILENAME, openConfiguredUserDatabase } from "./user-database.js";
 
 // Re-exported so a consumer of the public `SessionStore` surface (task 3:
 // resolve a mint-key conflict to the existing session) can `catch` and
@@ -40,11 +36,6 @@ import {
 export { MintKeyConflictError } from "./session-metadata.js";
 
 const log = getLog(["sentient", "store", "session-store"]);
-
-// Fallback when a caller does not thread `store.db_filename` from config — a
-// harness or test opening a store without the full composition root. The
-// composition root passes `cfg.store.db_filename` through explicitly.
-const DEFAULT_DB_FILENAME = "sessions.db";
 
 interface EntryRow {
   seq: number;
@@ -122,7 +113,7 @@ export interface SessionStore {
   close(): void;
 }
 
-export function openSessionStore(cap: Capability, dbFileName: string = DEFAULT_DB_FILENAME): SessionStore {
+export function openSessionStore(cap: Capability, dbFileName: string = DEFAULT_USER_DB_FILENAME): SessionStore {
   // Checked BEFORE the path check, deliberately: a wrong-class capability and
   // an escaping path are different faults and must say so. Without this, a
   // `file-scope` capability for the same user has an IDENTICAL rootPath, so
@@ -138,22 +129,7 @@ export function openSessionStore(cap: Capability, dbFileName: string = DEFAULT_D
     throw new Error(`capability resource class mismatch: expected "session-store", got "${cap.resource}"`);
   }
 
-  const dbPath = path.join(cap.rootPath, dbFileName);
-  if (!capabilityCoversPath(cap, dbPath)) {
-    throw new Error(`store path escapes capability scope: ${dbPath}`);
-  }
-
-  // The owner's home dir may not exist yet — a session for a freshly-created
-  // user, or any deploy path that did not pre-provision the dir. Create it
-  // inside the capability's own scoped root (checked above) BEFORE SQLite
-  // opens the file: `new Database(create:true)` creates the DB file but never
-  // its parent dir, failing with "unable to open database file". Mirrors
-  // FileScope, which already mkdir's dirname on write.
-  mkdirSync(cap.rootPath, { recursive: true });
-
-  const db = new Database(dbPath, { create: true });
-  db.exec(STORE_DDL);
-  const schemaVersion = migrateStore(db, cap.ownerUserId);
+  const { db, schemaVersion } = openConfiguredUserDatabase(cap, dbFileName);
   log.info("store.opened", { userId: cap.ownerUserId, schemaVersion });
 
   const insert = db.query<

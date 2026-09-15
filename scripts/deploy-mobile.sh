@@ -11,8 +11,10 @@ CONF="$DIR/release.local.conf"
 [ -f "$CONF" ] || { echo "ERROR: $CONF missing — copy scripts/release.local.conf.example."; exit 1; }
 # shellcheck disable=SC1090
 source "$CONF"
+# build-manifest reads Release bundle identity from shared constants; inherited
+# or local IOS_BUNDLE_ID values have no authority.
 : "${DEPLOY_HOST:?set DEPLOY_HOST}" "${DEPLOY_USER:?set DEPLOY_USER}" "${RELEASES_PATH:?set RELEASES_PATH}"
-: "${IOS_BUNDLE_ID:=io.dev32.sentient}" "${IOS_MIN_BUILD:=0}" "${ANDROID_MIN_BUILD:=0}"
+: "${IOS_MIN_BUILD:=0}" "${ANDROID_MIN_BUILD:=0}"
 SSH="ssh -o ConnectTimeout=10 ${DEPLOY_USER}@${DEPLOY_HOST}"
 
 case "$ARTIFACT" in
@@ -36,7 +38,7 @@ MANIFEST="$(PLAT="$PLAT" EXISTING="$EXISTING" \
   ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-}" ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-}" \
   ANDROID_MIN_BUILD="$ANDROID_MIN_BUILD" \
   IOS_BUNDLE_VERSION="${IOS_BUNDLE_VERSION:-}" IOS_SHORT_VERSION="${IOS_SHORT_VERSION:-}" \
-  IOS_MIN_BUILD="$IOS_MIN_BUILD" IOS_BUNDLE_ID="$IOS_BUNDLE_ID" \
+  IOS_MIN_BUILD="$IOS_MIN_BUILD" \
   node "$DIR/build-manifest.mjs")"
 echo "$MANIFEST" | $SSH "cat > '${RELEASES_PATH}/manifest.json'"
 echo "✓ manifest.json updated"

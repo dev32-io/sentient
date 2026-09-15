@@ -344,7 +344,7 @@ cmd_up() {
   # the next boot's port-settle reclaims them. `stack.sh down` is the full stop.
   trap 'kill 0' EXIT
 
-  ( cd gateway && exec bun --watch src/main.ts ) &
+  ( cd gateway && export SENTIENT_BUILD_VARIANT=Debug && exec bun --watch src/main.ts ) &
   echo $! > "$GATEWAY_PID_FILE"
   ( exec bun run --filter './gateway/webui' dev ) &
   echo $! > "$VITE_PID_FILE"

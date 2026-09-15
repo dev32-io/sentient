@@ -80,15 +80,40 @@ private val volatileToken = AtomicReference<String?>(null)
 private const val KEYCHAIN_SERVICE = "io.sentient.app"
 private const val DEFAULT_KEYCHAIN_ACCOUNT = "auth.token"
 
+internal sealed class IosSecureStoreRead {
+    data object Missing : IosSecureStoreRead()
+    data class Value(val value: String) : IosSecureStoreRead()
+    data object Failure : IosSecureStoreRead()
+}
+
 /**
  * iOS [SecureTokenStore] backed by the system Keychain.
  *
  * No initialisation is required on iOS — the Keychain is always available
  * once the device has been unlocked for the first time after boot.
  */
-class IosSecureTokenStore(
-    private val keychainAccount: String = DEFAULT_KEYCHAIN_ACCOUNT,
+class IosSecureTokenStore private constructor(
+    private val keychainAccount: String,
+    private val addItem: (CFDictionaryRef?) -> Int,
+    private val updateItem: (CFDictionaryRef?, CFDictionaryRef?) -> Int,
+    private val copyItemStatus: ((CFDictionaryRef?) -> Int)?,
 ) : SecureTokenStore {
+    constructor(keychainAccount: String = DEFAULT_KEYCHAIN_ACCOUNT) : this(
+        keychainAccount,
+        { query -> SecItemAdd(query, null) },
+        { query, attributes -> SecItemUpdate(query, attributes) },
+        null,
+    )
+
+    /** Native-test seam stays at actual Security-framework status boundary. */
+    internal constructor(
+        keychainAccount: String,
+        addItem: (CFDictionaryRef?) -> Int,
+        updateItem: (CFDictionaryRef?, CFDictionaryRef?) -> Int,
+        copyItemStatus: ((CFDictionaryRef?) -> Int)? = null,
+        @Suppress("UNUSED_PARAMETER") testing: Unit = Unit,
+    ) : this(keychainAccount, addItem, updateItem, copyItemStatus)
+
     private val volatileValue: AtomicReference<String?> =
         if (keychainAccount == DEFAULT_KEYCHAIN_ACCOUNT) volatileToken else AtomicReference<String?>(null)
 
@@ -102,32 +127,36 @@ class IosSecureTokenStore(
         // Kotlin/Native traps any exception that escapes an @ObjCExport boundary
         // (SIGABRT via trapOnUndeclaredException). Catch here so a Keychain
         // hiccup logs WARN and the SDK still connects.
-        runCatching { saveToKeychain(token) }.onFailure { e ->
-            log.warn("save-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
-        }
+        saveDurably(token)
     }
 
-    private fun saveToKeychain(token: String) {
+    /** Does not use volatile fallback; callers may claim durability only on true. */
+    internal fun saveDurably(token: String): Boolean = runCatching { saveToKeychain(token) }.getOrElse {
+        log.warn("save-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
+        false
+    }
+
+    private fun saveToKeychain(token: String): Boolean {
         val nsData = tokenToNSData(token) ?: run {
             log.warn("save-failed", mapOf("reason" to "token encoding failed"))
-            return
+            return false
         }
 
         // Add first; on duplicate, update the existing item's value.
         val addStatus = withQuery(
             includeAccessible = true,
             valueData = nsData,
-        ) { query -> SecItemAdd(query, null) }
+        ) { query -> addItem(query) }
 
-        when (addStatus) {
-            errSecSuccess -> log.info("save-ok", mapOf("op" to "add"))
+        return when (addStatus) {
+            errSecSuccess -> true.also { log.info("save-ok", mapOf("op" to "add")) }
             errSecDuplicateItem -> updateExisting(nsData)
-            else -> log.warn("save-failed", mapOf("op" to "add", "status" to addStatus))
+            else -> false.also { log.warn("save-failed", mapOf("op" to "add", "status" to addStatus)) }
         }
     }
 
     /** Updates the value of an already-present Keychain item. */
-    private fun updateExisting(nsData: NSData) {
+    private fun updateExisting(nsData: NSData): Boolean {
         // Match dict scopes to service+account; the attrs dict carries the new value.
         val status = memScoped {
             val matchDict = buildBaseQuery(includeAccessible = false, valueData = null)
@@ -140,32 +169,38 @@ class IosSecureTokenStore(
             val dataRef = CFBridgingRetain(nsData)
             try {
                 CFDictionaryAddValue(attrsDict, kSecValueData, dataRef)
-                SecItemUpdate(matchDict, attrsDict)
+                updateItem(matchDict, attrsDict)
             } finally {
                 if (dataRef != null) CFRelease(dataRef)
                 if (attrsDict != null) CFRelease(attrsDict)
                 if (matchDict != null) CFRelease(matchDict)
             }
         }
-        if (status == errSecSuccess) {
+        return if (status == errSecSuccess) {
             log.info("save-ok", mapOf("op" to "update"))
+            true
         } else {
             log.warn("save-failed", mapOf("op" to "update", "status" to status))
+            false
         }
     }
 
     override fun load(): String? {
         log.debug("load")
-        // A load failure must degrade to null, never abort the process across
-        // the @ObjCExport boundary (see save()).
+        // Preserve auth-token process-local fallback contract.
         volatileValue.load()?.let { return it }
-        return runCatching { loadFromKeychain() }.getOrElse {
-            log.warn("load-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
-            null
+        return when (val result = loadDurably()) {
+            is IosSecureStoreRead.Value -> result.value
+            IosSecureStoreRead.Missing, IosSecureStoreRead.Failure -> null
         }
     }
 
-    private fun loadFromKeychain(): String? = memScoped {
+    internal fun loadDurably(): IosSecureStoreRead = runCatching { loadFromKeychain() }.getOrElse {
+        log.warn("load-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
+        IosSecureStoreRead.Failure
+    }
+
+    private fun loadFromKeychain(): IosSecureStoreRead = memScoped {
         // kSecReturnData MUST be a CFBooleanRef (kCFBooleanTrue); a Kotlin Bool /
         // NSNumber here is what yields errSecParam (-50). kSecMatchLimitOne is a
         // CFStringRef. Both are added CF-natively below.
@@ -175,20 +210,20 @@ class IosSecureTokenStore(
 
         val result = alloc<CFTypeRefVar>()
         val status = try {
-            SecItemCopyMatching(query, result.ptr)
+            copyItemStatus?.invoke(query) ?: SecItemCopyMatching(query, result.ptr)
         } finally {
             if (query != null) CFRelease(query)
         }
 
         when (status) {
-            errSecSuccess -> decodeResult(result.value)
+            errSecSuccess -> decodeResult(result.value)?.let(IosSecureStoreRead::Value) ?: IosSecureStoreRead.Failure
             errSecItemNotFound -> {
                 log.debug("load-not-found")
-                null
+                IosSecureStoreRead.Missing
             }
             else -> {
                 log.warn("load-failed", mapOf("status" to status))
-                null
+                IosSecureStoreRead.Failure
             }
         }
     }

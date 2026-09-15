@@ -3,6 +3,9 @@ import { type ApiHttpError, bearerHeaders, handleFetch, jsonHeaders } from "./_h
 import type { ProfileV1 } from "./profile-api.ts";
 
 const log = createLogger(["sentient", "webui", "admin", "api"]);
+const APNS_SAVE_TIMEOUT_MS = 15_000;
+// Server supervisor allows five minutes for image startup and health checks.
+const APNS_APPLY_TIMEOUT_MS = 6 * 60_000;
 
 // --- Types (match gateway admin handler response shapes) ---
 
@@ -22,6 +25,18 @@ export interface LlmProviderStatus {
   has_base_url: boolean;
 }
 
+export interface ApnsCredentialsStatus {
+  has_key: boolean;
+  has_key_id: boolean;
+  has_team_id: boolean;
+}
+
+export interface ApnsCredentialsInput {
+  private_key_p8: string;
+  key_id: string;
+  team_id: string;
+}
+
 export interface SecretsStatus {
   llm: {
     active: LlmProvider;
@@ -34,6 +49,7 @@ export interface SecretsStatus {
     mcp_server_token: { has_token: boolean };
   };
   music_assistant: { has_token: boolean };
+  push: ApnsCredentialsStatus;
 }
 
 export type AdminApiError = ApiHttpError;
@@ -77,6 +93,10 @@ export interface AdminApi {
   ): Promise<Result<void>>;
   /** PUT /api/v1/admin/secrets/llm/active — sets the active LLM provider. */
   setActiveLlmProvider(token: string, provider: LlmProvider): Promise<Result<void>>;
+  /** Replaces all APNs credential fields atomically. */
+  setApnsCredentials(token: string, input: ApnsCredentialsInput): Promise<Result<{ ok: true }>>;
+  /** Applies complete saved APNs credentials to the local push transport. */
+  applyApnsCredentials(token: string): Promise<Result<{ ok: true; transport: "running" }>>;
   /**
    * POST /api/v1/auth/setup — first-admin bootstrap, no auth required.
    * Returns token + user on success so the wizard can immediately log in.
@@ -175,6 +195,29 @@ export function createAdminApi(config?: AdminApiConfig): AdminApi {
           method: "PUT",
           headers: jsonHeaders(bearerHeaders(token)),
           body: JSON.stringify({ provider }),
+        }),
+      );
+    },
+
+    setApnsCredentials(token, input) {
+      log.debug("setApnsCredentials");
+      return handleFetch<{ ok: true }>(
+        fetch(`${base}/api/v1/admin/secrets/push/apns`, {
+          method: "PUT",
+          headers: jsonHeaders(bearerHeaders(token)),
+          body: JSON.stringify(input),
+          signal: AbortSignal.timeout(APNS_SAVE_TIMEOUT_MS),
+        }),
+      );
+    },
+
+    applyApnsCredentials(token) {
+      log.debug("applyApnsCredentials");
+      return handleFetch<{ ok: true; transport: "running" }>(
+        fetch(`${base}/api/v1/admin/secrets/push/apns/apply`, {
+          method: "POST",
+          headers: bearerHeaders(token),
+          signal: AbortSignal.timeout(APNS_APPLY_TIMEOUT_MS),
         }),
       );
     },

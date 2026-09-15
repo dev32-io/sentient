@@ -78,6 +78,7 @@ export interface GatewayServerOptions {
   services: GatewayServices;
   schedules?: ScheduleService;
   pushStore?: PushStore;
+  pushProviderUrl?: string;
 }
 
 export type GatewayServer = Server<SessionData> & {
@@ -113,6 +114,8 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     installState: services.installState,
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
     requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken, services.auth.users),
+    systemOrchestrator: services.systemOrchestrator,
+    ...(options.pushProviderUrl ? { pushProviderUrl: options.pushProviderUrl } : {}),
   });
   const handleAuth = createAuthHandler({
     auth: services.auth,
@@ -214,6 +217,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
       schedules: services.schedules,
       accessManager: services.accessManager,
       calendarConfig: services.calendarConfig,
+      dbFileName: services.dbFileName,
       resolveUser: async (userId) => {
         const found = await services.auth.users.get(userId);
         return found.ok && found.value ? { role: found.value.role, householdId: "home" } : null;
@@ -235,6 +239,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     users: services.auth.users,
     accessManager: services.accessManager,
     ...(services.calendarConfig ? { calendarConfig: services.calendarConfig } : {}),
+    dbFileName: services.dbFileName,
     ...(services.calendarHouseholdTimeZone ? { householdTimeZone: services.calendarHouseholdTimeZone } : {}),
     ...(calendarReminderScheduler ? { reminders: calendarReminderScheduler } : {}),
   });

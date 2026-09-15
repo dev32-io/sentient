@@ -72,10 +72,10 @@ class AccountUseCases(
             }
         }
 
-    /** Best-effort server logout, then ALWAYS clear local session. Never fails the user out-of-flow. */
+    /** Clear locally first; best-effort server logout must never delay the local boundary. */
     suspend fun logout(): SentientResult<Unit> {
-        val r = account.logout()
         onLoggedOut()
+        val r = account.logout()
         log.info("logout", mapOf("serverAck" to (r is SentientResult.Success)))
         return SentientResult.Success(Unit)
     }

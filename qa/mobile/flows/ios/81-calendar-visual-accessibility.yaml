@@ -4,7 +4,7 @@ tags:
 ---
 # Agent selects exact 390x844 or 430x932 profile plus requested Dynamic Type and motion settings.
 - runFlow: _calendar/open-calendar.yaml
-- assertVisible: { id: "calendar-scroll-region" }
+- assertVisible: { id: "calendar-native-viewport" }
 - assertVisible: { id: "calendar-floating-view-bar-46" }
 - takeScreenshot: "calendar-visual-profile"
 - tapOn: { id: "calendar-event-.*" }

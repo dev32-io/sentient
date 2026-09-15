@@ -32,16 +32,29 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val CLIENT_TYPE_MOBILE = "mobile"
-private const val FORBIDDEN_CODE = "forbidden"
+private val SESSION_UNAVAILABLE_CODES = setOf("not_found", "forbidden")
 
 /** Callbacks the lifecycle drives back into the orchestrator. */
 interface LifecycleHooks {
     fun setStatus(next: SdkStatus)
     fun onReady(sessionId: String)
+    /** Clear focus proof whenever the owned transport is detached. */
+    fun onTransportDetached()
+    /** Whether conversation-scoped payload is quarantined pending target attachment. */
+    fun isRouteFenced(): Boolean
+    /** Accept target reconstruction after its transport attachment, before switch ack. */
+    fun onSessionAttached(sessionId: String)
+    /** Whether a session attachment/switch belongs to latest user activation intent. */
+    fun shouldRouteSessionFrame(msg: ServerMessage, sessionId: String): Boolean
+    /** Complete internal bookkeeping for a switch intentionally hidden as superseded. */
+    fun onDiscardedSessionSwitched(sessionId: String)
+    /** True while an explicit activation owns uncorrelated sessions.error replies. */
+    fun hasInFlightActivation(): Boolean
     /** Anchor the active ACP session uuid from a session.switched / session.created frame. */
+    fun onDraftAnchored(draftKey: String)
     fun onSessionAnchored(sessionId: String)
-    /** A `sessions.error forbidden` arrived — drop the anchor if a re-establish is in flight. */
-    fun onSessionForbidden()
+    /** An unavailable sessions.error arrived — drop a reconnect re-establish anchor if needed. */
+    fun onSessionUnavailable()
     /** A `pong` arrived — resolve an in-flight foreground liveness probe, if any. */
     fun onPong()
     /** A `stream.resumed` ack arrived (Task 3.10). recovered drives dedup vs. cursor-reset+refetch. */
@@ -179,14 +192,24 @@ class SdkLifecycle(
             tx.events.collect { event ->
                 when (event) {
                     is WsEvent.Control -> {
-                        // Dedup replayed control frames by seq/epoch before routing.
-                        if (applyCursor(event.seq, event.epoch)) onFrame(event.message)
-                        else log.debug("frame.dedup-dropped", mapOf("seq" to event.seq, "type" to event.message::class.simpleName))
+                        // Route transitions quarantine old-conversation payload before it
+                        // can advance the resume cursor or mutate connector state.
+                        if (hooks.isRouteFenced() && event.message.isConversationPayload()) {
+                            log.debug("frame.route-fenced", mapOf("type" to event.message::class.simpleName))
+                        } else if (applyCursor(event.seq, event.epoch)) {
+                            onFrame(event.message)
+                        } else {
+                            log.debug("frame.dedup-dropped", mapOf("seq" to event.seq, "type" to event.message::class.simpleName))
+                        }
                     }
                     is WsEvent.Audio -> {
-                        // Dedup replayed audio frames by the header seq (peeled by WsTransport).
-                        if (applyCursor(event.seq, null)) router.routeBinary(event.bytes)
-                        else log.debug("audio.dedup-dropped", mapOf("seq" to event.seq, "bytes" to event.bytes.size))
+                        if (hooks.isRouteFenced()) {
+                            log.debug("audio.route-fenced", mapOf("bytes" to event.bytes.size))
+                        } else if (applyCursor(event.seq, null)) {
+                            router.routeBinary(event.bytes)
+                        } else {
+                            log.debug("audio.dedup-dropped", mapOf("seq" to event.seq, "bytes" to event.bytes.size))
+                        }
                     }
                 }
             }
@@ -194,6 +217,19 @@ class SdkLifecycle(
     }
 
     private fun onFrame(msg: ServerMessage) {
+        val sessionFrameId = when (msg) {
+            is ServerMessage.SessionAttached -> msg.sessionId
+            is ServerMessage.SessionCreated -> msg.sessionId
+            is ServerMessage.SessionDraft -> msg.draftKey
+            is ServerMessage.SessionSwitched -> msg.sessionId
+            else -> null
+        }
+        if (sessionFrameId != null && !hooks.shouldRouteSessionFrame(msg, sessionFrameId)) {
+            if (msg is ServerMessage.SessionSwitched) hooks.onDiscardedSessionSwitched(sessionFrameId)
+            log.info("session-frame.superseded", mapOf("type" to msg::class.simpleName, "sessionId" to sessionFrameId))
+            return
+        }
+
         val intercepted = handshake?.intercept(msg) ?: false
         when (msg) {
             // Anchor the active ACP session uuid AND fan out to the connectors
@@ -205,7 +241,7 @@ class SdkLifecycle(
             // queue. It is replaced by the real id on the session.created the
             // first message triggers.
             is ServerMessage.SessionDraft -> {
-                hooks.onSessionAnchored(msg.draftKey)
+                hooks.onDraftAnchored(msg.draftKey)
                 // A draft holds NO attachment (gateway spec §3.7). Keeping the
                 // previous session's binding would stamp it onto this draft's
                 // first text.input — the one frame that mints the next session —
@@ -217,8 +253,10 @@ class SdkLifecycle(
             // than routed to a connector: it must be live from the first frame
             // the socket delivers, and connectors are wired later in the
             // handshake.
-            is ServerMessage.SessionAttached ->
+            is ServerMessage.SessionAttached -> {
                 setCommandBinding(CommandBinding(msg.sessionId, msg.generation), "session.attached")
+                hooks.onSessionAttached(msg.sessionId)
+            }
             // A REFUSED COMMAND, said out loud rather than dropped. WARN because
             // it always means a user action did not happen; the reason names
             // whether retrying is the right move.
@@ -226,10 +264,12 @@ class SdkLifecycle(
                 "command.rejected",
                 mapOf("code" to "server-command-rejected"),
             )
-            // A forbidden mid re-establish means the anchored session was revoked
-            // elsewhere — the orchestrator drops the anchor so reconnects stop
-            // re-firing a switch to a dead session.
-            is ServerMessage.SessionsError -> if (msg.code == FORBIDDEN_CODE) hooks.onSessionForbidden()
+            // Explicit activation owns requestId-less errors while its sole command is
+            // in flight. Otherwise unavailable belongs to reconnect re-establishment.
+            is ServerMessage.SessionsError ->
+                if (!hooks.hasInFlightActivation() && msg.code in SESSION_UNAVAILABLE_CODES) {
+                    hooks.onSessionUnavailable()
+                }
             // Pong resolves an in-flight foreground liveness probe (proves the socket
             // survived a backgrounding); harmless if no probe is pending.
             is ServerMessage.Pong -> hooks.onPong()
@@ -253,6 +293,24 @@ class SdkLifecycle(
      * rule every call site has to remember — and because an attachment dies with
      * its socket, exactly as the transport does.
      */
+    private fun ServerMessage.isConversationPayload(): Boolean = when (this) {
+        is ServerMessage.TurnStarted,
+        is ServerMessage.TurnTextDelta,
+        is ServerMessage.TurnCompleted,
+        is ServerMessage.TurnAborted,
+        is ServerMessage.TurnAudioStart,
+        is ServerMessage.TurnAudioDone,
+        is ServerMessage.PermissionRequest,
+        is ServerMessage.PermissionResolved,
+        is ServerMessage.DelegationProgress,
+        is ServerMessage.ConnectorTranscriptFinal,
+        is ServerMessage.ConversationSnapshot,
+        is ServerMessage.ConversationEntry,
+        is ServerMessage.TaskListState,
+        is ServerMessage.PlaybackStop -> true
+        else -> false
+    }
+
     private fun setCommandBinding(binding: CommandBinding?, reason: String) {
         transport?.commandBinding = binding
         log.debug(
@@ -274,6 +332,7 @@ class SdkLifecycle(
     private fun startSignalWatch(tx: WsTransport) {
         scope.launch {
             tx.signals.collect { signal ->
+                if (tx !== transport) return@collect
                 if (hooks.isConsumerDisconnected()) return@collect
                 if (signal is TransportSignal.Closed && signal.code == WS_NORMAL_CLOSURE) return@collect
                 log.warn("transport.signal", mapOf("signal" to signal::class.simpleName, "status" to hooks.status()))
@@ -303,6 +362,7 @@ class SdkLifecycle(
         transport = null
         session = null
         handshake = null
+        hooks.onTransportDetached()
         return open
     }
 

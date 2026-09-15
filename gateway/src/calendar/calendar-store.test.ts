@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Capability } from "../access/capability.js";
+import { STORE_SCHEMA_VERSION } from "../store/schema.js";
 import { openCalendarPersistence, openCalendarStore } from "./calendar-store.js";
 import { CALENDAR_SCHEMA_VERSION } from "./schema.js";
 import type {
@@ -54,12 +55,12 @@ describe("CalendarStore factory", () => {
     expect(existsSync(missing)).toBe(false);
   });
 
-  it("creates the fresh V2 database and enables WAL", () => {
+  it("creates private calendar tables in the configured user database and enables WAL", () => {
     const base = root();
     const store = openCalendarStore(cap(base), cfg);
-    const db = new Database(join(base, "calendar-v2", "calendar.db"));
+    const db = new Database(join(base, "sessions.db"));
     expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-      CALENDAR_SCHEMA_VERSION,
+      STORE_SCHEMA_VERSION,
     );
     expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
     expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeTruthy();
@@ -79,6 +80,19 @@ describe("CalendarStore factory", () => {
       store.list({ from: { kind: "all-day", date: "2026-01-01" }, to: { kind: "all-day", date: "2026-01-02" } }),
     ).toEqual({ ok: false, error: "closed" });
     db.close();
+  });
+
+  it("honors configured private DB filename while household keeps existing path", () => {
+    const base = root();
+    const privateStore = openCalendarStore(cap(base), cfg, { dbFileName: "custom.db" });
+    privateStore.close();
+    expect(existsSync(join(base, "custom.db"))).toBe(true);
+    expect(existsSync(join(base, "sessions.db"))).toBe(false);
+
+    const householdStore = openCalendarStore(cap(base, "calendar-household"), cfg, { dbFileName: "ignored.db" });
+    householdStore.close();
+    expect(existsSync(join(base, "calendar-v2", "calendar.db"))).toBe(true);
+    expect(existsSync(join(base, "ignored.db"))).toBe(false);
   });
 
   it("reads and expands recurring events with filters and exceptions", () => {
@@ -305,7 +319,7 @@ describe("CalendarStore factory", () => {
     expect(store.delete(original.id)).toEqual({ ok: true, value: undefined });
     expect(store.get(original.id)).toEqual({ ok: false, error: "not-found" });
     store.close();
-    const db = new Database(join(base, "calendar-v2", "calendar.db"));
+    const db = new Database(join(base, "sessions.db"));
     for (const table of ["exceptions", "exclusions", "tags"]) {
       expect(
         db
@@ -391,7 +405,7 @@ describe("CalendarStore factory", () => {
     const legacyContents = "legacy-calendar-sentinel";
     writeFileSync(legacyPath, legacyContents);
     const store = openCalendarStore(cap(base), cfg);
-    expect(existsSync(join(base, "calendar-v2", "calendar.db"))).toBe(true);
+    expect(existsSync(join(base, "sessions.db"))).toBe(true);
     expect(readFileSync(legacyPath, "utf8")).toBe(legacyContents);
     store.close();
   });
@@ -493,7 +507,7 @@ describe("CalendarStore factory", () => {
     });
     initial.close();
 
-    const db = new Database(join(base, "calendar-v2", "calendar.db"));
+    const db = new Database(join(base, "sessions.db"));
     db.query("UPDATE events SET created_at = ?, updated_at = ? WHERE id = ?").run(
       "not-an-instant",
       "2026-99-99",
@@ -507,7 +521,7 @@ describe("CalendarStore factory", () => {
     reopened.close();
   });
 
-  it("leaves an ahead-of-binary database untouched", () => {
+  it("leaves an ahead-of-binary household database untouched", () => {
     const base = root();
     const dbPath = join(base, "calendar-v2", "calendar.db");
     mkdirSync(join(base, "calendar-v2"), { recursive: true });
@@ -516,7 +530,7 @@ describe("CalendarStore factory", () => {
     db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION + 10}`);
     expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("delete");
     db.close();
-    const store = openCalendarStore(cap(base), cfg);
+    const store = openCalendarStore(cap(base, "calendar-household"), cfg);
     const check = new Database(dbPath);
     expect(check.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("delete");
     expect(check.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(

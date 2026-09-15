@@ -179,6 +179,15 @@ export const scheduledSessionCardQuerySchema = scheduleListQuerySchema;
 export const scheduledSessionCardPageSchema = z
   .object({ cards: z.array(scheduledSessionCardSchema).max(100), nextCursor: z.string().min(1).optional() })
   .strict();
+/** DELETE card collection targets only these visible occurrences; chat and schedule content remain intact. */
+export const scheduledSessionCardsClearRequestSchema = z
+  .object({ occurrenceIds: z.array(z.string().min(1)).min(1).max(10_000) })
+  .strict()
+  .refine(({ occurrenceIds }) => new Set(occurrenceIds).size === occurrenceIds.length, {
+    message: "occurrenceIds must be unique",
+    path: ["occurrenceIds"],
+  });
+export const scheduledSessionCardsClearResponseSchema = z.object({ cleared: z.literal(true) }).strict();
 
 export type ScheduleTimingInput = z.infer<typeof scheduleTimingInputSchema>;
 export type ScheduleTiming = z.infer<typeof scheduleTimingSchema>;
@@ -189,4 +198,6 @@ export type ScheduleListResponse = z.infer<typeof scheduleListResponseSchema>;
 export type ScheduleErrorCode = z.infer<typeof scheduleErrorCodeSchema>;
 export type ScheduledSessionCard = z.infer<typeof scheduledSessionCardSchema>;
 export type ScheduledSessionCardPage = z.infer<typeof scheduledSessionCardPageSchema>;
+export type ScheduledSessionCardsClearRequest = z.infer<typeof scheduledSessionCardsClearRequestSchema>;
+export type ScheduledSessionCardsClearResponse = z.infer<typeof scheduledSessionCardsClearResponseSchema>;
 export const goldenScheduleWireFixtures = goldenScheduleFixtures;

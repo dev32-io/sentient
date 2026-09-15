@@ -1,3 +1,6 @@
+import { CALENDAR_SCHEMA_STATEMENTS } from "../calendar/schema.js";
+import { SCHEDULING_SCHEMA_STATEMENTS } from "../scheduling/schema.js";
+
 // SQLite schema for the per-user session store (spec §3).
 //
 // One database file per user. WAL mode: appends inside a user serialize on
@@ -145,6 +148,16 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
     version: 6,
     name: "sessions.scheduled-schedule-id",
     statements: ["ALTER TABLE sessions ADD COLUMN scheduled_schedule_id TEXT"],
+  },
+  {
+    version: 8,
+    name: "private-calendar",
+    statements: CALENDAR_SCHEMA_STATEMENTS,
+  },
+  {
+    version: 9,
+    name: "scheduling-and-notification-cards",
+    statements: SCHEDULING_SCHEMA_STATEMENTS,
   },
 ];
 

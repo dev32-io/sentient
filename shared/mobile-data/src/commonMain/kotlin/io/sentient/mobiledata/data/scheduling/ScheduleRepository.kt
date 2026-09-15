@@ -10,6 +10,8 @@ interface ScheduleRepository {
     suspend fun patch(scheduleId: String, request: SchedulePatchRequest): SentientResult<SchedulePatchResponse>
     suspend fun delete(scheduleId: String, expectedRevision: Int): SentientResult<ScheduleDeleteResponse>
     suspend fun cards(cursor: String? = null, limit: Int? = null): SentientResult<ScheduledSessionCardPage>
+    suspend fun clearCard(sessionId: String): SentientResult<ScheduledSessionCardsClearResponse>
+    suspend fun clearCards(occurrenceIds: List<String>): SentientResult<ScheduledSessionCardsClearResponse>
 }
 
 class SdkScheduleRepository(private val client: ScheduleHttpClient) : ScheduleRepository {
@@ -18,4 +20,6 @@ class SdkScheduleRepository(private val client: ScheduleHttpClient) : ScheduleRe
     override suspend fun patch(scheduleId: String, request: SchedulePatchRequest) = client.patch(scheduleId, request).toScheduleResult()
     override suspend fun delete(scheduleId: String, expectedRevision: Int) = client.delete(scheduleId, expectedRevision).toScheduleResult()
     override suspend fun cards(cursor: String?, limit: Int?) = client.cards(cursor, limit).toScheduleResult()
+    override suspend fun clearCard(sessionId: String) = client.clearCard(sessionId).toScheduleResult()
+    override suspend fun clearCards(occurrenceIds: List<String>) = client.clearCards(occurrenceIds).toScheduleResult()
 }

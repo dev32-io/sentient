@@ -4,11 +4,14 @@ import {
   type ScheduleListResponse,
   type SchedulePatchRequest,
   type ScheduledSessionCardPage,
+  type ScheduledSessionCardsClearRequest,
+  type ScheduledSessionCardsClearResponse,
   scheduleCreateResponseSchema,
   scheduleDeleteResponseSchema,
   scheduleListResponseSchema,
   schedulePatchResponseSchema,
   scheduledSessionCardPageSchema,
+  scheduledSessionCardsClearResponseSchema,
 } from "@sentient/protocol";
 import type { z } from "zod";
 
@@ -20,13 +23,24 @@ export interface ScheduleApiError {
 }
 export type ScheduleApiResult<T> = { ok: true; value: T } | { ok: false; error: ScheduleApiError };
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+const INBOX_REQUEST_TIMEOUT_MS = 15_000;
 
 export interface SchedulesApi {
   list(token: string): Promise<ScheduleApiResult<ScheduleListResponse>>;
   create(token: string, input: ScheduleCreateRequest): Promise<ScheduleApiResult<Schedule>>;
   patch(token: string, id: string, input: SchedulePatchRequest): Promise<ScheduleApiResult<Schedule>>;
   delete(token: string, id: string, revision: number): Promise<ScheduleApiResult<void>>;
-  cards(token: string): Promise<ScheduleApiResult<ScheduledSessionCardPage>>;
+  cards(token: string, cursor?: string, signal?: AbortSignal): Promise<ScheduleApiResult<ScheduledSessionCardPage>>;
+  clearCard(
+    token: string,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScheduleApiResult<ScheduledSessionCardsClearResponse>>;
+  clearCards(
+    token: string,
+    occurrenceIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ScheduleApiResult<ScheduledSessionCardsClearResponse>>;
 }
 
 function failure(status: number, body?: unknown): ScheduleApiResult<never> {
@@ -72,6 +86,10 @@ export function createSchedulesApi(config: { baseUrl?: string; fetch?: Fetcher }
     const parsed = schema.safeParse(body);
     return parsed.success ? { ok: true, value: parsed.data } : failure(response.status);
   }
+  const inboxSignal = (signal?: AbortSignal): AbortSignal => {
+    const timeout = AbortSignal.timeout(INBOX_REQUEST_TIMEOUT_MS);
+    return signal ? AbortSignal.any([signal, timeout]) : timeout;
+  };
   return {
     list: (token) => call(token, "/api/v1/schedules", scheduleListResponseSchema),
     async create(token, input) {
@@ -95,6 +113,27 @@ export function createSchedulesApi(config: { baseUrl?: string; fetch?: Fetcher }
       });
       return result.ok ? { ok: true, value: undefined } : result;
     },
-    cards: (token) => call(token, "/api/v1/scheduled-session-cards", scheduledSessionCardPageSchema),
+    cards: (token, cursor, signal) =>
+      call(
+        token,
+        `/api/v1/scheduled-session-cards${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+        scheduledSessionCardPageSchema,
+        { signal: inboxSignal(signal) },
+      ),
+    clearCard: (token, sessionId, signal) =>
+      call(
+        token,
+        `/api/v1/scheduled-session-cards/${encodeURIComponent(sessionId)}`,
+        scheduledSessionCardsClearResponseSchema,
+        { method: "DELETE", signal: inboxSignal(signal) },
+      ),
+    clearCards: (token, occurrenceIds, signal) =>
+      occurrenceIds.length === 0
+        ? Promise.resolve({ ok: true, value: { cleared: true } })
+        : call(token, "/api/v1/scheduled-session-cards", scheduledSessionCardsClearResponseSchema, {
+            method: "DELETE",
+            body: JSON.stringify({ occurrenceIds: [...occurrenceIds] } satisfies ScheduledSessionCardsClearRequest),
+            signal: inboxSignal(signal),
+          }),
   };
 }

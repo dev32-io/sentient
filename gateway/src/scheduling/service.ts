@@ -1,6 +1,6 @@
-import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import type { Database } from "bun:sqlite";
+import { readdirSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import {
   type Schedule,
   type ScheduleCreateRequest,
@@ -11,8 +11,10 @@ import {
   scheduleSchema,
   scheduleSourceSchema,
   scheduledSessionCardSchema,
+  utcInstantSchema,
 } from "@sentient/protocol";
 import type { PrivateScheduleResource } from "../access/private-schedule-resource.js";
+import { DEFAULT_USER_DB_FILENAME, openUserDatabaseAtPath } from "../store/user-database.js";
 import { type UserId, isValidUserId } from "../user-auth/user-id.js";
 import type {
   AtomicScheduleFinalizer,
@@ -22,44 +24,18 @@ import type {
   FinalizationResult,
   ScheduleCommands,
   ScheduledContentOutbox,
+  ScheduledSessionCardCommands,
   SchedulingFailure,
   SchedulingResult,
 } from "./contracts.js";
 import { latestScheduleOccurrence, nextScheduleOccurrence } from "./recurrence.js";
 
-const SCHEMA_VERSION = 2;
 const DEFAULT_GRACE_MS = 15 * 60_000;
 const DEFAULT_MAX_SCHEDULES = 1_000;
 const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_INBOX_MAX_ENTRIES = 500;
+const DEFAULT_INBOX_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const MAX_CLAIM_LIMIT = 100;
-const DDL = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-CREATE TABLE IF NOT EXISTS schedules (
-  schedule_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, revision INTEGER NOT NULL, generation INTEGER NOT NULL,
-  message TEXT NOT NULL, timing_json TEXT NOT NULL, enabled INTEGER NOT NULL,
-  source_json TEXT NOT NULL, next_run_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL UNIQUE, create_fingerprint TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
-  deleted_revision INTEGER
-);
-CREATE TABLE IF NOT EXISTS occurrences (
-  occurrence_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, generation INTEGER NOT NULL,
-  intended_at TEXT NOT NULL, claim_token TEXT, claimed_until TEXT, session_id TEXT,
-  outcome TEXT, completed_at TEXT, entry_id TEXT, message TEXT, source_json TEXT, one_time INTEGER,
-  UNIQUE(schedule_id, generation, intended_at)
-);
-CREATE INDEX IF NOT EXISTS schedules_due ON schedules(deleted, enabled, next_run_at);
-CREATE TABLE IF NOT EXISTS scheduled_cards (
-  occurrence_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, schedule_id TEXT NOT NULL,
-  intended_at TEXT NOT NULL, completed_at TEXT NOT NULL, status TEXT NOT NULL, preview TEXT
-);
-CREATE TABLE IF NOT EXISTS content_outbox (
-  outbox_id TEXT PRIMARY KEY, occurrence_id TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL,
-  session_id TEXT NOT NULL, entry_id TEXT NOT NULL, available_at TEXT NOT NULL,
-  claim_token TEXT, claimed_until TEXT, attempt INTEGER NOT NULL DEFAULT 0, completed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS content_outbox_due ON content_outbox(completed_at,available_at,claimed_until);
-`;
 
 type Row = {
   schedule_id: string;
@@ -96,6 +72,15 @@ type RecoverableRow = {
   one_time: number;
 };
 type Recoverable = { db: Database; owner: UserId; row: RecoverableRow };
+type CardRow = {
+  session_id: unknown;
+  schedule_id: unknown;
+  occurrence_id: unknown;
+  intended_at: unknown;
+  completed_at: unknown;
+  outcome: unknown;
+  preview: unknown;
+};
 
 export interface ScheduleServiceOptions {
   /** Optional capability-root parent used by the boot scanner. */
@@ -103,7 +88,11 @@ export interface ScheduleServiceOptions {
   readonly graceMs?: number;
   readonly maxSchedulesPerUser?: number;
   readonly sessionDbFileName?: string;
+  readonly cardsDefaultPageSize?: number;
   readonly cardsMaxPageSize?: number;
+  readonly inboxMaxEntries?: number;
+  readonly inboxRetentionMs?: number;
+  readonly clock?: () => Date;
   readonly id?: () => string;
 }
 
@@ -132,6 +121,7 @@ export type CalendarReminderScheduleInput = Readonly<{
 }>;
 export interface ScheduleService
   extends ScheduleCommands,
+    ScheduledSessionCardCommands,
     DueClaimSource,
     ScheduleClaimTransactions,
     AtomicScheduleFinalizer,
@@ -210,8 +200,29 @@ function project(row: Row): Schedule | undefined {
 export function createScheduleService(options: ScheduleServiceOptions = {}): ScheduleService {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const maxSchedules = options.maxSchedulesPerUser ?? DEFAULT_MAX_SCHEDULES;
+  const cardsDefaultPageSize = options.cardsDefaultPageSize ?? DEFAULT_PAGE_SIZE;
+  const cardsMaxPageSize = options.cardsMaxPageSize ?? 100;
+  const inboxMaxEntries = options.inboxMaxEntries ?? DEFAULT_INBOX_MAX_ENTRIES;
+  const inboxRetentionMs = options.inboxRetentionMs ?? DEFAULT_INBOX_RETENTION_MS;
+  const clock = options.clock ?? (() => new Date());
   const makeId = options.id ?? (() => crypto.randomUUID());
-  if (!Number.isInteger(graceMs) || graceMs < 0 || !Number.isInteger(maxSchedules) || maxSchedules < 1)
+  if (
+    !Number.isInteger(graceMs) ||
+    graceMs < 0 ||
+    !Number.isInteger(maxSchedules) ||
+    maxSchedules < 1 ||
+    !Number.isInteger(cardsDefaultPageSize) ||
+    cardsDefaultPageSize < 1 ||
+    !Number.isInteger(cardsMaxPageSize) ||
+    cardsMaxPageSize < cardsDefaultPageSize ||
+    cardsMaxPageSize > 100 ||
+    !Number.isInteger(inboxMaxEntries) ||
+    inboxMaxEntries < 1 ||
+    inboxMaxEntries > 10_000 ||
+    !Number.isInteger(inboxRetentionMs) ||
+    inboxRetentionMs < 1 ||
+    inboxRetentionMs > 31_536_000_000
+  )
     throw new Error("invalid schedule service limits");
   const roots = new Map<UserId, string>();
   let closed = false;
@@ -220,31 +231,14 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     resource.assertOwner(resource.ownerUserId);
     roots.set(resource.ownerUserId, resource.rootPath);
   };
-  const openRoot = (root: string): Database => {
+  // Trusted supervisor paths enter only through discovery. Public methods first
+  // validate a capability-backed PrivateScheduleResource in remember().
+  const openRoot = (root: string, owner: UserId): Database => {
     if (closed) throw new Error("closed");
-    const dir = join(root, "scheduling-v1");
-    mkdirSync(dir, { recursive: true });
-    const db = new Database(join(dir, "schedules.db"), { create: true });
-    const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
-    if (version > SCHEMA_VERSION) {
-      db.close();
-      throw new Error("newer schedule schema");
-    }
-    db.exec(DDL);
-    if (version < 2) {
-      const columns = db
-        .query<{ name: string }, []>("PRAGMA table_info(occurrences)")
-        .all()
-        .map((r) => r.name);
-      if (!columns.includes("outcome")) db.exec("ALTER TABLE occurrences ADD COLUMN outcome TEXT");
-      if (!columns.includes("completed_at")) db.exec("ALTER TABLE occurrences ADD COLUMN completed_at TEXT");
-      if (!columns.includes("entry_id")) db.exec("ALTER TABLE occurrences ADD COLUMN entry_id TEXT");
-      if (!columns.includes("message")) db.exec("ALTER TABLE occurrences ADD COLUMN message TEXT");
-      if (!columns.includes("source_json")) db.exec("ALTER TABLE occurrences ADD COLUMN source_json TEXT");
-      if (!columns.includes("one_time")) db.exec("ALTER TABLE occurrences ADD COLUMN one_time INTEGER");
-    }
-    if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-    return db;
+    const resolvedRoot = resolve(root);
+    const dbPath = resolve(resolvedRoot, options.sessionDbFileName ?? DEFAULT_USER_DB_FILENAME);
+    if (!dbPath.startsWith(resolvedRoot + sep)) throw new Error("schedule database path escapes user root");
+    return openUserDatabaseAtPath(dbPath, owner).db;
   };
   const withResource = async <T>(
     resource: PrivateScheduleResource,
@@ -254,7 +248,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     remember(resource);
     let db: Database | undefined;
     try {
-      db = openRoot(resource.rootPath);
+      db = openRoot(resource.rootPath, resource.ownerUserId);
       return work(db);
     } catch {
       return fail("unavailable", true);
@@ -507,97 +501,105 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
       return { ok: true, value };
     });
 
-  const cards: ScheduleCommands["cards"] = async (resource, cursor, limit) => {
-    const bounded = Math.min(Math.max(1, limit || DEFAULT_PAGE_SIZE), options.cardsMaxPageSize ?? 100);
-    const offset = cursor ? Number(cursor) : 0;
-    if (!Number.isInteger(offset) || offset < 0) return fail("validation");
+  function projectCard(row: CardRow): ScheduledSessionCard | undefined {
+    if (row.outcome !== "completed" && row.outcome !== "failed" && row.outcome !== "interrupted") return undefined;
+    const normalized = typeof row.preview === "string" ? row.preview.replace(/\s+/gu, " ").trim() : "";
+    let preview = "";
+    for (const point of normalized) {
+      if (preview.length + point.length > 280) break;
+      preview += point;
+    }
+    const status =
+      row.outcome === "completed" && preview ? "completed" : row.outcome === "interrupted" ? "interrupted" : "failed";
+    const parsed = scheduledSessionCardSchema.safeParse({
+      sessionId: row.session_id,
+      scheduleId: row.schedule_id,
+      occurrenceId: row.occurrence_id,
+      intendedAt: row.intended_at,
+      completedAt: row.completed_at,
+      status,
+      ...(status === "completed" ? { preview } : {}),
+    });
+    return parsed.success ? parsed.data : undefined;
+  }
 
-    // Cards are a projection of the authoritative append-only session store.
-    // The schedule database deliberately contains only occurrence/outbox
-    // bookkeeping, so one-time consumption cannot erase this inbox entry.
-    const sessionDbPath = join(resource.rootPath, options.sessionDbFileName ?? "sessions.db");
-    if (!existsSync(sessionDbPath)) return { ok: true, value: { cards: [] } };
-    let sessionDb: Database | undefined;
-    try {
-      sessionDb = new Database(sessionDbPath, { readonly: true });
-      const rows = sessionDb
-        .query<
-          {
-            session_id: string;
-            schedule_id: string;
-            occurrence_id: string;
-            intended_at: string;
-            completed_at: string;
-            outcome: "completed" | "failed" | "interrupted";
-            preview: string | null;
-          },
-          [number, number]
-        >(
-          `
-          SELECT s.session_id,
-                 s.scheduled_schedule_id AS schedule_id,
-                 s.scheduled_occurrence_id AS occurrence_id,
-                 s.scheduled_intended_at AS intended_at,
-                 s.scheduled_completed_at AS completed_at,
-                 s.scheduled_outcome AS outcome,
-                 e.text AS preview
-          FROM sessions s
-          LEFT JOIN entries e
-            ON e.session_id=s.session_id
-           AND CAST(e.seq AS TEXT)=s.scheduled_entry_id
-           AND e.kind='assistant'
-          WHERE s.scheduled_outcome IS NOT NULL
-            AND s.scheduled_completed_at IS NOT NULL
-          ORDER BY s.scheduled_completed_at DESC, s.scheduled_occurrence_id DESC
-          LIMIT ? OFFSET ?
-        `,
+  const pruneCards = (db: Database, now: Date): void => {
+    const nowMs = now.getTime();
+    if (!Number.isFinite(nowMs)) throw new Error("invalid clock");
+    const cutoff = iso(new Date(nowMs - inboxRetentionMs));
+    db.query(`
+      DELETE FROM notification_cards WHERE occurrence_id IN (
+        SELECT c.occurrence_id FROM notification_cards c
+        JOIN occurrences o ON o.occurrence_id=c.occurrence_id
+        WHERE julianday(o.completed_at) IS NULL OR julianday(o.completed_at)<=julianday(?)
+      )
+    `).run(cutoff);
+    db.query(`
+      DELETE FROM notification_cards WHERE occurrence_id IN (
+        SELECT c.occurrence_id FROM notification_cards c
+        JOIN occurrences o ON o.occurrence_id=c.occurrence_id
+        ORDER BY julianday(o.completed_at) DESC, c.occurrence_id DESC
+        LIMIT -1 OFFSET ?
+      )
+    `).run(inboxMaxEntries);
+  };
+
+  const cardSelect = `
+    SELECT c.session_id,o.schedule_id,o.occurrence_id,o.intended_at,o.completed_at,o.outcome,e.text AS preview
+    FROM notification_cards c
+    JOIN occurrences o ON o.occurrence_id=c.occurrence_id
+    JOIN sessions s ON s.session_id=c.session_id
+    LEFT JOIN entries e
+      ON e.session_id=c.session_id
+     AND CAST(e.seq AS TEXT)=o.entry_id
+     AND e.kind='assistant'
+  `;
+
+  const cards: ScheduleCommands["cards"] = (resource, cursor, limit) =>
+    withResource(resource, (db) => {
+      const bounded = Math.min(Math.max(1, limit || cardsDefaultPageSize), cardsMaxPageSize);
+      const offset = cursor ? Number(cursor) : 0;
+      if (!Number.isInteger(offset) || offset < 0) return fail("validation");
+      db.transaction(() => pruneCards(db, clock())).immediate();
+      const rows = db
+        .query<CardRow, [number, number]>(
+          `${cardSelect} ORDER BY julianday(o.completed_at) DESC,c.occurrence_id DESC LIMIT ? OFFSET ?`,
         )
         .all(bounded + 1, offset);
-      const parsed: ScheduledSessionCard[] = rows.slice(0, bounded).flatMap((row) => {
-        const normalized = row.preview?.replace(/\s+/gu, " ").trim();
-        let preview = "";
-        if (normalized) {
-          // Protocol max length follows JavaScript string length (UTF-16 code
-          // units). Keep full code points while respecting that exact bound.
-          for (const point of normalized) {
-            if (preview.length + point.length > 280) break;
-            preview += point;
-          }
-        }
-        // Old or interrupted writes can contain completed provenance without a
-        // usable terminal assistant entry. Such rows are safe failures, never
-        // fabricated completed responses. Unknown/malformed rows are omitted so
-        // one damaged session cannot invalidate the whole authenticated page.
-        const status =
-          row.outcome === "completed" && preview
-            ? "completed"
-            : row.outcome === "interrupted"
-              ? "interrupted"
-              : "failed";
-        const card = scheduledSessionCardSchema.safeParse({
-          sessionId: row.session_id,
-          scheduleId: row.schedule_id,
-          occurrenceId: row.occurrence_id,
-          intendedAt: row.intended_at,
-          completedAt: row.completed_at,
-          status,
-          ...(status === "completed" ? { preview } : {}),
-        });
-        return card.success ? [card.data] : [];
-      });
+      const projected = rows.map(projectCard);
+      if (projected.some((card) => !card)) return fail("internal");
       return {
         ok: true,
         value: {
-          cards: parsed,
+          cards: projected.slice(0, bounded) as ScheduledSessionCard[],
           ...(rows.length > bounded ? { nextCursor: String(offset + bounded) } : {}),
         },
       };
-    } catch {
-      return fail("internal");
-    } finally {
-      sessionDb?.close();
-    }
-  };
+    });
+
+  const clearCards: ScheduledSessionCardCommands["clearCards"] = (resource, occurrenceIds) =>
+    withResource<void>(resource, (db) => {
+      if (
+        occurrenceIds.length < 1 ||
+        occurrenceIds.length > 10_000 ||
+        occurrenceIds.some((id) => !id) ||
+        new Set(occurrenceIds).size !== occurrenceIds.length
+      )
+        return fail("validation");
+      const remove = db.query("DELETE FROM notification_cards WHERE occurrence_id=?");
+      db.transaction(() => {
+        for (const id of occurrenceIds) remove.run(id);
+      }).immediate();
+      return { ok: true, value: undefined };
+    });
+
+  const clearCard: ScheduledSessionCardCommands["clearCard"] = (resource, sessionId) =>
+    withResource<void>(resource, (db) => {
+      if (!db.query<{ found: number }, [string]>("SELECT 1 found FROM sessions WHERE session_id=?").get(sessionId))
+        return fail("not_found");
+      db.query("DELETE FROM notification_cards WHERE session_id=?").run(sessionId);
+      return { ok: true, value: undefined };
+    });
 
   function discover(): void {
     if (!options.userDataRoot) return;
@@ -627,7 +629,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
       const found: Candidate[] = [];
       const recoverable: Recoverable[] = [];
       for (const [owner, root] of roots) {
-        const db = openRoot(root);
+        const db = openRoot(root, owner);
+        db.transaction(() => pruneCards(db, now)).immediate();
         opened.push(db);
         for (const row of db
           .query<RecoverableRow, [string]>(
@@ -788,7 +791,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     if (!root) return { ok: true, value: [] };
     let db: Database | undefined;
     try {
-      db = openRoot(root);
+      db = openRoot(root, ownerUserId);
       const ids = db
         .query<{ source_json: string }, []>("SELECT source_json FROM schedules WHERE deleted=0")
         .all()
@@ -819,7 +822,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     if (!root) return { ok: true, value: undefined };
     let db: Database | undefined;
     try {
-      db = openRoot(root);
+      db = openRoot(root, ownerUserId);
       const rows = db
         .query<{ schedule_id: string; source_json: string }, []>(
           "SELECT schedule_id,source_json FROM schedules WHERE deleted=0",
@@ -852,7 +855,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     const owners: UserId[] = [];
     try {
       for (const [owner, root] of roots) {
-        const db = openRoot(root);
+        const db = openRoot(root, owner);
         try {
           const rows = db.query<{ source_json: string }, []>("SELECT source_json FROM schedules").all();
           if (
@@ -879,7 +882,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     if (!root || !sessionId) return fail("claim_lost");
     let db: Database | undefined;
     try {
-      db = openRoot(root);
+      db = openRoot(root, claim.ownerUserId);
       const database = db;
       return database
         .transaction((): SchedulingResult<ClaimSessionAssociation> => {
@@ -959,10 +962,12 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     if (!root) return fail("claim_lost");
     let db: Database | undefined;
     try {
-      db = openRoot(root);
+      db = openRoot(root, claim.ownerUserId);
       const database = db;
       return database
         .transaction((): SchedulingResult<FinalizationResult> => {
+          if (!utcInstantSchema.safeParse(receipt.completedAt).success) return fail("validation");
+          if (outbox && !utcInstantSchema.safeParse(outbox.availableAt).success) return fail("validation");
           const occurrence = database
             .query<
               {
@@ -1005,6 +1010,41 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
               outbox.content.entryId !== receipt.content.entryId
             )
               return fail("validation");
+            const saved = database
+              .query<
+                {
+                  outbox_id: string;
+                  occurrence_id: string;
+                  owner_user_id: string;
+                  session_id: string;
+                  entry_id: string;
+                  available_at: string;
+                },
+                [string, string]
+              >(
+                "SELECT outbox_id,occurrence_id,owner_user_id,session_id,entry_id,available_at FROM content_outbox WHERE occurrence_id=? OR outbox_id=?",
+              )
+              .get(claim.occurrenceId, outbox.outboxId);
+            if (
+              saved &&
+              (saved.outbox_id !== outbox.outboxId ||
+                saved.occurrence_id !== claim.occurrenceId ||
+                saved.owner_user_id !== outbox.content.ownerUserId ||
+                saved.session_id !== outbox.content.sessionId ||
+                saved.entry_id !== outbox.content.entryId ||
+                saved.available_at !== outbox.availableAt)
+            )
+              return fail("conflict");
+          }
+          if (receipt.outcome !== "expired") {
+            const card = database
+              .query<{ session_id: string }, [string]>(
+                "SELECT session_id FROM notification_cards WHERE occurrence_id=?",
+              )
+              .get(claim.occurrenceId);
+            if (card && card.session_id !== receipt.sessionId) return fail("conflict");
+          }
+          if (outbox)
             database
               .query(
                 `INSERT OR IGNORE INTO content_outbox
@@ -1019,38 +1059,16 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                 outbox.content.entryId,
                 outbox.availableAt,
               );
-            const saved = database
-              .query<
-                {
-                  outbox_id: string;
-                  owner_user_id: string;
-                  session_id: string;
-                  entry_id: string;
-                  available_at: string;
-                },
-                [string]
-              >(
-                "SELECT outbox_id,owner_user_id,session_id,entry_id,available_at FROM content_outbox WHERE occurrence_id=?",
-              )
-              .get(claim.occurrenceId);
-            if (
-              !saved ||
-              saved.outbox_id !== outbox.outboxId ||
-              saved.owner_user_id !== outbox.content.ownerUserId ||
-              saved.session_id !== outbox.content.sessionId ||
-              saved.entry_id !== outbox.content.entryId ||
-              saved.available_at !== outbox.availableAt
-            )
-              return fail("conflict");
-          }
           const entryId = receipt.outcome === "completed" ? receipt.content.entryId : null;
           database
             .query(
               "UPDATE occurrences SET outcome=?,completed_at=?,entry_id=?,claimed_until=NULL WHERE occurrence_id=? AND outcome IS NULL",
             )
             .run(receipt.outcome, receipt.completedAt, entryId, claim.occurrenceId);
-          // Session provenance is the authoritative card source. Do not mirror
-          // response state or content into the scheduling database.
+          if (receipt.outcome !== "expired")
+            database
+              .query("INSERT OR IGNORE INTO notification_cards(occurrence_id,session_id) VALUES (?,?)")
+              .run(claim.occurrenceId, receipt.sessionId);
           const schedule = database
             .query<Row, [string]>("SELECT * FROM schedules WHERE schedule_id=?")
             .get(claim.scheduleId);
@@ -1076,6 +1094,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                 .run(nextRunAt, claim.scheduleId, occurrence.generation);
             }
           }
+          pruneCards(database, clock());
           return {
             ok: true,
             value: {
@@ -1103,7 +1122,7 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     try {
       for (const [owner, root] of roots) {
         if (entries.length >= limit) break;
-        const db = openRoot(root);
+        const db = openRoot(root, owner);
         try {
           const rows = db
             .query<
@@ -1157,8 +1176,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     if (closed) return fail("closed");
     discover();
     try {
-      for (const root of roots.values()) {
-        const db = openRoot(root);
+      for (const [owner, root] of roots) {
+        const db = openRoot(root, owner);
         try {
           const result = value === undefined ? db.query(sql).run(outboxId) : db.query(sql).run(value, outboxId);
           if (result.changes === 1) return { ok: true, value: undefined };
@@ -1184,6 +1203,8 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
     delete: remove,
     list,
     cards,
+    clearCard,
+    clearCards,
     claimDue,
     associateSession,
     finalizeClaim,

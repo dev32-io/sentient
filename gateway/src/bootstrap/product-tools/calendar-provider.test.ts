@@ -89,12 +89,12 @@ function args(
 const timed = "2026-01-01T10:00:00Z";
 type SchemaShape = {
   type?: string;
-  const?: string | boolean;
+  description?: string;
   pattern?: string;
   properties?: Record<string, SchemaShape>;
   required?: string[];
-  enum?: string[];
-  oneOf?: SchemaShape[];
+  enum?: Array<string | boolean>;
+  anyOf?: SchemaShape[];
 };
 type CalendarTool = ReturnType<typeof calendarProductToolProvider.create>[number];
 function tool(h: ReturnType<typeof harness>, name: string): CalendarTool {
@@ -104,7 +104,7 @@ function tool(h: ReturnType<typeof harness>, name: string): CalendarTool {
 }
 
 describe("calendar V2 product tools", () => {
-  it("publishes concise string schemas, stable tiers, and no legacy aliases", () => {
+  it("publishes provider-supported schemas, stable tiers, and no legacy aliases", () => {
     const h = harness();
     try {
       expect([...h.tools.keys()]).toEqual([
@@ -119,10 +119,13 @@ describe("calendar V2 product tools", () => {
       const list = tool(h, "calendar_list");
       const search = tool(h, "calendar_search");
       const update = tool(h, "calendar_update");
+      const remove = tool(h, "calendar_delete");
       const createProperties = (create.definition.parameters as SchemaShape).properties ?? {};
       const listProperties = (list.definition.parameters as SchemaShape).properties ?? {};
       const searchParameters = search.definition.parameters as SchemaShape;
-      const updateVariants = (update.definition.parameters as SchemaShape).oneOf ?? [];
+      const updateParameters = update.definition.parameters as SchemaShape;
+      const updateProperties = updateParameters.properties ?? {};
+      const deleteParameters = remove.definition.parameters as SchemaShape;
       expect(create.definition.tier).toBe("write");
       expect(createProperties.start?.type).toBe("string");
       expect(createProperties.recurrence?.properties?.frequency?.enum).toEqual([
@@ -135,20 +138,26 @@ describe("calendar V2 product tools", () => {
       expect(createProperties).not.toHaveProperty("rrule");
       expect(listProperties.scope?.enum).toEqual(["private", "household", "all"]);
       expect(searchParameters.required).toEqual(["query", "from", "to"]);
-      expect(updateVariants).toHaveLength(3);
+      expect(updateParameters.type).toBe("object");
+      expect(updateProperties.applyTo?.enum).toEqual(["this_occurrence", "this_and_following", "entire_series"]);
+      expect(updateProperties.originalStart?.description).toContain("Required when applyTo");
+      expect(updateParameters.required).toEqual(["eventId", "applyTo", "changes"]);
+      expect(deleteParameters.type).toBe("object");
+      expect(deleteParameters.required).toEqual(["eventId", "applyTo"]);
+      const createReminder = createProperties.reminder?.anyOf ?? [];
+      expect(createReminder.some((variant) => variant.properties?.enabled?.enum?.[0] === false)).toBe(false);
       expect(
-        updateVariants.find((variant) => variant.properties?.applyTo?.const === "this_occurrence")?.required,
-      ).toContain("originalStart");
-      expect(
-        updateVariants.find((variant) => variant.properties?.applyTo?.const === "entire_series")?.properties,
-      ).not.toHaveProperty("originalStart");
-      const createReminder = createProperties.reminder?.oneOf ?? [];
-      expect(createReminder.some((variant) => variant.properties?.enabled?.const === false)).toBe(false);
-      expect(
-        createReminder.find((variant) => variant.properties?.mode?.const === "all-day")?.properties?.localTime?.pattern,
+        createReminder.find((variant) => variant.properties?.mode?.enum?.[0] === "all-day")?.properties?.localTime
+          ?.pattern,
       ).toBe("^(?:[01]\\d|2[0-3]):[0-5]\\d$");
-      const updateReminder = updateVariants[0]?.properties?.changes?.properties?.reminder?.oneOf ?? [];
-      expect(updateReminder.some((variant) => variant.properties?.enabled?.const === false)).toBe(true);
+      const updateReminder = updateProperties.changes?.properties?.reminder?.anyOf ?? [];
+      expect(updateReminder.some((variant) => variant.properties?.enabled?.enum?.[0] === false)).toBe(true);
+      expect(JSON.stringify([create.definition.parameters, updateParameters, deleteParameters])).not.toContain(
+        '"oneOf"',
+      );
+      expect(JSON.stringify([create.definition.parameters, updateParameters, deleteParameters])).not.toContain(
+        '"const"',
+      );
       expect(create.validate?.({ title: "Appointment", start: timed, reminder: { enabled: false } })).toMatchObject({
         isError: true,
       });
@@ -227,6 +236,7 @@ describe("calendar V2 product tools", () => {
     try {
       const search = tool(h, "calendar_search");
       const update = tool(h, "calendar_update");
+      const remove = tool(h, "calendar_delete");
       expect(search.validate?.({ query: "x" })).toMatchObject({ isError: true });
       expect(JSON.parse(search.validate?.({ query: "x" })?.content ?? "{}")).toMatchObject({
         outcome: "error",
@@ -238,6 +248,10 @@ describe("calendar V2 product tools", () => {
       expect(
         update.validate?.({ eventId: "e", applyTo: "entire_series", originalStart: timed, changes: { title: "x" } }),
       ).toMatchObject({ isError: true });
+      expect(remove.validate?.({ eventId: "e", applyTo: "this_and_following" })).toMatchObject({ isError: true });
+      expect(remove.validate?.({ eventId: "e", applyTo: "entire_series", originalStart: timed })).toMatchObject({
+        isError: true,
+      });
     } finally {
       h.close();
     }
@@ -416,7 +430,7 @@ describe("calendar V2 product tools", () => {
       };
       expect(body.issues).toContainEqual({ path: "reminder.leadMinutes", code: "invalid_type" });
       expect(body.issues?.length).toBeLessThanOrEqual(8);
-      expect(body.expected).toContain("leadMinutes");
+      expect(body.expected).toContain("{enabled:true,mode:'lead',leadMinutes:15}");
       expect(body.expected).toContain("Only calendar_update");
       expect(invalid?.content).not.toContain("Invalid input");
       expect(invalid?.content).not.toContain(canary);

@@ -371,6 +371,7 @@ export function buildSessionCalendar(
   resolvedConfig?: CalendarConfig,
   householdTimeZone?: string,
   reminders?: CalendarReminderScheduler,
+  dbFileName?: string,
 ): SessionCalendar | null {
   if (!orchestratorCfg.calendar.enabled) return null;
 
@@ -387,7 +388,7 @@ export function buildSessionCalendar(
     // One fresh V2 handle per scope. The query service and all three adapters
     // share these handles; no compatibility facade or ambient principal is
     // introduced at the session boundary.
-    privateStore = openCalendarPersistence(privateCap, calendarCfg);
+    privateStore = openCalendarPersistence(privateCap, calendarCfg, dbFileName ? { dbFileName } : {});
     householdStore = openCalendarPersistence(householdCap, calendarCfg);
     const queryService = createCalendarQueryService({
       private: privateStore,
@@ -1714,6 +1715,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
             schedules: deps.schedules,
             accessManager,
             calendarConfig,
+            dbFileName,
             resolveUser: async (userId) => {
               if (!auth) return null;
               const found = await auth.users.get(userId);
@@ -1721,6 +1723,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
             },
           })
         : undefined,
+      dbFileName,
     );
 
     // The single `native` namespace map the broker resolves under

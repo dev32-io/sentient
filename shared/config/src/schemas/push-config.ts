@@ -3,6 +3,25 @@ import { z } from "zod";
 /** Optional iOS/APNs delivery policy. Credentials intentionally have no YAML schema here. */
 export const pushConfigSchema = z
   .object({
+    // Optional, not default-materialized: older binaries must still read existing operator YAML.
+    provider_url: z
+      .string()
+      .url()
+      .refine((value) => {
+        if (!URL.canParse(value)) return false;
+        const url = new URL(value);
+        return (
+          url.protocol === "http:" &&
+          ["127.0.0.1", "[::1]"].includes(url.hostname) &&
+          url.port !== "0" &&
+          url.pathname === "/api/push" &&
+          !url.username &&
+          !url.password &&
+          !url.search &&
+          !url.hash
+        );
+      }, "Push provider must be a credential-free loopback HTTP /api/push endpoint")
+      .optional(),
     request_timeout_ms: z.number().int().min(100).max(60_000),
     drain_interval_ms: z.number().int().min(100).max(60_000),
     drain_claim_limit: z.number().int().min(1).max(1_000),

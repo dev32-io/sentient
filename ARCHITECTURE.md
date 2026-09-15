@@ -88,8 +88,11 @@ The runtime serializes turns so only one ReAct loop writes a session at a time.
 Input arriving during a turn can steer the next loop iteration; background
 completion can steer the active turn or start a follow-up turn.
 
-Each user has a separate SQLite store. Its append-only entry stream is the
-source of truth for model context and client history:
+Each user has one configured SQLite database (`sessions.db` by default).
+Session history, scheduling, notification cards, delivery outbox, and private
+calendar tables share that file, but retain separate capability-scoped store
+APIs. Its append-only entry stream is the source of truth for model context
+and client history:
 
 ```mermaid
 flowchart LR
@@ -107,6 +110,28 @@ Live frames are a rendering optimization. Once a turn settles, live output and
 store replay must converge. Compaction appends a marker rather than rewriting
 history: the model projection uses the compacted suffix while the client can
 still render the complete conversation.
+
+### Storage scopes
+
+- **User:** `<user_data_root>/<userId>/<store.db_filename>`. Notification cards
+  reference existing sessions; clearing cards never deletes chat or schedule data.
+- **Household:** `<shared_data_root>/<householdId>/calendar-v2/calendar.db`.
+  Family calendar events stay shared, not duplicated into members' databases.
+  Calendar queries merge authorized private and household results. Personal
+  reminder schedules remain user-owned and reconcile shared-event references.
+- **Global:** gateway `push/push.db` owns device bindings, cross-account fences,
+  and delivery receipts. Gorush transports APNs notifications; it is not storage
+  authority. Foreground APNs notifications prompt authenticated REST inbox
+  refresh, as do inbox entry and foreground resume. Chat WebSocket remains
+  session-scoped.
+
+Domain schemas share the per-user migration ladder and enable SQLite foreign
+keys on each connection. Startup consolidates existing private calendar data
+before service loops or traffic, verifies the import, and retires the old file.
+Household calendar location is unchanged. Binary-only rollback to a release
+that expects the old private calendar location is not supported after cutover.
+Markdown memory, skills, configuration, secrets, and rebuildable indexes keep
+their existing storage formats.
 
 ## Voice and memory
 

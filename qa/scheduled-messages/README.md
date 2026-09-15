@@ -99,20 +99,24 @@ export SENTIENT_HOME="$(mktemp -d /tmp/sentient-push-e2e.XXXXXX)"
 export SENTIENT_GATEWAY_ROOT="$SENTIENT_HOME/gateway"
 export HOST_CONFIG_DIR="$SENTIENT_HOME/gateway/config"
 export GATEWAY_CONFIG_PATH="$SENTIENT_HOME/push-fixture-config.yaml"
-# Refuse any existing listener. Native supervisor also rejects—not adopts or
-# signals—an unowned holder, but failing before boot gives cleaner evidence.
-if lsof -nP -iTCP:8088 -sTCP:LISTEN | grep -q .; then
-  echo "refusing occupied managed-push fixture port 8088" >&2
+# Refuse any existing listener. Never put a fake on real Gorush port 8088.
+# Native supervisor also rejects—not adopts or signals—an unowned holder.
+export PUSH_QA_PORT=18088
+if lsof -nP -iTCP:"$PUSH_QA_PORT" -sTCP:LISTEN | grep -q .; then
+  echo "refusing occupied managed-push fixture port" >&2
   exit 1
 fi
 bun qa/scheduled-messages/prepare-managed-push-config.ts \
-  --source gateway/config.yaml --output "$GATEWAY_CONFIG_PATH" --state-root "$SENTIENT_HOME"
+  --source gateway/config.yaml --output "$GATEWAY_CONFIG_PATH" --state-root "$SENTIENT_HOME" \
+  --port "$PUSH_QA_PORT"
 scripts/stack.sh up
-curl -fsS http://127.0.0.1:8088/healthz >/dev/null
+curl -fsS "http://127.0.0.1:$PUSH_QA_PORT/healthz" >/dev/null
 # After push work is pending, fixture-owned stop simulates transport loss.
-curl -fsS -X POST http://127.0.0.1:8088/qa/stop >/dev/null
+curl -fsS -X POST "http://127.0.0.1:$PUSH_QA_PORT/qa/stop" >/dev/null
 # Observe optional service failure then watchdog-owned restart via status/health.
 ```
+
+Run `scripts/stack.sh down` with the same isolated environment in an exit trap, then verify its port is free. Do not leave stand-ins running after QA or reuse their accepted receipts as Apple-delivery evidence. The fixture refuses absent ports and port 8088; the generator aligns provider URL, native-service port, and health probe. Default dev/prod gateways never target that port.
 
 Pass requires direct+door ready recovery, one session for eligible work, no old backlog, consumed once/interrupted entries, recurring next run, and cards/chats surviving push outage. Never claim Gorush/APNs compatibility from stand-in. If sandbox or managed fixture cannot execute, record exact prerequisite instead of claiming outage passed.
 

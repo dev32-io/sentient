@@ -106,6 +106,8 @@ scheduling:
   max_message_chars: 12000
   cards_default_page_size: 20
   cards_max_page_size: 100
+  inbox_max_entries: 500
+  inbox_retention_ms: 2592000000
   outbox_claim_limit: 50
   outbox_lease_ms: 60000
 push:
@@ -120,17 +122,37 @@ push:
   revocation_ttl_ms: 2592000000
 `,
     );
-    const prev = process.env.GATEWAY_CONFIG_PATH;
+    const previousPath = process.env.GATEWAY_CONFIG_PATH;
+    const previousVariant = process.env.SENTIENT_BUILD_VARIANT;
     process.env.GATEWAY_CONFIG_PATH = path;
+    process.env.SENTIENT_BUILD_VARIANT = "Debug";
     try {
       const cfg = loadStartupConfig();
       expect(cfg.scheduling?.missedGraceMs).toBe(900000);
-      expect(cfg.scheduling?.cardsMaxPageSize).toBe(100);
+      expect(cfg.scheduling).toMatchObject({
+        cardsDefaultPageSize: 20,
+        cardsMaxPageSize: 100,
+        inboxMaxEntries: 500,
+        inboxRetentionMs: 2592000000,
+      });
       expect(cfg.push?.payloadMaxBytes).toBe(4096);
+      expect(cfg.push).toMatchObject({
+        providerUrl: "http://127.0.0.1:8088/api/push",
+        apnsTopic: "io.dev32.sentient.debug",
+        apnsSandbox: true,
+      });
+      process.env.SENTIENT_BUILD_VARIANT = "Release";
+      expect(loadStartupConfig().push).toMatchObject({
+        providerUrl: "http://127.0.0.1:8088/api/push",
+        apnsTopic: "io.dev32.sentient",
+        apnsSandbox: false,
+      });
       expect(cfg.push).not.toHaveProperty("apnsKey");
     } finally {
-      if (prev === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
-      else process.env.GATEWAY_CONFIG_PATH = prev;
+      if (previousPath === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
+      else process.env.GATEWAY_CONFIG_PATH = previousPath;
+      if (previousVariant === undefined) process.env.SENTIENT_BUILD_VARIANT = undefined;
+      else process.env.SENTIENT_BUILD_VARIANT = previousVariant;
     }
   });
 });

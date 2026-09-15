@@ -1,0 +1,109 @@
+.snt-file-picker {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.snt-file-picker__zone {
+  position: relative;
+  min-height: 150px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 7px;
+  padding: var(--space-lg);
+  border: 1px dashed color-mix(in oklab, var(--color-accent) 36%, var(--color-line));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-bg-sunk) 72%, transparent);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color var(--motion-state), background-color var(--motion-state), box-shadow var(--motion-state);
+}
+.snt-file-picker__zone:focus-within,
+.snt-file-picker__zone[data-dragging="true"] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent-50) 30%, var(--color-bg-sunk));
+  box-shadow: 0 0 18px -10px var(--color-accent);
+}
+.snt-file-picker__zone[data-disabled="true"] {
+  color: var(--color-ink-4);
+  cursor: not-allowed;
+  opacity: .62;
+}
+.snt-file-picker__zone strong { font-size: 14px; }
+.snt-file-picker__zone small {
+  max-width: 38ch;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+}
+.snt-file-picker__mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-bg-sunk);
+  box-shadow: var(--well-shadow);
+  color: var(--color-ink-3);
+}
+.snt-file-picker__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  opacity: 0;
+}
+.snt-file-picker__selection {
+  min-height: 70px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+}
+.snt-file-picker__file-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--slate-face);
+  color: var(--color-accent);
+  box-shadow: var(--slate-shadow-disabled);
+  font: var(--font-size-lg) var(--font-display);
+}
+.snt-file-picker__file-copy { min-width: 0; display: grid; }
+.snt-file-picker__file-copy strong {
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snt-file-picker__file-copy small,
+.snt-file-picker__error {
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+}
+.snt-file-picker__error { color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink)); }
+.snt-file-picker[data-error="true"] .snt-file-picker__zone { border-color: var(--color-stop); }
+
+@media (max-width: 620px) {
+  .snt-file-picker__zone { min-height: 132px; }
+  .snt-file-picker__selection { grid-template-columns: 42px minmax(0, 1fr); }
+  .snt-file-picker__selection .snt-button { grid-column: 2; justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snt-file-picker__zone { transition: none; }
+}
+
+@media (prefers-contrast: more) {
+  .snt-file-picker__zone { border-color: var(--color-ink-3); }
+}

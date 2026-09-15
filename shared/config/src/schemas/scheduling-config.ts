@@ -11,6 +11,8 @@ export const schedulingConfigSchema = z
     max_message_chars: z.number().int().min(1).max(12_000),
     cards_default_page_size: z.number().int().min(1).max(100),
     cards_max_page_size: z.number().int().min(1).max(100),
+    inbox_max_entries: z.number().int().min(1).max(10_000).default(500),
+    inbox_retention_ms: z.number().int().min(60_000).max(31_536_000_000).default(2_592_000_000),
     outbox_claim_limit: z.number().int().min(1).max(1_000),
     outbox_lease_ms: z.number().int().min(1_000).max(3_600_000),
   })

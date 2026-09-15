@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAccessManager } from "../access/access-manager.js";
@@ -142,6 +142,75 @@ describe("calendar reminder scheduling boundary", () => {
     persistence.close();
   });
 
+  test("keeps a reminder claim retryable when calendar storage cannot open", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-reminder-unavailable-"));
+    roots.push(root);
+    const userDataRoot = join(root, "users");
+    const sharedDataRoot = join(root, "shared");
+    const accessManager = createAccessManager({ userDataRoot, sharedDataRoot });
+    const principal = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    const resource = new PrivateScheduleResource(accessManager.grant(principal, "schedule-private"));
+    const schedules = createScheduleService({ userDataRoot, id: () => crypto.randomUUID() });
+    const due = new Date("2026-05-01T13:30:00.000Z");
+    expect(
+      (
+        await schedules.reconcileCalendarReminder(
+          resource,
+          {
+            eventId: "event-transient",
+            reminderId: "event-transient:u_aaaaaaaa",
+            enabled: true,
+            message: "Remind me about my calendar event.",
+            timing: { kind: "once-at", at: due.toISOString() },
+          },
+          new Date("2026-05-01T12:00:00.000Z"),
+        )
+      ).ok,
+    ).toBe(true);
+    const brokenDb = "nested/calendar.db";
+    mkdirSync(join(userDataRoot, principal.userId, brokenDb), { recursive: true });
+    mkdirSync(join(sharedDataRoot, principal.householdId, brokenDb), { recursive: true });
+    let submitted = false;
+    const runner = createScheduledChatRunner({
+      claims: schedules,
+      authorizer: {
+        async authorize(claim, signal) {
+          const execution = { claim, principal, resource };
+          const result = await authorizeCalendarReminderExecution(
+            execution,
+            { accessManager, calendarConfig: config, dbFileName: brokenDb },
+            signal,
+          );
+          return result.ok ? { ok: true, value: execution } : result;
+        },
+      },
+      submitter: {
+        async submit() {
+          submitted = true;
+          throw new Error("unavailable reminder must not submit");
+        },
+      },
+      finalizer: schedules,
+      claimLimit: 1,
+      leaseMs: 1_000,
+      pollMs: 1_000,
+      now: () => due,
+    });
+
+    expect(await runner.runOnce()).toEqual({ ok: false, error: { code: "unavailable", retryable: true } });
+    expect(submitted).toBe(false);
+    expect(await schedules.list(resource, undefined, 10)).toMatchObject({
+      ok: true,
+      value: { schedules: [expect.objectContaining({ enabled: true })] },
+    });
+    const db = new Database(join(userDataRoot, principal.userId, "sessions.db"), { readonly: true });
+    expect(db.query<{ outcome: string | null }, []>("SELECT outcome FROM occurrences").get()?.outcome).toBeNull();
+    db.close();
+    const retry = await schedules.claimDue(new Date(due.getTime() + 1_001), 1, 1_000);
+    expect(retry.ok && retry.value).toHaveLength(1);
+    schedules.close();
+  });
+
   test("executes skipped COUNT reminders through real runtimes without replay after restart", async () => {
     const cases = [
       {
@@ -278,7 +347,7 @@ describe("calendar reminder scheduling boundary", () => {
         store.close();
       };
       const outboxCount = () => {
-        const db = new Database(join(root, principal.userId, "scheduling-v1", "schedules.db"));
+        const db = new Database(join(root, principal.userId, "sessions.db"));
         const count = db.query<{ count: number }, []>("SELECT count(*) count FROM content_outbox").get()?.count;
         db.close();
         return count;

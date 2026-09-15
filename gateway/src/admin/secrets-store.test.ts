@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -153,6 +153,68 @@ describe("SecretsStore", () => {
     await store.setMusicAssistantUrl("http://mass.local:8095");
     const keys = await store.load();
     expect(keys.music_assistant.url).toBe("http://mass.local:8095");
+  });
+
+  // --- APNs credentials: atomic replacement -----------------------------------
+
+  it("preserves concurrent APNs and LLM mutations in valid YAML", async () => {
+    const store = makeStore(dir);
+    await store.load();
+    const [apns, llm] = await Promise.all([
+      store.setApnsCredentials({ keyBase64: "apns-key", keyId: "ABCDEFGHIJ", teamId: "KLMNOPQRST" }),
+      store.setLlmProviderKey("openrouter", { api_key: "unrelated-key" }),
+    ]);
+    expect(apns.ok).toBe(true);
+    expect(llm.ok).toBe(true);
+
+    const keys = await makeStore(dir).load();
+    expect(keys.push).toEqual({
+      apns_key_base64: "apns-key",
+      apns_key_id: "ABCDEFGHIJ",
+      apns_team_id: "KLMNOPQRST",
+    });
+    expect(keys.llm.openrouter.api_key).toBe("unrelated-key");
+  });
+
+  it("serializes concurrent APNs replacements as complete tuples", async () => {
+    const store = makeStore(dir);
+    await store.load();
+    const results = await Promise.all([
+      store.setApnsCredentials({ keyBase64: "initial-key", keyId: "ABCDEFGHIJ", teamId: "KLMNOPQRST" }),
+      store.setApnsCredentials({ keyBase64: "rotated-key", keyId: "UVWXYZ1234", teamId: "567890ABCD" }),
+    ]);
+    expect(results.every((result) => result.ok)).toBe(true);
+
+    expect((await makeStore(dir).load()).push).toEqual({
+      apns_key_base64: "rotated-key",
+      apns_key_id: "UVWXYZ1234",
+      apns_team_id: "567890ABCD",
+    });
+  });
+
+  it("leaves stored APNs fields unchanged when atomic write fails", async () => {
+    const store = makeStore(dir);
+    const initial = { keyBase64: "initial-key", keyId: "ABCDEFGHIJ", teamId: "KLMNOPQRST" };
+    await store.setApnsCredentials(initial);
+
+    const tempPath = join(dir, "secrets", "keys.yaml.tmp");
+    await mkdir(tempPath);
+    const result = await store.setApnsCredentials({
+      keyBase64: "replacement-key",
+      keyId: "UVWXYZ1234",
+      teamId: "567890ABCD",
+    });
+    expect(result.ok).toBe(false);
+    await rm(tempPath, { recursive: true });
+    expect(await store.setLlmProviderKey("openrouter", { api_key: "after-failure" })).toMatchObject({ ok: true });
+
+    const keys = await makeStore(dir).load();
+    expect(keys.push).toEqual({
+      apns_key_base64: initial.keyBase64,
+      apns_key_id: initial.keyId,
+      apns_team_id: initial.teamId,
+    });
+    expect(keys.llm.openrouter.api_key).toBe("after-failure");
   });
 
   // --- diffPaths: returns changed dotted-paths ---------------------------------

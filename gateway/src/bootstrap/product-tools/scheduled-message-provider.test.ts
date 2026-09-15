@@ -145,21 +145,25 @@ describe("scheduled-message product tools", () => {
     }
   });
 
-  test("advertises canonical recurrence constraints and returns safe actionable issue paths", () => {
+  test("advertises provider-supported canonical recurrence constraints and safe corrections", () => {
     const tools = scheduledMessageProductToolProvider.create({ schedules: commands, resource });
     const create = tools.find((tool) => tool.definition.name === "scheduled_message_create");
     const parameters = create?.definition.parameters as {
       properties?: {
-        timing?: { oneOf?: Array<{ properties?: { frequency?: { const?: string } }; required?: string[] }> };
+        timing?: {
+          anyOf?: Array<{ properties?: { frequency?: { enum?: string[] } }; required?: string[] }>;
+        };
       };
     };
-    const variants = parameters.properties?.timing?.oneOf ?? [];
-    expect(variants.find((variant) => variant.properties?.frequency?.const === "weekly")?.required).toContain(
+    const variants = parameters.properties?.timing?.anyOf ?? [];
+    expect(variants.find((variant) => variant.properties?.frequency?.enum?.[0] === "weekly")?.required).toContain(
       "weekdays",
     );
-    expect(variants.find((variant) => variant.properties?.frequency?.const === "monthly")?.required).toContain(
+    expect(variants.find((variant) => variant.properties?.frequency?.enum?.[0] === "monthly")?.required).toContain(
       "dayOfMonth",
     );
+    expect(JSON.stringify(parameters)).not.toContain('"oneOf"');
+    expect(JSON.stringify(parameters)).not.toContain('"const"');
 
     const invalid = create?.validate?.({
       idempotencyKey: "weekly-retry",
@@ -174,11 +178,12 @@ describe("scheduled-message product tools", () => {
     };
     expect(body.code).toBe("invalid_arguments");
     expect(body.issues).toContainEqual({ path: "timing.weekdays", code: "custom" });
+    expect(body.expected).toContain("{kind:'once-after',afterSeconds:300}");
     expect(body.expected).toContain("weekly also requires weekdays");
     expect(invalid?.content).not.toContain("weekly check-in");
   });
 
-  test("broker validates before approval and idempotent corrected replay creates one schedule", async () => {
+  test("rejects demonstrated malformed delays before approval and creates canonical delay idempotently", async () => {
     const root = mkdtempSync(join(tmpdir(), "scheduled-model-broker-"));
     const principal = createUserPrincipal("u_aaaaaaaa", "adult", "household-1");
     const accessManager = createAccessManager({ userDataRoot: root });
@@ -212,25 +217,35 @@ describe("scheduled-message product tools", () => {
       },
     });
     const base = {
-      toolCallId: "call-invalid",
       name: "scheduled_message_create",
-      args: {
-        idempotencyKey: "logical-weekly",
-        message: "weekly check-in",
-        timing: { kind: "recurring", frequency: "weekly", localTime: "09:00", timeZone: "UTC" },
-      },
       signal: new AbortController().signal,
       turnId: "turn-model",
     };
     try {
-      const invalid = await broker.dispatch(base);
-      expect("isError" in invalid && invalid.isError).toBe(true);
+      for (const [index, timing] of [
+        { minutes: 5, type: "once_after" },
+        { afterSeconds: 300, type: "once_after" },
+        { afterSeconds: 300 },
+      ].entries()) {
+        const invalid = await broker.dispatch({
+          ...base,
+          toolCallId: `call-invalid-${index}`,
+          args: { idempotencyKey: "logical-delay", message: "continue later", timing },
+        });
+        expect("isError" in invalid && invalid.isError).toBe(true);
+        if (!("content" in invalid)) throw new Error("missing invalid result");
+        expect(JSON.parse(invalid.content).expected).toContain("{kind:'once-after',afterSeconds:300}");
+      }
       expect(approvals).toBe(0);
-      expect((await scheduleService.list(scheduleResource, undefined, 20)).ok).toBe(true);
+
       const corrected = {
         ...base,
         toolCallId: "call-corrected",
-        args: { ...base.args, timing: { ...base.args.timing, weekdays: ["monday"] } },
+        args: {
+          idempotencyKey: "logical-delay",
+          message: "continue later",
+          timing: { kind: "once-after", afterSeconds: 300 },
+        },
       };
       const first = await broker.dispatch(corrected);
       const replay = await broker.dispatch({ ...corrected, toolCallId: "call-replay" });
@@ -239,6 +254,10 @@ describe("scheduled-message product tools", () => {
       expect(approvals).toBe(2);
       const listed = await scheduleService.list(scheduleResource, undefined, 20);
       expect(listed.ok && listed.value.schedules).toHaveLength(1);
+      expect(listed.ok && listed.value.schedules[0]?.timing).toEqual({
+        kind: "once",
+        at: "2026-09-12T08:05:00.000Z",
+      });
     } finally {
       scheduleService.close();
       sessionStore.close();

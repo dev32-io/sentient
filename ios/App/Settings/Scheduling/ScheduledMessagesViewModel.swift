@@ -1,53 +1,294 @@
 import Foundation
 import MobileData
 
+enum ScheduledInboxClearFailure: Equatable {
+    case unknownOutcome
+    case failed(String)
+
+    var title: String {
+        switch self {
+        case .unknownOutcome: "Clear outcome unknown"
+        case .failed: "Messages not cleared"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .unknownOutcome: "Connection ended before the clear result was confirmed. Reload to check current messages."
+        case .failed(let message): message
+        }
+    }
+}
+
+struct ScheduledInboxProjection {
+    private(set) var cards: [ScheduledSessionCard] = []
+    private var serverCards: [ScheduledSessionCard] = []
+    private var pendingIds: Set<String> = []
+    private var acknowledgedIds: Set<String> = []
+
+    mutating func receive(_ incoming: [ScheduledSessionCard], authoritative: Bool) {
+        if authoritative {
+            serverCards = incoming
+            acknowledgedIds.formIntersection(incoming.lazy.map(\.occurrenceId))
+        } else {
+            let knownIds = Set(serverCards.lazy.map(\.occurrenceId))
+            let incomingById = Dictionary(incoming.map { ($0.occurrenceId, $0) }, uniquingKeysWith: { first, _ in first })
+            let arrivals = incoming.filter { !knownIds.contains($0.occurrenceId) }
+            serverCards = arrivals + serverCards.map { incomingById[$0.occurrenceId] ?? $0 }
+        }
+        project()
+    }
+
+    mutating func beginClear(_ ids: Set<String>) {
+        pendingIds.formUnion(ids)
+        project()
+    }
+
+    mutating func finishClear(_ ids: Set<String>, succeeded: Bool) {
+        pendingIds.subtract(ids)
+        if succeeded { acknowledgedIds.formUnion(ids) }
+        project()
+    }
+
+    private mutating func project() {
+        cards = serverCards.filter { !pendingIds.contains($0.occurrenceId) && !acknowledgedIds.contains($0.occurrenceId) }
+    }
+}
+
+struct ScheduledInboxClearTarget {
+    let occurrenceIds: Set<String>
+    let requiresConfirmation: Bool
+}
+
+@MainActor
+@Observable
+final class ScheduledInboxState {
+    enum LoadState { case loading, ready, failed(String) }
+    private(set) var cards: [ScheduledSessionCard] = []
+    var cardsState: LoadState = .loading
+    var clearFailure: ScheduledInboxClearFailure?
+
+    private var failedClear: ScheduledInboxClearTarget?
+    private var clearQueue: [ScheduledInboxClearTarget] = []
+    private var projection = ScheduledInboxProjection()
+    private var clearFailureRevision = 0
+    private var reloadGeneration = 0
+    private var clearGeneration = 0
+    private var currentClear: ScheduledInboxClearTarget?
+    private let loadCards: () async throws -> Bool
+    private let clearCards: ([String]) async throws -> ScheduledInboxClearFailure?
+    @ObservationIgnored private nonisolated(unsafe) var clearTask: Task<Void, Never>?
+
+    init(
+        loadCards: @escaping () async throws -> Bool,
+        clearCards: @escaping ([String]) async throws -> ScheduledInboxClearFailure?
+    ) {
+        self.loadCards = loadCards
+        self.clearCards = clearCards
+    }
+
+    deinit { clearTask?.cancel() }
+
+    func cancel() {
+        reloadGeneration &+= 1
+        clearGeneration &+= 1
+        clearTask?.cancel()
+        let cancelledIds = clearQueue.reduce(into: currentClear?.occurrenceIds ?? []) { $0.formUnion($1.occurrenceIds) }
+        clearQueue.removeAll()
+        currentClear = nil
+        projection.finishClear(cancelledIds, succeeded: false)
+        cards = projection.cards
+        clearTask = nil
+    }
+
+    func reload() async {
+        let generation = reloadGeneration
+        let failureRevision = clearFailureRevision
+        do {
+            let loaded = try await loadCards()
+            guard generation == reloadGeneration, !Task.isCancelled else { return }
+            if loaded, clearFailureRevision == failureRevision {
+                clearFailure = nil
+                failedClear = nil
+            }
+        } catch is CancellationError {
+        } catch {
+            guard generation == reloadGeneration, !Task.isCancelled else { return }
+            cardsState = .failed("Couldn't load scheduled messages.")
+        }
+    }
+
+    var clearRetryRequiresConfirmation: Bool { failedClear?.requiresConfirmation == true }
+
+    func clear(_ card: ScheduledSessionCard) {
+        enqueueClear(ScheduledInboxClearTarget(occurrenceIds: [card.occurrenceId], requiresConfirmation: false))
+    }
+
+    func clearAll() {
+        if let failedClear, failedClear.requiresConfirmation {
+            enqueueClear(failedClear)
+        } else {
+            enqueueClear(ScheduledInboxClearTarget(occurrenceIds: Set(cards.lazy.map(\.occurrenceId)), requiresConfirmation: true))
+        }
+    }
+
+    func retryClear() {
+        guard let failedClear, !failedClear.requiresConfirmation else { return }
+        enqueueClear(failedClear)
+    }
+
+    func receive(_ value: [ScheduledSessionCard], authoritative: Bool) {
+        projection.receive(value, authoritative: authoritative)
+        cards = projection.cards
+    }
+
+    private func enqueueClear(_ target: ScheduledInboxClearTarget) {
+        guard !target.occurrenceIds.isEmpty else { return }
+        if failedClear?.occurrenceIds == target.occurrenceIds {
+            failedClear = nil
+            clearFailure = nil
+        }
+        projection.beginClear(target.occurrenceIds)
+        cards = projection.cards
+        clearQueue.append(target)
+        guard clearTask == nil else { return }
+        let generation = clearGeneration
+        clearTask = Task { [weak self] in await self?.drainClearQueue(generation: generation) }
+    }
+
+    private func drainClearQueue(generation: Int) async {
+        while generation == clearGeneration, !clearQueue.isEmpty, !Task.isCancelled {
+            let target = clearQueue.removeFirst()
+            currentClear = target
+            let outcome: ScheduledInboxClearFailure?
+            do {
+                outcome = try await clearCards(Array(target.occurrenceIds))
+            } catch is CancellationError {
+                guard generation == clearGeneration, !Task.isCancelled else { break }
+                outcome = .unknownOutcome
+            } catch {
+                outcome = .unknownOutcome
+            }
+            guard generation == clearGeneration, !Task.isCancelled else { break }
+            currentClear = nil
+            projection.finishClear(target.occurrenceIds, succeeded: outcome == nil)
+            cards = projection.cards
+            if let outcome {
+                failedClear = target
+                clearFailure = outcome
+                clearFailureRevision &+= 1
+            }
+        }
+        guard generation == clearGeneration else { return }
+        currentClear = nil
+        clearTask = nil
+    }
+}
+
 @MainActor
 @Observable
 final class ScheduledMessagesViewModel {
-    enum LoadState { case loading, ready, failed(String) }
+    typealias LoadState = ScheduledInboxState.LoadState
     var schedules: [Schedule] = []
-    var cards: [ScheduledSessionCard] = []
     var scheduleState: LoadState = .loading
-    var cardsState: LoadState = .loading
     var mutationError: String?
     var isMutating = false
 
+    var cards: [ScheduledSessionCard] { inbox.cards }
+    var cardsState: LoadState { inbox.cardsState }
+    var clearFailure: ScheduledInboxClearFailure? { inbox.clearFailure }
+    var clearRetryRequiresConfirmation: Bool { inbox.clearRetryRequiresConfirmation }
+
     private let useCases: ScheduleUseCases
+    private let inbox: ScheduledInboxState
+    private var reloadGeneration = 0
     @ObservationIgnored private nonisolated(unsafe) var scheduleTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var cardsTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var reloadTask: Task<Void, Never>?
 
-    init(useCases: ScheduleUseCases) { self.useCases = useCases }
-    deinit { scheduleTask?.cancel(); cardsTask?.cancel() }
+    init(useCases: ScheduleUseCases) {
+        self.useCases = useCases
+        inbox = ScheduledInboxState(
+            loadCards: {
+                if case .success = onEnum(of: try await useCases.loadCards(limit: 100)) { return true }
+                return false
+            },
+            clearCards: { ids in
+                switch onEnum(of: try await useCases.clearCards(occurrenceIds: ids)) {
+                case .success: return nil
+                case .failure(let failure):
+                    return failure.error.kind == .connection || failure.error.kind == .timeout
+                        ? .unknownOutcome
+                        : .failed(failure.error.userMessage)
+                case .loading: return .unknownOutcome
+                }
+            }
+        )
+    }
 
-    func start() {
-        guard scheduleTask == nil else { return }
-        scheduleTask = Task { [weak self, useCases] in
-            for await value in useCases.schedules {
-                guard let self, !Task.isCancelled else { return }
-                switch onEnum(of: value) {
-                case .loading(let loading): self.schedules = (loading.partial as? [Schedule]) ?? self.schedules; self.scheduleState = .loading
-                case .success(let success): self.schedules = (success.data as? [Schedule]) ?? []; self.scheduleState = .ready
-                case .failure(let failure): self.scheduleState = .failed(failure.error.userMessage)
+    deinit { scheduleTask?.cancel(); cardsTask?.cancel(); reloadTask?.cancel() }
+
+    func cancel() {
+        scheduleTask?.cancel()
+        cardsTask?.cancel()
+        reloadGeneration &+= 1
+        reloadTask?.cancel()
+        inbox.cancel()
+        scheduleTask = nil
+        cardsTask = nil
+        reloadTask = nil
+    }
+
+    func start(loadSchedules: Bool = true) {
+        if loadSchedules && scheduleTask == nil {
+            scheduleTask = Task { [weak self, useCases] in
+                for await value in useCases.schedules {
+                    guard let self, !Task.isCancelled else { return }
+                    switch onEnum(of: value) {
+                    case .loading(let loading): self.schedules = (loading.partial as? [Schedule]) ?? self.schedules; self.scheduleState = .loading
+                    case .success(let success): self.schedules = (success.data as? [Schedule]) ?? []; self.scheduleState = .ready
+                    case .failure(let failure): self.scheduleState = .failed(failure.error.userMessage)
+                    }
                 }
             }
         }
+        startObservingCards()
+        if reloadTask == nil {
+            let generation = reloadGeneration
+            reloadTask = Task { [weak self] in
+                guard let self else { return }
+                if loadSchedules { await reload() }
+                else { await reloadCards() }
+                guard generation == reloadGeneration else { return }
+                reloadTask = nil
+            }
+        }
+    }
+
+    func startObservingCards() {
+        guard cardsTask == nil else { return }
         cardsTask = Task { [weak self, useCases] in
             for await value in useCases.cards {
                 guard let self, !Task.isCancelled else { return }
                 switch onEnum(of: value) {
-                case .loading(let loading): self.cards = (loading.partial as? [ScheduledSessionCard]) ?? self.cards; self.cardsState = .loading
-                case .success(let success): self.cards = (success.data as? [ScheduledSessionCard]) ?? []; self.cardsState = .ready
-                case .failure(let failure): self.cardsState = .failed(failure.error.userMessage)
+                case .loading(let loading):
+                    if let partial = loading.partial as? [ScheduledSessionCard] { self.inbox.receive(partial, authoritative: false) }
+                    self.inbox.cardsState = .loading
+                case .success(let success):
+                    self.inbox.receive((success.data as? [ScheduledSessionCard]) ?? [], authoritative: true)
+                    self.inbox.cardsState = .ready
+                case .failure(let failure): self.inbox.cardsState = .failed(failure.error.userMessage)
                 }
             }
         }
-        Task { await reload() }
     }
 
     func reload() async {
-        do { _ = try await useCases.reload(limit: 100); _ = try await useCases.loadCards(limit: 100) }
+        do { _ = try await useCases.reload(limit: 100); await inbox.reload() }
         catch is CancellationError {} catch { scheduleState = .failed("Couldn't load scheduled messages.") }
     }
+
+    func reloadCards() async { await inbox.reload() }
 
     func create(_ draft: ScheduleDraft) async -> Bool {
         guard let request = draft.createRequest else { mutationError = draft.validationMessage; return false }
@@ -67,7 +308,10 @@ final class ScheduledMessagesViewModel {
     }
 
     func delete(_ schedule: Schedule) async { _ = await mutate { try await self.useCases.delete(schedule: schedule) } }
-    func select(_ card: ScheduledSessionCard) { useCases.select(card: card) }
+    func clear(_ card: ScheduledSessionCard) { inbox.clear(card) }
+    func clearAll() { inbox.clearAll() }
+    func retryClear() { inbox.retryClear() }
+    func receiveCards(_ value: [ScheduledSessionCard], authoritative: Bool) { inbox.receive(value, authoritative: authoritative) }
 
     private func mutate<T>(_ operation: () async throws -> SentientResult<T>) async -> Bool {
         isMutating = true; mutationError = nil
@@ -81,7 +325,6 @@ final class ScheduledMessagesViewModel {
         } catch is CancellationError { return false }
         catch { mutationError = "Couldn't save this change. Please try again."; return false }
     }
-
 }
 
 enum ScheduleDraftMode: String, CaseIterable { case once = "Once", delay = "After delay", recurring = "Recurring" }

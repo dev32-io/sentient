@@ -7,11 +7,14 @@ import io.sentient.mobilesdk.settings.createSettingsHttpClient
 
 /** Swift-friendly installation owner. Keep this object above authenticated user sessions. */
 class IosPushLifecycle internal constructor(
-    private val httpClient: HttpClient,
+    private val httpClients: MutableMap<PushTransportAuthority, HttpClient>,
     val coordinator: PushUnlinkCoordinator,
     val registrationRequests: PushRegistrationRequestFactory,
 ) {
-    fun close() = httpClient.close()
+    fun close() {
+        httpClients.values.forEach(HttpClient::close)
+        httpClients.clear()
+    }
 }
 
 fun createIosPushLifecycle(
@@ -19,12 +22,21 @@ fun createIosPushLifecycle(
     allowSelfSignedDevHost: Boolean,
     token: () -> String,
 ): IosPushLifecycle {
-    val http = createSettingsHttpClient(allowSelfSignedDevHost)
+    val origin = PushTransportAuthority(gatewayWsUrl, allowSelfSignedDevHost)
+    val httpClients = mutableMapOf<PushTransportAuthority, HttpClient>()
+    fun client(authority: PushTransportAuthority): PushHttpClient {
+        val http = httpClients.getOrPut(authority) {
+            createSettingsHttpClient(authority.allowSelfSignedDevHost, followRedirects = false)
+        }
+        return PushHttpClient(http, authority.gatewayWsUrl, token)
+    }
     return IosPushLifecycle(
-        httpClient = http,
+        httpClients = httpClients,
         coordinator = PushUnlinkCoordinator(
-            client = PushHttpClient(http, gatewayWsUrl, token),
+            registrationClient = client(origin),
+            registrationOrigin = origin,
             store = IosPushLifecycleStore(),
+            revocationClient = ::client,
         ),
         registrationRequests = PushRegistrationRequestFactory(DeviceIdProvider(IosDeviceIdStore())),
     )

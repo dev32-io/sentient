@@ -46,6 +46,13 @@ class NewChatAnchorResetTest {
         runCurrent()
         assertEquals(null, sdk.currentSessionId.value, "anchor stays null while the mint is pending")
 
+        val request = kotlinx.serialization.json.Json.parseToJsonElement(fake.sentText.last { it.contains("session.new") }) as kotlinx.serialization.json.JsonObject
+        val requestId = (request["requestId"] as kotlinx.serialization.json.JsonPrimitive).content
+        fake.emit(WsIncoming.Text("""{"type":"session.draft","requestId":"$requestId","draftKey":"draft-new","ts":2}"""))
+        runCurrent()
+        sdk.sendText("first message", "pending-new")
+        runCurrent()
+
         // The fresh mint's session.created re-anchors to the NEW conversation only.
         fake.emit(created("conv-new", 2))
         sdk.currentSessionId.first { it == "conv-new" }

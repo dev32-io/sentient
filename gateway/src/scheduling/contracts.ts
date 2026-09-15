@@ -43,8 +43,13 @@ export interface ScheduleCommands {
   cards(
     resource: PrivateScheduleResource,
     cursor: string | undefined,
-    limit: number,
+    limit: number | undefined,
   ): Promise<SchedulingResult<ScheduledSessionCardPage>>;
+}
+
+export interface ScheduledSessionCardCommands {
+  clearCard(resource: PrivateScheduleResource, sessionId: string): Promise<SchedulingResult<void>>;
+  clearCards(resource: PrivateScheduleResource, occurrenceIds: readonly string[]): Promise<SchedulingResult<void>>;
 }
 
 /**

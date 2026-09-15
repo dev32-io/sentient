@@ -45,7 +45,7 @@ export function LocalNavigation<TKey extends string>({
       if (!current) return;
       const navBounds = nav.getBoundingClientRect();
       const currentBounds = current.getBoundingClientRect();
-      nav.style.setProperty("--nav-current-top", `${currentBounds.top - navBounds.top}px`);
+      nav.style.setProperty("--nav-current-top", `${currentBounds.top - navBounds.top + nav.scrollTop}px`);
       nav.style.setProperty("--nav-current-height", `${currentBounds.height}px`);
       nav.dataset.sntReady = "true";
     };

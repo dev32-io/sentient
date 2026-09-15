@@ -56,7 +56,7 @@ class CommandBindingTest {
     @Test
     fun stamps_every_command_form_including_the_payload_less_ones() {
         // Payload-less interrupt and capture-bearing audio.end both receive binding.
-        for (msg in listOf<ClientMessage>(ClientMessage.Interrupt, ClientMessage.AudioEnd("cap-1"))) {
+        for (msg in listOf<ClientMessage>(ClientMessage.Interrupt, ClientMessage.AudioEnd("cap-1"), ClientMessage.AudioCancel("cap-1"))) {
             assertEquals("s_1", field(msg, BINDING, "sessionId")?.jsonPrimitive?.content)
         }
     }

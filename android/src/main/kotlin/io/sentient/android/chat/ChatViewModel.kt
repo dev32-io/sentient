@@ -20,7 +20,6 @@ import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
-import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.Job
@@ -80,11 +79,9 @@ class ChatViewModel(
 
     init {
         log.info("init", mapOf("sessionId" to (sessionId ?: "<new>")))
-        // A null route entry is a cold/new-chat boundary, not an implicit reattach.
-        // Preparation is explicit and fire-and-forget; the gateway buffers the first
-        // message while the composer remains usable.
-        if (sessionId == null) component.switchConversation.startFreshChat()
-        else component.switchConversation(sessionId)
+        // Claims a unique local route generation before collection starts. Session id
+        // alone is insufficient: a retained old B VM must stay stale after B -> A -> B.
+        component.bindChatRoute(cache, sessionId, activate = true)
         // COLD-RECONCILE: an existing-conversation switch reloads authoritative history
         // from REST. That cold snapshot carries NO pendingId, so reconcile-by-pendingId
         // can't drop a still-pending optimistic bubble → a duplicate. On the cold-replace
@@ -111,14 +108,15 @@ class ChatViewModel(
                 )
             }
         }
-        // Drain the outbox on every READY emission AND sweep unacked timeouts. Both
-        // operations are idempotent: flushIfReady is a no-op when not READY or nothing
-        // queued; sweepTimeouts is a no-op when nothing is sent-but-unechoed.
+        // Sweep on connection changes; the shared drain also observes authority and
+        // pending entries, so an acknowledgement need not change READY to release sends.
         viewModelScope.launch {
-            component.connection.state.collect { conn ->
-                component.sendMessage.flushIfReady(cache, conn.status)
+            component.connection.state.collect {
                 if (cache.pending.value.isNotEmpty()) cache.sweepTimeouts()
             }
+        }
+        viewModelScope.launch {
+            component.observeOutbound(cache).collect { component.flushOutbound(cache) }
         }
         // Periodic sweep: drives unacked-timeout FAILED transitions even when there are
         // no connection events. Runs only while pending entries exist; cancels on VM clear.
@@ -205,13 +203,10 @@ class ChatViewModel(
         }
     }
 
-    private val isReady: Boolean get() = connection.value.status == SdkStatus.READY
-
     fun send(text: String) {
         val id = UUID.randomUUID().toString()
         log.info("send", mapOf("len" to text.length, "pendingId" to id))
         cache.enqueue(id, text)
-        if (isReady) component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
     fun retry(pendingId: String) {
@@ -219,7 +214,6 @@ class ChatViewModel(
         cache.retry(pendingId)
         // Verify the socket rather than trusting a possibly-stale READY (see iOS note).
         component.ensureConnected()
-        component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
     // Talk-mode intents (design spec §3) — thin passthroughs to the component. All mode

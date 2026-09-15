@@ -32,6 +32,7 @@ const DIR_MODE = 0o700;
 
 export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
   let cache: KeysYaml | null = null;
+  let mutationQueue: Promise<void> = Promise.resolve();
 
   async function readFromDisk(): Promise<KR<KeysYaml>> {
     try {
@@ -132,6 +133,24 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
     return wr;
   }
 
+  function enqueueMutation(
+    transform: (current: KeysYaml) => KeysYaml,
+    event: string,
+    props: (next: KeysYaml) => Record<string, unknown>,
+  ): Promise<KR<void>> {
+    const operation = mutationQueue.then(async () => {
+      const current = await loadOrBootstrap();
+      if (!current.ok) return current;
+      const next = transform(current.value);
+      return applyWrite(next, event, props(next));
+    });
+    mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
   function resolveProviderLlm(data: KeysYaml, provider: LlmProvider): ResolvedLlm {
     const providerKey = provider === "ollama-cloud" ? "ollama_cloud" : provider;
     const entry = data.llm[providerKey as keyof typeof data.llm] as {
@@ -192,87 +211,105 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
       };
     },
 
-    async setLlmProviderKey(provider, patch) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      const data = r.value;
-      const providerKey = provider === "ollama-cloud" ? "ollama_cloud" : provider;
-      const existing = data.llm[providerKey as keyof typeof data.llm] as {
-        api_key: string | null;
-        base_url: string | null;
-      };
-      const next: KeysYaml = {
-        ...data,
-        llm: {
-          ...data.llm,
-          [providerKey]: {
-            api_key: "api_key" in patch ? (patch.api_key ?? null) : existing.api_key,
-            base_url: "base_url" in patch ? (patch.base_url ?? null) : existing.base_url,
+    setApnsCredentials(credentials) {
+      return enqueueMutation(
+        (current) => ({
+          ...current,
+          push: {
+            apns_key_base64: credentials.keyBase64,
+            apns_key_id: credentials.keyId,
+            apns_team_id: credentials.teamId,
           },
+        }),
+        "secrets-store.setApnsCredentials",
+        () => ({
+          hasKey: credentials.keyBase64.length > 0,
+          hasKeyId: credentials.keyId.length > 0,
+          hasTeamId: credentials.teamId.length > 0,
+        }),
+      );
+    },
+
+    setLlmProviderKey(provider, patch) {
+      const providerKey = provider === "ollama-cloud" ? "ollama_cloud" : provider;
+      return enqueueMutation(
+        (current) => {
+          const existing = current.llm[providerKey as keyof typeof current.llm] as {
+            api_key: string | null;
+            base_url: string | null;
+          };
+          return {
+            ...current,
+            llm: {
+              ...current.llm,
+              [providerKey]: {
+                api_key: "api_key" in patch ? (patch.api_key ?? null) : existing.api_key,
+                base_url: "base_url" in patch ? (patch.base_url ?? null) : existing.base_url,
+              },
+            },
+          };
         },
-      };
-      const updated = next.llm[providerKey as keyof typeof next.llm] as { api_key: string | null };
-      return applyWrite(next, "secrets-store.setLlmProviderKey", { provider, hasApiKey: updated.api_key !== null });
+        "secrets-store.setLlmProviderKey",
+        (next) => {
+          const updated = next.llm[providerKey as keyof typeof next.llm] as { api_key: string | null };
+          return { provider, hasApiKey: updated.api_key !== null };
+        },
+      );
     },
 
-    async setActiveLlmProvider(provider) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      return applyWrite(
-        { ...r.value, llm: { ...r.value.llm, active: provider } },
+    setActiveLlmProvider(provider) {
+      return enqueueMutation(
+        (current) => ({ ...current, llm: { ...current.llm, active: provider } }),
         "secrets-store.setActiveLlmProvider",
-        { provider },
+        () => ({ provider }),
       );
     },
 
-    async setHomeAssistantToken(kind, token) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      const next: KeysYaml = { ...r.value, home_assistant: { ...r.value.home_assistant, [kind]: token } };
-      return applyWrite(next, "secrets-store.setHomeAssistantToken", { kind, hasToken: token !== null });
+    setHomeAssistantToken(kind, token) {
+      return enqueueMutation(
+        (current) => ({ ...current, home_assistant: { ...current.home_assistant, [kind]: token } }),
+        "secrets-store.setHomeAssistantToken",
+        () => ({ kind, hasToken: token !== null }),
+      );
     },
 
-    async setHomeAssistantUrl(url) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      const next: KeysYaml = { ...r.value, home_assistant: { ...r.value.home_assistant, url } };
-      return applyWrite(next, "secrets-store.setHomeAssistantUrl", { hasUrl: url !== null });
+    setHomeAssistantUrl(url) {
+      return enqueueMutation(
+        (current) => ({ ...current, home_assistant: { ...current.home_assistant, url } }),
+        "secrets-store.setHomeAssistantUrl",
+        () => ({ hasUrl: url !== null }),
+      );
     },
 
-    async setHomeAssistantLocalIp(ip) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      const next: KeysYaml = { ...r.value, home_assistant: { ...r.value.home_assistant, local_ip: ip } };
-      return applyWrite(next, "secrets-store.setHomeAssistantLocalIp", { hasIp: ip !== null });
+    setHomeAssistantLocalIp(ip) {
+      return enqueueMutation(
+        (current) => ({ ...current, home_assistant: { ...current.home_assistant, local_ip: ip } }),
+        "secrets-store.setHomeAssistantLocalIp",
+        () => ({ hasIp: ip !== null }),
+      );
     },
 
-    async setMusicAssistantToken(token) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      return applyWrite(
-        { ...r.value, music_assistant: { ...r.value.music_assistant, token } },
+    setMusicAssistantToken(token) {
+      return enqueueMutation(
+        (current) => ({ ...current, music_assistant: { ...current.music_assistant, token } }),
         "secrets-store.setMusicAssistantToken",
-        { hasToken: token !== null },
+        () => ({ hasToken: token !== null }),
       );
     },
 
-    async setMusicAssistantUrl(url) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      return applyWrite(
-        { ...r.value, music_assistant: { ...r.value.music_assistant, url } },
+    setMusicAssistantUrl(url) {
+      return enqueueMutation(
+        (current) => ({ ...current, music_assistant: { ...current.music_assistant, url } }),
         "secrets-store.setMusicAssistantUrl",
-        { hasUrl: url !== null },
+        () => ({ hasUrl: url !== null }),
       );
     },
 
-    async setMusicAssistantLocalIp(ip) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      return applyWrite(
-        { ...r.value, music_assistant: { ...r.value.music_assistant, local_ip: ip } },
+    setMusicAssistantLocalIp(ip) {
+      return enqueueMutation(
+        (current) => ({ ...current, music_assistant: { ...current.music_assistant, local_ip: ip } }),
         "secrets-store.setMusicAssistantLocalIp",
-        { hasIp: ip !== null },
+        () => ({ hasIp: ip !== null }),
       );
     },
 

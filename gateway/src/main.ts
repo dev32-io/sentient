@@ -1,11 +1,13 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createAccessManager } from "./access/access-manager.ts";
 import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
 import { claimSingleEvaluation, describeHotReloadRefusal } from "./bootstrap/single-evaluation.ts";
 import { type SingleInstanceIo, acquireSingleInstance, describeConflict } from "./bootstrap/single-instance.ts";
 import { authorizeCalendarReminderExecution } from "./calendar/calendar-reminder-scheduler.ts";
+import { consolidatePrivateCalendar } from "./calendar/private-calendar-consolidation.ts";
 import { gatewayStateDir, loadLoggingConfig, loadStartupConfig, resolveSentientHome } from "./config/startup-config.ts";
 import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
 import { createUserPrincipal } from "./identity/user-principal.ts";
@@ -23,6 +25,7 @@ import { createGatewayServer } from "./server.ts";
 import { createCredentialRevoker } from "./session-handlers/credential-revocation.ts";
 import { buildSessionHandles } from "./session-handlers/session-binding.ts";
 import { openSessionStore } from "./store/session-store.ts";
+import { createUserStore } from "./user-auth/user-store.ts";
 
 /** `~/.sentient/run` — the gateway's own runtime handles: the per-user MCP
  *  sockets, the native services' pid files, and the single-instance claim. */
@@ -163,6 +166,19 @@ if (!claim.ok) {
 // Captured here, not read off `claim` inside shutdown(): a hoisted function
 // declaration is outside the guard's narrowing, so the union would resurface.
 const releaseInstanceClaim = claim.release;
+
+// Storage cutover must settle before service composition starts schedulers,
+// MCP sockets, reminder recovery, or traffic.
+const migrationUsers = await createUserStore().list();
+if (!migrationUsers.ok) throw new Error(`private calendar migration could not list users: ${migrationUsers.error}`);
+const migrationAccess = createAccessManager({
+  userDataRoot: config.access.user_data_root,
+  ...(config.access.shared_data_root ? { sharedDataRoot: config.access.shared_data_root } : {}),
+});
+for (const user of migrationUsers.value) {
+  const principal = createUserPrincipal(user.userId, user.role, "home");
+  consolidatePrivateCalendar(migrationAccess.grant(principal, "calendar-private"), config.store.db_filename);
+}
 
 const services = await createGatewayServices(config);
 
@@ -326,7 +342,7 @@ const scheduledExecutionAuthorizer = createScheduledExecutionAuthorizer({
         authorizeCalendarReminder: (execution, signal) =>
           authorizeCalendarReminderExecution(
             execution,
-            { accessManager: services.accessManager, calendarConfig },
+            { accessManager: services.accessManager, calendarConfig, dbFileName: services.dbFileName },
             signal,
           ),
       }
@@ -365,8 +381,9 @@ if (schedules && pushStore && config.push && config.scheduling) {
     receipts: pushStore,
     invalidator: pushStore,
     provider: createGorushApnsProvider({
-      url: "http://127.0.0.1:8088/api/push",
-      topic: process.env.SENTIENT_APNS_TOPIC ?? "io.dev32.sentient",
+      url: pushConfig.providerUrl,
+      topic: pushConfig.apnsTopic,
+      sandbox: pushConfig.apnsSandbox,
     }),
     content: {
       async resolve(reference, signal) {
@@ -452,6 +469,7 @@ const server = createGatewayServer({
   services,
   ...(schedules ? { schedules } : {}),
   ...(pushStore ? { pushStore } : {}),
+  ...(config.push ? { pushProviderUrl: config.push.providerUrl } : {}),
 });
 
 log.info("gateway-started", { host: server.hostname, port: server.port });

@@ -1,0 +1,5 @@
+// Generated from shared/config/build-variants.json. Do not edit.
+#include "../Local.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = io.dev32.sentient.debug
+APS_ENVIRONMENT = development

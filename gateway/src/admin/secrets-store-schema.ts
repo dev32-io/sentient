@@ -96,6 +96,8 @@ export interface SecretsStore {
   getProviderSecretsSync(provider: LlmProvider): ResolvedLlm | null;
   /** Null fields remain empty strings; composition decides that push is unavailable. */
   getApnsCredentialsSync?(): ResolvedApnsCredentials | null;
+  /** Replaces all APNs fields in one atomic store write. */
+  setApnsCredentials(credentials: ResolvedApnsCredentials): Promise<Result<void, SecretsStoreError>>;
   setLlmProviderKey(
     provider: LlmProvider,
     patch: { api_key?: string | null; base_url?: string | null },

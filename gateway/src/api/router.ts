@@ -78,7 +78,8 @@ export function createApiRouter(deps: ApiRouterDeps): ApiRouter {
     if (
       pathname === `${API_V1}/schedules` ||
       pathname.startsWith(`${API_V1}/schedules/`) ||
-      pathname === `${API_V1}/scheduled-session-cards`
+      pathname === `${API_V1}/scheduled-session-cards` ||
+      pathname.startsWith(`${API_V1}/scheduled-session-cards/`)
     )
       return deps.handleScheduledMessages?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
     if (pathname.startsWith(`${API_V1}/push/`))

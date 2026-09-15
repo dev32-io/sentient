@@ -72,7 +72,8 @@ class AudioDownlinkHooks(
  *
  * @param deriver The single state slice-holder; callbacks mutate it then [emit].
  * @param emit Recompute + publish connection/timeline. Called after every slice change.
- * @param send Send a control [ClientMessage] over the transport.
+ * @param send Send a best-effort control [ClientMessage] over the transport.
+ * @param sendAwaited Send a control frame synchronously for acknowledged operations.
  * @param sendBinary Send a raw binary frame (PCM uplink) over the transport.
  * @param newId Deterministic request-id generator for sessions requests.
  * @param sessionsTimeoutMs Sessions lifecycle request/broadcast timeout.
@@ -94,6 +95,7 @@ class SdkConnectors(
     private val emit: () -> Unit,
     private val emitEvent: (SdkEvent) -> Unit,
     private val send: (ClientMessage) -> Unit,
+    sendAwaited: suspend (ClientMessage) -> Unit = { send(it) },
     sendBinary: (ByteArray) -> Unit,
     newId: () -> String,
     sessionsTimeoutMs: Long,
@@ -156,6 +158,7 @@ class SdkConnectors(
 
     val sessions = SessionsConnector(
         send = send,
+        sendAwaited = sendAwaited,
         newId = newId,
         timeoutMs = sessionsTimeoutMs,
         clock = clock,

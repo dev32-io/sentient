@@ -160,6 +160,8 @@ class IosUserSession(
         gatewayWsUrl = safeGatewayWsUrl,
         allowSelfSignedDevHost = allowSelfSignedDevHost,
         token = { bundle.tokenStore.load() ?: "" },
+        isOwnerActive = { !closed },
+        onAuthenticationRequired = { if (!closed) sdk.signalAuthExpired() },
     )
 
     private val sdk: SentientSdk = SentientSdk(
@@ -184,7 +186,12 @@ class IosUserSession(
         },
     )
 
-    private val settingsHttpClient = createSettingsHttpClient(allowSelfSignedDevHost)
+    private val settingsHttpClient = createSettingsHttpClient(
+        allowSelfSignedDevHost = allowSelfSignedDevHost,
+        token = { bundle.tokenStore.load() ?: "" },
+        isOwnerActive = { !closed },
+        onAuthenticationRequired = { if (!closed) sdk.signalAuthExpired() },
+    )
     private val calendarDependency = CalendarDependencyBoundary.initializing()
 
     /** Namespace derivation is synchronous and content-free; database work is not. */

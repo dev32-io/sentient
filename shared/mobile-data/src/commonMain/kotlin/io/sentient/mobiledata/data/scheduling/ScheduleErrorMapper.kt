@@ -9,7 +9,7 @@ internal fun <T : Any> AuthResult<T>.toScheduleResult(): SentientResult<T> = whe
     is AuthResult.Success -> SentientResult.Success(value)
     is AuthResult.Failure -> SentientResult.Failure(when (val failure = error) {
         AuthError.InvalidCredentials -> SentientError.Auth("Your session expired. Please sign in again.", terminal = true)
-        is AuthError.Network -> SentientError.Connection("Network unavailable. Your changes were not saved.")
+        is AuthError.Network -> SentientError.Connection("Connection lost before the scheduling request outcome was confirmed. Reload to verify current state.")
         is AuthError.Unknown -> SentientError.Protocol("The server returned an invalid scheduling response.")
         is AuthError.Server -> when {
             failure.status == 401 -> SentientError.Auth("Your session expired. Please sign in again.", terminal = true)

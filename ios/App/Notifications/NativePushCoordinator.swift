@@ -27,16 +27,27 @@ final class SystemNotificationPermissionProvider: NotificationPermissionProvidin
 
 enum NativePushPermission: Equatable { case unconfigured, notDetermined, denied, authorized, provisional, unavailable, error }
 
-enum NativePushLifecycleResult { case success, failure }
+enum NativePushLifecycleResult: Sendable { case success, failure }
 enum NativePushLifecycleSnapshot {
     case linked(PushBinding, activationPending: Bool)
     case pendingUnlink
+    case registrationUncertain
+    case storageUnavailable
+    case storageWriteFailed
+    case authorityUnavailable
     case unlinked
+
+    var isPendingUnlink: Bool {
+        if case .pendingUnlink = self { return true }
+        return false
+    }
 }
 
 @MainActor
 protocol NativePushLifecycleClient: AnyObject {
     var state: NativePushLifecycleSnapshot { get }
+    func prepareUnlink(ownerFence: String) async throws -> NativePushLifecycleResult
+    func preparePersistedUnlink() async throws -> NativePushLifecycleResult
     func unlink(ownerFence: String) async throws -> NativePushLifecycleResult
     func retryPendingUnlink() async throws -> NativePushLifecycleResult
     func reconcileActivation(ownerFence: String) async throws -> NativePushLifecycleResult
@@ -53,8 +64,20 @@ final class KmpNativePushLifecycleClient: NativePushLifecycleClient {
         switch onEnum(of: lifecycle.coordinator.state.value) {
         case .linked(let linked): .linked(linked.binding, activationPending: linked.activationPending)
         case .pendingUnlink, .unlinkFailed: .pendingUnlink
+        case .registrationUncertain: .registrationUncertain
+        case .storageUnavailable: .storageUnavailable
+        case .storageWriteFailed: .storageWriteFailed
+        case .authorityUnavailable: .authorityUnavailable
         case .unlinked: .unlinked
         }
+    }
+    func prepareUnlink(ownerFence: String) async throws -> NativePushLifecycleResult {
+        if case .success = onEnum(of: try await lifecycle.coordinator.prepareUnlink(ownerFence: ownerFence)) { return .success }
+        return .failure
+    }
+    func preparePersistedUnlink() async throws -> NativePushLifecycleResult {
+        if case .success = onEnum(of: try await lifecycle.coordinator.preparePersistedUnlink()) { return .success }
+        return .failure
     }
     func unlink(ownerFence: String) async throws -> NativePushLifecycleResult {
         if case .success = onEnum(of: try await lifecycle.coordinator.unlink(ownerFence: ownerFence)) { return .success }
@@ -91,6 +114,11 @@ struct NativePushAccountConfiguration {
     let token: () -> String
 }
 
+struct ForegroundInboxInvalidation: Equatable {
+    let accountFence: String
+    let sequence: UInt64
+}
+
 @MainActor
 final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NativePushCoordinator()
@@ -100,6 +128,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     @Published private(set) var registrationPending = false
     @Published private(set) var lifecycleWarning: String?
     @Published private(set) var binding: PushBinding?
+    @Published private(set) var foregroundInboxInvalidation: ForegroundInboxInvalidation?
     let navigation = PendingNotificationNavigation()
 
     private let permissions: NotificationPermissionProviding
@@ -112,9 +141,13 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     private var accountTransitionTask: Task<Void, Never>?
     private var retryAfterAccountTransition = false
     private var transitionGeneration = 0
+    private var logoutPreparationGeneration: Int?
+    private var logoutPreparationOwnerFence: String?
+    private var logoutPreparationNavigationFence: String?
     private var pendingConfiguration: NativePushAccountConfiguration?
     private var pendingLogout = false
     private var pendingSettingsUnlink = false
+    private var foregroundInvalidationSequence: UInt64 = 0
     private let log = AppLog("push", "native")
 
     init(
@@ -155,18 +188,57 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
     }
 
     func configure(account: NativePushAccountConfiguration) {
-        guard ownerFence != account.fence else {
-            if let lifecycle { applyLifecycleState(lifecycle.state) }
+        if ownerFence == account.fence {
+            if pendingLogout || accountTransitionTask != nil || lifecycle?.state.isPendingUnlink == true {
+                pendingConfiguration = account
+                pendingLogout = false
+                retryPendingUnlink()
+            } else if let lifecycle {
+                applyLifecycleState(lifecycle.state)
+            }
             Task { await refreshPermission() }
             return
         }
-        if lifecycle != nil, ownerFence != nil {
-            pendingConfiguration = account
-            pendingLogout = false
-            beginAccountTransition()
+        if let lifecycle {
+            if case .unlinked = lifecycle.state {
+                lifecycle.close()
+                self.lifecycle = nil
+                installLifecycle(account)
+            } else {
+                pendingConfiguration = account
+                pendingLogout = false
+                if ownerFence == nil { retryPendingUnlink() } else { beginAccountTransition() }
+            }
             return
         }
         installLifecycle(account)
+    }
+
+    /// Starts revoke-only replay from persisted state without bearer or APNs token.
+    func configureForLoggedOutCleanup(appConfig: AppConfig) {
+        guard appConfig.isConfigured, !appConfig.hasToken else { return }
+        configureForLoggedOutCleanup(
+            gatewayWsUrl: appConfig.gatewayWsUrl,
+            allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost
+        )
+    }
+
+    func configureForLoggedOutCleanup(gatewayWsUrl: String, allowSelfSignedDevHost: Bool) {
+        if let lifecycle {
+            applyLifecycleState(lifecycle.state)
+            if lifecycle.state.isPendingUnlink { retryPendingUnlink() }
+            return
+        }
+        let cleanup = lifecycleFactory(NativePushAccountConfiguration(
+            fence: "logged-out-cleanup",
+            gatewayWsUrl: gatewayWsUrl,
+            allowSelfSignedDevHost: allowSelfSignedDevHost,
+            token: { "" }
+        ))
+        lifecycle = cleanup
+        ownerFence = nil
+        applyLifecycleState(cleanup.state)
+        retryPendingUnlink()
     }
 
     func refreshPermission() async {
@@ -224,22 +296,65 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         beginAccountTransition(settingsUnlink: true)
     }
 
-    /// Freezes revoke-only authority in shared secure storage before returning;
-    /// local account teardown remains immediate and network completion is async.
-    func unlinkForLogout() {
-        navigation.clear()
-        guard lifecycle != nil, ownerFence != nil else { return }
-        // A replacement already queued by a newer authenticated host remains the
-        // latest desired configuration. Otherwise this transition ends unlinked.
+    /// Local-only logout preparation. KMP lifecycle fences late network results durably.
+    func prepareForLogout(preservingNavigationFor accountFence: String? = nil) async -> Bool {
+        let capturedOwnerFence = ownerFence
+        if let accountFence {
+            navigation.bindPending(to: accountFence)
+        } else {
+            navigation.clear()
+        }
         pendingLogout = pendingConfiguration == nil
-        registrationTask?.cancel()
         registrationPending = false
         binding = nil
-        if accountTransitionTask != nil {
-            lifecycleWarning = "Notifications may continue until this device reconnects."
-            return
+
+        transitionGeneration &+= 1
+        let operation = transitionGeneration
+        logoutPreparationGeneration = operation
+        logoutPreparationOwnerFence = capturedOwnerFence
+        logoutPreparationNavigationFence = accountFence
+        registrationTask?.cancel()
+        registrationTask = nil
+        accountTransitionTask?.cancel()
+        accountTransitionTask = nil
+
+        guard let lifecycle, let capturedOwnerFence else { return true }
+        do {
+            let result = try await lifecycle.prepareUnlink(ownerFence: capturedOwnerFence)
+            guard transitionGeneration == operation, self.lifecycle === lifecycle,
+                  ownerFence == capturedOwnerFence else { return false }
+            applyLifecycleState(lifecycle.state)
+            if case .success = result { return true }
+        } catch {
+            guard transitionGeneration == operation, self.lifecycle === lifecycle,
+                  ownerFence == capturedOwnerFence else { return false }
         }
-        beginAccountTransition(logout: true)
+        applyLifecycleState(lifecycle.state)
+        if lifecycleWarning == nil {
+            lifecycleWarning = "Notification unlink could not be stored securely. Notifications may continue."
+        }
+        return false
+    }
+
+    /// Last MainActor step before session teardown/auth clearing. Re-processes
+    /// intents received while durable preparation was suspended.
+    func finalizeLogoutPreparation(timedOut: Bool = false) {
+        guard logoutPreparationGeneration == transitionGeneration else { return }
+        defer {
+            logoutPreparationGeneration = nil
+            logoutPreparationOwnerFence = nil
+            logoutPreparationNavigationFence = nil
+            transitionGeneration &+= 1
+        }
+        guard ownerFence == logoutPreparationOwnerFence else { return }
+        if let logoutPreparationNavigationFence {
+            navigation.bindPending(to: logoutPreparationNavigationFence)
+        } else {
+            navigation.clear()
+        }
+        if timedOut, lifecycleWarning == nil {
+            lifecycleWarning = "Notification unlink preparation timed out. Notifications may continue."
+        }
     }
 
     func dismissLifecycleWarning() { lifecycleWarning = nil }
@@ -255,9 +370,32 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         accountTransitionTask = Task {
             defer { finishAccountTransitionTask(operation: operation, lifecycle: lifecycle) }
             do {
-                let result = try await lifecycle.retryPendingUnlink()
+                if ownerFence == nil {
+                    let prepared = try await lifecycle.preparePersistedUnlink()
+                    guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
+                    if case .failure = prepared {
+                        applyLifecycleState(lifecycle.state)
+                        return
+                    }
+                }
+                var result = try await lifecycle.retryPendingUnlink()
                 guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
+                // A cancelled registration may still finish after bounded logout preparation.
+                // Freeze that late received grant before deciding the old lifecycle is done.
+                if case .linked = lifecycle.state,
+                   (pendingLogout || pendingConfiguration != nil), let ownerFence {
+                    result = try await lifecycle.prepareUnlink(ownerFence: ownerFence)
+                    guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
+                    if case .success = result {
+                        result = try await lifecycle.retryPendingUnlink()
+                        guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
+                    }
+                }
                 if case .failure = result {
+                    applyLifecycleState(lifecycle.state)
+                    return
+                }
+                if case .registrationUncertain = lifecycle.state {
                     applyLifecycleState(lifecycle.state)
                     return
                 }
@@ -278,8 +416,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
                 if let ownerFence {
                     _ = try await lifecycle.reconcileActivation(ownerFence: ownerFence)
                     guard !Task.isCancelled, self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
+                    applyLifecycleState(lifecycle.state)
+                } else {
+                    closeTransitionLifecycle(lifecycle)
                 }
-                applyLifecycleState(lifecycle.state)
             } catch {
                 guard self.transitionGeneration == operation, self.lifecycle === lifecycle else { return }
                 lifecycleWarning = "Notification unlink is still pending."
@@ -292,12 +432,62 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        let destination = NotificationDestination(userInfo: response.notification.request.content.userInfo)
-        await MainActor.run {
-            if let destination { self.navigation.receive(destination) }
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let userInfo = notification.request.content.userInfo
+        let bindingId = userInfo["bindingId"] as? String
+        let generation: Int64? = switch userInfo["generation"] {
+        case let value as NSNumber: value.int64Value
+        case let value as String: Int64(value)
+        default: nil
         }
+        let destination = NotificationDestination(userInfo: userInfo)
+        executeNotificationCallback {
+            var payload: [AnyHashable: Any] = [:]
+            if let bindingId { payload["bindingId"] = bindingId }
+            if let generation { payload["generation"] = generation }
+            if let destination { payload["sessionId"] = destination.sessionId }
+            self.receiveForeground(userInfo: payload)
+            completionHandler([])
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        completeNotificationResponse(userInfo: response.notification.request.content.userInfo) {
+            completionHandler()
+        }
+    }
+
+    nonisolated func completeNotificationResponse(
+        userInfo: [AnyHashable: Any],
+        completionHandler: @MainActor @escaping () -> Void
+    ) {
+        let destination = NotificationDestination(userInfo: userInfo)
+        executeNotificationCallback {
+            if let destination { self.navigation.receive(destination) }
+            completionHandler()
+        }
+    }
+
+    private nonisolated func executeNotificationCallback(_ operation: @MainActor @escaping () -> Void) {
+        Task { @MainActor in operation() }
+    }
+
+    func receiveForeground(userInfo: [AnyHashable: Any]) {
+        guard let ownerFence, let binding,
+              userInfo["bindingId"] as? String == binding.bindingId,
+              Self.payloadGeneration(userInfo["generation"]) == Int64(binding.generation),
+              NotificationDestination(userInfo: userInfo) != nil else { return }
+        foregroundInvalidationSequence &+= 1
+        foregroundInboxInvalidation = ForegroundInboxInvalidation(
+            accountFence: ownerFence,
+            sequence: foregroundInvalidationSequence
+        )
     }
 
     private func installLifecycle(_ configuration: NativePushAccountConfiguration) {
@@ -308,18 +498,15 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         Task { await refreshPermission() }
     }
 
-    private func beginAccountTransition(logout: Bool = false, settingsUnlink: Bool = false) {
+    private func beginAccountTransition(settingsUnlink: Bool = false) {
         guard accountTransitionTask == nil, let lifecycle, let ownerFence else { return }
-        if logout, pendingConfiguration == nil { pendingLogout = true }
         if settingsUnlink { pendingSettingsUnlink = true }
         transitionGeneration += 1
         let operation = transitionGeneration
         registrationTask?.cancel()
         registrationPending = false
         binding = nil
-        lifecycleWarning = logout
-            ? "Notifications may continue until this device reconnects."
-            : "Notification activation is waiting for the previous binding to be disabled."
+        lifecycleWarning = "Notification activation is waiting for the previous binding to be disabled."
         accountTransitionTask = Task {
             defer { finishAccountTransitionTask(operation: operation, lifecycle: lifecycle) }
             do {
@@ -357,6 +544,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
 
     private func finishAccountTransition(after oldLifecycle: NativePushLifecycleClient) {
         guard lifecycle === oldLifecycle, let next = pendingConfiguration else { return }
+        guard case .unlinked = oldLifecycle.state else {
+            applyLifecycleState(oldLifecycle.state)
+            return
+        }
         pendingConfiguration = nil
         pendingLogout = false
         pendingSettingsUnlink = false
@@ -368,6 +559,10 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
 
     private func closeTransitionLifecycle(_ oldLifecycle: NativePushLifecycleClient) {
         guard lifecycle === oldLifecycle else { return }
+        guard case .unlinked = oldLifecycle.state else {
+            applyLifecycleState(oldLifecycle.state)
+            return
+        }
         pendingLogout = false
         pendingSettingsUnlink = false
         oldLifecycle.close()
@@ -397,6 +592,7 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
                     binding = registered
                 } else {
                     permission = .error
+                    applyLifecycleState(lifecycle.state)
                 }
             } catch is CancellationError {
             } catch {
@@ -414,9 +610,29 @@ final class NativePushCoordinator: NSObject, ObservableObject, UNUserNotificatio
         case .pendingUnlink:
             binding = nil
             lifecycleWarning = "Notifications may continue until this device reconnects."
+        case .registrationUncertain:
+            binding = nil
+            lifecycleWarning = "Notification registration could not be confirmed. Notifications may continue."
+        case .storageUnavailable:
+            binding = nil
+            lifecycleWarning = "Notification unlink state could not be read securely. Notifications may continue."
+        case .storageWriteFailed:
+            binding = nil
+            lifecycleWarning = "Notification unlink could not be stored securely. Notifications may continue."
+        case .authorityUnavailable:
+            binding = nil
+            lifecycleWarning = "Notification unlink server is unknown. Revocation was not sent. Notifications may continue."
         case .unlinked:
             binding = nil
             lifecycleWarning = nil
+        }
+    }
+
+    private static func payloadGeneration(_ value: Any?) -> Int64? {
+        switch value {
+        case let value as NSNumber: value.int64Value
+        case let value as String: Int64(value)
+        default: nil
         }
     }
 
@@ -439,9 +655,12 @@ final class SentientAppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in NativePushCoordinator.shared.didFailRegistration() }
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // Install UN delegate before launch returns. Navigation remains app-scoped
+        // inside this singleton until delayed authentication mounts UserSessionHost.
+        let coordinator = NativePushCoordinator.shared
         if let payload = launchOptions?[.remoteNotification] as? [AnyHashable: Any],
            let destination = NotificationDestination(userInfo: payload) {
-            Task { @MainActor in NativePushCoordinator.shared.navigation.receive(destination) }
+            Task { @MainActor in coordinator.navigation.receive(destination) }
         }
         return true
     }

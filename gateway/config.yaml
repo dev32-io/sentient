@@ -205,6 +205,8 @@ scheduling:
   max_message_chars: 12000            # Saved normal user-message bound. Range 1–12000.
   cards_default_page_size: 20         # Newest-first inbox page size. Range 1–100.
   cards_max_page_size: 100            # Hard request page bound. Range 1–100.
+  inbox_max_entries: 500              # Retained notification cards per user. Range 1–10000.
+  inbox_retention_ms: 2592000000      # 30 days; expiry is durable and never deletes chat content. Range 60000–31536000000.
   outbox_claim_limit: 50              # Content-reference deliveries claimed per drain. Range 1–1000.
   outbox_lease_ms: 60000              # Delivery lease independent of schedule cleanup. Range 1000–3600000.
 
@@ -213,6 +215,9 @@ scheduling:
 # locally and never belong in this file.
 # ---------------------------------------------------------------------------
 push:
+  # APNs topic/environment come from the embedded Debug/Release build identity.
+  # provider_url remains operator-tunable; QA uses its own explicit loopback port.
+  # provider_url: http://127.0.0.1:8088/api/push
   request_timeout_ms: 5000            # Bounded provider request. Range 100–60000.
   drain_interval_ms: 1000             # Pending delivery scan cadence. Range 100–60000.
   drain_claim_limit: 50               # Max deliveries per drain. Range 1–1000.
@@ -238,11 +243,11 @@ access:
   # shared_data_root: ~/.sentient/gateway/shared
 
 # ---------------------------------------------------------------------------
-# Store — durable per-user session history (spec §3)
+# Store — durable per-user data (sessions, scheduling, inbox, private calendar)
 # ---------------------------------------------------------------------------
 store:
-  # SQLite filename created inside each user's home dir (<user_data_root>/<userId>/).
-  # One DB per user: physical isolation plus a natural per-user WAL write lane.
+  # SQLite filename inside each user's home dir (<user_data_root>/<userId>/).
+  # Domain stores share this file, not authority. Household/global stores stay separate.
   db_filename: sessions.db
 
 # ---------------------------------------------------------------------------

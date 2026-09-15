@@ -386,9 +386,11 @@ export function createCalendarReminderScheduler(deps: {
   schedules: ScheduleService;
   accessManager: AccessManager;
   calendarConfig: CalendarConfig;
+  dbFileName?: string;
   resolveUser?: (userId: string) => Promise<ResolvedUser | null>;
   listUsers?: () => Promise<readonly (ResolvedUser & { userId: string })[]>;
 }): CalendarReminderScheduler {
+  const storeDeps = deps.dbFileName ? { dbFileName: deps.dbFileName } : {};
   let closed = false;
   const reconcile = async (
     persistence: CalendarPersistence,
@@ -425,6 +427,7 @@ export function createCalendarReminderScheduler(deps: {
           ownerStore = openCalendarPersistence(
             deps.accessManager.grant(principal, scope === "household" ? "calendar-household" : "calendar-private"),
             deps.calendarConfig,
+            storeDeps,
           );
           const found = ownerStore.read(eventId as CalendarEventId);
           if (found.ok) event = found.value;
@@ -617,6 +620,7 @@ export function createCalendarReminderScheduler(deps: {
           store = openCalendarPersistence(
             deps.accessManager.grant(principal, scope === "private" ? "calendar-private" : "calendar-household"),
             deps.calendarConfig,
+            storeDeps,
           );
           await scheduler.reconcilePending(store, scope);
         } catch {
@@ -642,9 +646,10 @@ export function createCalendarReminderScheduler(deps: {
 
 export async function authorizeCalendarReminderExecution(
   execution: AuthorizedScheduledExecution,
-  deps: { accessManager: AccessManager; calendarConfig: CalendarConfig },
+  deps: { accessManager: AccessManager; calendarConfig: CalendarConfig; dbFileName?: string },
   signal: AbortSignal,
 ): Promise<SchedulingResult<void>> {
+  const storeDeps = deps.dbFileName ? { dbFileName: deps.dbFileName } : {};
   const denied = (): SchedulingResult<void> => ({
     ok: false,
     error: { code: "forbidden", retryable: false },
@@ -652,17 +657,29 @@ export async function authorizeCalendarReminderExecution(
   if (signal.aborted) return { ok: false, error: { code: "closed", retryable: false } };
   if (execution.claim.source.kind !== "calendar-reminder") return denied();
   const source = execution.claim.source;
+  let unavailable = false;
   for (const resource of ["calendar-private", "calendar-household"] as const) {
     let store: CalendarPersistence | undefined;
     try {
-      store = openCalendarPersistence(deps.accessManager.grant(execution.principal, resource), deps.calendarConfig);
+      store = openCalendarPersistence(
+        deps.accessManager.grant(execution.principal, resource),
+        deps.calendarConfig,
+        storeDeps,
+      );
       const consented = store.trustedReminderOwners?.(source.eventId as CalendarEventId) ?? {
         ok: true as const,
         value: [],
       };
-      if (!consented.ok || !consented.value.includes(execution.principal.userId)) continue;
+      if (!consented.ok) {
+        unavailable ||= consented.error === "io-error" || consented.error === "closed";
+        continue;
+      }
+      if (!consented.value.includes(execution.principal.userId)) continue;
       const found = store.read(source.eventId as CalendarEventId);
-      if (!found.ok) continue;
+      if (!found.ok) {
+        unavailable ||= found.error === "io-error" || found.error === "closed";
+        continue;
+      }
       const event = found.value;
       const intended = Date.parse(execution.claim.intendedAt);
       const baseReminder = reminderFor(event, execution.principal.userId);
@@ -706,10 +723,10 @@ export async function authorizeCalendarReminderExecution(
         if (instant !== undefined && Math.abs(instant - intended) < 60_000) return { ok: true, value: undefined };
       }
     } catch {
-      // Fail closed without disclosing which calendar scope exists.
+      unavailable = true;
     } finally {
       store?.close();
     }
   }
-  return denied();
+  return unavailable ? { ok: false, error: { code: "unavailable", retryable: true } } : denied();
 }

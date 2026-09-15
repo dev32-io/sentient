@@ -60,8 +60,6 @@ struct ChatView: View {
     let onOpenInbox: () -> Void
     /// Logout → host shuts the UserSession down + clears the token.
     let onLogout: () -> Void
-    /// Authentication expiry uses its distinct authenticated-lifecycle entry point.
-    let onAuthenticationExpired: () -> Void
 
     // ── Drawer state ────────────────────────────────────────────────────────────
 
@@ -96,8 +94,7 @@ struct ChatView: View {
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         onOpenInbox: @escaping () -> Void,
-        onLogout: @escaping () -> Void,
-        onAuthenticationExpired: @escaping () -> Void
+        onLogout: @escaping () -> Void
     ) {
         _vm = StateObject(wrappedValue: makeVM())
         _historyModel = StateObject(wrappedValue: makeHistoryVM())
@@ -108,7 +105,6 @@ struct ChatView: View {
         self.onOpenSettings = onOpenSettings
         self.onOpenInbox = onOpenInbox
         self.onLogout = onLogout
-        self.onAuthenticationExpired = onAuthenticationExpired
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────────
@@ -176,9 +172,7 @@ struct ChatView: View {
         }
         .connectionState(
             banner: connectionBanner,
-            onReconnect: { vm.reconnect() },
-            authExpired: connection.authExpired,
-            onAuthExpired: onAuthenticationExpired
+            onReconnect: { vm.reconnect() }
         )
         .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
             Task { await historyModel.renameSession(id, title: title) }

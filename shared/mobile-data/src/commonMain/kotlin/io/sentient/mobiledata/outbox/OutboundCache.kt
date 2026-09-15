@@ -9,7 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * In-memory optimistic-send queue for ONE conversation. Stateful by nature (it IS the
  * cache), so it is owned by the chat VM and dies with the conversation — no reset().
- * Knows nothing about the connection; the VM gates the flush on connection-ready.
+ * [routeGeneration] binds it to that VM's route request; connection-scoped send
+ * authority still lives outside this cache.
  *
  * There is NO "sent" state. An entry is QUEUED until its committed echo arrives, at
  * which point the VM [remove]s it. Reconcile is driven by the LIVE echo's
@@ -22,9 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
  *   QUEUED → (markSent: sentAtMs set, still QUEUED) → removed on echo
  *          | FAILED (disconnect OR unacked-timeout via sweepTimeouts) → retry → QUEUED
  *
- * NO resend guard: the gateway dedups by pendingId, so a reconnect re-sending a
- * sent-but-unechoed entry is safe. sentAtMs tracks when the entry was handed to the
- * transport for the timeout sweep ONLY — it does NOT gate re-sends.
+ * Send once per connection attempt; authority/voice emissions must not resend.
+ * Reconnect clears the attempt guard, preserving pendingId and timeout timestamps.
  *
  * @param clock Injected wall-clock for deterministic testing.
  * @param unackedTimeoutMs Millis after [markSent] before a still-QUEUED entry
@@ -36,6 +36,26 @@ class OutboundCache(
     private val unackedTimeoutMs: Long = DEFAULT_UNACKED_TIMEOUT_MS,
 ) {
     private val queue = LinkedHashMap<String, PendingMessage>()
+    private val sentOnConnection = mutableSetOf<String>()
+
+    private var sentTransportGeneration: Long? = null
+
+    internal fun unsent(transportGeneration: Long): List<PendingMessage> {
+        if (sentTransportGeneration != transportGeneration) {
+            sentOnConnection.clear()
+            sentTransportGeneration = transportGeneration
+        }
+        return queued().filter { it.id !in sentOnConnection }
+    }
+
+    // Route-instance identity, assigned once by ChatComponent when its owning VM enters.
+    // Distinct from sessionId: navigating B -> A -> B must not revive old B VM work.
+    internal var routeGeneration: Long? = null
+        private set
+
+    internal fun bindToRoute(generation: Long) {
+        if (routeGeneration == null) routeGeneration = generation
+    }
     private val _pending = MutableStateFlow<List<PendingMessage>>(emptyList())
     val pending: StateFlow<List<PendingMessage>> = _pending.asStateFlow()
 
@@ -62,7 +82,10 @@ class OutboundCache(
      * unacked-timeout sweep; the entry stays QUEUED for display. The committed echo
      * removes it via [remove].
      */
-    fun markSent(id: String) = transition(id) { it.copy(sentAtMs = clock.nowMs()) }
+    fun markSent(id: String) {
+        sentOnConnection += id
+        transition(id) { it.copy(sentAtMs = clock.nowMs()) }
+    }
 
     /**
      * Fail a QUEUED entry (disconnect). Any QUEUED entry — sent or unsent — may be
@@ -77,7 +100,10 @@ class OutboundCache(
      * No-op if the entry is not FAILED.
      */
     fun retry(id: String) = transition(id) {
-        if (it.status == MessageStatus.FAILED) it.copy(status = MessageStatus.QUEUED, sentAtMs = null) else it
+        if (it.status == MessageStatus.FAILED) {
+            sentOnConnection -= id
+            it.copy(status = MessageStatus.QUEUED, sentAtMs = null)
+        } else it
     }
 
     /**
@@ -102,6 +128,7 @@ class OutboundCache(
 
     /** Drop a reconciled entry (its committed echo arrived). */
     fun remove(id: String) {
+        sentOnConnection -= id
         if (queue.remove(id) != null) publish()
     }
 
@@ -116,6 +143,7 @@ class OutboundCache(
     fun dropPending() {
         if (queue.isEmpty()) return
         queue.clear()
+        sentOnConnection.clear()
         publish()
     }
 

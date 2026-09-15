@@ -62,21 +62,16 @@ targets:
             localhost:
               NSExceptionAllowsInsecureHTTPLoads: true
               NSIncludesSubdomains: true
+    # Generated from shared/config/build-variants.json by scripts/ios-gen-project.sh.
+    # Debug's generated config includes Local.xcconfig for its gateway URL.
     configFiles:
-      Debug: App/Local.xcconfig
+      Debug: App/Generated/Debug.xcconfig
+      Release: App/Generated/Release.xcconfig
     settings:
       base:
-        # Prod bundle id; Debug overrides to the .debug id so both install side by side.
-        PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: App/SentientApp.entitlements
-      configs:
-        Debug:
-          PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
-          APS_ENVIRONMENT: development
-        Release:
-          APS_ENVIRONMENT: production
     preBuildScripts:
       - name: Verify Sentient identity checksum
         script: |

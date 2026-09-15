@@ -42,6 +42,67 @@ final class SessionConnectivityRecoveryFence {
 }
 
 @MainActor
+final class SessionLogoutBoundary {
+    private let prepare: (Bool) async -> Bool
+    private let finalizePreparation: (Bool) -> Void
+    private let clearAuth: () -> Void
+    private let startRevoke: () -> Void
+    private let preparationTimeout: Duration
+    private var preparationTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+    private var teardown: (() -> Void)?
+    private var generation = 0
+    private var hasStarted = false
+
+    init(
+        prepare: @escaping (Bool) async -> Bool,
+        finalizePreparation: @escaping (Bool) -> Void = { _ in },
+        clearAuth: @escaping () -> Void,
+        startRevoke: @escaping () -> Void,
+        preparationTimeout: Duration = .seconds(10)
+    ) {
+        self.prepare = prepare
+        self.finalizePreparation = finalizePreparation
+        self.clearAuth = clearAuth
+        self.startRevoke = startRevoke
+        self.preparationTimeout = preparationTimeout
+    }
+
+    func run(preservingNavigation: Bool = false, teardown: @escaping () -> Void) {
+        guard !hasStarted else { return }
+        hasStarted = true
+        generation &+= 1
+        let operation = generation
+        self.teardown = teardown
+        let prepare = prepare
+        preparationTask = Task { [weak self] in
+            _ = await prepare(preservingNavigation)
+            self?.finish(operation: operation, timedOut: false)
+        }
+        timeoutTask = Task { [weak self, preparationTimeout] in
+            do {
+                try await Task.sleep(for: preparationTimeout)
+                self?.finish(operation: operation, timedOut: true)
+            } catch {}
+        }
+    }
+
+    private func finish(operation: Int, timedOut: Bool) {
+        guard generation == operation, let teardown else { return }
+        generation &+= 1
+        preparationTask?.cancel()
+        timeoutTask?.cancel()
+        preparationTask = nil
+        timeoutTask = nil
+        self.teardown = nil
+        finalizePreparation(timedOut)
+        teardown()
+        clearAuth()
+        startRevoke()
+    }
+}
+
+@MainActor
 final class UserSession: ObservableObject {
     /// The KMP User-scope holder: SDK + ChatComponent + session scope.
     private let inner: IosUserSession
@@ -72,6 +133,7 @@ final class UserSession: ObservableObject {
     @Published private(set) var calendarNamespace: CalendarCacheNamespace?
 
     private var calendarLifecycleTask: Task<Void, Never>?
+    private var logoutBoundary: SessionLogoutBoundary!
 
     /// Awaits background calendar open/disposal without blocking MainActor and
     /// publishes the typed result back to this MainActor-owned object.
@@ -108,10 +170,9 @@ final class UserSession: ObservableObject {
             _ = $0.onConnectivityRecovered()
         }
     ) {
-        // AccountUseCases can invoke this callback without the explicit root
-        // logout button. Close the same session before clearing auth state so a
-        // successor login cannot race the predecessor's namespace purge.
-        var closeSession: (() -> Void)?
+        // AccountUseCases may invoke this off-main. Route it through the same
+        // serialized session-owned boundary as root and auth-expiry logout.
+        var beginSettingsLogout: (() -> Void)?
         self.inner = createUserSession(
             gatewayWsUrl: gatewayWsUrl,
             allowSelfSignedDevHost: allowSelfSignedDevHost,
@@ -125,10 +186,7 @@ final class UserSession: ObservableObject {
                 #endif
             }(),
             onLoggedOut: {
-                Task { @MainActor in
-                    closeSession?()
-                    onLoggedOut()
-                }
+                Task { @MainActor in beginSettingsLogout?() }
             }
         )
         self.calendarAvailability = inner.calendarAvailability
@@ -166,14 +224,24 @@ final class UserSession: ObservableObject {
         self.calendarLifecycleTask = Task { [weak self] in
             await self?.awaitCalendarLifecycle()
         }
-        closeSession = { [weak self] in self?.shutdown() }
+        self.logoutBoundary = SessionLogoutBoundary(
+            prepare: { preserving in
+                await NativePushCoordinator.shared.prepareForLogout(
+                    preservingNavigationFor: preserving ? "\(gatewayWsUrl)|\(authenticatedUserId)" : nil
+                )
+            },
+            finalizePreparation: { NativePushCoordinator.shared.finalizeLogoutPreparation(timedOut: $0) },
+            clearAuth: onLoggedOut,
+            startRevoke: { NativePushCoordinator.shared.retryPendingUnlink() }
+        )
+        beginSettingsLogout = { [weak self] in self?.explicitLogout() }
     }
 
     /// Build a thin per-conversation ChatViewModel over the shared ChatComponent.
     /// Called by the route-keyed root ChatView; a new VM per active conversation.
-    func makeChatVM(sessionId: String?) -> ChatViewModel {
+    func makeChatVM(sessionId: String?, activateOnInit: Bool = true) -> ChatViewModel {
         log.info("makeChatVM sessionId=\(sessionId ?? "<new>")")
-        return ChatViewModel(component: component, sessionId: sessionId)
+        return ChatViewModel(component: component, sessionId: sessionId, activateOnInit: activateOnInit)
     }
 
     /// Build the history VM over the shared ChatComponent (reads + rename/delete).
@@ -181,24 +249,20 @@ final class UserSession: ObservableObject {
         HistoryViewModel(component: component)
     }
 
-    /// Notification/deep-link destinations must name a session visible to the
-    /// authenticated account before the route can resume it.
-    func validateNotificationSession(_ sessionId: String) async -> NotificationSessionValidation {
-        guard let destination = NotificationDestination(sessionId: sessionId) else { return .unavailable }
+    /// Activates through shared READY/reconnect handling. `.authorized` means
+    /// matching `session.switched` arrived; gateway activation is ownership-authorized.
+    func activateSession(_ sessionId: String) async -> NotificationSessionValidation {
+        guard NotificationDestination(sessionId: sessionId) != nil else { return .unavailable }
         do {
-            let pageSize: Int32 = 100
-            var offset: Int32 = 0
-            while true {
-                try Task.checkCancellation()
-                let sessions = try await component.observeSessions.invoke(limit: pageSize, offset: offset)
-                if canResumeNotificationDestination(destination, sessionIds: sessions.map(\.id)) { return .authorized }
-                if sessions.count < Int(pageSize) { return .unavailable }
-                offset += pageSize
+            switch try await component.activateSession.invoke(sessionId: sessionId) {
+            case .authorized: return .authorized
+            case .unavailable: return .unavailable
+            case .retryableFailure: return .retryableFailure
             }
         } catch is CancellationError {
             return .retryableFailure
         } catch {
-            log.warn("notification destination validation failed code=transport")
+            log.warn("session activation failed code=transport")
             return .retryableFailure
         }
     }
@@ -227,10 +291,26 @@ final class UserSession: ObservableObject {
     func shutdown() { closeCalendarBoundary(using: inner.close) }
 
     /// Explicit root/settings logout production entry point.
-    func explicitLogout() { closeCalendarBoundary(using: inner.explicitLogout) }
+    func explicitLogout() {
+        calendarRecoveryFence.close()
+        networkMonitor?.cancel()
+        networkMonitor = nil
+        logoutBoundary.run { [weak self, inner] in
+            guard let self else { inner.explicitLogout(); return }
+            self.closeCalendarBoundary(using: inner.explicitLogout)
+        }
+    }
 
     /// Terminal authentication failure production entry point.
-    func authenticationExpired() { closeCalendarBoundary(using: inner.authenticationExpired) }
+    func authenticationExpired() {
+        calendarRecoveryFence.close()
+        networkMonitor?.cancel()
+        networkMonitor = nil
+        logoutBoundary.run(preservingNavigation: true) { [weak self, inner] in
+            guard let self else { inner.authenticationExpired(); return }
+            self.closeCalendarBoundary(using: inner.authenticationExpired)
+        }
+    }
 
     /// Account replacement production entry point before a successor host is created.
     func accountReplaced() { closeCalendarBoundary(using: inner.accountReplaced) }

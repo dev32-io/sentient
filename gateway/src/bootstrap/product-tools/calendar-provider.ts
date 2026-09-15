@@ -254,7 +254,7 @@ function invalidArguments(error: z.ZodError): ToolResult {
       code: "invalid_arguments",
       ...(issues.length > 0 ? { issues } : {}),
       expected:
-        "Use reminder {enabled:true, mode:'at-start'}, {enabled:true, mode:'lead', leadMinutes}, or for all-day events {enabled:true, mode:'all-day', localTime:'HH:mm', timeZone:'IANA zone'}. Only calendar_update may use {enabled:false}. Occurrence-scoped mutations require originalStart; entire_series must omit it.",
+        "Use reminder {enabled:true,mode:'at-start'}, {enabled:true,mode:'lead',leadMinutes:15}, or for all-day events {enabled:true,mode:'all-day',localTime:'09:00',timeZone:'America/Toronto'}. Only calendar_update may use {enabled:false}. Occurrence-scoped mutations require originalStart; entire_series must omit it.",
     }),
     isError: true,
   };
@@ -318,15 +318,18 @@ const filtersParameter = {
 const reminderEnabledVariants = [
   {
     type: "object",
-    properties: { enabled: { const: true }, mode: { const: "at-start" } },
+    properties: {
+      enabled: { type: "boolean", enum: [true] },
+      mode: { type: "string", enum: ["at-start"] },
+    },
     required: ["enabled", "mode"],
     additionalProperties: false,
   },
   {
     type: "object",
     properties: {
-      enabled: { const: true },
-      mode: { const: "lead" },
+      enabled: { type: "boolean", enum: [true] },
+      mode: { type: "string", enum: ["lead"] },
       leadMinutes: { type: "integer", minimum: 1, maximum: 43200 },
     },
     required: ["enabled", "mode", "leadMinutes"],
@@ -335,8 +338,8 @@ const reminderEnabledVariants = [
   {
     type: "object",
     properties: {
-      enabled: { const: true },
-      mode: { const: "all-day" },
+      enabled: { type: "boolean", enum: [true] },
+      mode: { type: "string", enum: ["all-day"] },
       localTime: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$", description: "HH:mm" },
       timeZone: { type: "string", minLength: 1, description: "IANA timezone" },
     },
@@ -346,15 +349,20 @@ const reminderEnabledVariants = [
 ] as const;
 const createReminderParameter = {
   description:
-    "Optional acting-user reminder linked to this event. Omit it to create no reminder. Timed starts use at-start or lead; date-only/all-day starts require all-day localTime and timeZone.",
-  oneOf: reminderEnabledVariants,
+    "Optional acting-user reminder linked to this event. Omit it to create no reminder. Timed starts use {enabled:true,mode:'at-start'} or {enabled:true,mode:'lead',leadMinutes:15}; date-only/all-day starts require {enabled:true,mode:'all-day',localTime:'09:00',timeZone:'America/Toronto'}.",
+  anyOf: reminderEnabledVariants,
 };
 const updateReminderParameter = {
   description:
-    "Optional acting-user reminder change. Omit to preserve it; use enabled:false to remove it. Timed starts use at-start or lead; date-only/all-day starts require all-day localTime and timeZone.",
-  oneOf: [
+    "Optional acting-user reminder change. Omit to preserve it; use {enabled:false} to remove it. Timed starts use {enabled:true,mode:'at-start'} or {enabled:true,mode:'lead',leadMinutes:15}; date-only/all-day starts require {enabled:true,mode:'all-day',localTime:'09:00',timeZone:'America/Toronto'}.",
+  anyOf: [
     ...reminderEnabledVariants,
-    { type: "object", properties: { enabled: { const: false } }, required: ["enabled"], additionalProperties: false },
+    {
+      type: "object",
+      properties: { enabled: { type: "boolean", enum: [false] } },
+      required: ["enabled"],
+      additionalProperties: false,
+    },
   ],
 };
 const changesParameter = {
@@ -417,39 +425,31 @@ const getParameters = {
 };
 const mutationTargetParameters = {
   eventId: { type: "string" },
+  applyTo: {
+    type: "string",
+    enum: ["this_occurrence", "this_and_following", "entire_series"],
+    description:
+      "Choose this_occurrence or this_and_following with originalStart; choose entire_series without originalStart.",
+  },
+  originalStart: {
+    ...timeParameter,
+    description:
+      "Required when applyTo is this_occurrence or this_and_following; must be omitted when applyTo is entire_series.",
+  },
   expectedRevision: { type: "integer", minimum: 1 },
   scope: writeScopeParameter,
 };
-function mutationParameterVariant(
-  applyTo: "this_occurrence" | "this_and_following" | "entire_series",
-  changes?: Record<string, unknown>,
-): Record<string, unknown> {
-  const occurrenceScoped = applyTo !== "entire_series";
-  return {
-    type: "object",
-    properties: {
-      ...mutationTargetParameters,
-      applyTo: { const: applyTo },
-      ...(occurrenceScoped ? { originalStart: timeParameter } : {}),
-      ...(changes ? { changes } : {}),
-    },
-    required: ["eventId", "applyTo", ...(occurrenceScoped ? ["originalStart"] : []), ...(changes ? ["changes"] : [])],
-    additionalProperties: false,
-  };
-}
 const updateParameters = {
-  oneOf: [
-    mutationParameterVariant("this_occurrence", changesParameter),
-    mutationParameterVariant("this_and_following", changesParameter),
-    mutationParameterVariant("entire_series", changesParameter),
-  ],
+  type: "object",
+  properties: { ...mutationTargetParameters, changes: changesParameter },
+  required: ["eventId", "applyTo", "changes"],
+  additionalProperties: false,
 };
 const deleteParameters = {
-  oneOf: [
-    mutationParameterVariant("this_occurrence"),
-    mutationParameterVariant("this_and_following"),
-    mutationParameterVariant("entire_series"),
-  ],
+  type: "object",
+  properties: mutationTargetParameters,
+  required: ["eventId", "applyTo"],
+  additionalProperties: false,
 };
 
 function runner(

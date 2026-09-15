@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { UserId } from "../user-auth/user-id.js";
 import type { PushBindingDestination, PushDeliveryReceipt } from "./contracts.js";
 import { buildPushPayload, createPushDeliveryService } from "./delivery-service.js";
+import { createGorushApnsProvider } from "./gorush-provider.js";
 
 const ownerUserId = "u_a11ce001" as UserId;
 const destination = (id: string, mode: "hidden" | "content" = "hidden"): PushBindingDestination => ({
@@ -52,6 +53,41 @@ describe("private push delivery", () => {
     expect(sent[0]).toMatchObject({ bindingId: "one", mode: "content", body: "private 1" });
     expect(sent[1]).toMatchObject({ bindingId: "two", mode: "hidden" });
     expect(sent[2]).toMatchObject({ bindingId: "two", mode: "content", body: "private 3" });
+  });
+
+  it("does not persist a receipt for malformed Gorush acceptance", async () => {
+    const receipts: PushDeliveryReceipt[] = [];
+    const service = createPushDeliveryService({
+      config,
+      bindings: { activeForUser: async () => ({ ok: true, value: [destination("one")] }) },
+      content: { resolve: async () => ({ ok: true, value: { plainText: "synthetic" } }) },
+      provider: createGorushApnsProvider({
+        url: "http://127.0.0.1:8088/api/push",
+        topic: "io.dev32.sentient.debug",
+        sandbox: true,
+        fetch: async () => Response.json({ success: "ok", counts: 1, logs: [] }),
+      }),
+      receipts: {
+        read: async () => null,
+        record: async (_delivery, _binding, _generation, receipt) => {
+          receipts.push(receipt);
+        },
+      },
+    });
+    expect(
+      await service.deliver(
+        {
+          deliveryId: "delivery",
+          content: { ownerUserId, sessionId: "session", entryId: "entry" },
+          attempt: 1,
+        },
+        new AbortController().signal,
+      ),
+    ).toEqual({
+      ok: false,
+      error: { code: "provider_unavailable", retryable: true },
+    });
+    expect(receipts).toHaveLength(0);
   });
 
   it("bounds actual UTF-8 wire bytes including routing metadata", () => {

@@ -5,6 +5,8 @@ import {
   schedulePatchRequestSchema,
   scheduleSchema,
   scheduledSessionCardPageSchema,
+  scheduledSessionCardsClearRequestSchema,
+  scheduledSessionCardsClearResponseSchema,
 } from "./schedules";
 import { sessionRowSchema } from "./sessions";
 
@@ -77,5 +79,16 @@ describe("scheduled-message wire boundary", () => {
       false,
     );
     expect(scheduledSessionCardPageSchema.safeParse({ cards: [], unreadCount: 1 }).success).toBe(false);
+    expect(scheduledSessionCardsClearRequestSchema.safeParse(fixture.cardsClear).success).toBe(true);
+    expect(scheduledSessionCardsClearRequestSchema.safeParse({ occurrenceIds: [] }).success).toBe(false);
+    expect(scheduledSessionCardsClearRequestSchema.safeParse({ occurrenceIds: [""] }).success).toBe(false);
+    expect(scheduledSessionCardsClearRequestSchema.safeParse({ occurrenceIds: ["same", "same"] }).success).toBe(false);
+    expect(
+      scheduledSessionCardsClearRequestSchema.safeParse({
+        occurrenceIds: Array.from({ length: 10_001 }, (_, index) => `occ-${index}`),
+      }).success,
+    ).toBe(false);
+    expect(scheduledSessionCardsClearResponseSchema.safeParse({ cleared: true }).success).toBe(true);
+    expect(scheduledSessionCardsClearResponseSchema.safeParse({ cleared: false }).success).toBe(false);
   });
 });

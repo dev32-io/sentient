@@ -41,6 +41,8 @@ export interface CalendarHandlerDeps {
   users: Pick<UserStore, "get">;
   accessManager: AccessManager;
   calendarConfig?: CalendarConfig;
+  /** Configured private user DB filename. */
+  dbFileName?: string;
   /** Concrete household zone resolved by the composition root. */
   householdTimeZone?: string;
   /** Injectable request-scoped V2 persistence opener used by handler tests. */
@@ -107,7 +109,9 @@ async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Prom
     const preflight = preflightList(listInput(url), cfg, requestId);
     if (preflight) return preflight;
   }
-  const open = deps.openStore ?? ((cap, config) => openCalendarPersistence(cap, config));
+  const open =
+    deps.openStore ??
+    ((cap, config) => openCalendarPersistence(cap, config, deps.dbFileName ? { dbFileName: deps.dbFileName } : {}));
   let privateStore: CalendarPersistence | undefined;
   let householdStore: CalendarPersistence | undefined;
   try {

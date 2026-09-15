@@ -5,14 +5,16 @@ import type { ApnsPushProvider, PushBindingDestination, PushResult } from "./con
 
 const responseSchema = z
   .object({
-    counts: z.number().int().nonnegative().optional(),
-    logs: z.array(z.object({ type: z.string().optional(), error: z.string().optional() }).passthrough()).optional(),
+    success: z.literal("ok"),
+    counts: z.number().int().nonnegative(),
+    logs: z.array(z.object({ type: z.string(), error: z.string().optional() })),
   })
   .passthrough();
 
 export interface GorushProviderOptions {
   url: string;
   topic: string;
+  sandbox: boolean;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   now?: () => Date;
 }
@@ -30,12 +32,16 @@ export function createGorushApnsProvider(options: GorushProviderOptions): ApnsPu
         const response = await request(options.url, {
           method: "POST",
           headers: { "content-type": "application/json" },
+          redirect: "error",
           body: JSON.stringify({
             notifications: [
               {
                 tokens: [destination.apnsDeviceToken],
                 platform: 1,
                 topic: options.topic,
+                development: options.sandbox,
+                production: !options.sandbox,
+                push_type: "alert",
                 title: payload.title,
                 message: payload.body ?? "",
                 data: {
@@ -44,7 +50,7 @@ export function createGorushApnsProvider(options: GorushProviderOptions): ApnsPu
                   sessionId: payload.sessionId,
                   mode: payload.mode,
                 },
-                collapse_key: stableNotificationId(payload),
+                collapse_id: stableNotificationId(payload),
               },
             ],
           }),
@@ -53,10 +59,11 @@ export function createGorushApnsProvider(options: GorushProviderOptions): ApnsPu
         if (!response.ok) return providerFailure(response.status >= 500 || response.status === 429);
         const parsed = responseSchema.safeParse(await response.json());
         if (!parsed.success) return providerFailure(true);
-        const failed = parsed.data.logs?.some((entry) => entry.type?.toLowerCase() === "failed" || entry.error);
-        if (failed || parsed.data.counts === 0) {
-          const permanent = parsed.data.logs?.some((entry) =>
-            /baddevicetoken|unregistered|device token not for topic/i.test(entry.error ?? ""),
+        // Pinned Gorush counts our one token plus its nonempty APNs topic.
+        // Synchronous successful APNs sends have no log entries (errors only).
+        if (parsed.data.logs.length > 0 || parsed.data.counts !== 2) {
+          const permanent = parsed.data.logs.some((entry) =>
+            /baddevicetoken|unregistered|device\s*token\s*not\s*for\s*topic/i.test(entry.error ?? ""),
           );
           return permanent ? { ok: false, error: { code: "not_found", retryable: false } } : providerFailure(true);
         }

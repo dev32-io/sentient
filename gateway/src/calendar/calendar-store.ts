@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type { UserRole } from "@sentient/protocol";
 import { z } from "zod";
 import type { Capability, ResourceClass } from "../access/capability.js";
+import { migrateDatabase, readUserVersion } from "../store/migrate-store.js";
+import { DEFAULT_USER_DB_FILENAME, openConfiguredUserDatabase } from "../store/user-database.js";
 import { DEFAULT_RECURRENCE_LIMITS, expandRecurrence } from "./expand-recurrence.js";
-import { CALENDAR_DDL, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION } from "./schema.js";
+import { CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION } from "./schema.js";
 import {
   type CalendarConfig,
   type CalendarEventId,
@@ -36,6 +38,8 @@ export interface CalendarStoreDeps {
   fault?: (operation: string) => void;
   /** Alias retained for embedders that call the hook an operation observer. */
   onOperation?: (operation: string) => void;
+  /** Configured per-user DB filename. Ignored for household scope. */
+  dbFileName?: string;
 }
 
 export interface CalendarTransactionOptions {
@@ -218,7 +222,7 @@ class TransactionAbort extends Error {
   }
 }
 
-/** Opens only the fresh V2 database at `<root>/calendar-v2/calendar.db`. */
+/** Opens private calendar in configured user DB; household stays at calendar-v2/calendar.db. */
 export function openCalendarPersistence(
   cap: Capability,
   _cfg: CalendarConfig,
@@ -229,22 +233,17 @@ export function openCalendarPersistence(
       `openCalendarPersistence: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`,
     );
   }
-  const calendarRoot = join(cap.rootPath, "calendar-v2");
-  const dbPath = join(calendarRoot, "calendar.db");
-  mkdirSync(calendarRoot, { recursive: true });
-  const db = new Database(dbPath, { create: true });
-
-  // A database newer than this binary must not be rewritten. This check is
-  // intentionally after opening the V2 path, and never looks at V1 storage.
-  const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
-  if (version <= CALENDAR_SCHEMA_VERSION) {
-    if (version === 0) {
-      db.exec(CALENDAR_DDL);
-      db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION}`);
-    } else {
-      db.exec("PRAGMA foreign_keys = ON;");
-      for (let next = version; next < CALENDAR_SCHEMA_VERSION; next++) db.exec(CALENDAR_MIGRATIONS[next - 1] ?? "");
-      db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION}`);
+  let db: Database;
+  if (cap.resource === "calendar-private") {
+    db = openConfiguredUserDatabase(cap, deps.dbFileName ?? DEFAULT_USER_DB_FILENAME).db;
+  } else {
+    const calendarRoot = join(cap.rootPath, "calendar-v2");
+    mkdirSync(calendarRoot, { recursive: true });
+    db = new Database(join(calendarRoot, "calendar.db"), { create: true });
+    const version = readUserVersion(db);
+    if (version <= CALENDAR_SCHEMA_VERSION) {
+      db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON");
+      migrateDatabase(db, cap.ownerUserId, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION, "calendar-household");
     }
   }
   let closed = false;

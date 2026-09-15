@@ -87,7 +87,7 @@ function isHidden(element: HTMLElement): boolean {
   return false;
 }
 
-function isLiveDialogRoot(element: HTMLElement): boolean {
+export function isLiveDialogRoot(element: HTMLElement): boolean {
   return element.isConnected && !isHidden(element);
 }
 
