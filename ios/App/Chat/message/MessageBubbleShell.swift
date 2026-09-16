@@ -144,7 +144,7 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
 
     @ViewBuilder
     private var avatarColumn: some View {
-        if continuation {
+        if continuation && avatarMode == .idle {
             Color.clear
                 .frame(width: BubbleLayout.avatarSize + Space.md, height: 1)
                 .accessibilityHidden(true)
@@ -233,25 +233,33 @@ private struct BubbleCanvasChrome: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.layoutDirection) private var layoutDirection
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion || !breathes)) { timeline in
-            GeometryReader { proxy in
-                let overflow = BubbleLayout.chromeOverflow
-                let faceRect = CGRect(
-                    x: overflow, y: overflow,
-                    width: proxy.size.width, height: proxy.size.height
-                )
-                let phase = breathPhase(at: timeline.date)
-
-                Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
-                    draw(phase: phase, in: &context, faceRect: faceRect)
-                }
-                .frame(
-                    width: proxy.size.width + overflow * 2,
-                    height: proxy.size.height + overflow * 2
-                )
-                .offset(x: -overflow, y: -overflow)
+        if breathes && !reduceMotion {
+            TimelineView(.animation) { timeline in
+                chrome(phase: breathPhase(at: timeline.date))
             }
+        } else {
+            chrome(phase: nil)
+        }
+    }
+
+    private func chrome(phase: Double?) -> some View {
+        GeometryReader { proxy in
+            let overflow = BubbleLayout.chromeOverflow
+            let faceRect = CGRect(
+                x: overflow, y: overflow,
+                width: proxy.size.width, height: proxy.size.height
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
+                draw(phase: phase, in: &context, faceRect: faceRect)
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

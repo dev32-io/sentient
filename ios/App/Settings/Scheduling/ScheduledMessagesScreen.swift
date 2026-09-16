@@ -53,10 +53,12 @@ struct ScheduledMessagesScreen: View {
                 AsyncNotice(kind: .loading, title: "Refreshing schedules")
             }
             if vm.schedules.isEmpty { AsyncNotice(kind: .empty, title: "No scheduled messages", detail: "Create a one-time or recurring message.") }
-            ForEach(vm.schedules, id: \.scheduleId) { schedule in
-                ScheduleSummaryCard(schedule: schedule, disabled: vm.isMutating, onEdit: {
-                    editing = schedule; draft = ScheduleDraft(schedule: schedule)
-                }, onToggle: { Task { await vm.toggle(schedule) } }, onDelete: { Task { await vm.delete(schedule) } })
+            LazyVStack(spacing: Space.lg) {
+                ForEach(vm.schedules, id: \.scheduleId) { schedule in
+                    ScheduleSummaryCard(schedule: schedule, disabled: vm.isMutating, onEdit: {
+                        editing = schedule; draft = ScheduleDraft(schedule: schedule)
+                    }, onToggle: { Task { await vm.toggle(schedule) } }, onDelete: { Task { await vm.delete(schedule) } })
+                }
             }
         }
     }

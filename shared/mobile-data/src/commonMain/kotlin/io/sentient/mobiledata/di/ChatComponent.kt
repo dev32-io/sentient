@@ -135,7 +135,11 @@ open class ChatComponent(
     /** The user's Allow / Deny. Fail-closed: silence is never approval (§7.1). */
     fun respondToPermission(requestId: String, approved: Boolean) = sdk.respondToPermission(requestId, approved)
 
-    val observeChat = ObserveChatUseCase(conversationRepository, clock)
+    val observeChat = ObserveChatUseCase(
+        conversationRepository,
+        clock,
+        sdk.assistantActivity,
+    )
     val switchConversation = SwitchConversationUseCase(sessionsRepository)
     val sendMessage = SendMessageUseCase(conversationRepository, outboundSessionId, outboundRouteGeneration, sdk.transportGeneration)
     val observeSessions = ObserveSessionsUseCase(sessionsRepository)

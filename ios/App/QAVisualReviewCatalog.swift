@@ -1,4 +1,5 @@
 #if DEBUG
+import MobileData
 import SwiftUI
 
 struct QAVisualReviewCatalog: View {
@@ -85,6 +86,11 @@ private enum QAFoundationCatalogSection: String, CaseIterable, Hashable {
     case forms
     case feedback
     case composites
+    case history
+    case chat
+    case voice
+    case notifications
+    case calendar
 
     var title: String {
         switch self {
@@ -93,6 +99,11 @@ private enum QAFoundationCatalogSection: String, CaseIterable, Hashable {
         case .forms: "Forms"
         case .feedback: "Feedback"
         case .composites: "Composites"
+        case .history: "History"
+        case .chat: "Chat"
+        case .voice: "Voice + Rive"
+        case .notifications: "Notifications"
+        case .calendar: "Calendar"
         }
     }
 
@@ -103,6 +114,11 @@ private enum QAFoundationCatalogSection: String, CaseIterable, Hashable {
         case .forms: "Native inputs with shared focus and error surfaces"
         case .feedback: "Loading, empty, error, success, and progress states"
         case .composites: "Reusable cards, identity, PIN, and page chrome"
+        case .history: "Repeated real session rows and history feedback"
+        case .chat: "Variable-height bubbles, composer, and task shelf"
+        case .voice: "Voice pod states, waveform, and authored Rive identity"
+        case .notifications: "Card face, tray, swipe, badge, and bulk clear"
+        case .calendar: "Native viewport plus week and floating controls"
         }
     }
 }
@@ -138,15 +154,45 @@ private struct QACatalogSpecimen<Content: View>: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("qa-specimen-\(stableID)")
+    }
+
+    private var stableID: String {
+        title.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.reduce(into: "") {
+            if $1 != "-" || !$0.hasSuffix("-") { $0.append($1) }
+        }
     }
 }
 
-/// Debug-only catalog for reviewing the actual iOS foundation and common
-/// composites without entering an authenticated product flow. Production
-/// specimens use the app's public SwiftUI views; explicitly labeled renderer
-/// comparisons are isolated experiments and never replace those specimens.
+/// Debug-only catalog for reviewing shipped iOS hybrid components without
+/// entering an authenticated product flow. Fixtures pass synthetic values and
+/// inert closures directly to production SwiftUI views.
 struct QAFoundationCatalog: View {
-    @State private var selectedSection: QAFoundationCatalogSection = .foundation
+    @State private var selectedSection: QAFoundationCatalogSection
+    private let historyState: String
+
+    init() {
+        let arguments = ProcessInfo.processInfo.arguments
+        let requested = arguments.firstIndex(of: "--qa-foundation-family").flatMap { index in
+            arguments.indices.contains(index + 1) ? QAFoundationCatalogSection(rawValue: arguments[index + 1]) : nil
+        }
+        let requestedCalendarView = arguments.firstIndex(of: "--qa-calendar-view").flatMap { index -> CalendarView? in
+            guard arguments.indices.contains(index + 1) else { return nil }
+            switch arguments[index + 1] {
+            case "month": return .month
+            case "week": return .week
+            case "day": return .day
+            default: return nil
+            }
+        }
+        historyState = arguments.firstIndex(of: "--qa-history-state").flatMap { index in
+            arguments.indices.contains(index + 1) ? arguments[index + 1] : nil
+        } ?? "loaded"
+        _selectedSection = State(initialValue: requested ?? .foundation)
+        _historySearch = State(initialValue: historyState == "no-match" ? "missing fixture" : "")
+        _calendarView = State(initialValue: requestedCalendarView ?? .day)
+    }
     @State private var fieldText = "Ada Lovelace"
     @State private var secureText = "secret"
     @State private var maskedText = "1234"
@@ -156,34 +202,37 @@ struct QAFoundationCatalog: View {
     @State private var segment = "one"
     @State private var selection = "one"
     @State private var slider = 0.64
-    @State private var date = Date()
+    @State private var date = Date(timeIntervalSince1970: 1_834_272_000)
     @State private var stepper = 2
     @State private var search = "voice"
+    @State private var historySearch: String
     @State private var chipSelected = true
     @State private var selectableCardSelected = true
     @State private var disclosureExpanded = true
     @State private var pinCount = 2
+    @State private var calendarView: CalendarView
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: Space.xl) {
-                    header
-                    sectionJumpBar(proxy: proxy)
-                    foundationSection
-                    controlsSection
-                    formsSection
-                    feedbackSection
-                    compositesSection
+        Group {
+            if selectedSection == .history || selectedSection == .chat || selectedSection == .calendar {
+                VStack(spacing: 0) {
+                    sectionJumpBar
+                        .padding(.horizontal, Space.lg)
+                        .padding(.vertical, Space.sm)
+                    selectedSectionBody
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(.horizontal, Space.lg)
-                .padding(.top, Space.md)
-                .padding(.bottom, Space.xxxl)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .onChange(of: selectedSection) { _, value in
-                withAnimation(.easeInOut(duration: DesignV2.Motion.feedback)) {
-                    proxy.scrollTo(value, anchor: .top)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: Space.xl) {
+                        header
+                        sectionJumpBar
+                        selectedSectionBody
+                    }
+                    .padding(.horizontal, Space.lg)
+                    .padding(.top, Space.md)
+                    .padding(.bottom, Space.xxxl)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
         }
@@ -196,7 +245,7 @@ struct QAFoundationCatalog: View {
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
                 VStack(alignment: .leading, spacing: Space.xs) {
-                    Text("Foundation + composites")
+                    Text("iOS hybrid component catalog")
                         .font(Typo.display(TypeScale.lg, .medium))
                         .foregroundStyle(DuskColors.ink)
                     Text("One specimen at a time")
@@ -208,7 +257,7 @@ struct QAFoundationCatalog: View {
                     .font(Typo.mono(TypeScale.xs))
                     .foregroundStyle(DuskColors.accent)
             }
-            Text("Real iOS primitives and shared composites. No prototype code, no product-page wrappers.")
+            Text("Real shipped primitives, wrappers, and product leaves. No prototype or live application state.")
                 .font(Typo.ui(TypeScale.sm))
                 .foregroundStyle(DuskColors.ink3)
             HStack(spacing: Space.sm) {
@@ -225,7 +274,7 @@ struct QAFoundationCatalog: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func sectionJumpBar(proxy: ScrollViewProxy) -> some View {
+    private var sectionJumpBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Space.sm) {
                 ForEach(QAFoundationCatalogSection.allCases, id: \.self) { section in
@@ -233,17 +282,30 @@ struct QAFoundationCatalog: View {
                         title: section.title,
                         selected: selectedSection == section,
                         accessibilityId: "qa-jump-\(section.rawValue)",
-                        action: {
-                            selectedSection = section
-                            withAnimation(.easeInOut(duration: DesignV2.Motion.feedback)) {
-                                proxy.scrollTo(section, anchor: .top)
-                            }
-                        }
+                        action: { selectedSection = section }
                     )
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
         .accessibilityIdentifier("qa-foundation-section-jump")
+    }
+
+    @ViewBuilder
+    private var selectedSectionBody: some View {
+        switch selectedSection {
+        case .foundation: foundationSection
+        case .controls: controlsSection
+        case .forms: formsSection
+        case .feedback: feedbackSection
+        case .composites: compositesSection
+        case .history: historySection
+        case .chat: chatSection
+        case .voice: voiceSection
+        case .notifications: notificationsSection
+        case .calendar: calendarSection
+        }
     }
 
     @ViewBuilder
@@ -400,6 +462,17 @@ struct QAFoundationCatalog: View {
                 }
             }
 
+            QACatalogSpecimen("Selectable and menu trigger", contract: "DesignSelectableButton · DesignMenuTriggerLabel") {
+                HStack(spacing: Space.md) {
+                    DesignSelectableButton(
+                        accessibilityLabel: "Voice choice", state: .selected,
+                        accessibilityId: "qa-selectable-button", action: {}
+                    ) { Text("Selected voice").padding(.horizontal, Space.md) }
+                    DesignMenuTriggerLabel(currentLabel: "Current option", isEnabled: true, width: .intrinsic)
+                        .accessibilityIdentifier("qa-menu-trigger-label")
+                }
+            }
+
             QACatalogSpecimen("Supporting controls", contract: "toggle · select · slider") {
                 VStack(alignment: .leading, spacing: Space.md) {
                     DesignToggleRow(title: "Enabled", detail: "Native toggle track and knob", isOn: $toggle, accessibilityId: "qa-toggle-row")
@@ -419,8 +492,13 @@ struct QAFoundationCatalog: View {
 
     private var formsSection: some View {
         catalogSection(.forms) {
-            QACatalogSpecimen("Text input", contract: "DesignField") {
-                DesignField(title: "Display name", prompt: "Name", text: $fieldText, accessibilityId: "qa-field")
+            QACatalogSpecimen("Text input states", contract: "DesignField") {
+                VStack(spacing: Space.md) {
+                    DesignField(title: "Filled", prompt: "Name", text: $fieldText, accessibilityId: "qa-field")
+                    DesignField(title: "Empty", prompt: "Name", text: .constant(""), accessibilityId: "qa-field-empty")
+                    DesignField(title: "Error", text: $fieldText, error: "Use a synthetic display name", accessibilityId: "qa-field-error")
+                    DesignField(title: "Disabled", text: $fieldText, accessibilityId: "qa-field-disabled", isEnabled: false)
+                }
             }
 
             QACatalogSpecimen("Secure and masked input", contract: "native reveal + write-only") {
@@ -449,6 +527,21 @@ struct QAFoundationCatalog: View {
                 }
             }
 
+            QACatalogSpecimen("Settings field wrappers", contract: "DesignSettingsSelectRow · DesignSettingsSliderRow") {
+                DesignCard(bodyStyle: .settingsGroup) {
+                    DesignSettingsSelectRow(
+                        title: "Voice", detail: "Current synthetic choice",
+                        options: [(value: "one", label: "One"), (value: "two", label: "Two")],
+                        selection: $selection, accessibilityId: "qa-settings-select-row"
+                    )
+                    DesignSettingsSliderRow(
+                        title: "Temperature", detail: "Synthetic model range", value: $slider,
+                        range: 0...1, step: 0.01, format: { "\(Int(($0 * 100).rounded()))%" },
+                        accessibilityId: "qa-settings-slider-row"
+                    )
+                }
+            }
+
             QACatalogSpecimen("Compatibility form composites", contract: "validated · identity · secret") {
                 VStack(spacing: Space.md) {
                     ValidatedField(title: "Validated", text: $fieldText, validate: { $0.isEmpty ? "Required" : nil })
@@ -463,6 +556,7 @@ struct QAFoundationCatalog: View {
         catalogSection(.feedback) {
             QACatalogSpecimen("Notice states", contract: "AsyncNotice") {
                 VStack(spacing: Space.sm) {
+                    AsyncNotice(kind: .info, title: "Information", detail: "Synthetic informational state")
                     AsyncNotice(kind: .loading, title: "Loading", detail: "Fetching the latest state")
                     AsyncNotice(kind: .empty, title: "Nothing here", detail: "No matching records")
                     AsyncNotice(kind: .error, title: "Could not load", detail: "The local service is unavailable", retry: {})
@@ -484,9 +578,25 @@ struct QAFoundationCatalog: View {
                 }
             }
 
-            QACatalogSpecimen("Apply feedback", contract: "shared save lifecycle") {
+            QACatalogSpecimen("Settings loading and inline error", contract: "SoulLoadingRow · SoulInlineError") {
+                VStack(spacing: Space.md) {
+                    SoulLoadingRow()
+                    SoulInlineError(message: "Synthetic settings failure")
+                }
+            }
+
+            QACatalogSpecimen("Apply feedback and bars", contract: "DesignApplyFeedback · DesignApplyBar") {
                 VStack(spacing: Space.sm) {
-                    DesignApplyFeedback(state: .saving)
+                    DesignApplyBar(
+                        isDirty: true, state: .idle,
+                        discardAccessibilityId: "qa-apply-discard", applyAccessibilityId: "qa-apply-dirty",
+                        onDiscard: {}, onApply: {}
+                    )
+                    DesignApplyBar(
+                        isDirty: true, state: .saving,
+                        discardAccessibilityId: "qa-applying-discard", applyAccessibilityId: "qa-apply-applying",
+                        onDiscard: {}, onApply: {}
+                    )
                     DesignApplyFeedback(state: .restarting)
                     DesignApplyFeedback(state: .alreadyApplying)
                     DesignApplyFeedback(state: .applied, successMessage: "Changes applied")
@@ -499,6 +609,35 @@ struct QAFoundationCatalog: View {
 
     private var compositesSection: some View {
         catalogSection(.composites) {
+            QACatalogSpecimen("Page header and chrome", contract: "DesignPageHeader · DesignPageChrome") {
+                VStack(spacing: Space.md) {
+                    DesignPageHeader(title: "Synthetic settings", subtitle: "Real shipped header", showsBack: false)
+                    DesignPageChrome(title: "Synthetic detail", accessibilityId: "qa-page-chrome", showsBack: false) {
+                        Text("Page chrome content").designText(.body)
+                    }
+                    .frame(height: 180)
+                }
+            }
+
+            QACatalogSpecimen("Settings editor", contract: "DesignSettingsEditor") {
+                DesignSettingsEditor(
+                    title: "System prompt", detail: "Synthetic local draft", state: .unsaved,
+                    content: { DesignMultilineEditor(title: "Prompt", text: $editorText, accessibilityId: "qa-settings-editor-field") },
+                    actions: {
+                        DesignActionButton(title: "Reset", role: .secondary, fillsWidth: false, action: {})
+                        DesignActionButton(title: "Save", fillsWidth: false, action: {})
+                    }
+                )
+            }
+
+            QACatalogSpecimen("Update footer", contract: "UpdateFooter") {
+                UpdateFooter(
+                    status: UpdateStatusCheckFailed(reason: "synthetic"),
+                    versionText: "1.5.0 (12)", accessibilityId: "qa-update-footer",
+                    onCheck: { UpdateStatusUpToDate.shared }, onInstall: {}
+                )
+            }
+
             QACatalogSpecimen("Cards and rows", contract: "plate-owned layout") {
                 VStack(spacing: Space.md) {
                     DesignCard(title: "Elevated card", detail: "Header and rows") {
@@ -576,15 +715,23 @@ struct QAFoundationCatalog: View {
                 }
             }
 
-            QACatalogSpecimen("Identity card", contract: "dominant visual composite") {
-                DesignDominantVisualCard(
-                    title: "Ada Lovelace",
-                    detail: "Terra identity",
-                    accessibilityLabel: "Ada Lovelace",
-                    accessibilityId: "qa-dominant-card",
-                    action: {}
-                ) {
-                    ElevatedUserAvatar(name: "Ada Lovelace", size: DesignMetrics.dominantAvatarSize, tint: .terra)
+            QACatalogSpecimen("Identity card", contract: "dominant visual composite · avatar states") {
+                VStack(spacing: Space.md) {
+                    DesignDominantVisualCard(
+                        title: "Ada Lovelace",
+                        detail: "Terra identity",
+                        accessibilityLabel: "Ada Lovelace",
+                        accessibilityId: "qa-dominant-card",
+                        action: {}
+                    ) {
+                        ElevatedUserAvatar(name: "Ada Lovelace", size: DesignMetrics.dominantAvatarSize, tint: .terra)
+                    }
+                    HStack(spacing: Space.xl) {
+                        ElevatedUserAvatar(name: "Ada Lovelace", tint: .terra)
+                        ElevatedUserAvatar(name: "Grace Hopper", tint: .sage, selected: true)
+                        ElevatedUserAvatar(name: "Unknown", tint: .fallback, disabled: true, fallback: true)
+                    }
+                    .accessibilityIdentifier("qa-avatar-states")
                 }
             }
 
@@ -622,6 +769,411 @@ struct QAFoundationCatalog: View {
             }
         }
     }
+
+    private var historySection: some View {
+        HistorySidePanelContent(
+            rows: ["empty", "error", "loading", "no-match"].contains(historyState)
+                ? [] : qaMakeHistoryRows(count: qaFixtureCount(default: 50)),
+            query: $historySearch,
+            loading: historyState == "loading" || historyState == "stale-checking",
+            hasLoaded: historyState != "loading",
+            hasError: historyState == "error" || historyState == "stale",
+            isSearching: historyState == "no-match" || !historySearch.isEmpty,
+            nowMs: 1_800_000_000_000,
+            userName: "Ada Lovelace",
+            household: "Analytical Engine Household",
+            activeSessionId: "qa-history-1",
+            onSelect: { _ in }, onNewChat: {}, onSettings: {}, onRetry: {},
+            onAskRename: { _ in }, onAskDelete: { _ in }
+        )
+        .accessibilityIdentifier("qa-foundation-section-history")
+    }
+
+    private var chatSection: some View {
+        VStack(spacing: 0) {
+            MessageList(
+                messages: qaMakeChatMessages(count: qaFixtureCount(default: 150)),
+                userName: "Ada"
+            )
+            qaComposer(draft: "", tasks: qaTaskItems)
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.sm)
+                .accessibilityIdentifier("qa-composer-tasks")
+        }
+        .accessibilityIdentifier("qa-foundation-section-chat")
+    }
+
+    private var voiceSection: some View {
+        catalogSection(.voice) {
+            QACatalogSpecimen("Voice pod states", contract: "VoiceCaptureSurface") {
+                VStack(alignment: .trailing, spacing: Space.xl) {
+                    qaVoiceSurface(.idle, target: .send)
+                    qaVoiceSurface(.hold, target: .send)
+                    qaVoiceSurface(.auto, target: .auto)
+                    qaVoiceSurface(.denied, target: .cancel)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            QACatalogSpecimen("Voice waveform", contract: "PttBigWave") {
+                PttBigWave(levels: qaMicLevels, isActive: false)
+                    .accessibilityIdentifier("qa-voice-waveform")
+            }
+            QACatalogSpecimen("Sentient identity states", contract: "RiveSentientIdentity") {
+                HStack(spacing: Space.xl) {
+                    ForEach(SentientIdentityState.allCases, id: \.self) { state in
+                        VStack(spacing: Space.xs) {
+                            RiveSentientIdentity(state: state, size: 72)
+                            Text(state.statusLabel).font(Typo.ui(TypeScale.sm))
+                        }
+                        .accessibilityIdentifier("qa-rive-\(state.triggerName)")
+                    }
+                }
+            }
+        }
+    }
+
+    private var notificationsSection: some View {
+        catalogSection(.notifications) {
+            QACatalogSpecimen("Notification badge counts", contract: "DesignBadgedIconButton") {
+                HStack(spacing: Space.xl) {
+                    ForEach([0, 3, 100], id: \.self) { count in
+                        DesignBadgedIconButton(
+                            systemName: "bell",
+                            label: "Messages",
+                            count: count,
+                            accessibilityId: "qa-notification-badge-\(count)",
+                            action: {}
+                        )
+                    }
+                }
+            }
+            QACatalogSpecimen("Notification card faces", contract: "DesignNotificationCardButton") {
+                VStack(spacing: Space.md) {
+                    qaNotificationFace(id: "normal", state: .normal, lines: 2)
+                    qaNotificationFace(id: "disabled", state: .disabled, lines: 4)
+                }
+            }
+            QACatalogSpecimen("Notification action trays", contract: "DesignNotificationActionTray") {
+                VStack(spacing: Space.sm) {
+                    DesignNotificationActionTray(
+                        title: "Clear", showsIcon: true, isVisible: true, isEnabled: true,
+                        accessibilityLabel: "Clear notification", accessibilityId: "qa-notification-tray", action: {}
+                    )
+                    .frame(height: 86)
+                    DesignNotificationActionTray(
+                        title: "Release to clear", showsIcon: false, isVisible: true, isEnabled: false,
+                        accessibilityLabel: "Clear notification", accessibilityId: "qa-notification-tray-armed", action: {}
+                    )
+                    .frame(height: 110)
+                }
+            }
+            QACatalogSpecimen("Notification swipe rows · repeated heights", contract: "ScheduledInboxSwipeRow") {
+                LazyVStack(spacing: Space.md) {
+                    ForEach(Array(qaMakeNotificationCards(count: qaFixtureCount(default: 24)).enumerated()), id: \.element.occurrenceId) { index, card in
+                        QANotificationSwipeFixture(card: card, index: index)
+                    }
+                }
+            }
+            QACatalogSpecimen("Notification bulk clear", contract: "ScheduledInboxHeader") {
+                VStack(spacing: Space.sm) {
+                    ScheduledInboxHeader(canClearAll: true, onBack: {}, onClearAll: {})
+                    ScheduledInboxHeader(canClearAll: false, onBack: {}, onClearAll: {})
+                }
+            }
+        }
+    }
+
+    private var calendarSection: some View {
+        VStack(spacing: 0) {
+            FloatingViewBar(
+                selected: calendarView,
+                onSelect: { calendarView = $0 },
+                onFilters: {},
+                activeFilterCount: 3
+            )
+            .padding(.horizontal, Space.lg)
+            .padding(.bottom, Space.sm)
+            if calendarView == .month || calendarView == .year {
+                CalendarMorphStage(
+                    state: qaCalendarState(view: calendarView),
+                    onSelectDate: { _ in },
+                    onSelectMonth: { _, _ in }
+                )
+                .background(DuskColors.bgSunk)
+                .accessibilityIdentifier("qa-calendar-native-month")
+            } else {
+                QACalendarAdjacentFixture(view: calendarView)
+                    .id(calendarView)
+            }
+        }
+        .accessibilityIdentifier("qa-foundation-section-calendar")
+    }
+
+    private func qaComposer(draft: String, tasks: [TaskListItem]) -> some View {
+        Composer(
+            tasks: tasks,
+            ttsEnabled: true,
+            talkMode: .idle,
+            micLevels: qaMicLevels,
+            voiceDisabled: false,
+            canInterrupt: false,
+            initialDraft: draft,
+            initiallyExpandedTaskId: tasks.first?.id,
+            onSend: { _ in }, onVoiceIntent: { _ in }, onTtsToggle: {},
+            onInterrupt: {}, onFocusGained: {}
+        )
+    }
+
+    private func qaVoiceSurface(_ state: VoiceCaptureState, target: VoiceCaptureTarget) -> some View {
+        VoiceCaptureSurface(
+            state: state,
+            target: target,
+            levels: qaMicLevels,
+            disabled: false,
+            physicallyPressed: false,
+            announcement: state.rawValue,
+            captureGesture: VoiceCaptureGesture(onBegin: { _ in }, onChange: { _ in }, onTerminate: { _, _ in }),
+            onActivate: {}, onStartAccessibleHold: {}, onTarget: { _ in }
+        )
+    }
+
+    private func qaNotificationFace(id: String, state: DesignControlState, lines: Int) -> some View {
+        DesignNotificationCardButton(
+            accessibilityLabel: "Synthetic scheduled result",
+            accessibilityHint: "Opens chat",
+            accessibilityId: "qa-notification-face-\(id)",
+            state: state,
+            action: {}
+        ) {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Text("Sep 15, 2026 at 9:41 AM").designText(.caption).foregroundStyle(DuskColors.ink2)
+                Text(Array(repeating: "Synthetic scheduled message completed.", count: lines).joined(separator: " "))
+                    .designText(.body).foregroundStyle(DuskColors.ink)
+            }
+            .padding(Space.lg)
+        }
+    }
+}
+
+private struct QANotificationSwipeFixture: View {
+    let card: ScheduledSessionCard
+    let index: Int
+    @State private var isRevealed: Bool
+
+    init(card: ScheduledSessionCard, index: Int) {
+        self.card = card
+        self.index = index
+        _isRevealed = State(initialValue: index == 1)
+    }
+
+    var body: some View {
+        ScheduledInboxSwipeRow(
+            card: card,
+            isRevealed: isRevealed,
+            disabled: index == 2,
+            onBeginSwipe: {},
+            onSetRevealed: { isRevealed = $0 },
+            onClear: { isRevealed = false },
+            onOpen: { isRevealed.toggle() }
+        )
+        .accessibilityIdentifier("qa-notification-swipe-\(index)")
+    }
+}
+
+private struct QACalendarAdjacentFixture: View {
+    let view: CalendarView
+    @AccessibilityFocusState private var openerFocus: CalendarOverlayOrigin?
+    @State private var current: CalendarAdjacentPageID
+    @State private var periods: [CalendarAdjacentPageID]
+    @State private var revision = 1
+
+    init(view: CalendarView) {
+        let anchor = CalendarViewportDate(date: "2028-02-16")!
+        let current = CalendarAdjacentPageID(view: view, anchor: anchor)
+        self.view = view
+        _current = State(initialValue: current)
+        _periods = State(initialValue: CalendarAdjacentPeriodWindow.starting(at: current))
+    }
+
+    var body: some View {
+        CalendarAdjacentViewport(
+            current: current,
+            data: CalendarAdjacentViewportData(
+                isActive: true,
+                generation: "qa-adjacent-\(view)",
+                revision: revision,
+                pages: Dictionary(uniqueKeysWithValues: periods.map { ($0, qaCalendarPage($0)) }),
+                semanticAnchor: current.anchor,
+                selectedDate: current.anchor.date,
+                todayDate: "2028-02-14"
+            ),
+            locale: qaCalendarLocale,
+            openerFocus: $openerFocus,
+            onRequest: { request in
+                periods = request.periods
+                    .prefix(CalendarAdjacentPeriodWindow.maximumPeriods + 1)
+                    .map { CalendarAdjacentPageID(view: request.view, anchor: $0) }
+                revision &+= 1
+            },
+            onBrowse: { current = CalendarAdjacentPageID(view: view, anchor: $0) },
+            onEvent: { openerFocus = .event($0.actionIdentity.stableKey) },
+            onSelectDate: { _, date in
+                if let anchor = CalendarViewportDate(date: date) {
+                    current = CalendarAdjacentPageID(view: view, anchor: anchor)
+                }
+            },
+            onRetry: { revision &+= 1 }
+        )
+        .accessibilityIdentifier("qa-calendar-adjacent-\(view)")
+    }
+}
+
+private let qaMicLevels: [Float] = [0.16, 0.38, 0.72, 0.46, 0.88, 0.30, 0.62, 0.94, 0.48, 0.74, 0.28]
+
+private let qaTaskItems = [
+    TaskListItem(id: "travel", toolName: "Check travel", kind: "background", status: "running", argsPreview: "Friday evening · four people", startedAtMs: 1_000, endedAtMs: nil),
+    TaskListItem(id: "draft", toolName: "Prepare draft", kind: "foreground", status: "done", argsPreview: "Cozy seasonal menu", startedAtMs: 1_100, endedAtMs: 1_500),
+    TaskListItem(id: "calendar", toolName: "Update calendar", kind: "foreground", status: "error", argsPreview: "Shared family calendar", startedAtMs: 1_200, endedAtMs: 1_600),
+]
+
+private func qaFixtureCount(default defaultCount: Int) -> Int {
+    let arguments = ProcessInfo.processInfo.arguments
+    guard let index = arguments.firstIndex(of: "--qa-fixture-count"),
+          arguments.indices.contains(index + 1),
+          let requested = Int(arguments[index + 1]) else { return defaultCount }
+    return min(max(requested, 1), 1_000)
+}
+
+private func qaMakeChatMessages(count: Int) -> [ChatMessage] {
+    (0..<count).map { index in
+        let isUser = index.isMultiple(of: 4)
+        let isStreaming = index % 37 == 9
+        let cutoff = index % 41 == 13 ? "interrupt" : nil
+        let content: String
+        if isStreaming {
+            content = index.isMultiple(of: 2) ? "" : "Streaming synthetic response is still arriving…"
+        } else if index % 7 == 1 {
+            content = """
+            ## Household plan \(index)
+
+            - [x] Confirm pickup
+            - [ ] Pack **weather layers**
+            - Keep [school calendar](https://example.invalid/calendar) unchanged
+
+            | Time | Owner | Status |
+            | --- | --- | --- |
+            | 08:30 | Ada | Ready |
+            | 15:10 | Grace | Pending |
+
+            ```swift
+            let fixture = "committed GFM"
+            ```
+            """
+        } else {
+            content = String(
+                repeating: isUser ? "Please preserve this synthetic constraint. " : "Synthetic committed Markdown paragraph with **emphasis** and `inline code`. ",
+                count: index % 9 + 1
+            )
+        }
+        return ChatMessage(
+            ts: 1_800_000_000_000 + Int64(index) * 3_600_000,
+            role: isUser ? "user" : "assistant",
+            content: content,
+            streaming: isStreaming,
+            cutoffKind: cutoff,
+            turnId: "qa-turn-\(index / 4)",
+            replyId: isUser ? nil : "qa-reply-\(index)",
+            pendingId: nil,
+            entryId: "qa-message-\(index)"
+        )
+    }
+}
+
+private func qaMakeHistoryRows(count: Int) -> [SessionRow] {
+    (0..<count).map { index in
+        let title = index.isMultiple(of: 3)
+            ? "Long synthetic conversation title for truncation \(index)"
+            : "Synthetic chat \(index)"
+        return SessionRow(
+            sessionId: "qa-history-\(index)", rootId: nil, title: title,
+            startedAt: 1_799_900_000_000 - Int64(index) * 60_000,
+            lastActiveAt: 1_799_900_000_000 - Int64(index) * 3_600_000,
+            messageCount: Int32(index), isActive: index == 0
+        )
+    }
+}
+
+private func qaMakeNotificationCards(count: Int) -> [ScheduledSessionCard] {
+    (0..<count).map { index in
+        ScheduledSessionCard(
+            sessionId: "qa-session-\(index)", scheduleId: "qa-schedule",
+            occurrenceId: "qa-occurrence-\(index)", intendedAt: "2026-09-15T16:40:00Z",
+            completedAt: "2026-09-15T16:41:00Z", status: .completed,
+            preview: String(repeating: "Synthetic scheduled result \(index). ", count: index % 6 + 1)
+        )
+    }
+}
+
+private let qaCalendarDays = [
+    CalendarCivilDay(date: "2028-02-13", number: 13, weekday: "Sun", label: "Sunday, February 13"),
+    CalendarCivilDay(date: "2028-02-14", number: 14, weekday: "Mon", label: "Monday, February 14"),
+    CalendarCivilDay(date: "2028-02-15", number: 15, weekday: "Tue", label: "Tuesday, February 15"),
+    CalendarCivilDay(date: "2028-02-16", number: 16, weekday: "Wed", label: "Wednesday, February 16"),
+    CalendarCivilDay(date: "2028-02-17", number: 17, weekday: "Thu", label: "Thursday, February 17"),
+    CalendarCivilDay(date: "2028-02-18", number: 18, weekday: "Fri", label: "Friday, February 18"),
+    CalendarCivilDay(date: "2028-02-19", number: 19, weekday: "Sat", label: "Saturday, February 19"),
+]
+
+private let qaCalendarLocale = CalendarLocale(
+    languageTag: "en-US", timeZoneId: "UTC", weekStart: .sunday, hourCycle: .hour12
+)
+
+private func qaCalendarPage(_ period: CalendarAdjacentPageID) -> CalendarAdjacentPageData {
+    let anchor = period.anchor.date
+    let occurrence = CalendarProjectionOccurrence(
+        eventId: "qa-event-\(anchor)", occurrenceId: "qa-occurrence-\(anchor)",
+        originalStart: "\(anchor)T09:00:00Z", recurring: false, recurrence: nil, revision: 1,
+        scope: .household,
+        title: "Calendar planning with a variable-height synthetic title for \(anchor)",
+        description: "Committed local fixture details.",
+        start: "\(anchor)T09:00:00Z", end: "\(anchor)T10:30:00Z",
+        visibility: .everyone, importance: .important,
+        group: "Family", tags: ["Planning", "Synthetic"], persistedTimeZoneId: "UTC"
+    )
+    let projection = CalendarProjection().project(request: CalendarProjectionRequest(
+        occurrences: [occurrence], anchorDate: anchor, view: period.view,
+        selectedDate: "2028-02-16", todayDate: "2028-02-14", locale: qaCalendarLocale,
+        filters: CalendarFilters(scope: .all, groups: [], tags: [], importance: nil, text: "")
+    ))
+    return CalendarAdjacentPageData(
+        projection: projection,
+        loading: CalendarLoadingState(phase: .idle),
+        freshness: .fresh,
+        offline: .online,
+        error: nil
+    )
+}
+
+private func qaCalendarState(view: CalendarView) -> CalendarUiState {
+    let anchor = "2028-02-16"
+    let projection = CalendarProjection().project(request: CalendarProjectionRequest(
+        occurrences: [], anchorDate: anchor, view: view, selectedDate: anchor, todayDate: "2028-02-14",
+        locale: qaCalendarLocale, filters: CalendarFilters(scope: .all, groups: [], tags: [], importance: nil, text: "")
+    ))
+    return CalendarUiState(CalendarExperienceState(
+        anchorDate: anchor, view: view, selectedDate: anchor, filters: projection.filters,
+        locale: qaCalendarLocale, todayDate: "2028-02-14", visibleInterval: projection.interval, selectedInterval: nil,
+        authorizedOccurrences: [], projection: projection, facets: projection.facets,
+        freshness: .fresh, loading: CalendarLoadingState(phase: .idle), offline: .online,
+        error: nil, hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
+        presentationReady: true,
+        recovery: CalendarRecoveryState(phase: .idle, generation: 0, failureKind: nil),
+        mutationAvailability: CalendarMutationAvailability(canCreate: true, canEdit: true, canDelete: true, reason: nil),
+        mutation: CalendarMutationState(
+            phase: .idle, preview: nil, editor: nil, deleteConfirmation: nil, pendingRequest: nil,
+            error: nil, conflict: nil, outcome: nil, successorEventId: nil, affectedWindows: []
+        )
+    ))
 }
 
 #endif

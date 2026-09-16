@@ -12,7 +12,7 @@ struct PttBigWave: View {
 
     var body: some View {
         Group {
-            if reduceMotion {
+            if reduceMotion || !isActive {
                 staticBars
             } else {
                 animatedBars
@@ -30,7 +30,7 @@ struct PttBigWave: View {
     }
 
     private var animatedBars: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !isActive)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             bars { index in
                 PttWaveMetrics.sampledAnimatedScale(levels, bar: index, time: time)

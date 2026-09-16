@@ -105,6 +105,7 @@ class SdkConnectors(
     private val scope: CoroutineScope? = null,
     private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
     private val onCognitionChanged: (CognitionState) -> Unit = { state -> deriver.cognition = state; emit() },
+    private val onCognitionActivityChanged: (CognitionState, String?) -> Unit = { _, _ -> },
     private val onPermissionsChanged: (List<PermissionPrompt>) -> Unit = {},
     private val onDelegationsChanged: (List<DelegationSnapshotItem>) -> Unit = {},
     private val onTasksChanged: (List<TaskListItem>) -> Unit = {},
@@ -126,13 +127,14 @@ class SdkConnectors(
     )
 
     val inflight = InFlightMessageConnector(
-        onUpdate = { msg -> deriver.inflight = msg; emit() },
+        onUpdate = { msg -> deriver.applyInflight(msg); emit() },
         onEvent = emitEvent,
     )
 
     val cognition = CognitionStatusConnector(
         onStateChange = { state -> onCognitionChanged(state) },
         onEvent = emitEvent,
+        onActivityChange = onCognitionActivityChanged,
     )
 
     val turnError = TurnErrorConnector(

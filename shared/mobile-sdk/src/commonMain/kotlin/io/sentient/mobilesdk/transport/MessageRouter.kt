@@ -37,6 +37,8 @@ import io.sentient.mobilesdk.protocol.ServerMessage
 class MessageRouter(
     private val connectors: List<Connector>,
     private val audioConnector: Connector? = null,
+    private val onRouteStart: () -> Unit = {},
+    private val onRouteComplete: (success: Boolean) -> Unit = {},
 ) {
     private val log = createLogger("transport", "router")
 
@@ -52,7 +54,14 @@ class MessageRouter(
         } else {
             log.debug("dispatch", mapOf("type" to type, "connectors" to connectors.size))
         }
-        for (connector in connectors) connector.handle(msg)
+        onRouteStart()
+        var success = false
+        try {
+            for (connector in connectors) connector.handle(msg)
+            success = true
+        } finally {
+            onRouteComplete(success)
+        }
     }
 
     /**

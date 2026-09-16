@@ -1,6 +1,7 @@
 import Foundation
 import MobileData
 import SwiftUI
+import UIKit
 
 /// Geometry only: strict Gregorian civil dates, never event instants or cache keys.
 struct CalendarViewportDate: Hashable, Comparable {
@@ -36,6 +37,18 @@ struct CalendarViewportDate: Hashable, Comparable {
         )
         guard (1...9999).contains(next.year) else { return nil }
         return Self(date: next.string)
+    }
+
+    var ordinal: Int {
+        let parts = date.split(separator: "-").compactMap { Int($0) }
+        let month = CalendarViewportMonth(year: Int32(parts[0]), month: Int32(parts[1]))
+        return CalendarNativeMonthGeometry.daysBeforeMonth(index: month.index) + parts[2] - 1
+    }
+
+    init?(ordinal: Int) {
+        guard ordinal >= 0 else { return nil }
+        let value = CalendarNativeMonthGeometry.civilDate(year: 1, month: 1, day: 1, offset: ordinal)
+        self.init(date: value.string)
     }
 
     /// The shared lease accepts a complete 42-cell month grid around every
@@ -347,6 +360,37 @@ struct CalendarAdjacentPage: View {
             CalendarEmptyState(message: "No events match these filters.")
                 .padding(.horizontal, CalendarSurfaceLayout.contentInset)
         }
+    }
+}
+
+/// Native period cells host these rows separately. UIKit therefore owns each
+/// measured row boundary while stable civil periods remain collection slots.
+struct CalendarAdjacentPeriodRow: View {
+    let row: CalendarAdjacentRow
+    let animateArrival: Bool
+    let locale: CalendarLocale
+    let rightToLeft: Bool
+    let openerFocus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding
+    let onEvent: (CalendarProjectedEvent) -> Void
+    let onSelectDate: (String) -> Void
+    let onRetry: () -> Void
+    @State private var opacity: CGFloat = 1
+
+    var body: some View {
+        CalendarAdjacentPage(
+            row: row, locale: locale, rightToLeft: rightToLeft, openerFocus: openerFocus,
+            onEvent: onEvent, onSelectDate: onSelectDate, onRetry: onRetry
+        )
+        .opacity(opacity)
+        .onAppear {
+            guard Self.shouldAnimateArrival(animateArrival, reduceMotion: UIAccessibility.isReduceMotionEnabled) else { return }
+            opacity = 0
+            withAnimation(.easeOut(duration: Motion.normal)) { opacity = 1 }
+        }
+    }
+
+    static func shouldAnimateArrival(_ requested: Bool, reduceMotion: Bool) -> Bool {
+        requested && !reduceMotion
     }
 }
 

@@ -853,7 +853,7 @@ private struct VoicePodCanvas: View, Animatable {
                 layoutDirection: layoutDirection
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 let facePath = shape.path(in: faceRect)
                 let castOpacity = (isEnabled ? 0.78 : 0.42) * Double(1 - pressAmount)
                 VoiceCanvasDrawing.shadow(
@@ -975,7 +975,7 @@ private struct VoiceCrownSpineCanvas: View {
             )
             let spineShape = RoundedRectangle(cornerRadius: 8, style: .continuous)
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 let deckDropShadow = DesignDropShadowGeometry(radius: 10, y: 8, sourceInset: 0)
                 VoiceCanvasDrawing.shadow(
                     shape: deckShape,
@@ -1093,7 +1093,7 @@ private struct VoiceTargetFacetCanvas: View, Animatable {
                 layoutDirection: layoutDirection
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 let facePath = shape.path(in: faceRect)
                 let shadowAmount = selectionAmount * (1 - pressAmount)
                 let facetDropShadow = DesignDropShadowGeometry(radius: 9, y: 8, sourceInset: 0)
@@ -1180,7 +1180,7 @@ private struct VoiceCrownSelectionSeam: View {
             )
             let shape = Capsule(style: .continuous)
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 VoiceCanvasDrawing.shadow(
                     shape: shape,
                     color: color.opacity(0.55),
@@ -1206,21 +1206,27 @@ private struct VoiceAutoOrbit<S: InsettableShape>: View {
 
     @ComposerReduceMotion private var reduceMotion
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
-            let phase = reduceMotion
-                ? 0.0
-                : (sin(timeline.date.timeIntervalSinceReferenceDate * 4.05) + 1) / 2
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, size in
-                let rect = CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
-                context.stroke(
-                    shape.path(in: rect),
-                    with: .color(DuskColors.sage.opacity(0.48 + phase * 0.24)),
-                    lineWidth: 1
-                )
+        if reduceMotion {
+            orbit(phase: 0)
+        } else {
+            TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+                orbit(phase: (sin(timeline.date.timeIntervalSinceReferenceDate * 4.05) + 1) / 2)
             }
-            .scaleEffect(reduceMotion ? 1 : 1 + phase * 0.055)
         }
+    }
+
+    private func orbit(phase: Double) -> some View {
+        Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, size in
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
+            context.stroke(
+                shape.path(in: rect),
+                with: .color(DuskColors.sage.opacity(0.48 + phase * 0.24)),
+                lineWidth: 1
+            )
+        }
+        .scaleEffect(reduceMotion ? 1 : 1 + phase * 0.055)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

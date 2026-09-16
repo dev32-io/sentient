@@ -65,6 +65,7 @@ struct ChatView: View {
 
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
+    @State private var messageMeasurementLoading = false
 
     // ── Keep-screen-on (S8) ─────────────────────────────────────────────────────
 
@@ -119,15 +120,6 @@ struct ChatView: View {
         connection.cognition != .idle || connection.isSpeaking
     }
 
-    private var currentSentientIdentityState: SentientIdentityState {
-        identityState(
-            for: connection,
-            hasStreamingAssistantText: displayMessages.contains {
-                $0.role == "assistant" && $0.streaming && !$0.content.isEmpty
-            }
-        )
-    }
-
     private var voiceActive: Bool { connection.voiceMode == .active }
 
     private var chatLoadingState: LoadingAffordance {
@@ -158,14 +150,18 @@ struct ChatView: View {
     // ── Root body ─────────────────────────────────────────────────────────────────
 
     var body: some View {
-        SideDrawer(
+        let messages = displayMessages
+        let assistantActivity = vm.state.model.assistantActivity
+
+        return SideDrawer(
             isOpen: $drawerOpen,
             onOpen: {
                 panelNowMs = Int64(Date().timeIntervalSince1970 * 1000)
                 Task { await historyModel.refresh() }
             }
         ) {
-            mainColumn
+            mainColumn(messages: messages, assistantActivity: assistantActivity)
+                .environment(\.sentientIdentityPlaybackEnabled, !drawerOpen)
         } drawer: {
             historySidePanel
                 .background(DuskColors.bg.ignoresSafeArea())
@@ -256,16 +252,21 @@ struct ChatView: View {
 
     // ── Main content column ───────────────────────────────────────────────────────
 
-    private var mainColumn: some View {
+    private func mainColumn(
+        messages: [ChatMessage],
+        assistantActivity: AssistantActivityState
+    ) -> some View {
         VStack(spacing: 0) {
             titleBar
             MessageList(
-                messages: displayMessages,
-                activeMarkMode: currentSentientIdentityState,
+                messages: messages,
+                assistantActivity: assistantActivity,
                 userName: userName,
                 pending: pending,
                 onRetry: { vm.retry($0) },
-                historyLoading: historyLoading
+                historyLoading: historyLoading,
+                initialExistingHistory: activeSessionId != nil,
+                onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay {
@@ -273,9 +274,9 @@ struct ChatView: View {
                 // fetching its snapshot, so the list is cleared and a centered
                 // spinner stands in. A brand-new chat keeps historyLoading false →
                 // no spinner. The composer is NEVER gated on this (see below).
-                if historyLoading {
+                if historyLoading || messageMeasurementLoading {
                     HistoryLoadingOverlay()
-                } else if displayMessages.isEmpty && pending.isEmpty, chatLoadingState != .none {
+                } else if messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
                     ChatLoadingView(state: chatLoadingState)
                 }
             }
@@ -350,7 +351,6 @@ struct ChatView: View {
 
     private var titleBar: some View {
         ChatTitleBar(
-            markMode: currentSentientIdentityState,
             onOpenPanel: { drawerOpen = true },
             onOpenInbox: onOpenInbox,
             onNewChat: { onNewChat() }

@@ -142,6 +142,9 @@ class SentientSdk(
     private val _timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
     val timeline: StateFlow<List<ChatMessage>> = _timeline.asStateFlow()
 
+    private val _assistantActivity = MutableStateFlow(AssistantActivityState())
+    val assistantActivity: StateFlow<AssistantActivityState> = _assistantActivity.asStateFlow()
+
     // Open L3 confirm prompts (§7.1). A StateFlow is conflation-SAFE here only because
     // every emitted value carries EVERY still-open prompt — never model this as a single
     // nullable prompt, or two back-to-back requests would lose the first. The arrival
@@ -273,6 +276,7 @@ class SentientSdk(
         voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
+        onActiveTurnChanged = { turnId -> deriver.applyAudioTurn(turnId); emit() },
         // Lazy-arm the downlink engine on the first TTS turn (mirrors web-sdk's
         // arm-on-audio.start model). Deferred accessors — `voice` is constructed AFTER
         // `audio`, but these only fire at audio.start / drain, long after construction.
@@ -375,6 +379,7 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
+        onCognitionActivityChanged = ::onCognitionActivityChanged,
         onPermissionsChanged = { prompts -> _permissions.value = prompts },
         onDelegationsChanged = { list -> _delegations.value = list },
         onTasksChanged = { list -> _tasks.value = list },
@@ -384,7 +389,16 @@ class SentientSdk(
         // change still folds into the deriver (UI toggle state) inside PreferencesConnector.
     )
 
-    private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
+    private var routedFrameDepth = 0
+    private val router = MessageRouter(
+        connectors = connectors.all,
+        audioConnector = connectors.audioOutput,
+        onRouteStart = { routedFrameDepth++ },
+        onRouteComplete = { success ->
+            routedFrameDepth--
+            if (success && routedFrameDepth == 0) emit()
+        },
+    )
 
     private fun onAudioStateChanged(isSpeaking: Boolean, fsmState: AudioState) {
         deriver.isSpeaking = isSpeaking
@@ -396,6 +410,10 @@ class SentientSdk(
     private fun onCognitionChanged(state: CognitionState) {
         deriver.cognition = state
         refreshStuckWatch()
+    }
+
+    private fun onCognitionActivityChanged(state: CognitionState, turnId: String?) {
+        deriver.applyCognitionActivity(state, turnId)
         emit()
     }
 
@@ -405,7 +423,8 @@ class SentientSdk(
      * stays in the same conversation. Nothing conversation-scoped belongs here; that
      * is [clearConversationScopedState].
      */
-    private fun clearActiveToIdle() {
+    private fun clearActiveToIdle(preserveTurnFence: Boolean = false) {
+        if (preserveTurnFence) deriver.interruptAssistantActivity() else deriver.clearAssistantActivity()
         connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
         connectors.permission.reset() // fail-closed: drop open prompts, never auto-approve
         audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
@@ -445,7 +464,7 @@ class SentientSdk(
 
     private fun onStuckTimeout() {
         log.warn("stuck-state.reset", mapOf("status" to deriver.status, "cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
-        clearActiveToIdle()
+        clearActiveToIdle(preserveTurnFence = true)
     }
 
     private fun refreshStuckWatch() {
@@ -626,7 +645,7 @@ class SentientSdk(
         log.info("interrupt")
         markInteraction()
         connectors.turnError.noteInterrupt(null)
-        clearActiveToIdle()
+        clearActiveToIdle(preserveTurnFence = true)
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
@@ -1164,6 +1183,7 @@ class SentientSdk(
     }
 
     private fun clearTransportSessionState() {
+        deriver.clearAssistantActivity()
         reestablishingSessionId = null
         reestablishing.value = false
         activationCorrelationDirty = false
@@ -1190,6 +1210,9 @@ class SentientSdk(
     private fun emit() {
         _connection.value = deriver.deriveConnection()
         _timeline.value = deriver.deriveTimeline()
+        // Connector callbacks fire while one frame is still broadcasting. Publish this
+        // identity surface only after every connector has folded that frame.
+        if (routedFrameDepth == 0) _assistantActivity.value = deriver.deriveAssistantActivity()
     }
 
     private fun setStatus(next: SdkStatus) {

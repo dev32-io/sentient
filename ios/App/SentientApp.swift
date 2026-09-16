@@ -12,8 +12,11 @@ struct SentientApp: App {
         let attributes = try? FileManager.default.attributesOfItem(atPath: requestURL.path)
         let modified = attributes?[.modificationDate] as? Date
         visualCaptureMode = (modified?.timeIntervalSinceNow ?? -.infinity) > -1800
+        let catalogMode = ProcessInfo.processInfo.arguments.contains("--qa-foundation-catalog") ||
+            ProcessInfo.processInfo.arguments.contains("--qa-visual-review")
         #else
         visualCaptureMode = false
+        let catalogMode = false
         #endif
 
         // Drop high-volume DEBUG tracing in prod (Release); keep it in dev.
@@ -28,7 +31,8 @@ struct SentientApp: App {
         // from launch and survive logout→login. The uploader is built only if a
         // backend is already configured (else a prior crash auto-uploads next
         // launch). Mirrors Android's VitalsHolder.init in SentientApp.onCreate.
-        if !visualCaptureMode {
+        // Synthetic catalogs must not initialize diagnostics or its persisted-backend uploader.
+        if !visualCaptureMode && !catalogMode {
             VitalsHolder.shared.start()
         }
     }

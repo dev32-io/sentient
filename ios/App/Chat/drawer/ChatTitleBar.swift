@@ -9,7 +9,6 @@
 import SwiftUI
 
 struct ChatTitleBar: View {
-    let markMode: SentientIdentityState
     let onOpenPanel: () -> Void
     let onOpenInbox: () -> Void
     let onNewChat: () -> Void
@@ -29,7 +28,7 @@ struct ChatTitleBar: View {
             .accessibilityIdentifier("history-open")
             Spacer()
             HStack(spacing: Space.sm) {
-                SentientMark(size: ChatLayout.markSize, mode: markMode)
+                StaticSentientMark(size: ChatLayout.markSize)
                 Text(Self.title)
                     .font(Typo.display(TypeScale.lg, .semibold))
                     .foregroundStyle(DuskColors.ink)

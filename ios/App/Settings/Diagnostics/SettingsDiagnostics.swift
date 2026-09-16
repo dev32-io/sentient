@@ -80,7 +80,7 @@ struct SettingsDiagnostics: View {
     }
 
     private var sessionRows: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        LazyVStack(alignment: .leading, spacing: Space.xs) {
             ForEach(Array(model.sessions.enumerated()), id: \.element.path) { index, session in
                 SessionUploadRow(
                     info: session,

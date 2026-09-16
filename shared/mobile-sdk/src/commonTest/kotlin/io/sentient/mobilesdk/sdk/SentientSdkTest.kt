@@ -25,7 +25,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
@@ -149,6 +151,81 @@ class SentientSdkTest {
         fake.emit(WsIncoming.Text("{\"type\":\"turn.audio.done\",\"turnId\":\"c1\"}"))
         sdk.connection.first { !it.isSpeaking }
         assertTrue(!sdk.connection.value.isSpeaking)
+    }
+
+    @Test
+    fun assistantActivity_publishes_only_fully_folded_monotonic_owners() = runTest {
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+        connectToReady(sdk, fake)
+        val emissions = mutableListOf<AssistantActivityState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            sdk.assistantActivity.collect { emissions += it }
+        }
+
+        suspend fun route(json: String) {
+            fake.emit(WsIncoming.Text(json))
+            runCurrent()
+        }
+
+        route("{\"type\":\"turn.started\",\"turnId\":\"t1\"}")
+        route("{\"type\":\"turn.text.delta\",\"turnId\":\"t1\",\"replyId\":\"r1\",\"text\":\"old\"}")
+        route("{\"type\":\"turn.audio.start\",\"turnId\":\"t1\",\"encoding\":\"pcm\",\"sampleRate\":24000}")
+        val beforeT2Start = emissions.size
+        route("{\"type\":\"turn.started\",\"turnId\":\"t2\"}")
+        assertTrue(
+            emissions.drop(beforeT2Start).none { it.turnId == "t1" },
+            "t2 frame published partial old identity: $emissions",
+        )
+        route("{\"type\":\"turn.text.delta\",\"turnId\":\"t2\",\"replyId\":\"r2\",\"text\":\"new\"}")
+        route("{\"type\":\"turn.audio.start\",\"turnId\":\"t2\",\"encoding\":\"pcm\",\"sampleRate\":24000}")
+        route("{\"type\":\"turn.completed\",\"turnId\":\"t2\"}")
+        route("{\"type\":\"turn.completed\",\"turnId\":\"t1\"}")
+        route("{\"type\":\"turn.audio.done\",\"turnId\":\"t1\"}")
+
+        val firstT2 = emissions.indexOfFirst { it.turnId == "t2" }
+        assertTrue(firstT2 >= 0, "emissions=$emissions")
+        assertTrue(emissions.drop(firstT2).none { it.turnId == "t1" }, "older turn reclaimed activity: $emissions")
+        assertEquals(
+            AssistantActivityState(AssistantActivityPhase.RESPONDING, "t2", "r2"),
+            emissions.last(),
+            "queued t2 owns activity when promoted",
+        )
+    }
+
+    @Test
+    fun interrupt_tombstones_old_turn_until_genuine_new_turn_starts() = runTest {
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+        connectToReady(sdk, fake)
+        val emissions = mutableListOf<AssistantActivityState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            sdk.assistantActivity.collect { emissions += it }
+        }
+
+        suspend fun route(json: String) {
+            fake.emit(WsIncoming.Text(json))
+            runCurrent()
+        }
+
+        route("{\"type\":\"turn.started\",\"turnId\":\"t1\"}")
+        route("{\"type\":\"turn.text.delta\",\"turnId\":\"t1\",\"replyId\":\"r1\",\"text\":\"active\"}")
+        assertEquals(AssistantActivityState(AssistantActivityPhase.RESPONDING, "t1", "r1"), emissions.last())
+
+        val beforeInterrupt = emissions.size
+        sdk.interrupt()
+        runCurrent()
+        route("{\"type\":\"turn.text.delta\",\"turnId\":\"t1\",\"replyId\":\"r1\",\"text\":\"late\"}")
+        route("{\"type\":\"turn.started\",\"turnId\":\"t1\"}")
+        route("{\"type\":\"turn.audio.start\",\"turnId\":\"t1\",\"encoding\":\"pcm\",\"sampleRate\":24000}")
+
+        assertTrue(
+            emissions.drop(beforeInterrupt).all { it == AssistantActivityState() },
+            "interrupted t1 was re-admitted: $emissions",
+        )
+
+        route("{\"type\":\"turn.started\",\"turnId\":\"t2\"}")
+        assertEquals(AssistantActivityState(AssistantActivityPhase.THINKING, "t2", null), emissions.last())
     }
 
     @Test

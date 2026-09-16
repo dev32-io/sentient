@@ -7,6 +7,8 @@ import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.TaskListItem
+import io.sentient.mobilesdk.sdk.AssistantActivityPhase
+import io.sentient.mobilesdk.sdk.AssistantActivityState
 import io.sentient.mobilesdk.sdk.ChatMessage
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -117,6 +119,27 @@ class ObserveChatUseCaseTest {
             "a keyless row sharing the bubble's turn must stay visible — only an exact replyId match is hidden",
         )
         assertEquals("r1", m.live?.replyId)
+        job.cancel()
+    }
+
+    @Test
+    fun activity_identity_is_projected_with_live_row_without_latestRow_guessing() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FakeConversationRepository()
+        repo.timelineState.value = listOf(
+            ChatMessage(ts = 1, role = "assistant", content = "old", turnId = "t1", replyId = "r1"),
+        )
+        val activity = MutableStateFlow(AssistantActivityState())
+        val models = mutableListOf<ChatModel>()
+        val observe = ObserveChatUseCase(repo, Clock { 0L }, activity)
+        val job = launch { observe(MutableStateFlow(emptyList())).collect { models.add(it) } }
+
+        repo.events.emit(SdkEvent.MessageStarted("t2"))
+        activity.value = AssistantActivityState(AssistantActivityPhase.THINKING, "t2", null)
+        runCurrent()
+
+        assertEquals("t2", models.last().live?.turnId)
+        assertEquals("t2", models.last().assistantActivity.turnId)
+        assertTrue(models.last().committed.any { it.replyId == "r1" }, "historical row stays unrelated")
         job.cancel()
     }
 

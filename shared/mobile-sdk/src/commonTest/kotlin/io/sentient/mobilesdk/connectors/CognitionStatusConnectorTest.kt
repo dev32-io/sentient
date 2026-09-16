@@ -1,11 +1,7 @@
 // ---------------------------------------------------------------------------
-// CognitionStatusConnectorTest — ported VERBATIM from web-sdk
-// cognition-status-connector.test.ts. FSM contract: cycle lifecycle →
-// simplified client cognition state.
-//   cycle.started   → THINKING
-//   cycle.completed → IDLE
-//   cycle.aborted   → IDLE
-// Duplicate-state transitions do NOT fire onStateChange. → keeper.
+// CognitionStatusConnectorTest — lifecycle → simplified client cognition state
+// plus monotonic newest-turn ownership. Duplicate global-state transitions do NOT fire
+// onStateChange; identity ownership still updates. → keeper.
 //
 // NOTE: the TS declares a third CognitionState "acting" but the
 // cognition-status-connector NEVER reaches it — acting is reserved for a
@@ -68,6 +64,35 @@ class CognitionStatusConnectorTest {
         // Already idle — cycle.completed should be a no-op.
         c.handle(ServerMessage.TurnCompleted(turnId = "c1"))
         assertEquals(emptyList(), changes)
+    }
+
+    @Test
+    fun completing_older_turn_does_not_clear_newer_owner() {
+        val owners = mutableListOf<Pair<CognitionState, String?>>()
+        val c = CognitionStatusConnector(onActivityChange = { state, turnId -> owners += state to turnId })
+
+        c.handle(ServerMessage.TurnStarted(turnId = "t1"))
+        c.handle(ServerMessage.TurnStarted(turnId = "t2"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "t1"))
+
+        assertEquals(CognitionState.IDLE, c.state(), "global cognition keeps existing web-compatible transition")
+        assertEquals(CognitionState.THINKING to "t2", owners.last())
+    }
+
+    @Test
+    fun older_overlapping_turn_never_reclaims_presentation() {
+        val owners = mutableListOf<Pair<CognitionState, String?>>()
+        val c = CognitionStatusConnector(onActivityChange = { state, turnId -> owners += state to turnId })
+
+        c.handle(ServerMessage.TurnStarted(turnId = "t1"))
+        c.handle(ServerMessage.TurnStarted(turnId = "t2"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "t2"))
+
+        assertEquals(CognitionState.IDLE, c.state(), "global cognition keeps existing web-compatible transition")
+        assertEquals(CognitionState.IDLE to null, owners.last())
+
+        c.handle(ServerMessage.TurnCompleted(turnId = "t1"))
+        assertEquals(CognitionState.IDLE to null, owners.last())
     }
 
     @Test

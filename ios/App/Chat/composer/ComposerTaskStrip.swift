@@ -321,7 +321,7 @@ private struct TaskShelfCanvas: View {
                 height: proxy.size.height + ComposerTaskShelfGeometry.joinedFaceExtension
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 TaskShelfCanvasDrawing.shadow(
                     shape: shape,
                     color: Color.black.opacity(0.82),
@@ -405,7 +405,7 @@ private struct TaskPillCanvas: View, Animatable {
                 height: proxy.size.height
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 let facePath = shape.path(in: faceRect)
                 let shadowAmount = expansionAmount * (1 - pressAmount)
                 TaskShelfCanvasDrawing.shadow(
@@ -510,7 +510,7 @@ private struct TaskDetailCanvas: View {
                 height: proxy.size.height
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 TaskShelfCanvasDrawing.shadow(
                     shape: shape,
                     color: Color.black.opacity(0.9),
@@ -559,27 +559,33 @@ private struct TaskStatusIndicator: View {
 
     @ComposerReduceMotion private var reduceMotion
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 24, paused: reduceMotion || !isRunning)) { timeline in
-            let phase = reduceMotion
-                ? 0.0
-                : (sin(timeline.date.timeIntervalSinceReferenceDate * 4.5) + 1) / 2
-            ZStack {
-                if isRunning {
-                    Circle()
-                        .fill(DuskColors.amber)
-                        .opacity(reduceMotion ? 1 : 0.58 + phase * 0.42)
-                        .scaleEffect(reduceMotion ? 1 : 0.76 + phase * 0.24)
-                        .shadow(color: DuskColors.amber.opacity(0.45), radius: 4)
-                } else {
-                    Circle().fill(statusColor)
-                }
+        if isRunning && !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1 / 24)) { timeline in
+                indicator(phase: (sin(timeline.date.timeIntervalSinceReferenceDate * 4.5) + 1) / 2)
             }
-            .frame(
-                width: ComposerTaskShelfGeometry.pulseDiameter,
-                height: ComposerTaskShelfGeometry.pulseDiameter
-            )
+        } else {
+            indicator(phase: 0)
         }
+    }
+
+    private func indicator(phase: Double) -> some View {
+        ZStack {
+            if isRunning {
+                Circle()
+                    .fill(DuskColors.amber)
+                    .opacity(reduceMotion ? 1 : 0.58 + phase * 0.42)
+                    .scaleEffect(reduceMotion ? 1 : 0.76 + phase * 0.24)
+                    .shadow(color: DuskColors.amber.opacity(0.45), radius: 4)
+            } else {
+                Circle().fill(statusColor)
+            }
+        }
+        .frame(
+            width: ComposerTaskShelfGeometry.pulseDiameter,
+            height: ComposerTaskShelfGeometry.pulseDiameter
+        )
         .accessibilityHidden(true)
     }
 

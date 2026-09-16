@@ -5,8 +5,8 @@ struct SendAnchorState: Equatable {
     var observed: Set<String> = []
 }
 
-func reduceSendAnchor(_ state: SendAnchorState, identities: Set<String>) -> (SendAnchorState, String?) {
-    let next = identities.first { !state.observed.contains($0) }
+func reduceSendAnchor(_ state: SendAnchorState, identities: [String]) -> (SendAnchorState, String?) {
+    let next = identities.last { !state.observed.contains($0) }
     return (SendAnchorState(observed: state.observed.union(identities)), next)
 }
 

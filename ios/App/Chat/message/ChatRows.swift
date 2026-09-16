@@ -122,13 +122,23 @@ func chatRows(_ messages: [ChatMessage], calendar: Calendar = .current,
     messageChronology(messages: messages, calendar: calendar, now: now).rows
 }
 
+private let dividerDayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "EEEE"
+    return formatter
+}()
+
+private let dividerTimeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.timeStyle = .short
+    formatter.dateStyle = .none
+    return formatter
+}()
+
 private func dividerLabel(_ date: Date, calendar: Calendar, now: Date) -> String {
     let day: String
     if calendar.isDateInToday(date) { day = "Today" }
     else if calendar.isDateInYesterday(date) { day = "Yesterday" }
-    else {
-        let f = DateFormatter(); f.dateFormat = "EEEE"; day = f.string(from: date)
-    }
-    let t = DateFormatter(); t.timeStyle = .short; t.dateStyle = .none
-    return "\(day) · \(t.string(from: date))"
+    else { day = dividerDayFormatter.string(from: date) }
+    return "\(day) · \(dividerTimeFormatter.string(from: date))"
 }

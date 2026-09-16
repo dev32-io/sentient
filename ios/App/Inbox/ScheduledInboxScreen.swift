@@ -114,17 +114,11 @@ struct ScheduledInboxScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DesignPageHeader(title: "Messages", backAccessibilityId: "scheduled-inbox-back", onBack: onBack) {
-                DesignActionButton(
-                    title: "Clear all",
-                    role: .destructive,
-                    state: canClearAll ? .normal : .disabled,
-                    accessibilityId: "scheduled-inbox-clear-all",
-                    fillsWidth: false
-                ) {
-                    clearAllIntent.request(.initial, canClear: canClearAll)
-                }
-            }
+            ScheduledInboxHeader(
+                canClearAll: canClearAll,
+                onBack: onBack,
+                onClearAll: { clearAllIntent.request(.initial, canClear: canClearAll) }
+            )
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Space.lg) {
                     notices
@@ -246,7 +240,26 @@ struct ScheduledInboxScreen: View {
     private var canClearAll: Bool { !busy && !vm.cards.isEmpty }
 }
 
-private struct ScheduledInboxSwipeRow: View {
+struct ScheduledInboxHeader: View {
+    let canClearAll: Bool
+    let onBack: () -> Void
+    let onClearAll: () -> Void
+
+    var body: some View {
+        DesignPageHeader(title: "Messages", backAccessibilityId: "scheduled-inbox-back", onBack: onBack) {
+            DesignActionButton(
+                title: "Clear all",
+                role: .destructive,
+                state: canClearAll ? .normal : .disabled,
+                accessibilityId: "scheduled-inbox-clear-all",
+                fillsWidth: false,
+                action: onClearAll
+            )
+        }
+    }
+}
+
+struct ScheduledInboxSwipeRow: View {
     let card: ScheduledSessionCard
     let isRevealed: Bool
     let disabled: Bool
@@ -254,11 +267,36 @@ private struct ScheduledInboxSwipeRow: View {
     let onSetRevealed: (Bool) -> Void
     let onClear: () -> Void
     let onOpen: () -> Void
+    private let preview: String
+    private let completedDate: Date?
 
     @State private var swipe = ScheduledInboxSwipeState()
     @State private var width: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.locale) private var locale
+    @Environment(\.timeZone) private var timeZone
+
+    init(
+        card: ScheduledSessionCard,
+        isRevealed: Bool,
+        disabled: Bool,
+        onBeginSwipe: @escaping () -> Void,
+        onSetRevealed: @escaping (Bool) -> Void,
+        onClear: @escaping () -> Void,
+        onOpen: @escaping () -> Void
+    ) {
+        self.card = card
+        self.isRevealed = isRevealed
+        self.disabled = disabled
+        self.onBeginSwipe = onBeginSwipe
+        self.onSetRevealed = onSetRevealed
+        self.onClear = onClear
+        self.onOpen = onOpen
+        preview = Self.preview(for: card)
+        completedDate = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(card.completedAt))
+            ?? (try? Date.ISO8601FormatStyle().parse(card.completedAt))
+    }
 
     var body: some View {
         cardFace
@@ -355,15 +393,15 @@ private struct ScheduledInboxSwipeRow: View {
 
     private var armed: Bool { swipe.isArmed(width: width) }
 
-    private var preview: String {
+    private static func preview(for card: ScheduledSessionCard) -> String {
         if let preview = card.preview { return String(preview.prefix(280)) }
         return card.status == .failed ? "Scheduled conversation failed" : "Scheduled conversation interrupted"
     }
 
     private var completedLabel: String {
-        let date = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(card.completedAt))
-            ?? (try? Date.ISO8601FormatStyle().parse(card.completedAt))
-        return date?.formatted(date: .abbreviated, time: .shortened) ?? card.completedAt
+        completedDate?.formatted(Date.FormatStyle(
+            date: .abbreviated, time: .shortened, locale: locale, timeZone: timeZone
+        )) ?? card.completedAt
     }
 }
 

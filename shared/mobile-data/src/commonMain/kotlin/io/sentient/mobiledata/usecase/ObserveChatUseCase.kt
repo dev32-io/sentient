@@ -6,6 +6,7 @@ import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.sdk.AssistantActivityState
 import io.sentient.mobilesdk.sdk.ChatMessage
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.delay
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -36,6 +38,7 @@ private const val REVEAL_TICK_MS = 16L
 class ObserveChatUseCase(
     private val conversation: ConversationRepository,
     private val clock: Clock,
+    private val assistantActivity: Flow<AssistantActivityState> = flowOf(AssistantActivityState()),
 ) {
     private val log = createLogger("data", "observe-chat")
 
@@ -74,10 +77,13 @@ class ObserveChatUseCase(
             revealFlow(),
             // Paired to stay within combine's 5-flow arity — no relationship between
             // the two beyond both being plain per-emission lists.
-            combine(pending, conversation.tasks) { pendingMsgs, tasks -> pendingMsgs to tasks },
+            combine(pending, conversation.tasks, assistantActivity) { pendingMsgs, tasks, activity ->
+                Triple(pendingMsgs, tasks, activity)
+            },
             historyLoadingFlow(),
             conversation.echoedPendingIds,
-        ) { committed, rs, (pendingMsgs, tasks), loading, echoedPendingIds ->
+        ) { committed, rs, presentation, loading, echoedPendingIds ->
+            val (pendingMsgs, tasks, activity) = presentation
             // Reconcile against the LIVE echo's echoedPendingIds, not committed.pendingId:
             // cold REST snapshots carry pendingId=null (there is no DB), so
             // committed.mapNotNull { it.pendingId } would be empty and the optimistic
@@ -115,6 +121,7 @@ class ObserveChatUseCase(
                 pending = visiblePending,
                 live = liveBubble,
                 tasks = tasks,
+                assistantActivity = activity,
                 historyLoading = loading,
                 reconciledPendingIds = echoedPendingIds,
             )

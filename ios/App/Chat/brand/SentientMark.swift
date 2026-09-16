@@ -32,12 +32,21 @@ enum SentientIdentityState: CaseIterable, Equatable {
 protocol SentientIdentityDriving: AnyObject {
     func setReducedMotion(_ reduced: Bool)
     func transition(to state: SentientIdentityState)
+    func setRenderingActive(_ active: Bool)
+}
+
+extension SentientIdentityDriving {
+    func setRenderingActive(_ active: Bool) {}
 }
 
 @MainActor
 final class SentientIdentityStateController {
-    private let driver: SentientIdentityDriving
-    private var hasSynchronized = false
+    // The model owns this controller; retaining its driver would retain the model.
+    private weak var driver: SentientIdentityDriving?
+    private var synchronizedState: SentientIdentityState?
+    private var synchronizedReducedMotion: Bool?
+    private var needsSynchronization = true
+    private var renderingActive = false
     private(set) var state: SentientIdentityState
     private(set) var reducedMotion: Bool
 
@@ -51,39 +60,54 @@ final class SentientIdentityStateController {
         self.driver = driver
     }
 
-    /// Applies the latest view inputs together so Reduced Motion always reaches
-    /// Rive before the first state trigger. Repeated appearances are no-ops
-    /// unless an input changed while the view was absent.
+    /// Records view inputs while playback is ineligible, then applies only the
+    /// latest pair when playback becomes eligible again.
     func synchronize(state latest: SentientIdentityState, reducedMotion reduced: Bool) {
-        let stateChanged = state != latest
-        let reducedMotionChanged = reducedMotion != reduced
-        state = latest
-        reducedMotion = reduced
-
-        guard !hasSynchronized || stateChanged || reducedMotionChanged else { return }
-        if !hasSynchronized || reducedMotionChanged {
-            driver.setReducedMotion(reduced)
+        if state != latest || reducedMotion != reduced {
+            state = latest
+            reducedMotion = reduced
+            needsSynchronization = true
         }
-        driver.transition(to: latest)
-        hasSynchronized = true
+        reconcileIfActive()
     }
 
     func request(_ latest: SentientIdentityState) {
         guard state != latest else { return }
         state = latest
-        guard hasSynchronized else { return }
-        driver.transition(to: latest)
+        needsSynchronization = true
+        reconcileIfActive()
     }
 
     func setReducedMotion(_ reduced: Bool) {
         guard reducedMotion != reduced else { return }
         reducedMotion = reduced
-        guard hasSynchronized else { return }
-        driver.setReducedMotion(reduced)
-        // The authored machine has separate reduced-motion variants. Re-apply
-        // the latest state after changing the input so a live identity leaves
-        // any in-flight transition and settles on the matching variant.
-        driver.transition(to: state)
+        needsSynchronization = true
+        reconcileIfActive()
+    }
+
+    func setRenderingActive(_ active: Bool) {
+        guard renderingActive != active else { return }
+        renderingActive = active
+        driver?.setRenderingActive(active)
+        if !active {
+            synchronizedState = nil
+            needsSynchronization = true
+        }
+        reconcileIfActive()
+    }
+
+    private func reconcileIfActive() {
+        guard renderingActive, needsSynchronization else { return }
+        let reducedMotionChanged = synchronizedReducedMotion != reducedMotion
+        if reducedMotionChanged {
+            driver?.setReducedMotion(reducedMotion)
+            synchronizedReducedMotion = reducedMotion
+        }
+        if synchronizedState != state || reducedMotionChanged {
+            driver?.transition(to: state)
+            synchronizedState = state
+        }
+        needsSynchronization = false
     }
 }
 
@@ -91,11 +115,12 @@ final class SentientIdentityStateController {
 final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
     let riveViewModel: RiveViewModel?
     private(set) var controller: SentientIdentityStateController!
+    private var reducedMotion = false
 
     init(
         initialState: SentientIdentityState,
         reducedMotion: Bool = false,
-        autoPlay: Bool = true,
+        autoPlay: Bool = false,
         bundle: Bundle = .main,
         resourceExists: (Bundle) -> Bool = {
             $0.url(forResource: "sentient-avatar", withExtension: "riv") != nil
@@ -142,11 +167,22 @@ final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
     }
 
     func setReducedMotion(_ reduced: Bool) {
+        reducedMotion = reduced
         riveViewModel?.setInput("reducedMotion", value: reduced)
     }
 
     func transition(to state: SentientIdentityState) {
         riveViewModel?.triggerInput(state.triggerName)
+        guard reducedMotion else { return }
+        // Reduced variants are authored as immediate static states. Apply their
+        // zero-duration state change, then stop the display link in this turn.
+        riveViewModel?.riveView?.advance(delta: 0)
+        riveViewModel?.pause()
+    }
+
+    func setRenderingActive(_ active: Bool) {
+        guard !active, riveViewModel?.isPlaying == true else { return }
+        riveViewModel?.pause()
     }
 }
 
@@ -154,6 +190,29 @@ final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
 private final class MissingIdentityDriver: SentientIdentityDriving {
     func setReducedMotion(_ reduced: Bool) {}
     func transition(to state: SentientIdentityState) {}
+}
+
+private struct SentientIdentityPlaybackEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+private struct SentientIdentityMeasurementKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Parent-controlled coverage eligibility. Chat sets this false while its
+    /// history panel covers message content.
+    var sentientIdentityPlaybackEnabled: Bool {
+        get { self[SentientIdentityPlaybackEnabledKey.self] }
+        set { self[SentientIdentityPlaybackEnabledKey.self] = newValue }
+    }
+
+    /// Exact row measurement preserves avatar geometry without loading Rive.
+    var sentientIdentityMeasurement: Bool {
+        get { self[SentientIdentityMeasurementKey.self] }
+        set { self[SentientIdentityMeasurementKey.self] = newValue }
+    }
 }
 
 /// SwiftUI owns only lifecycle, sizing, accessibility, and static fallback.
@@ -164,14 +223,17 @@ struct RiveSentientIdentity: View {
     private let reducedMotionOverride: Bool?
 
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.sentientIdentityPlaybackEnabled) private var playbackEnabled
+    @State private var appeared = false
+    @State private var visibleInScroll = true
     @StateObject private var model: RiveIdentityModel
 
     init(state: SentientIdentityState, size: CGFloat = SentientMarkLayout.defaultSize) {
-        self.init(
-            state: state,
-            size: size,
-            model: RiveIdentityModel(initialState: state)
-        )
+        self.state = state
+        self.size = size
+        reducedMotionOverride = nil
+        _model = StateObject(wrappedValue: RiveIdentityModel(initialState: state))
     }
 
     /// Internal injection keeps deterministic capture on the same production
@@ -207,16 +269,47 @@ struct RiveSentientIdentity: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.statusLabel)
         .onAppear {
-            model.controller.synchronize(
-                state: state,
-                reducedMotion: effectiveReducedMotion
-            )
+            appeared = true
+            updateRenderingEligibility()
         }
+        .onDisappear {
+            appeared = false
+            updateRenderingEligibility()
+        }
+        .onScrollVisibilityChange { visible in
+            visibleInScroll = visible
+            updateRenderingEligibility()
+        }
+        .onChange(of: playbackEnabled) { _, _ in updateRenderingEligibility() }
+        .onChange(of: scenePhase) { _, _ in updateRenderingEligibility() }
         .onChange(of: state) { _, latest in model.controller.request(latest) }
         .onChange(of: reducedMotion) { _, reduced in
             guard reducedMotionOverride == nil else { return }
             model.controller.setReducedMotion(reduced)
         }
+    }
+
+    private func updateRenderingEligibility() {
+        let eligible = appeared && visibleInScroll && playbackEnabled && scenePhase == .active
+        if eligible {
+            model.controller.synchronize(state: state, reducedMotion: effectiveReducedMotion)
+        }
+        model.controller.setRenderingActive(eligible)
+    }
+}
+
+struct StaticSentientMark: View {
+    let size: CGFloat
+    var state: SentientIdentityState = .idle
+
+    var body: some View {
+        Image("SentientMark")
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(state.statusLabel)
     }
 }
 
@@ -225,8 +318,14 @@ struct SentientMark: View {
     var size: CGFloat = SentientMarkLayout.defaultSize
     var mode: SentientIdentityState = .idle
 
-    var body: some View {
-        RiveSentientIdentity(state: mode, size: size)
+    @Environment(\.sentientIdentityMeasurement) private var measurement
+
+    @ViewBuilder var body: some View {
+        if mode == .idle || measurement {
+            StaticSentientMark(size: size, state: mode)
+        } else {
+            RiveSentientIdentity(state: mode, size: size)
+        }
     }
 }
 

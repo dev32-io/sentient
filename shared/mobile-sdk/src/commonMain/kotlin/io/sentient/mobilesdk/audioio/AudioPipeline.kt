@@ -88,6 +88,7 @@ class AudioPipeline(
     private val scope: CoroutineScope,
     private val outputSampleRate: Int,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
+    private val onActiveTurnChanged: (String?) -> Unit = {},
     private val playbackDrainSettleMs: Long = DEFAULT_DRAIN_SETTLE_MS,
     private val armPlayback: suspend () -> Boolean = { true },
     private val disarmPlayback: () -> Unit = {},
@@ -179,6 +180,7 @@ class AudioPipeline(
             return
         }
         isSpeaking = true
+        onActiveTurnChanged(turnId)
         armPlaybackOnce()
         transition(AudioInput.AudioStart, turnId)
     }
@@ -372,6 +374,7 @@ class AudioPipeline(
                 mapOf("turnId" to next.turnId, "frames" to buffered.size, "opusMode" to opusMode, "depth" to queue.depth),
             )
             for (raw in buffered) forwardFrame(raw, next.turnId)
+            onActiveTurnChanged(next.turnId)
             if (!next.streamDone) return next
             if (opusMode) opusDecoder.reset()
             next = queue.promote()
@@ -405,6 +408,7 @@ class AudioPipeline(
         isSpeaking = false
         queue.clear()
         lastTurnId = ""
+        onActiveTurnChanged(null)
         log.info("downlink-drained", mapOf("turnId" to turnId))
         releasePlaybackEngine()
         transition(AudioInput.AudioDone, turnId)
@@ -468,6 +472,7 @@ class AudioPipeline(
         )
         if (head == null && !hadBuffered) return // nothing arrived during the hold
         isSpeaking = true
+        onActiveTurnChanged(head?.turnId)
         // NEVER pre-set framesDone here (the pre-2.0 line was `framesDone = streamDone`).
         // The arm's post-flush hook settles the head once the buffered reply has actually
         // reached the player — a pre-flush isPlaybackIdle=true would false-finalize and
@@ -507,6 +512,7 @@ class AudioPipeline(
         isSpeaking = false
         queue.clear()
         lastTurnId = ""
+        onActiveTurnChanged(null)
         transition(AudioInput.Interrupt, turnId)
     }
 
@@ -529,6 +535,7 @@ class AudioPipeline(
         clearPendingFrames()
         queue.clear()
         lastTurnId = ""
+        onActiveTurnChanged(null)
         opusDecoder.reset()
         // Lazy model: the engine is only armed during a turn. Drop queued audio + reset
         // the latch so the next audio.start (post-reconnect) re-arms from scratch. The
