@@ -5,7 +5,7 @@ export const PENDING_SESSION_KEY = "sentient:pendingSessionId";
 
 type RouteStorage = Pick<Storage, "getItem" | "setItem">;
 
-function browserStorage(): RouteStorage | undefined {
+function browserStorage(): Storage | undefined {
   try {
     return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
   } catch {
@@ -24,13 +24,7 @@ export function loadStoredRoute(storage: Pick<RouteStorage, "getItem"> | undefin
 }
 
 export function loadPendingSession(
-  storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = (() => {
-    try {
-      return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
-    } catch {
-      return undefined;
-    }
-  })(),
+  storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = browserStorage(),
 ): string | null {
   if (!storage) return null;
   try {
@@ -48,15 +42,7 @@ export function loadPendingSession(
   }
 }
 
-export function clearPendingSession(
-  storage: Pick<Storage, "removeItem"> | undefined = (() => {
-    try {
-      return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
-    } catch {
-      return undefined;
-    }
-  })(),
-): void {
+export function clearPendingSession(storage: Pick<Storage, "removeItem"> | undefined = browserStorage()): void {
   try {
     storage?.removeItem(PENDING_SESSION_KEY);
   } catch {

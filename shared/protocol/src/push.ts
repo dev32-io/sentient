@@ -72,10 +72,7 @@ export const pushRegistrationRequestSchema = z
     installationId: z.string().min(1).max(200),
     platform: z.literal("ios"),
     apnsDeviceToken: z.string().regex(/^[A-Fa-f0-9]{64,200}$/),
-    replaces: z
-      .object({ bindingId: z.string().min(1), generation: z.number().int().positive() })
-      .strict()
-      .optional(),
+    replaces: pushBindingReferenceSchema.optional(),
   })
   .strict();
 export const pushRegistrationResponseSchema = z
