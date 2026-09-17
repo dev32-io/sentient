@@ -33,18 +33,10 @@ struct MessageChronology {
 }
 
 /// Stable per-message identity — ONE row per logical bubble across its whole
-/// lifecycle. Keyed on replyId FIRST, not turnId: a mid-turn steer rotates
-/// replyId, so one turnId can own TWO assistant bubbles (reply 1 answers the
-/// first message, reply 2 answers the steer). Keying on turnId aliases both
-/// replies onto the same row id — a duplicate Identifiable id in this ForEach,
-/// which SwiftUI/LazyVStack shows as a bogus move animation right after the
-/// steer and as vanish/reappear on scroll (recycle-by-id).
-///
-/// The live streaming bubble and its committed twin still share replyId
-/// (ObserveChatUseCase builds the live bubble with replyId = it.replyId), so
-/// the streaming→committed handoff is still the SAME SwiftUI row (no remount,
-/// no flash). replyId is constant across tokens same as turnId was, so unlike
-/// ts it never churns mid-reveal.
+/// lifecycle. Reveal projection marks its retained presentation identity in
+/// entryId so the turn placeholder, first stamped delta, and committed echo
+/// remain one native row. Other assistant rows key on replyId: a mid-turn steer
+/// rotates replyId, so separate actual replies remain separate rows.
 ///
 /// Entries with no replyId (user rows, REST history) key by their stable
 /// gateway entryId. turnId is a fallback only for a gateway that does not
@@ -54,6 +46,7 @@ func messageRowId(_ message: ChatMessage, index: Int) -> String {
     if message.role == "user", let pendingId = message.pendingId, !pendingId.isEmpty {
         return "send-\(pendingId)"
     }
+    if message.entryId.hasPrefix("presentation:") { return message.entryId }
     if let replyId = message.replyId, !replyId.isEmpty { return "reply-\(replyId)" }
     if !message.entryId.isEmpty { return "ent-\(message.entryId)" }
     if let turnId = message.turnId, !turnId.isEmpty { return "turn-\(turnId)" }
@@ -78,10 +71,8 @@ func messageChronology(
 
     for (index, message) in messages.enumerated() {
         var insertedDivider = false
-        // Streaming messages have ts=0 (no real timestamp while in flight).
-        // Never bucket them into a day-divider — ts=0/epoch would produce a
-        // bogus separator. The committed entry that follows carries the real
-        // timestamp and divider.
+        // Live rows carry their stable start timestamp for identity metadata,
+        // but remain outside durable day grouping until committed.
         if !message.streaming {
             let date = Date(timeIntervalSince1970: Double(message.ts) / 1000)
             let day = calendar.dateComponents([.year, .month, .day], from: date)
@@ -122,13 +113,23 @@ func chatRows(_ messages: [ChatMessage], calendar: Calendar = .current,
     messageChronology(messages: messages, calendar: calendar, now: now).rows
 }
 
+private let dividerDayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "EEEE"
+    return formatter
+}()
+
+private let dividerTimeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.timeStyle = .short
+    formatter.dateStyle = .none
+    return formatter
+}()
+
 private func dividerLabel(_ date: Date, calendar: Calendar, now: Date) -> String {
     let day: String
     if calendar.isDateInToday(date) { day = "Today" }
     else if calendar.isDateInYesterday(date) { day = "Yesterday" }
-    else {
-        let f = DateFormatter(); f.dateFormat = "EEEE"; day = f.string(from: date)
-    }
-    let t = DateFormatter(); t.timeStyle = .short; t.dateStyle = .none
-    return "\(day) · \(t.string(from: date))"
+    else { day = dividerDayFormatter.string(from: date) }
+    return "\(day) · \(dividerTimeFormatter.string(from: date))"
 }

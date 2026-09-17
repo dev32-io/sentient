@@ -125,9 +125,11 @@ struct ToolsScreen: View {
             )
             .accessibilityIdentifier("settings-tools-empty")
         } else {
-            ForEach(vm.groupIds, id: \.self) { id in
-                if let entry = vm.catalog?.groups[id] {
-                    groupCard(id, entry)
+            LazyVStack(spacing: Space.lg) {
+                ForEach(vm.groupIds, id: \.self) { id in
+                    if let entry = vm.catalog?.groups[id] {
+                        groupCard(id, entry)
+                    }
                 }
             }
         }
@@ -181,16 +183,18 @@ struct ToolsScreen: View {
                     }
                 }
             } content: {
-                ForEach(builtins, id: \.name) { tool in
-                    DesignToggleRow(
-                        title: capabilityName(tool.name),
-                        detail: builtInDetail(tool.description, toolset: tool.toolset),
-                        isOn: Binding(
-                            get: { vm.isToolsetOn(tool.toolset) },
-                            set: { _ in vm.toggleToolset(tool.toolset) }
-                        ),
-                        accessibilityId: "settings-tools-builtin-\(tool.name)"
-                    )
+                LazyVStack(spacing: 0) {
+                    ForEach(builtins, id: \.name) { tool in
+                        DesignToggleRow(
+                            title: capabilityName(tool.name),
+                            detail: builtInDetail(tool.description, toolset: tool.toolset),
+                            isOn: Binding(
+                                get: { vm.isToolsetOn(tool.toolset) },
+                                set: { _ in vm.toggleToolset(tool.toolset) }
+                            ),
+                            accessibilityId: "settings-tools-builtin-\(tool.name)"
+                        )
+                    }
                 }
             }
         }

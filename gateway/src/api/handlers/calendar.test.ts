@@ -335,6 +335,31 @@ describe("calendar V2 REST handler", () => {
     expect(householdWrite.status).toBe(403);
   });
 
+  it("rejects forged personal-reminder metadata before persistence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-handler-forged-reminder-"));
+    roots.push(root);
+    const api = realApi(root);
+    const response = await api(
+      request("/api/v1/calendar/events", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "hostile household event",
+          start: "2026-12-01T10:00:00Z",
+          scope: "household",
+          notificationPolicy: {
+            sentientPersonalReminders: {
+              u_victim000: { enabled: true, mode: "at-start" },
+            },
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(422);
+    const listed = await api(request("/api/v1/calendar/events?from=2026-12-01&to=2026-12-02&scope=household"));
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { body: { events: unknown[] } }).body.events).toEqual([]);
+  });
+
   it("closes every opened handle on success and when the second opener fails", async () => {
     let privateClosed = 0;
     let householdClosed = 0;

@@ -1,0 +1,82 @@
+schemaVersion: 1
+stages:
+  - id: contracts
+    tasks:
+      - contracts-authority
+    mode: sequential
+    checks:
+      - bash -lc "source scripts/env.sh && bun run typecheck && git diff --check"
+    review:
+      mode: required
+      focus: Review public once/recurring and actor-reminder contract compatibility,
+        capability confinement, bounded session-card projection, and complete
+        registration/revoke-only/pending-unlink/rebinding state semantics.
+        Confirm fixtures are sufficient for independently implemented clients
+        and services and do not add unread state, a second chat runtime, or
+        provider secrets.
+  - id: independent-layers
+    tasks:
+      - schedule-service
+      - push-service
+      - shared-mobile-data
+      - web-experience
+    mode: concurrent
+    checks:
+      - bash -lc "source scripts/env.sh && bun run typecheck && bun run
+        design:foundation:check && git diff --check"
+    review:
+      mode: required
+      focus: Review scheduling mutation/claim fencing and recurrence; per-device
+        privacy, revoke-only authority, account-binding generations, safe
+        protected Gorush configuration and missing-credential degradation; exact
+        KMP/web fixture parity and logout cleanup without retaining general
+        auth. Confirm terminal/outbox production is still reserved to its one
+        owner. For web screens and calendar controls, verify named
+        foundation-component reuse, token-only visuals, accessible bounded
+        session cards, no read-state machinery and no new style allowlist
+        exemptions. Check changed excluded calendar lines only embed checked
+        visual components.
+  - id: execution-and-native-clients
+    tasks:
+      - scheduled-chat-execution
+      - ios-experience
+    mode: concurrent
+    checks:
+      - bash -lc "source scripts/env.sh && bun run typecheck && bun run
+        design:foundation:check && git diff --check"
+    review:
+      mode: required
+      focus: Review single-runtime socket-free session acquisition, ordinary user
+        submission, durable original-turn completion, atomic
+        finalization/outbox/once-consumption and recurrent advancement, restart
+        reconciliation, retained background work, content-free emission and
+        source authorization. Review the iOS client's auth-gated session-link
+        routing, OS callbacks, pending unlink warnings/revoke-only storage and
+        replacement binding fence. Require a changed-file component/token check
+        for every new screen/card/control, including changed legacy calendar
+        files outside automated checker scope; forbid hardcoded visuals and
+        broadening allowlists. Core iOS state tests must not be skipped merely
+        because real push delivery is unavailable.
+  - id: gateway-and-calendar-integration
+    tasks:
+      - gateway-surfaces
+      - calendar-reminders
+    mode: sequential
+    checks:
+      - bash -lc "source scripts/env.sh && bun run ci && bun run
+        design:foundation:check && git diff --check"
+    review:
+      mode: required
+      focus: "Ordered fresh-agent baton pass is intentional: gateway-surfaces mounts
+        the stable services and session-card API, then calendar-reminders
+        consumes that composition and modifies the same central bootstrap with
+        one coherent calendar mutation/reconciliation owner. Review bounded
+        owner-scoped card projections, backward-compatible session APIs,
+        one-time activation of supervisors, optional push readiness, real model
+        tool registration, and current-authority execution. Then review personal
+        calendar intent transactions, idempotent derived jobs,
+        moved-earlier/claim linearization, cancellation/visibility/series-split
+        and partial-write recovery. Verify the fully composed
+        source-to-session-to-card/outbox journey and all mandatory local E2E
+        coverage; only explicitly unsupported native
+        permission/real-device/provider legs may skip with reasons."

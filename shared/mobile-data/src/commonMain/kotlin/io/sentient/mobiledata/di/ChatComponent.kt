@@ -5,6 +5,8 @@ import io.sentient.mobiledata.data.SdkConnectionStateRepository
 import io.sentient.mobiledata.data.SdkConversationRepository
 import io.sentient.mobiledata.data.SdkSessionsRepository
 import io.sentient.mobiledata.data.SessionsRepository
+import io.sentient.mobiledata.outbox.OutboundCache
+import io.sentient.mobiledata.usecase.ActivateSessionUseCase
 import io.sentient.mobiledata.usecase.DeleteSessionUseCase
 import io.sentient.mobiledata.usecase.ObserveChatUseCase
 import io.sentient.mobiledata.usecase.ObserveSessionsUseCase
@@ -67,8 +69,23 @@ open class ChatComponent(
     val sessionsRepository: SessionsRepository = SdkSessionsRepository(sdk)
     val connection = SdkConnectionStateRepository(sdk)
 
-    /** The gateway-minted active session id, from the SDK's session.created/switched anchor. */
+    /** Durable gateway-minted anchor, retained across reconnect. */
     val currentSessionId: StateFlow<String?> get() = sdk.currentSessionId
+
+    /** Session authorized for outbound messages on the current transport. */
+    val outboundSessionId: StateFlow<String?> get() = sdk.outboundSessionId
+
+    /** Local route-instance authority; changes even when navigation returns to the same session. */
+    val outboundRouteGeneration: StateFlow<Long?> get() = sdk.outboundRouteGeneration
+
+    /** Durable acknowledged identity, retained across transport loss. */
+    val acknowledgedRoute get() = sdk.acknowledgedRoute
+
+    /** VM-scoped automatic outbox drain, shared by Android and iOS. */
+    fun observeOutbound(cache: OutboundCache): Flow<Unit> = sendMessage.observeReadiness(cache, connection.state)
+
+    /** Read current SDK status, never a lagging native UI projection. */
+    fun flushOutbound(cache: OutboundCache) = sendMessage.flushIfReady(cache, connection.state.value.status)
 
     /** Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Thin
      *  passthrough mirroring [currentSessionId] — a single StateFlow with no combine/mapping
@@ -118,12 +135,30 @@ open class ChatComponent(
     /** The user's Allow / Deny. Fail-closed: silence is never approval (§7.1). */
     fun respondToPermission(requestId: String, approved: Boolean) = sdk.respondToPermission(requestId, approved)
 
-    val observeChat = ObserveChatUseCase(conversationRepository, clock)
+    val observeChat = ObserveChatUseCase(
+        conversationRepository,
+        clock,
+        sdk.assistantActivity,
+    )
     val switchConversation = SwitchConversationUseCase(sessionsRepository)
-    val sendMessage = SendMessageUseCase(conversationRepository, currentSessionId)
+    val sendMessage = SendMessageUseCase(conversationRepository, outboundSessionId, outboundRouteGeneration, sdk.transportGeneration)
     val observeSessions = ObserveSessionsUseCase(sessionsRepository)
+    val activateSession = ActivateSessionUseCase(sessionsRepository)
     val renameSession = RenameSessionUseCase(sessionsRepository)
     val deleteSession = DeleteSessionUseCase(sessionsRepository)
+
+    /** Bind one VM-owned cache to its route request. A pre-authorized deep-link route
+     * reuses the generation claimed by the awaited activation. */
+    fun bindChatRoute(cache: OutboundCache, sessionId: String?, activate: Boolean = true) {
+        val generation = when {
+            activate && sessionId == null -> sdk.beginFreshChatRoute()
+            activate && sessionId != null -> sdk.beginSessionRoute(sessionId)
+            sessionId != null && acknowledgedRoute.value?.sessionId == sessionId &&
+                acknowledgedRoute.value?.generation == outboundRouteGeneration.value -> acknowledgedRoute.value?.generation
+            else -> null
+        }
+        if (generation != null) cache.bindToRoute(generation)
+    }
 
     // ── SDK UI-command passthroughs ───────────────────────────────────────────
     // The chat VM drives voice / TTS / interrupt / reconnect + lifecycle through

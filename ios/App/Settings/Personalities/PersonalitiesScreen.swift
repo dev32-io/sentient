@@ -117,9 +117,11 @@ struct PersonalitiesScreen: View {
             detail: "Open a personality for full instructions and actions.",
             headerStyle: .quiet
         ) {
-            ForEach(Array(vm.personalities.enumerated()), id: \.element.name) { index, personality in
-                personalityRow(personality)
-                if index < vm.personalities.count - 1 { DesignDivider() }
+            LazyVStack(spacing: 0) {
+                ForEach(Array(vm.personalities.enumerated()), id: \.element.name) { index, personality in
+                    personalityRow(personality)
+                    if index < vm.personalities.count - 1 { DesignDivider() }
+                }
             }
         }
     }

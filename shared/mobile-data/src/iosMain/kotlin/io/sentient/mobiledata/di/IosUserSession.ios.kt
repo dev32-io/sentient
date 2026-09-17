@@ -160,6 +160,8 @@ class IosUserSession(
         gatewayWsUrl = safeGatewayWsUrl,
         allowSelfSignedDevHost = allowSelfSignedDevHost,
         token = { bundle.tokenStore.load() ?: "" },
+        isOwnerActive = { !closed },
+        onAuthenticationRequired = { if (!closed) sdk.signalAuthExpired() },
     )
 
     private val sdk: SentientSdk = SentientSdk(
@@ -184,7 +186,12 @@ class IosUserSession(
         },
     )
 
-    private val settingsHttpClient = createSettingsHttpClient(allowSelfSignedDevHost)
+    private val settingsHttpClient = createSettingsHttpClient(
+        allowSelfSignedDevHost = allowSelfSignedDevHost,
+        token = { bundle.tokenStore.load() ?: "" },
+        isOwnerActive = { !closed },
+        onAuthenticationRequired = { if (!closed) sdk.signalAuthExpired() },
+    )
     private val calendarDependency = CalendarDependencyBoundary.initializing()
 
     /** Namespace derivation is synchronous and content-free; database work is not. */
@@ -210,6 +217,7 @@ class IosUserSession(
         onTokenRefreshed = { bundle.tokenStore.save(it) },
         onLoggedOut = onLoggedOut,
         calendarDependency = calendarDependency,
+        onSessionSelected = component.sessionsRepository::switchToFireAndForget,
     )
 
     /** Background initialization is queued after any predecessor teardown. */
@@ -285,6 +293,7 @@ class IosUserSession(
         val runtimeAtClose = calendarLifecycleGate.close {
             calendarDependency.disable(CalendarDependencyUnavailableReason.CLOSED)
         }
+        settings.close()
         calendarDisposalJob = IosCalendarLifecycleQueue.enqueue {
             disposeRuntime(runtimeAtClose)
             calendarScope.cancel()

@@ -4,6 +4,7 @@ import { MUSIC_TOOL_SETTINGS } from "../tools/music/music-tools.js";
 import { WEB_TOOL_SETTINGS } from "../tools/web/web-tools.js";
 import { CALENDAR_TOOL_SETTINGS } from "./product-tools/calendar-provider.js";
 import { homeProductToolProvider } from "./product-tools/home-provider.js";
+import { SCHEDULED_MESSAGE_TOOL_SETTINGS } from "./product-tools/scheduled-message-provider.js";
 
 /** Authoritative prompt-independent metadata for first-class foundation tools.
  * Runtime runners and settings/default projections consume these same product
@@ -36,6 +37,11 @@ export function foundationProductToolMetadata(): readonly FoundationProductToolM
     ...CALENDAR_TOOL_SETTINGS.map((tool) => ({
       ...tool,
       productGroup: "calendar" as const,
+      defaultExposure: "standard" as const,
+    })),
+    ...SCHEDULED_MESSAGE_TOOL_SETTINGS.map((tool) => ({
+      ...tool,
+      productGroup: "scheduled" as const,
       defaultExposure: "standard" as const,
     })),
   ];

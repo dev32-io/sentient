@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
+import type { ScheduleCommands } from "../scheduling/contracts.js";
 import type { NativeToolRunner } from "../tools/tool-broker.js";
 import type {
   FoundationProductGroup,
@@ -57,6 +59,31 @@ describe("product tool provider composition", () => {
       music: provider("music", "music_play"),
     };
     expect([...composeProductToolProviders(slots).keys()]).toEqual(["web_search", "home_state", "music_play"]);
+  });
+
+  it("mounts scheduled-message tools when the authenticated session supplies its commands and capability", () => {
+    const schedules: ScheduleCommands = {
+      create: async () => ({ ok: false, error: { code: "internal", retryable: false } }),
+      patch: async () => ({ ok: false, error: { code: "internal", retryable: false } }),
+      delete: async () => ({ ok: true, value: undefined }),
+      list: async () => ({ ok: true, value: { schedules: [] } }),
+      cards: async () => ({ ok: true, value: { cards: [] } }),
+    };
+    const resource = new PrivateScheduleResource({
+      ownerUserId: "u_aaaaaaaa" as never,
+      resource: "schedule-private",
+      rootPath: "/tmp/u_aaaaaaaa",
+      role: "adult",
+    });
+    const tools = composeProductToolProviders(undefined, { scheduled: { schedules, resource } });
+    expect([...tools.keys()].filter((name) => name.startsWith("scheduled_message_"))).toEqual([
+      "scheduled_message_list",
+      "scheduled_message_create",
+      "scheduled_message_edit",
+      "scheduled_message_pause",
+      "scheduled_message_resume",
+      "scheduled_message_delete",
+    ]);
   });
 
   it("rejects a contribution whose authoritative metadata claims another group", () => {

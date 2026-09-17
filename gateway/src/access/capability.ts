@@ -17,6 +17,8 @@ export type ResourceClass =
   | "memory-household"
   | "calendar-private"
   | "calendar-household"
+  | "schedule-private"
+  | "push-private"
   | "web-artifact";
 
 export interface Capability {

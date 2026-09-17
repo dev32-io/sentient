@@ -18,10 +18,11 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 case "${1:-}" in
-  --release) PROFILE="release" ;;
-  "")        PROFILE="debug" ;;
+  --release) PROFILE="release"; VARIANT="Release" ;;
+  "")        PROFILE="debug";   VARIANT="Debug" ;;
   *) echo "ERROR: unknown argument: $1 (usage: build-gateway.sh [--release])"; exit 1 ;;
 esac
+VARIANT_DEFINE="process.env.SENTIENT_BUILD_VARIANT=\"$VARIANT\""
 
 command -v bun &>/dev/null || { echo "ERROR: bun not found — run 'source scripts/env.sh' first."; exit 1; }
 
@@ -40,10 +41,10 @@ if [ "$PROFILE" = "release" ]; then
   # top-level `await`s in gateway/src/main.ts — it fails the build outright
   # with `"await" can only be used inside an "async" function`. Re-add
   # --bytecode only once the entrypoint no longer uses top-level await.
-  ( cd gateway && bun build src/main.ts --compile --minify \
+  ( cd gateway && bun build src/main.ts --compile --minify --define "$VARIANT_DEFINE" \
       --outfile "$OUT/bin/sentient-gateway" )
 else
-  ( cd gateway && bun build src/main.ts --compile --sourcemap=inline \
+  ( cd gateway && bun build src/main.ts --compile --sourcemap=inline --define "$VARIANT_DEFINE" \
       --outfile "$OUT/bin/sentient-gateway" )
 fi
 

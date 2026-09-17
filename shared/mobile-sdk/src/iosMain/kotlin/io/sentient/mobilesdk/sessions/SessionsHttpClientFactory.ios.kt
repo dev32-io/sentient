@@ -15,6 +15,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import io.sentient.mobilesdk.auth.installAuthenticatedBearer401Observer
 import io.sentient.mobilesdk.log.createLogger
 import kotlinx.serialization.json.Json
 import platform.Foundation.NSURLAuthenticationChallenge
@@ -44,18 +45,26 @@ private val log = createLogger("sessions", "http-client-factory", "ios")
  * @param gatewayWsUrl Full WS URL, e.g. `wss://host/api/v1/ws`.
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
  * @param token Lambda returning the current PASETO session token.
+ * @param onAuthenticationRequired Optional authenticated-owner expiry callback.
  */
 fun createSessionsHttpClient(
     gatewayWsUrl: String,
     allowSelfSignedDevHost: Boolean,
     token: () -> String,
+    isOwnerActive: () -> Boolean = { true },
+    onAuthenticationRequired: (() -> Unit)? = null,
 ): SessionsHttpClient {
     log.info(
         "create",
         mapOf("gatewayWsUrl" to gatewayWsUrl, "allowSelfSignedDevHost" to allowSelfSignedDevHost),
     )
     return SessionsHttpClient(
-        httpClient = buildSessionsHttpClient(allowSelfSignedDevHost),
+        httpClient = buildSessionsHttpClient(
+            allowSelfSignedDevHost = allowSelfSignedDevHost,
+            token = token,
+            isOwnerActive = isOwnerActive,
+            onAuthenticationRequired = onAuthenticationRequired,
+        ),
         gatewayWsUrl = gatewayWsUrl,
         token = token,
     )
@@ -70,30 +79,37 @@ fun createSessionsHttpClient(
  * server certificate against the system trust store.
  */
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-private fun buildSessionsHttpClient(allowSelfSignedDevHost: Boolean): HttpClient =
-    HttpClient(Darwin) {
-        engine {
-            if (allowSelfSignedDevHost) {
-                log.warn(
-                    "DEV-ONLY: TLS certificate validation disabled — self-signed cert trusted",
-                    mapOf("guard" to "allowSelfSignedDevHost=true"),
-                )
-                handleChallenge { _: NSURLSession,
-                                  _: NSURLSessionTask,
-                                  challenge: NSURLAuthenticationChallenge,
-                                  completionHandler: (NSURLSessionAuthChallengeDisposition, NSURLCredential?) -> Unit ->
-                    if (challenge.protectionSpace.authenticationMethod ==
-                        NSURLAuthenticationMethodServerTrust
-                    ) {
-                        val trust: SecTrustRef? = challenge.protectionSpace.serverTrust
-                        val credential: NSURLCredential? =
-                            if (trust != null) NSURLCredential.credentialForTrust(trust) else null
-                        completionHandler(NSURLSessionAuthChallengeUseCredential, credential)
-                    } else {
-                        completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, null)
-                    }
+private fun buildSessionsHttpClient(
+    allowSelfSignedDevHost: Boolean,
+    token: () -> String,
+    isOwnerActive: () -> Boolean,
+    onAuthenticationRequired: (() -> Unit)?,
+): HttpClient = HttpClient(Darwin) {
+    if (onAuthenticationRequired != null) {
+        installAuthenticatedBearer401Observer(token, isOwnerActive, onAuthenticationRequired)
+    }
+    engine {
+        if (allowSelfSignedDevHost) {
+            log.warn(
+                "DEV-ONLY: TLS certificate validation disabled — self-signed cert trusted",
+                mapOf("guard" to "allowSelfSignedDevHost=true"),
+            )
+            handleChallenge { _: NSURLSession,
+                              _: NSURLSessionTask,
+                              challenge: NSURLAuthenticationChallenge,
+                              completionHandler: (NSURLSessionAuthChallengeDisposition, NSURLCredential?) -> Unit ->
+                if (challenge.protectionSpace.authenticationMethod ==
+                    NSURLAuthenticationMethodServerTrust
+                ) {
+                    val trust: SecTrustRef? = challenge.protectionSpace.serverTrust
+                    val credential: NSURLCredential? =
+                        if (trust != null) NSURLCredential.credentialForTrust(trust) else null
+                    completionHandler(NSURLSessionAuthChallengeUseCredential, credential)
+                } else {
+                    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, null)
                 }
             }
         }
-        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }
+    install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+}

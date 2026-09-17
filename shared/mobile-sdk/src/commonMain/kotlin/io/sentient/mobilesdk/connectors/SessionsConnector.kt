@@ -38,6 +38,7 @@ import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Result of [SessionsConnector.list]. Mirrors web-sdk's list result shape. */
 data class SessionsListPage(
@@ -62,6 +63,9 @@ sealed class SessionsChangeEvent {
 class SessionsTimeoutException(val frameType: String) :
     Exception("timeout waiting for $frameType")
 
+/** Thrown when an acknowledged lifecycle command cannot reach the active transport. */
+class SessionsTransportException : Exception("session-transport-unavailable")
+
 /** Thrown when the gateway returns a sessions.error for a lifecycle request. */
 class SessionsRequestException(
     val code: String,
@@ -73,6 +77,7 @@ private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
 
 class SessionsConnector(
     private val send: (ClientMessage) -> Unit,
+    private val sendAwaited: suspend (ClientMessage) -> Unit = { send(it) },
     private val newId: () -> String,
     private val clock: Clock,
     private val httpClient: SessionsHttpClient? = null,
@@ -112,10 +117,10 @@ class SessionsConnector(
     }
 
     private fun onSessionsError(msg: ServerMessage.SessionsError) {
-        // Only the switched-waiter path can receive a sessions.error now; reject it.
-        // requestId is nullable — conversation.activate errors have none; in that case
-        // no waiter exists (fire-and-forget) so the remove is a safe no-op.
-        val waiter = switchedWaiters.remove(msg.requestId)
+        // conversation.activate has no requestId. It is serialized by SentientSdk,
+        // so the sole switch waiter is its correlation boundary.
+        val key = msg.requestId ?: switchedWaiters.keys.singleOrNull()
+        val waiter = key?.let(switchedWaiters::remove)
         if (waiter != null) {
             log.warn("switch.error", mapOf("requestId" to msg.requestId, "code" to msg.code))
             waiter.completeExceptionally(SessionsRequestException(msg.code, ""))
@@ -147,8 +152,13 @@ class SessionsConnector(
     }
 
     private fun onSwitched(msg: ServerMessage.SessionSwitched) {
-        switchedWaiters.remove(msg.sessionId)?.complete(Unit)
+        acknowledgeIgnoredSwitch(msg.sessionId)
         dispatch(SessionsChangeEvent.Switched(msg.sessionId, msg.title, msg.ts))
+    }
+
+    /** Resolve a superseded activation without publishing its stale switch globally. */
+    internal fun acknowledgeIgnoredSwitch(sessionId: String) {
+        switchedWaiters.remove(sessionId)?.complete(Unit)
     }
 
     private fun dispatch(event: SessionsChangeEvent) {
@@ -208,13 +218,18 @@ class SessionsConnector(
         switchedWaiters[sessionId] = deferred
         val id = newId()
         log.info("switchTo", mapOf("sessionId" to sessionId, "requestId" to id))
-        send(ClientMessage.ConversationActivate(sessionId = sessionId))
         try {
-            withTimeout(timeoutMs) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
-            switchedWaiters.remove(sessionId)
-            log.warn("timeout", mapOf("frame" to "session.switched", "sessionId" to sessionId))
-            throw SessionsTimeoutException("session.switched")
+            sendAwaited(ClientMessage.ConversationActivate(sessionId = sessionId))
+            val acknowledged = withTimeoutOrNull(timeoutMs) {
+                deferred.await()
+                true
+            } ?: false
+            if (!acknowledged) {
+                log.warn("timeout", mapOf("frame" to "session.switched", "sessionId" to sessionId))
+                throw SessionsTimeoutException("session.switched")
+            }
+        } finally {
+            if (switchedWaiters[sessionId] === deferred) switchedWaiters.remove(sessionId)
         }
     }
 
@@ -229,6 +244,8 @@ class SessionsConnector(
         createdWaiters.add(deferred)
         val id = newId()
         log.info("newChat", mapOf("requestId" to id))
+        lastMintAtMs = clock.nowMs()
+        pendingMintIntent = INTENT_EXPLICIT
         send(ClientMessage.SessionNew(requestId = id, intent = INTENT_EXPLICIT))
         return try {
             withTimeout(timeoutMs) { deferred.await() }
@@ -246,7 +263,10 @@ class SessionsConnector(
     fun sendNew() = sendNewWithIntent(null)
 
     /** Prepare an intentionally fresh boundary without blocking the composer. */
-    fun startFreshChat() = sendNewWithIntent(INTENT_EXPLICIT)
+    fun startFreshChat() {
+        lastMintAtMs = null
+        sendNewWithIntent(INTENT_EXPLICIT)
+    }
 
     private fun sendNewWithIntent(intent: String?) {
         val now = clock.nowMs()

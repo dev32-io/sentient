@@ -1,3 +1,6 @@
+import { CALENDAR_SCHEMA_STATEMENTS } from "../calendar/schema.js";
+import { SCHEDULING_SCHEMA_STATEMENTS } from "../scheduling/schema.js";
+
 // SQLite schema for the per-user session store (spec §3).
 //
 // One database file per user. WAL mode: appends inside a user serialize on
@@ -126,6 +129,35 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "UPDATE entries SET reply_id = message_id WHERE message_id IS NOT NULL",
       "ALTER TABLE entries DROP COLUMN message_id",
     ],
+  },
+  {
+    version: 5,
+    name: "sessions.scheduled-execution",
+    statements: [
+      "ALTER TABLE sessions ADD COLUMN scheduled_occurrence_id TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_intended_at TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_actual_at TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_turn_id TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_outcome TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_completed_at TEXT",
+      "ALTER TABLE sessions ADD COLUMN scheduled_entry_id TEXT",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_scheduled_occurrence ON sessions (scheduled_occurrence_id) WHERE scheduled_occurrence_id IS NOT NULL",
+    ],
+  },
+  {
+    version: 6,
+    name: "sessions.scheduled-schedule-id",
+    statements: ["ALTER TABLE sessions ADD COLUMN scheduled_schedule_id TEXT"],
+  },
+  {
+    version: 8,
+    name: "private-calendar",
+    statements: CALENDAR_SCHEMA_STATEMENTS,
+  },
+  {
+    version: 9,
+    name: "scheduling-and-notification-cards",
+    statements: SCHEDULING_SCHEMA_STATEMENTS,
   },
 ];
 

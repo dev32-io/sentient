@@ -167,6 +167,10 @@ export interface SessionRegistry {
     ws: ServerWebSocket<SessionData>,
     build: () => SessionHandles,
   ): Attachment;
+  /** Acquire or construct the same resident session without inventing a
+   * socket. Construction is not evaluated for disposal until the caller has
+   * synchronously submitted its work. */
+  ensure(sessionId: string, build: () => SessionHandles): SessionHandles;
   /** Drop one attachment and let the disposal policy decide what that means.
    *  A duplicate or late close (an `attachmentId` that is no longer a member)
    *  is a no-op. */
@@ -406,6 +410,19 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       });
       evaluate(sessionId, resident);
       return attachment;
+    },
+
+    ensure(sessionId, build) {
+      const existing = sessions.get(sessionId);
+      if (existing) return existing.handles;
+      const handles = build();
+      sessions.set(sessionId, { handles, subscribers: createSubscriberSet(sessionId) });
+      log.info("session-registry.resident", {
+        sessionId,
+        residentSessions: sessions.size,
+        reason: "socket-free scheduled acquisition",
+      });
+      return handles;
     },
 
     detach(sessionId, attachmentId) {

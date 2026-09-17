@@ -1,0 +1,81 @@
+schemaVersion: 1
+id: gateway-surfaces
+title: Expose scheduled session cards and compose gateway services
+dependsOn:
+  - scheduled-chat-execution
+description: Make the implemented schedule, scheduled-chat execution and push
+  layers available through the real gateway, and expose a bounded session-backed
+  card query. This owns public mounting and application lifecycle, not the
+  terminal/outbox state machine. The bell inbox remains a list of truncated
+  existing-session previews; normal session listing and resume must stay
+  compatible.
+scope: >-
+  Consume the ready schedule/push handler factories, scheduled-message provider,
+  scheduled-chat runner and outbox adapter. Own `gateway/src/api/router.ts`,
+  scheduled-card query additions to `gateway/src/api/handlers/sessions.ts`,
+  bounded projection/read operations in the session store, central
+  `gateway/src/bootstrap/phase-services.ts` and `create-gateway-services.ts`,
+  product-tool registry/metadata/role-default integration, and necessary service
+  lifecycle/auth-revocation mounting. Do not redesign occurrence
+  finalization/outbox transactions, device revocation cryptography, calendar
+  source integration, or any client UI.
+
+
+  Read the existing session provenance/migration added by scheduled-chat
+  execution. Add only projection indexes/read helpers necessary for bounded
+  cards. Full response text remains in session entries; no notification
+  database, read-state or transcript mirror. Local fixture-control support may
+  be added only where needed to exercise disposable schedules/registrations
+  through supported local APIs, never as a production auth bypass.
+delivery: >-
+  - Implement the documented authenticated scheduled-card query with bounded
+  newest-first pagination/filtering and truncated plain-text previews/status
+  derived from the session store. Resolve current principal/membership on reads,
+  handle missing/removed sessions safely and leave existing session
+  list/messages contracts backward compatible. Do not return or log full content
+  where a bounded preview is expected.
+
+  - Mount schedule and push APIs, actual model provider metadata and role
+  defaults. Ensure ordinary schedule tools are discoverable and mediated with
+  accurate one-time/recurring and calendar-versus-schedule descriptions; tools
+  never bypass authorization. Existing calendar reminders are wired separately
+  afterward.
+
+  - Compose the reusable scheduling service, scheduled-chat executor, outbox
+  queue and push drainer exactly once through the host lifecycle. Start
+  lazily/according to YAML, use current user records for due execution,
+  cancel/shut down bounded work, and preserve normal session-registry
+  retention/revocation behavior. No raw timers or duplicate supervisors in
+  request handlers.
+
+  - Pass protected Gorush configuration/credentials through the established
+  secret/accessor/supervisor paths. Missing push credentials/addon failure
+  yields truthful unavailable status, while schedules, chats and cards keep
+  working. Do not change launchd ownership or run production deployment.
+
+  - Mount exact-generation revoke-only cleanup separately from ordinary
+  authenticated APIs without widening its authority. Wire account
+  revocation/deletion and normal logout/unlink integration; mobile local
+  logout/pending warning is owned by clients. Replacement binding activation and
+  server revocation acknowledgements remain enforced by the push service.
+
+  - Add public-route/composition/projection tests using real temporary stores
+  and controlled runtime/provider adapters: owner isolation, bounded cards
+  surviving one-time cleanup, normal message submit through the composed runner,
+  duplicate startup/shutdown safety, optional push failure, authority refresh,
+  and preserved old session API behavior. Test pending unlink/rebinding protocol
+  without phone delivery. Leave the local stack ready for the calendar source
+  adapter and final outside-in verification; no production actions.
+checks:
+  - bash -lc "source scripts/env.sh && bun test gateway/src/api
+    gateway/src/store gateway/src/scheduling gateway/src/scheduled-chat
+    gateway/src/push"
+  - bash -lc "source scripts/env.sh && bun test gateway/src/bootstrap
+    gateway/src/tools/role-defaults.test.ts && bun run typecheck && git diff
+    --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: Public session projection and service composition are a cohesive
+    gateway boundary once durable execution and provider services exist; keeping
+    them separate avoids overloading the crash-recovery implementation.

@@ -1,18 +1,20 @@
 import MobileData
 
-/// Derives the identity from assistant activity only. Capture/listening never
-/// changes the identity; those semantics stay with the native composer.
-func identityState(
-    for connection: ConnectionState,
-    hasStreamingAssistantText: Bool = false
-) -> SentientIdentityState {
-    if hasStreamingAssistantText || connection.isSpeaking || connection.audioState == .assistantSpeaking {
-        return .responding
+/// Selects at most one row, and never lets stale speech or a new turn's global
+/// cognition animate a previous reply. A null reply is only the live pre-token row.
+func activeAssistantAvatar(
+    in messages: [ChatMessage],
+    activity: AssistantActivityState
+) -> (index: Int, state: SentientIdentityState)? {
+    guard activity.phase != .idle,
+          let turnId = activity.turnId, !turnId.isEmpty,
+          let index = messages.lastIndex(where: { $0.role == "assistant" }) else { return nil }
+    let message = messages[index]
+    guard message.cutoffKind == nil, message.turnId == turnId else { return nil }
+    if let replyId = activity.replyId {
+        guard !replyId.isEmpty, message.replyId == replyId else { return nil }
+    } else {
+        guard message.streaming, message.replyId == nil else { return nil }
     }
-    if connection.cognition == .thinking
-        || connection.cognition == .acting
-        || connection.audioState == .processing {
-        return .thinking
-    }
-    return .idle
+    return (index, activity.phase == .thinking ? .thinking : .responding)
 }

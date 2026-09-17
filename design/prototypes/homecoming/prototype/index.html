@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Sentient · Coming home</title>
+  <link rel="stylesheet" href="assets/fonts.css">
+  <link rel="stylesheet" href="assets/foundation.css">
+  <link rel="stylesheet" href="homecoming.css">
+  <script src="assets/sentient-avatar.js" defer></script>
+  <script src="homecoming.js" defer></script>
+</head>
+<body class="snt-surface" data-view="both">
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="back" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6"/></symbol>
+    <symbol id="chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="settings" viewBox="0 0 24 24"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0M12 14v3"/></symbol>
+    <symbol id="home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v11h14V9M9 20v-7h6v7"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="delete" viewBox="0 0 24 24"><path d="M9 5h12v14H9l-7-7zM12 9l6 6m0-6-6 6"/></symbol>
+    <symbol id="wifi" viewBox="0 0 24 24"><path d="M3 8a15 15 0 0 1 18 0M6 12a10 10 0 0 1 12 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r=".7"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 10a8 8 0 1 0-1 7M20 4v6h-6"/></symbol>
+  </svg>
+  <header class="review-bar">
+    <div class="review-title"><span class="review-dot"></span><strong>Coming home</strong><span class="review-subtitle">A Sentient arrival study</span></div>
+    <div class="review-actions">
+      <div class="view-switch" role="group" aria-label="Preview layout"><i aria-hidden="true"></i><button data-view="both" aria-pressed="true">Together</button><button data-view="mobile" aria-pressed="false">Mobile</button><button data-view="web" aria-pressed="false">Web</button></div>
+      <label class="family-select">Household <select id="household-size" aria-label="Number of sample people"><option value="4">4 people</option><option value="8" selected>8 people</option><option value="14">14 people</option></select></label>
+      <button class="review-reset" id="reset" title="Restart both previews" aria-label="Restart both previews"><svg><use href="#refresh"/></svg></button>
+    </div>
+  </header>
+  <main class="presentation">
+    <section class="study web-study" aria-labelledby="web-label">
+      <header class="study-label"><h1 id="web-label">A little room to arrive.</h1><span>Web · A calm, two-part welcome</span></header>
+      <div class="web-frame">
+        <div class="browser-chrome" aria-hidden="true"><span class="browser-dots"><i></i><i></i><i></i></span><span class="browser-address"><svg><use href="#lock"/></svg>sentient.home</span><span class="browser-chrome-end"></span></div>
+        <section class="app app-web" data-platform="web" aria-label="Web login preview"></section>
+      </div>
+      <p class="study-caption"><span>01</span>Space for the brand. A compact place for everyone.</p>
+    </section>
+    <section class="study mobile-study" aria-labelledby="mobile-label">
+      <header class="study-label"><h2 id="mobile-label">Familiar. Within reach.</h2><span>Mobile · Made for one hand</span></header>
+      <div class="phone-frame">
+        <div class="phone-status" aria-hidden="true"><span>9:41</span><span class="island"></span><span class="phone-indicators"><svg><use href="#wifi"/></svg><span class="battery"></span></span></div>
+        <section class="app app-mobile" data-platform="mobile" aria-label="Mobile login preview"></section>
+        <div class="home-indicator" aria-hidden="true"></div>
+      </div>
+      <p class="study-caption"><span>02</span>Names, not a wall of oversized cards.</p>
+    </section>
+  </main>
+  <footer class="review-footer"><span>Interactive concept · Fictional household · No live connection</span><span>Choose a person to explore sign-in. Demo pin: <b>1234</b></span></footer>
+</body>
+</html>

@@ -56,15 +56,17 @@ struct ChatView: View {
     /// (leveled nav: root category list → per-category pages). The shared UpdateModel
     /// is owned by the host and threaded into the pushed SettingsSheet, not here.
     let onOpenSettings: () -> Void
+    /// Open the session-backed scheduled-message inbox.
+    let onOpenInbox: () -> Void
     /// Logout → host shuts the UserSession down + clears the token.
     let onLogout: () -> Void
-    /// Authentication expiry uses its distinct authenticated-lifecycle entry point.
-    let onAuthenticationExpired: () -> Void
 
     // ── Drawer state ────────────────────────────────────────────────────────────
 
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
+    @State private var messageMeasurementLoading = false
+    @State private var composerHeight: CGFloat = 0
 
     // ── Keep-screen-on (S8) ─────────────────────────────────────────────────────
 
@@ -93,8 +95,8 @@ struct ChatView: View {
         onSelectSession: @escaping (String) -> Void,
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
-        onLogout: @escaping () -> Void,
-        onAuthenticationExpired: @escaping () -> Void
+        onOpenInbox: @escaping () -> Void,
+        onLogout: @escaping () -> Void
     ) {
         _vm = StateObject(wrappedValue: makeVM())
         _historyModel = StateObject(wrappedValue: makeHistoryVM())
@@ -103,8 +105,8 @@ struct ChatView: View {
         self.onSelectSession = onSelectSession
         self.onNewChat = onNewChat
         self.onOpenSettings = onOpenSettings
+        self.onOpenInbox = onOpenInbox
         self.onLogout = onLogout
-        self.onAuthenticationExpired = onAuthenticationExpired
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────────
@@ -117,15 +119,6 @@ struct ChatView: View {
         // OR SPEAKING (isSpeaking, which the SDK now holds until the speaker tail
         // physically drains, not merely until the frame queue empties).
         connection.cognition != .idle || connection.isSpeaking
-    }
-
-    private var currentSentientIdentityState: SentientIdentityState {
-        identityState(
-            for: connection,
-            hasStreamingAssistantText: displayMessages.contains {
-                $0.role == "assistant" && $0.streaming && !$0.content.isEmpty
-            }
-        )
     }
 
     private var voiceActive: Bool { connection.voiceMode == .active }
@@ -158,23 +151,25 @@ struct ChatView: View {
     // ── Root body ─────────────────────────────────────────────────────────────────
 
     var body: some View {
-        SideDrawer(
+        let messages = displayMessages
+        let assistantActivity = vm.state.model.assistantActivity
+
+        return SideDrawer(
             isOpen: $drawerOpen,
             onOpen: {
                 panelNowMs = Int64(Date().timeIntervalSince1970 * 1000)
                 Task { await historyModel.refresh() }
             }
         ) {
-            mainColumn
+            mainColumn(messages: messages, assistantActivity: assistantActivity)
+                .environment(\.sentientIdentityPlaybackEnabled, !drawerOpen)
         } drawer: {
             historySidePanel
                 .background(DuskColors.bg.ignoresSafeArea())
         }
         .connectionState(
             banner: connectionBanner,
-            onReconnect: { vm.reconnect() },
-            authExpired: connection.authExpired,
-            onAuthExpired: onAuthenticationExpired
+            onReconnect: { vm.reconnect() }
         )
         .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
             Task { await historyModel.renameSession(id, title: title) }
@@ -258,63 +253,79 @@ struct ChatView: View {
 
     // ── Main content column ───────────────────────────────────────────────────────
 
-    private var mainColumn: some View {
-        VStack(spacing: 0) {
-            titleBar
-            MessageList(
-                messages: displayMessages,
-                activeMarkMode: currentSentientIdentityState,
-                userName: userName,
-                pending: pending,
-                onRetry: { vm.retry($0) },
-                historyLoading: historyLoading
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay {
-                // History-loading takes precedence: an existing-session switch is
-                // fetching its snapshot, so the list is cleared and a centered
-                // spinner stands in. A brand-new chat keeps historyLoading false →
-                // no spinner. The composer is NEVER gated on this (see below).
-                if historyLoading {
-                    HistoryLoadingOverlay()
-                } else if displayMessages.isEmpty && pending.isEmpty, chatLoadingState != .none {
-                    ChatLoadingView(state: chatLoadingState)
+    private func mainColumn(
+        messages: [ChatMessage],
+        assistantActivity: AssistantActivityState
+    ) -> some View {
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                titleBar
+                MessageList(
+                    messages: messages,
+                    assistantActivity: assistantActivity,
+                    userName: userName,
+                    pending: pending,
+                    onRetry: { vm.retry($0) },
+                    historyLoading: historyLoading,
+                    bottomOcclusion: composerHeight,
+                    initialExistingHistory: activeSessionId != nil,
+                    onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    if historyLoading || messageMeasurementLoading {
+                        HistoryLoadingOverlay()
+                    } else if messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
+                        ChatLoadingView(state: chatLoadingState)
+                    }
+                }
+                if let banner = vm.state.banner {
+                    ContentErrorBanner(
+                        text: banner.text,
+                        canRetry: banner.canRetry,
+                        onRetry: banner.canRetry ? { vm.reconnect() } : nil
+                    )
+                }
+                if let notice = vm.state.reopenFailedNotice {
+                    ReopenFailedNoticeBanner(
+                        noticeText: notice,
+                        onDismiss: { vm.dismissReopenFailedNotice() }
+                    )
                 }
             }
-            // Chat-side error banner (model failure).
-            if let banner = vm.state.banner {
-                ContentErrorBanner(
-                    text: banner.text,
-                    canRetry: banner.canRetry,
-                    onRetry: banner.canRetry ? { vm.reconnect() } : nil
-                )
-            }
-            // One-shot ReopenFailed notice (spec §14). Auto-dismissed by the VM after ~4 s
-            // or earlier on tap. Independent of the repo-failure banner above.
-            if let notice = vm.state.reopenFailedNotice {
-                ReopenFailedNoticeBanner(
-                    noticeText: notice,
-                    onDismiss: { vm.dismissReopenFailedNotice() }
-                )
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            Composer(
-                tasks: tasks,
-                ttsEnabled: connection.prefs.ttsEnabled,
-                talkMode: vm.talkMode,
-                micLevels: vm.micLevels,
-                voiceDisabled: connection.status != .ready,
-                canInterrupt: canInterrupt,
-                onSend: { vm.send($0) },
-                onVoiceIntent: { vm.voiceIntent($0) },
-                onTtsToggle: { vm.toggleTts() },
-                onInterrupt: { vm.interrupt() },
-                onFocusGained: { vm.onComposerFocus() }
-            )
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+
+            composerDock
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .duskTheme()
+    }
+
+    private var composerDock: some View {
+        Composer(
+            tasks: tasks,
+            ttsEnabled: connection.prefs.ttsEnabled,
+            talkMode: vm.talkMode,
+            micLevels: vm.micLevels,
+            voiceDisabled: connection.status != .ready,
+            canInterrupt: canInterrupt,
+            onSend: { vm.send($0) },
+            onVoiceIntent: { vm.voiceIntent($0) },
+            onTtsToggle: { vm.toggleTts() },
+            onInterrupt: { vm.interrupt() },
+            onFocusGained: { vm.onComposerFocus() }
+        )
+        .background(alignment: .top) {
+            LinearGradient(
+                colors: [.clear, DuskColors.bg.opacity(0.94), DuskColors.bg],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: composerHeight + 48)
+            .offset(y: -48)
+            .allowsHitTesting(false)
+        }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
     }
 
     // ── History side panel ────────────────────────────────────────────────────────
@@ -352,8 +363,8 @@ struct ChatView: View {
 
     private var titleBar: some View {
         ChatTitleBar(
-            markMode: currentSentientIdentityState,
             onOpenPanel: { drawerOpen = true },
+            onOpenInbox: onOpenInbox,
             onNewChat: { onNewChat() }
         )
     }

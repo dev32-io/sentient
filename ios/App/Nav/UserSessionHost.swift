@@ -1,17 +1,16 @@
 // ---------------------------------------------------------------------------
 // UserSessionHost — the authed root. Owns the User/Connection-scoped UserSession
 // (@StateObject, built once on entry into the authed branch) and a NavigationStack
-// whose ROOT is the chat surface keyed `.id(activeSessionId)`.
+// whose ROOT is the chat surface keyed by committed route identity.
 //
 // Swift mirror of Android's AppNavHost chat gating:
 //   - The SDK + socket live in UserSession ABOVE the stack, so opening history /
 //     settings / switching conversation never drops the connection.
-//   - Changing `activeSessionId` rebuilds the root ChatView via `.id(...)` → a
-//     fresh thin ChatViewModel (route-recreates-VM analogue). History select sets
-//     `activeSessionId = id`; new chat sets it nil (cold-start mirrors Android:
-//     chat(nil) → a fresh conversation).
-//   - Logout calls userSession.shutdown() + clears the token; RootView's auth
-//     gate then routes to login (the UserSession @StateObject deinits here).
+//   - Every route commitment rebuilds ChatView via `.id(chatRoute)`, including
+//     same-session reopen and repeated new-chat selection. Acknowledged routes
+//     bind existing shared SDK proof without another activation.
+//   - Logout enters UserSession's serialized push/session/auth boundary; RootView's
+//     auth gate then routes to login (the UserSession @StateObject deinits here).
 //
 // Presence: scenePhase drives userSession.pause()/resume() with a cold-start-skip
 // (init already connected) — the first .active after launch is skipped. The OTA
@@ -21,90 +20,180 @@
 import SwiftUI
 import MobileData
 
+@MainActor
+final class ForegroundInboxRefreshController: ObservableObject {
+    private let accountFence: String
+    private let refresh: () async -> Void
+    private var task: Task<Void, Never>?
+    private var trailingInvalidation = false
+    private var generation = 0
+
+    init(accountFence: String, refresh: @escaping () async -> Void) {
+        self.accountFence = accountFence
+        self.refresh = refresh
+    }
+
+    func request(accountFence: String) {
+        guard accountFence == self.accountFence else { return }
+        guard task == nil else {
+            trailingInvalidation = true
+            return
+        }
+        let operation = generation
+        task = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                trailingInvalidation = false
+                await refresh()
+            } while operation == generation && trailingInvalidation && !Task.isCancelled
+            guard operation == generation else { return }
+            task = nil
+        }
+    }
+
+    func cancel() {
+        generation &+= 1
+        task?.cancel()
+        task = nil
+        trailingInvalidation = false
+    }
+
+    deinit { task?.cancel() }
+}
+
 struct UserSessionHost: View {
     /// User/Connection scope: the SDK + ChatComponent live here, above the stack.
     @StateObject private var userSession: UserSession
+    /// User-scoped so route changes cannot discard an in-flight clear or its recovery state.
+    @State private var scheduledInboxViewModel: ScheduledMessagesViewModel
+    @StateObject private var inboxRefresh: ForegroundInboxRefreshController
+    @StateObject private var notificationResume = NotificationResumeController()
+    @ObservedObject private var nativePush = NativePushCoordinator.shared
+    @ObservedObject private var notificationNavigation = NativePushCoordinator.shared.navigation
 
     /// Shared OTA-update state (owned by UpdateGate above). Forwarded to Settings
     /// and re-checked on real foregrounds, riding the same scenePhase resume signal.
     private let updateModel: UpdateModel
 
     let userName: String
-    /// Clears the token via AppConfig → RootView re-routes to login.
-    let onLogout: () -> Void
+    private let accountFence: String
 
-    /// The active conversation id; nil = new chat. Changing it rebuilds the root
-    /// ChatView (and its thin VM) via `.id(chatIdentity)`.
-    @State private var activeSessionId: String?
-    /// Monotonic new-chat nonce. `activeSessionId` never advances off nil for a
-    /// gate-minted chat (the mint re-anchors INSIDE the VM's cache, not here), so
-    /// `onNewChat` setting nil→nil was a SwiftUI `.id` no-op — "+" did nothing from a
-    /// fresh chat. Bumping this on every new-chat forces a distinct identity → a real
-    /// rebuild → a clean nil-route VM, even when already on a new chat.
-    @State private var newChatEpoch = 0
+    @State private var chatRoute = ChatRouteSelection()
     @State private var path: [Route] = []
     /// Identity/data passed to the child editor; the Fish results route remains
     /// the owner of catalog/filter/paging state underneath it.
     @State private var fishEditorEntry: FishVoiceEntry?
 
-    /// Root ChatView identity: the conversation id when one is selected (history),
-    /// else a per-new-chat nonce so each "+" rebuilds a fresh nil-route VM.
-    private var chatIdentity: String { activeSessionId ?? "new-\(newChatEpoch)" }
-
     @Environment(\.scenePhase) private var scenePhase
     /// Cold-start-skip: only resume after a REAL background. The init-connect
     /// already brought the socket up, so the first .active is a no-op.
     @State private var hasBackgrounded = false
+    @State private var authenticationEnding = false
     private let sceneLog = AppLog("nav", "scene")
 
     init(appConfig: AppConfig, updateModel: UpdateModel) {
         userName = appConfig.displayName
-        onLogout = { appConfig.logout() }
+        let fence = "\(appConfig.gatewayWsUrl)|\(appConfig.authenticatedUserId ?? "")"
+        accountFence = fence
         self.updateModel = updateModel
-        _userSession = StateObject(wrappedValue: UserSession(
+        NativePushCoordinator.shared.configure(appConfig: appConfig)
+        let session = UserSession(
             gatewayWsUrl: appConfig.gatewayWsUrl,
             allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
             // This branch is mounted only when AppConfig has a persisted,
             // explicit server-authenticated identity. An empty value is a
             // fail-closed guard for an impossible stale view transition.
             authenticatedUserId: appConfig.authenticatedUserId ?? "",
-            // Settings Account-logout hook (KMP AccountUseCases): drop token →
-            // RootView routes to login. Root "Log out" stays the danger-row wiring below.
+            // UserSession owns push preparation, session teardown, then auth clearing.
             onLoggedOut: { appConfig.logout() }
+        )
+        _userSession = StateObject(wrappedValue: session)
+        let inboxViewModel = ScheduledMessagesViewModel(useCases: session.settings.schedules)
+        _scheduledInboxViewModel = State(initialValue: inboxViewModel)
+        _inboxRefresh = StateObject(wrappedValue: ForegroundInboxRefreshController(
+            accountFence: fence,
+            refresh: { [weak inboxViewModel] in await inboxViewModel?.reloadCards() }
         ))
         // Cold start mirrors Android's CURRENT behavior: enter at chat(nil) → a new
         // conversation. (A resume-vs-new refinement is a separate follow-up.)
-        _activeSessionId = State(initialValue: nil)
     }
 
     var body: some View {
         NavigationStack(path: $path) {
             // VM factories (NOT prebuilt VMs): ChatView wraps them in @StateObject so
-            // each instance owns its VM for its lifetime. `.id(chatIdentity)` makes
+            // each instance owns its VM for its lifetime. `.id(chatRoute)` makes
             // SwiftUI build a FRESH ChatView (hence a fresh @StateObject ChatViewModel)
             // whenever the identity changes — a selected id, or a new-chat nonce bump.
             ChatView(
-                makeVM: { userSession.makeChatVM(sessionId: activeSessionId) },
+                makeVM: {
+                    userSession.makeChatVM(
+                        sessionId: chatRoute.sessionId,
+                        activateOnInit: !chatRoute.acknowledged
+                    )
+                },
                 makeHistoryVM: { userSession.makeHistoryVM() },
                 userName: userName,
-                activeSessionId: activeSessionId,
+                activeSessionId: chatRoute.sessionId,
                 onSelectSession: { id in
-                    activeSessionId = id
+                    chatRoute.select(id)
                     path.removeAll()
                 },
                 onNewChat: {
-                    activeSessionId = nil
-                    newChatEpoch += 1
+                    chatRoute.select(nil)
                     path.removeAll()
                 },
                 onOpenSettings: { path = [.settings] },
-                onLogout: logout,
-                onAuthenticationExpired: authenticationExpired
+                onOpenInbox: openInbox,
+                onLogout: logout
             )
-            .id(chatIdentity)
+            .id(chatRoute)
             .navigationDestination(for: Route.self) { route in
                 destination(for: route)
             }
+        }
+        .allowsHitTesting(!authenticationEnding)
+        .accessibilityHidden(authenticationEnding)
+        .overlay(alignment: .top) {
+            notificationResumeNotice
+                .padding(.horizontal, Space.lg)
+                .padding(.top, Space.md)
+        }
+        .overlay {
+            if authenticationEnding {
+                ProgressView("Signing in again…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DuskColors.bg.ignoresSafeArea())
+            }
+        }
+        .onReceive(notificationNavigation.$destination) { destination in
+            guard destination != nil, !authenticationEnding else { return }
+            Task { @MainActor in
+                guard !authenticationEnding,
+                      let destination = notificationNavigation.take(accountFence: accountFence) else { return }
+                resumeNotificationDestination(destination)
+            }
+        }
+        .onReceive(nativePush.$foregroundInboxInvalidation) { invalidation in
+            guard let invalidation, !authenticationEnding else { return }
+            inboxRefresh.request(accountFence: invalidation.accountFence)
+        }
+        .onAppear {
+            guard !authenticationEnding else { return }
+            if let destination = notificationNavigation.take(accountFence: accountFence) {
+                resumeNotificationDestination(destination)
+            }
+        }
+        .task {
+            for await state in userSession.component.connection.state {
+                guard state.authExpired else { continue }
+                authenticationExpired()
+                return
+            }
+        }
+        .onDisappear {
+            notificationResume.cancel()
+            inboxRefresh.cancel()
+            scheduledInboxViewModel.cancel()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -116,9 +205,11 @@ struct UserSessionHost: View {
                 // (the app-global vitals facade; same instance as init / Settings).
                 VitalsHolder.shared.onAppBackground()
             case .active:
+                guard !authenticationEnding else { return }
                 if hasBackgrounded {
                     sceneLog.info("foreground")
                     userSession.resume()
+                    inboxRefresh.request(accountFence: accountFence)
                     // OTA re-check rides the SAME foreground signal as resume, so it
                     // inherits the cold-start-skip (the launch check is UpdateGate's
                     // one-shot .task) — only on a REAL resume after a background.
@@ -131,16 +222,33 @@ struct UserSessionHost: View {
         }
     }
 
-    /// Logout: tear down the SDK session, then clear the auth gate so RootView
-    /// routes back to login (this view leaves the authed branch → @StateObject deinits).
     private func logout() {
+        guard !authenticationEnding else { return }
+        authenticationEnding = true
+        notificationResume.cancel()
+        inboxRefresh.cancel()
+        scheduledInboxViewModel.cancel()
+        path.removeAll()
+        notificationNavigation.clear()
         userSession.explicitLogout()
-        onLogout()
     }
 
     private func authenticationExpired() {
+        guard !authenticationEnding else { return }
+        authenticationEnding = true
+        let destination = notificationResume.state.destination
+        notificationResume.cancel()
+        inboxRefresh.cancel()
+        scheduledInboxViewModel.cancel()
+        path.removeAll()
+        notificationNavigation.preserve(destination, for: accountFence)
         userSession.authenticationExpired()
-        onLogout()
+    }
+
+    private func openInbox() {
+        guard !authenticationEnding else { return }
+        inboxRefresh.request(accountFence: accountFence)
+        path = [.scheduledInbox]
     }
 
     // ── Settings route graph ─────────────────────────────────────────────────────
@@ -150,6 +258,71 @@ struct UserSessionHost: View {
 
     /// Pop one level off the stack (category page → settings root, or sub → parent).
     private func popRoute() { if !path.isEmpty { path.removeLast() } }
+
+    private func routeToAcknowledgedSession(_ sessionId: String) {
+        guard !authenticationEnding else { return }
+        chatRoute.select(sessionId, acknowledged: true)
+        path.removeAll()
+    }
+
+    private func resumeNotificationDestination(_ destination: NotificationDestination) {
+        guard !authenticationEnding else { return }
+        notificationResume.resume(
+            destination,
+            accountFence: accountFence,
+            activate: { await userSession.activateSession($0) },
+            route: routeToAcknowledgedSession,
+            clear: clearScheduledCard
+        )
+    }
+
+    private func clearScheduledCard(_ sessionId: String) async -> Bool {
+        do {
+            switch onEnum(of: try await userSession.settings.schedules.clearCard(sessionId: sessionId)) {
+            case .success: return true
+            case .failure, .loading: return false
+            }
+        } catch {
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var notificationResumeNotice: some View {
+        switch notificationResume.state {
+        case .idle, .pending, .clearing:
+            EmptyView()
+        case .unavailable:
+            AsyncNotice(
+                kind: .warning,
+                title: "Message unavailable",
+                detail: "This message is no longer available.",
+                retry: notificationResume.dismiss,
+                accessibilityId: "notification-session-unavailable",
+                actionTitle: "Dismiss"
+            )
+        case .retryableFailure(let destination):
+            AsyncNotice(
+                kind: .warning,
+                title: "Couldn't open message",
+                detail: "Check your connection and try again.",
+                retry: { resumeNotificationDestination(destination) },
+                accessibilityId: "notification-session-retry",
+                actionTitle: "Try again"
+            )
+        case .clearFailure(let destination):
+            AsyncNotice(
+                kind: .warning,
+                title: "Message opened",
+                detail: "It couldn't be cleared from Messages. Try clearing it again.",
+                retry: {
+                    notificationResume.retryClear(destination, accountFence: accountFence, clear: clearScheduledCard)
+                },
+                accessibilityId: "notification-session-clear-retry",
+                actionTitle: "Retry clear"
+            )
+        }
+    }
 
     @ViewBuilder
     private func destination(for route: Route) -> some View {
@@ -166,6 +339,10 @@ struct UserSessionHost: View {
             MemoryScreen(settings: settings, onBack: popRoute)
         case .settingsCalendar:
             CalendarSessionRoute(userSession: userSession, onBack: popRoute)
+        case .settingsScheduledMessages:
+            ScheduledMessagesScreen(settings: settings, onBack: popRoute)
+        case .settingsPushNotifications:
+            PushNotificationsScreen(settings: settings, onBack: popRoute)
         case .settingsPersonalities:
             PersonalitiesScreen(settings: settings, onBack: popRoute)
         case .settingsVoice:
@@ -205,10 +382,34 @@ struct UserSessionHost: View {
             SecretsScreen(settings: settings, onBack: popRoute)
         case .settingsDiagnostics:
             DiagnosticsScreen(onBack: popRoute)
+        case .scheduledInbox:
+            ScheduledInboxScreen(
+                viewModel: scheduledInboxViewModel,
+                isOpening: notificationResume.state.isBusy,
+                onBack: popRoute,
+                onSelectSession: { sessionId in
+                    guard let destination = NotificationDestination(sessionId: sessionId) else { return }
+                    resumeNotificationDestination(destination)
+                }
+            )
         case .history:
             // History is presented as the in-chat keeper drawer, not a stack page;
             // this case exists for the typed graph's completeness.
             EmptyView()
         }
+    }
+}
+
+/// Committed native route identity, not SDK intent or transport health. Every route
+/// commitment recreates its VM, including an acknowledged B → B reopen.
+struct ChatRouteSelection: Hashable {
+    private(set) var sessionId: String?
+    private(set) var acknowledged = false
+    private var epoch = 0
+
+    mutating func select(_ sessionId: String?, acknowledged: Bool = false) {
+        self.sessionId = sessionId
+        self.acknowledged = acknowledged
+        epoch += 1
     }
 }

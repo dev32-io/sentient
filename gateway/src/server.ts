@@ -15,7 +15,9 @@ import { createMcpCatalogHandler } from "./api/handlers/mcp-catalog.ts";
 import { createProfileEditHandler } from "./api/handlers/profile-edit.ts";
 import { createProfileHandler } from "./api/handlers/profile.ts";
 import { createProvidersHandler } from "./api/handlers/providers.ts";
+import { createPushHandler } from "./api/handlers/push.ts";
 import { createReadyHandler } from "./api/handlers/ready.ts";
+import { createScheduledMessagesHandler } from "./api/handlers/scheduled-messages.ts";
 import { type RequireAdminFn, createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
 import { createSessionsHandler } from "./api/handlers/sessions.ts";
@@ -30,7 +32,13 @@ import { runApply } from "./apply/orchestrator.ts";
 import type { RouterDeps } from "./apply/router.ts";
 import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
+import {
+  type CalendarReminderScheduler,
+  createCalendarReminderScheduler,
+} from "./calendar/calendar-reminder-scheduler.ts";
 import { getLog } from "./logging/logger.ts";
+import type { PushStore } from "./push/push-store.ts";
+import type { ScheduleService } from "./scheduling/service.ts";
 import {
   type SessionData,
   cleanupSession,
@@ -68,10 +76,18 @@ export interface GatewayServerOptions {
   port: number;
   host: string;
   services: GatewayServices;
+  schedules?: ScheduleService;
+  pushStore?: PushStore;
+  pushProviderUrl?: string;
 }
 
-export function createGatewayServer(options: GatewayServerOptions): Server<SessionData> {
+export type GatewayServer = Server<SessionData> & {
+  closeOwnedResources(): Promise<void>;
+};
+
+export function createGatewayServer(options: GatewayServerOptions): GatewayServer {
   const { services } = options;
+  let calendarReminderScheduler: CalendarReminderScheduler | undefined;
   const adminToken = process.env.ADMIN_TOKEN;
   let activeConnections = 0;
 
@@ -98,6 +114,8 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     installState: services.installState,
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
     requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken, services.auth.users),
+    systemOrchestrator: services.systemOrchestrator,
+    ...(options.pushProviderUrl ? { pushProviderUrl: options.pushProviderUrl } : {}),
   });
   const handleAuth = createAuthHandler({
     auth: services.auth,
@@ -191,13 +209,39 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     tagMaxLen: services.ttsConfig.voice_tag_max_len,
     maxTags: services.ttsConfig.voice_max_tags,
   });
-  const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
+  const handleDiagnostics = createDiagnosticsHandler({
+    tokens: services.auth.tokens,
+  });
+  if (services.schedules && services.calendarConfig) {
+    calendarReminderScheduler = createCalendarReminderScheduler({
+      schedules: services.schedules,
+      accessManager: services.accessManager,
+      calendarConfig: services.calendarConfig,
+      dbFileName: services.dbFileName,
+      resolveUser: async (userId) => {
+        const found = await services.auth.users.get(userId);
+        return found.ok && found.value ? { role: found.value.role, householdId: "home" } : null;
+      },
+      listUsers: async () => {
+        const found = await services.auth.users.list();
+        return found.ok
+          ? found.value.map((user) => ({
+              userId: user.userId,
+              role: user.role,
+              householdId: "home",
+            }))
+          : [];
+      },
+    });
+  }
   const handleCalendar = createCalendarHandler({
     tokens: services.auth.tokens,
     users: services.auth.users,
     accessManager: services.accessManager,
     ...(services.calendarConfig ? { calendarConfig: services.calendarConfig } : {}),
+    dbFileName: services.dbFileName,
     ...(services.calendarHouseholdTimeZone ? { householdTimeZone: services.calendarHouseholdTimeZone } : {}),
+    ...(calendarReminderScheduler ? { reminders: calendarReminderScheduler } : {}),
   });
   const handleSessions = createSessionsHandler({
     tokens: services.auth.tokens,
@@ -205,8 +249,25 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     accessManager: services.accessManager,
     dbFileName: services.dbFileName,
   });
+  const handleScheduledMessages = options.schedules
+    ? createScheduledMessagesHandler({
+        tokens: services.auth.tokens,
+        users: services.auth.users,
+        accessManager: services.accessManager,
+        schedules: options.schedules,
+      })
+    : undefined;
+  const handlePush = options.pushStore
+    ? createPushHandler({
+        tokens: services.auth.tokens,
+        users: services.auth.users,
+        accessManager: services.accessManager,
+        registrations: options.pushStore,
+        revocations: options.pushStore,
+      })
+    : undefined;
 
-  return Bun.serve<SessionData>({
+  const server = Bun.serve<SessionData>({
     port: options.port,
     hostname: options.host,
     // Bun's idleTimeout is in whole seconds, capped at 255. Convert from the
@@ -215,7 +276,10 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     ...(services.tls ? { tls: services.tls } : {}),
 
     error(err: Error): Response {
-      log.warn("server-error", { type: err.constructor.name, message: err.message });
+      log.warn("server-error", {
+        type: err.constructor.name,
+        message: err.message,
+      });
       return new Response("Internal Server Error", { status: 500 });
     },
 
@@ -240,6 +304,8 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         handleDiagnostics,
         handleSessions,
         handleCalendar,
+        ...(handleScheduledMessages ? { handleScheduledMessages } : {}),
+        ...(handlePush ? { handlePush } : {}),
         handleStatic,
       });
       return router(request);
@@ -271,6 +337,13 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         log.info("client-disconnected");
         cleanupSession(ws, services);
       },
+    },
+  });
+  return Object.assign(server, {
+    async closeOwnedResources() {
+      const scheduler = calendarReminderScheduler;
+      calendarReminderScheduler = undefined;
+      await scheduler?.close();
     },
   });
 }
@@ -339,7 +412,13 @@ function buildApplyHandler(
       return runApply(services.applyDeps, userId);
     },
     systemOrchestrator: services.systemOrchestrator ?? {
-      applySubset: async () => ({ state: "idle", services: [], startedAt: null, finishedAt: null }) as never,
+      applySubset: async () =>
+        ({
+          state: "idle",
+          services: [],
+          startedAt: null,
+          finishedAt: null,
+        }) as never,
     },
     registry: services.systemOrchestrator?.registry ?? new Map(),
   };

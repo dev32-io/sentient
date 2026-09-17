@@ -1,0 +1,637 @@
+schemaVersion: 1
+id: scheduled-messages-notifications
+title: Scheduled assistant messages and private device notifications
+kind: story
+spec: >
+  # Spec
+
+
+  ## Outcome
+
+
+  Family members can ask Sentient to reach out later, manage scheduled messages,
+  and enable personal calendar reminders. At the scheduled time, the gateway
+  submits the message as an ordinary user message in a fresh chat session. Users
+  find the result in a simple session-card inbox or through optional phone push;
+  clicking either resumes that session. Even simple reminders go through chat
+  rather than canned notification text.
+
+
+  ## Scope
+
+
+  **Included:** Scheduled messages settings on web and iOS; explicit one-time or
+  recurring schedules; one-time absolute times and relative delays such as in 30
+  minutes; daily/weekly/monthly recurrence in an explicit timezone; model tools
+  to create, view, edit, pause/resume, and delete schedules; gateway-owned
+  one-time cleanup; personal calendar reminders; a bell-accessible list of
+  truncated message cards; push settings on web and iOS; iOS device registration
+  and APNs delivery; per-device privacy defaulting to hidden; and
+  gateway-managed Gorush on mini0.
+
+
+  **Keep it simple:** A cron-like runner using a canonical recurrence rule and
+  established time/recurrence utilities. Users need not enter cron expressions.
+  Scheduling and push delivery have small reusable interfaces, with
+  scheduled-chat behavior outside those layers. Reuse existing chat execution
+  and resume without adding special handling or verification for skills/tools.
+  Retain shared KMP SDK/data work needed by iOS.
+
+
+  **Presentation:** Follow the existing Sentient design language and reuse the
+  shipped design tokens and component libraries on web and iOS. New screens,
+  cards, forms, and reminder controls must not introduce inline hardcoded
+  styling, copied palettes, or page-local replacements for shared controls.
+  Compose existing components; if a genuinely missing primitive is necessary,
+  add the smallest reusable token-backed component in the established library
+  rather than bypassing it.
+
+
+  **Excluded:** Android is deprecated: no Android feature delivery, app
+  builds/E2E, or FCM integration in this work. Removal of existing Android
+  source is also outside this change. A separate inbox read/unread model, unread
+  badges or read-state synchronization, notification-management workflows, a
+  run-history dashboard, a general automation/plugin/DAG framework, arbitrary
+  shell jobs, automatic non-response escalation, implicit family broadcasts, and
+  browser push delivery are excluded. Web still exposes the inbox and settings
+  that accurately explain browser-delivery availability. Production deployment
+  and production test messages are not part of verification.
+
+
+  ## Behavior
+
+
+  ### One-time and recurring messages
+
+  - A user-owned schedule contains a normal user-message body, timing, timezone,
+  and enabled state. Settings show pending one-time and recurring entries with
+  their next run. The tool schema and descriptions explicitly distinguish
+  one-time from recurring scheduling.
+
+  - One-time scheduling accepts an absolute time or a positive relative delay,
+  resolved to an execution instant by the gateway when accepted. Thus 'let's
+  chat about that in 30 minutes' creates a one-time schedule. Store a meaningful
+  message about the referenced topic using available conversational context;
+  clarify if the topic or timing is unclear rather than relying on replaying the
+  originating chat.
+
+  - Recurring schedules remain after each run until deleted; pausing disables
+  execution without removing the entry. They use canonical calendar-style rules
+  for daily/weekly/monthly local wall-clock execution: skip nonexistent DST
+  times, use the first instance of ambiguous times, and skip nonexistent monthly
+  dates.
+
+  - At each due occurrence, submit the saved body as an ordinary user message in
+  a fresh server-minted session using existing chat behavior. Retain scheduling
+  provenance and intended/actual time as metadata. Do not introduce a special
+  reminder execution mode or replay the original chat.
+
+  - The gateway automatically removes a one-time schedule after its execution
+  attempt reaches a terminal outcome. The model does not perform cleanup.
+  Preserve the resulting session and any pending push delivery; push failure
+  must not retain or recreate the consumed schedule. Expired/skipped one-time
+  entries are also cleaned up by the gateway.
+
+  - Editing, pausing, or deleting affects occurrences not yet started, without
+  erasing existing chats. Resolve current user authorization at execution and
+  preserve existing chat/tool policy; scheduling grants no additional
+  permissions.
+
+  - After downtime, execute only the most recent missed occurrence if within a
+  YAML-configured grace window, initially 15 minutes; skip older occurrences
+  rather than replaying a backlog. Record interrupted execution and do not
+  blindly rerun it. Push retries never execute the message again.
+
+
+  ### Calendar versus scheduled-message intent
+
+  - Calendar tools record real-world dated/timed events, appointments, or
+  activities. Scheduled-message tools ask the assistant to reach out or handle a
+  chat request later. Recurrence alone does not imply a calendar event.
+
+  - Both tool families and their arguments must explain this distinction and
+  name the alternative. The scheduled message is the normal user instruction to
+  submit later; timing arguments specify once at/after a time or recurring with
+  a timezone. State explicitly that the gateway consumes one-time entries
+  automatically.
+
+  - 'Chat about that in 30 minutes', 'Remind me to take medicine every morning',
+  and 'Send me my daily news every morning' create schedules, not calendar
+  events. 'Put my dentist appointment on the calendar' creates an event. An
+  explicit event-plus-reminder request creates the event with one linked
+  reminder, not a duplicate independent schedule. Clarify materially ambiguous
+  requests instead of creating both resources.
+
+
+  ### Personal calendar reminders
+
+  - Remind me defaults off and belongs to the acting user, including on
+  household events. Timed events default to a reminder at their start with an
+  optional lead time; all-day events require a chosen reminder time.
+
+  - Recurring reminders follow event/occurrence identity and moved/cancelled
+  occurrences. Event edits update pending reminders; deletion or lost visibility
+  cancels them. Completed conversations remain intact.
+
+  - Calendar create/update tools accept optional reminder settings: omission on
+  update preserves the reminder, explicit disabling removes it. Linked reminders
+  appear in Scheduled messages and use the same fresh-session path. A one-time
+  event reminder is consumed by the gateway; a recurring subscription remains
+  for future occurrences.
+
+
+  ### Simple inbox and session links
+
+  - The bell opens a newest-first list of compact message cards, visually
+  consistent with the existing past-chat list. Each card shows a truncated saved
+  assistant message and points to its sessionId; the full conversation stays in
+  the session store.
+
+  - Clicking a card resumes that session through the existing path. Reuse a
+  lightweight session-backed projection with only the metadata needed to
+  identify these sessions and display their cards; do not add a separate
+  conversation copy or notification lifecycle database.
+
+  - No read/unread state, read receipts, unread badges, or separate
+  notification-management controls are required. Failed/interrupted sessions may
+  show a safe status in place of a missing preview using existing session state;
+  no additional history dashboard is needed.
+
+  - Push is optional and follows the saved response. Disabled/unavailable push
+  does not affect scheduled execution or the card list. One-time schedule
+  cleanup does not remove its card/session.
+
+  - Both card and push links carry the session destination into the existing
+  authenticated resume path, including cold launch and login.
+  Missing/unauthorized sessions show a safe unavailable state; an identifier
+  never grants access.
+
+
+  ### Per-device push privacy
+
+  - Each native installation has an authorized account association, push-enabled
+  state, and independent preview preference. Explicit user action requests OS
+  permission/registers delivery. Settings show actual permission/registration
+  state, support disabling/unlinking, and link to system settings where
+  supported.
+
+  - Hide content is the default: generic New message title with no response,
+  instruction, event title, or identifying preview. Show content includes the
+  saved assistant response as plain text bounded to provider payload limits; the
+  full response remains in the session. Both retain minimal routing metadata.
+
+  - Apply the current device association, enabled state, and privacy on the
+  gateway before each dispatch/retry. Already-dispatched content cannot be
+  recalled. Authenticated inbox previews are independent of lock-screen privacy
+  settings.
+
+  - Logout attempts to unlink the device but always permits immediate local
+  logout. If mini0 is unreachable or unlink fails, clearly warn that push may
+  continue, including previews when enabled, until server-side unlink succeeds.
+  Keep unlink pending and retry when connectivity returns without retaining
+  general account access solely for cleanup; never report the server association
+  removed before acknowledgement.
+
+  - Before an account switch activates a new delivery binding for the
+  installation, disable the old binding. If that cannot be confirmed, the new
+  account may sign in but push stays unavailable/pending rather than carrying
+  over the previous association. Other devices remain unaffected.
+
+  - Token replacement/invalidation affects only that destination. Disabling push
+  or changing one device's privacy does not affect other devices or schedules.
+
+
+  ## Acceptance
+
+
+  - UI and model tools support one-time absolute/delay scheduling and recurring
+  schedules with the same lifecycle behavior. A contextual request to chat in 30
+  minutes becomes one meaningful future user message, not a calendar event.
+
+  - Each executed occurrence uses a fresh resumable session and normal chat
+  submission. No new skill/tool execution subsystem or feature-specific proof of
+  existing skill/tool behavior is required.
+
+  - The gateway consumes one-time schedules automatically after terminal
+  execution or expiry, without a model cleanup call; their sessions/cards and
+  pending push delivery survive. Recurring schedules remain for the next
+  occurrence.
+
+  - Tool and argument descriptions distinguish schedules from calendar events,
+  with representative requests producing only the intended resource and one
+  linked reminder for an explicit event-plus-reminder request.
+
+  - Personal calendar reminders follow authorized event changes/cancellations
+  without duplicate or cross-user execution.
+
+  - The inbox is a past-chat-style list of truncated message cards that resume
+  the identified sessions. It requires no read/unread infrastructure and works
+  without push.
+
+  - Per-device hidden-mode payloads contain no message/event content;
+  content-enabled payloads are size-bounded and route to the same session.
+  Registration and preferences remain account/device scoped.
+
+  - Recovery and delivery retries do not duplicate session creation or blindly
+  replay chat execution. Current authorization and existing session access
+  checks remain in force.
+
+  - Scheduling and push delivery are encapsulated independently of calendar UI
+  and scheduled-chat behavior, enabling future callers without a new general
+  automation framework.
+design: >
+  # Design
+
+
+  ## Approach
+
+
+  Use three small boundaries: a reusable scheduling service that owns when work
+  is due and its durable one-time/recurring lifecycle; a scheduled-message
+  adapter that submits a normal message in a new session; and a reusable
+  push-delivery service that owns device destinations, privacy, and provider
+  dispatch. Keep typed interfaces narrow, with only the current
+  scheduled-message action implemented. Do not expose arbitrary job execution to
+  the model or build speculative plugin machinery.
+
+
+  Reuse existing recurrence/time utilities, chat submission, session storage,
+  client navigation, and past-chat card presentation. The inbox is a minimal
+  projection of scheduled-origin sessions, not a parallel notification state
+  machine. Existing session rows do not currently expose a message preview; add
+  only the bounded projection metadata needed for these cards.
+
+
+  Gorush remains a replaceable APNs transport managed by the host supervisor.
+  Scheduling does not depend on Gorush, and push delivery does not depend on
+  calendar or schedule definitions. Browser push is deferred; Android/FCM
+  integration is excluded.
+
+
+  ## Boundaries and Flow
+
+
+  1. Authenticated settings and mediated tools use the same scheduled-message
+  API. It validates one-time/recurring timing and persists the owner and
+  message; descriptions distinguish this from creating calendar events.
+
+  2. The scheduling service yields a due occurrence with a stable identity. The
+  scheduled-message adapter resolves current authorization, associates one fresh
+  session with that occurrence, and submits the message through normal chat
+  behavior.
+
+  3. On terminal execution, acknowledge the occurrence: consume a one-time job
+  or advance a recurring job. Preserve only the durable completion/deduplication
+  bookkeeping needed for crash safety; removing the schedule must not erase its
+  session or pending delivery. Expired one-time jobs are also consumed by the
+  gateway.
+
+  4. Session-backed card data becomes available through the inbox projection. A
+  saved response can be passed to the push-delivery service with authorized
+  recipient and session destination; it applies per-device privacy and
+  dispatches through its provider adapter. Push retry state is independent of
+  schedule cleanup.
+
+  5. Cards and notification clicks use the existing authenticated session-resume
+  path. Shared mobile layers own shared data; native layers own OS permission,
+  token lifecycle, and notification-click handling.
+
+
+  Calendar reminders are personal subscriptions linked to event/occurrence
+  identity, translated into the same scheduling path; they are not
+  household-wide switches. Calendar data remains untrusted context rather than
+  authority. Existing calendar recurrence semantics remain intact.
+
+
+  Keep scheduling, chat execution, inbox projection, and push delivery
+  separately encapsulated behind explicit interfaces without duplicating
+  conversation content or adding read-state storage. Preserve
+  immutable-principal/capability authorization at public boundaries. Gorush uses
+  private host access, protected credentials, sanitized logging, bounded
+  health/recovery, and provider egress. Operator timing/retry/resource limits
+  belong in YAML. Existing launchd ownership and production deployment
+  procedures remain unchanged.
+
+
+  ## Failure and Verification
+
+
+  Keep enough durable occurrence/session identity to reconcile a saved result
+  and finish one-time cleanup after a crash without another session or message
+  submission. Treat interrupted execution as a terminal recorded outcome rather
+  than claiming exactly-once external effects or blindly replaying chat work.
+  One-time cleanup and push retries are independent; bounded delivery retry must
+  never recreate a consumed job. Preserve recurring next-run behavior and avoid
+  downtime backlogs.
+
+
+  External calls are cancellable and bounded. Revalidate current user/event
+  access and device association at relevant boundaries. Invalid tokens or
+  provider outages affect delivery, not sessions or scheduling. Use existing
+  session failure/unavailable behavior rather than a new notification lifecycle
+  UI. Never log credentials, tokens, prompts, transcripts, or notification
+  bodies.
+
+
+  Local logout is not blocked by offline push unlink. A pending unlink warning
+  accurately exposes the residual delivery window; retry uses only narrowly
+  limited revocation authority, not retained general account credentials.
+  Activation of a replacement account binding is fenced until the old binding is
+  disabled. Verify successful unlink, offline/failing unlink with immediate
+  local teardown, reconnection cleanup, and account replacement without
+  requiring actual phone delivery. Already-dispatched notifications cannot be
+  recalled.
+
+
+  Local E2E proves scheduling, gateway-owned one-time cleanup, model intent
+  selection, calendar linkage, simple card navigation, available settings
+  behavior, recovery, and account isolation on the real stack. Existing chat
+  tests own skill/tool execution; do not add feature-specific re-verification of
+  those internals.
+
+
+  Focused tests at the scheduling and push-adapter boundaries prove
+  recurrence/DST handling, durable cleanup/deduplication, per-device payload
+  privacy/size, token association/revocation, and retry behavior. Adapter tests
+  may substitute provider responses but are not phone-delivery E2E. Actual APNs
+  delivery is optional operator verification with suitable
+  devices/signing/credentials: if unavailable, skip and explicitly report it as
+  unverified rather than block local E2E or claim a pass. Notification-click
+  routing can be exercised independently through a session deep link. Shared KMP
+  tests may use their existing JVM/Android-named unit-test targets solely to
+  verify common code used by iOS; this does not require Android app delivery or
+  testing.
+e2e: >
+  # E2E
+
+
+  ## Scope
+
+
+  Use disposable accounts and schedules on the real local gateway and managed
+  services to verify one-time and recurring messages, gateway-owned cleanup,
+  calendar-versus-schedule model intent, personal reminders, simple truncated
+  session-card lists, available push settings, session-link resume, recovery,
+  and account isolation. Exercise web at desktop/mobile widths and iOS on
+  available supported local clients/simulators. No special skill/tool execution
+  proof is required beyond normal chat behavior. Retain redacted UI evidence and
+  content-free identifiers/statuses; remove only disposable resources.
+
+
+  ## E2E-001 — One-time message creates a chat and cleans itself up
+
+
+  ### Exercise
+
+
+  On the real local stack, create a disposable one-time schedule with a short
+  relative delay through Scheduled messages settings. Let it run with no client
+  attached, then open its inbox card and send a follow-up. Repeat settings
+  creation across web and available iOS clients; do not contact production.
+
+
+  ### Oracle
+
+
+  The saved message runs as an ordinary user message in one fresh session. The
+  gateway removes the consumed one-time entry without any model cleanup action.
+  Its truncated message card remains available, opens that session, and the
+  follow-up continues through existing resume behavior. No special skill/tool
+  behavior is required for this case.
+
+
+  ### Proof
+
+
+  Capture redacted pending/consumed schedule states and card/navigation state
+  with matching occurrence/session identifiers. Reopen settings to establish
+  durable one-time cleanup while the session remains accessible. Retain no
+  message content. Remove only disposable test resources.
+
+
+  ## E2E-002 — Model distinguishes one-time recurring and calendar requests
+
+
+  ### Exercise
+
+
+  Using a disposable local account with an established harmless topic, request
+  'let's chat about that in 30 minutes', a medicine reminder every morning, and
+  a daily news briefing with explicit times/timezone. Separately request a
+  calendar appointment, an appointment with a reminder, and a materially
+  ambiguous request. List, edit, pause/resume, and delete schedules through the
+  model; inspect settings/calendar. Use near-term disposable occurrences to
+  exercise recurring retention rather than waiting 30 minutes.
+
+
+  ### Oracle
+
+
+  The contextual chat request creates a one-time schedule with a meaningful
+  message and gateway-resolved delay. Morning reminder/news requests create
+  recurring schedules, not calendar events; a recurring schedule remains after
+  an occurrence for its next run. Appointment requests create calendar events,
+  explicit event-plus-reminder creates one linked reminder, and ambiguous intent
+  is clarified rather than creating both. Lifecycle changes match settings and
+  paused/deleted schedules do not fire pending occurrences.
+
+
+  ### Proof
+
+
+  Retain resource types/counts, schedule kind/timing, and lifecycle states
+  without chat/message content. Verify no extra calendar event or duplicate
+  reminder and that one-time versus recurring behavior matches the tool
+  arguments. Clean up disposable resources.
+
+
+  ## E2E-003 — Personal calendar reminders follow event lifecycle
+
+
+  ### Exercise
+
+
+  With two disposable household users on the real local stack, enable Remind me
+  for one user through web and available native calendar cards; verify
+  default-off behavior for the other. Exercise the optional model argument,
+  omission on update, and explicit disable. Move/cancel recurring occurrences,
+  delete an event, remove visibility before a reminder, and exercise an all-day
+  event with a chosen reminder time.
+
+
+  ### Oracle
+
+
+  Only subscribed authorized users receive the correct scheduled chats. Pending
+  timing follows moved occurrences; cancelled/deleted/inaccessible events do not
+  fire. Omitted update arguments preserve the reminder and disabling removes it.
+  One-time reminders are consumed by the gateway while recurring subscriptions
+  remain. Existing sessions/cards survive event changes and one-time cleanup.
+
+
+  ### Proof
+
+
+  Capture redacted card/settings/session-list states and
+  event/occurrence/session identifiers and timestamps. Verify one session per
+  due authorized occurrence and no cross-user entries. Remove disposable events,
+  schedules, and accounts.
+
+
+  ## E2E-004 — Simple message cards resume their sessions without push
+
+
+  ### Exercise
+
+
+  Use a disposable local account across web and available iOS clients with push
+  disabled. Let a schedule produce a result, open the bell list, click its
+  truncated message card, and reload/reconnect. Exercise the session deep link
+  from cold launch and through login without requiring a received push. Open a
+  stale link after supported cleanup removes its disposable session.
+
+
+  ### Oracle
+
+
+  The inbox is a compact newest-first message-card list visually consistent with
+  past chats, not a full response feed or read/unread workflow. Its card
+  persists after one-time schedule cleanup and opens the same existing session
+  with the full conversation. Navigation survives cold launch/login, and removed
+  sessions show a safe unavailable state. No push delivery is needed.
+
+
+  ### Proof
+
+
+  Capture redacted list layout and navigation states with matching session
+  identifiers. Assert that displayed previews are bounded without retaining
+  message text. Record deep-link routing independently of OS notification
+  delivery; remove only disposable resources.
+
+
+  ## E2E-005 — Push settings show device privacy and actual availability
+
+
+  ### Exercise
+
+
+  Open push settings on web and available native test clients using a disposable
+  account. Exercise available enable/disable and privacy controls; where
+  supported, request permission, deny it, register/unlink a development
+  installation, and compare two installations' preferences. Do not require or
+  send an actual phone notification. Skip only native registration/permission
+  portions unavailable without suitable platform support or development
+  credentials and record the limitation.
+
+
+  ### Oracle
+
+
+  Web accurately discloses deferred browser delivery. Native settings show
+  actual permission/registration state, default to hidden previews, and keep
+  supported device preferences independent. Denied permission or disabled push
+  does not stop schedules or session cards. Unsupported registration is never
+  presented as successfully enabled. This case makes no claim of provider
+  delivery or lock-screen presentation.
+
+
+  ### Proof
+
+
+  Retain redacted settings states and content-free device aliases; record which
+  platform interactions were exercised and which were skipped. Lower-level
+  push-adapter tests, not this UI case, establish outbound payload privacy/size
+  and token association. Unlink any development registrations and remove
+  disposable resources.
+
+
+  ## E2E-007 — Restart preserves one-time cleanup and recurring progress
+
+
+  ### Exercise
+
+
+  Using disposable local schedules with harmless messages, restart the gateway
+  around execution and one-time cleanup, and temporarily make the managed push
+  dependency unavailable. Include a missed occurrence inside the configured
+  grace window and older ones outside it. Restore services through their normal
+  local lifecycle and inspect pending schedules and session cards. Actual
+  provider receipt is not required.
+
+
+  ### Oracle
+
+
+  An executed occurrence retains one session identity. Completed one-time work
+  is consumed after recovery without another submission; interrupted execution
+  is recorded rather than blindly rerun, and its one-time entry is also cleaned
+  up. Recurring schedules retain the next occurrence. Older missed work is not
+  replayed as a backlog. Push unavailability does not remove saved chats or
+  recreate consumed jobs.
+
+
+  ### Proof
+
+
+  Retain content-free occurrence/session identifiers, schedule presence/absence,
+  timestamps, and submission counts for the cleanup/non-replay invariants.
+  Capture redacted card/settings states and sanitized service transitions.
+  Lower-level tests own exact crash-window and push retry proof. Restore local
+  configuration and remove disposable resources.
+
+
+  ## E2E-008 — Schedules cards and session links preserve account isolation
+
+
+  ### Exercise
+
+
+  With two disposable local accounts, attempt cross-account schedule/card access
+  and session-link opening, and revoke access before a schedule fires. Where
+  development device registration is available, sign out with the gateway
+  temporarily unreachable, restore connectivity for pending unlink, and switch
+  accounts while attempting cross-account destination registration. Otherwise
+  record the platform-specific limitation; authorization and
+  pending-unlink/rebinding state machines still require deterministic boundary
+  tests.
+
+
+  ### Oracle
+
+
+  Another account cannot read/mutate the owner's schedules, see their cards, or
+  treat a session identifier as authorization. Due execution respects current
+  authority. Local logout completes even if unlink fails, with a visible warning
+  that pushes may continue until server acknowledgement; restored connectivity
+  completes pending revocation without retaining general account access. A new
+  delivery binding cannot become active before the old one is disabled. Ordinary
+  chat policy remains unchanged.
+
+
+  ### Proof
+
+
+  Retain sanitized denial outcomes, local auth/pending-unlink state, and
+  content-free binding/schedule/session identifiers. Record the distinction
+  between exercised native association behavior and skipped device-dependent
+  portions. Verify narrow revocation authority, account-switch fencing, and
+  retry behavior in deterministic boundary tests regardless of real-device
+  availability. Restore local connectivity and remove disposable resources.
+
+
+  ## Exclusions
+
+
+  Actual APNs receipt, lock-screen presentation, and notification-tap behavior
+  are not required automated E2E gates. If suitable devices, signing, or
+  development credentials are unavailable, skip those checks and report actual
+  phone delivery unverified; optional operator verification must use authorized
+  development devices, never production messages. iOS registration/OS-permission
+  portions unavailable on the test platform may likewise be skipped with their
+  precise limitation recorded, not treated as passed. Deterministic scheduling
+  and push-adapter tests cover payload privacy, size, association, retry,
+  DST/month-boundary, and crash/cleanup invariants without claiming OS delivery.
+  Android delivery/E2E and FCM integration are excluded because Android is
+  deprecated. Browser push, read/unread synchronization, exhaustive OS behavior,
+  and production smoke are excluded.

@@ -58,9 +58,47 @@ export function deriveCycleStatus(inputs: CycleStatusInputs): CycleStatus {
 // Feed → UI derivation
 // ---------------------------------------------------------------------------
 
+/** First-visible metadata retained for the loaded conversation lifecycle. */
+export interface InflightPresentation {
+  readonly id: string;
+  readonly timestamp: number;
+}
+
+/** Carries first-visible metadata across placeholder → reply → committed echo. */
+export function updateInflightPresentations(
+  presentations: Map<string, InflightPresentation>,
+  previous: readonly InFlightMessage[],
+  next: readonly InFlightMessage[],
+  now = Date.now(),
+): void {
+  for (const entry of next) {
+    const key = entry.replyId ?? entry.turnId;
+    if (presentations.has(key)) continue;
+    const seed = entry.replyId
+      ? previous.find(
+          (prior) => prior.turnId === entry.turnId && prior.replyId === undefined && prior.text.length === 0,
+        )
+      : undefined;
+    presentations.set(
+      key,
+      seed
+        ? (presentations.get(seed.turnId) ?? {
+            id: `inflight-${key}`,
+            timestamp: now,
+          })
+        : { id: `inflight-${key}`, timestamp: now },
+    );
+  }
+}
+
 function buildUserMessage(
   id: string,
-  item: { ts: number; content: string; channel: ConversationUserChannel },
+  item: {
+    ts: number;
+    content: string;
+    channel: ConversationUserChannel;
+    pendingId?: string | undefined;
+  },
 ): ChatMessage {
   return {
     id,
@@ -69,15 +107,20 @@ function buildUserMessage(
     timestamp: item.ts,
     isStreaming: false,
     channel: item.channel,
+    ...(item.pendingId ? { pendingId: item.pendingId } : {}),
   };
 }
 
-function buildAssistantMessage(id: string, item: CommittedFeedItem & { kind: "assistant" }): ChatMessage {
+function buildAssistantMessage(
+  id: string,
+  item: CommittedFeedItem & { kind: "assistant" },
+  presentation?: InflightPresentation,
+): ChatMessage {
   return {
-    id,
+    id: presentation?.id ?? id,
     role: "assistant",
     text: item.content,
-    timestamp: item.ts,
+    timestamp: presentation?.timestamp ?? item.ts,
     isStreaming: false,
     // turnId is the gateway-owned join key carried on the conversation.entry
     // frame (CommittedFeedItem) — read straight through, never invented client-side.
@@ -92,7 +135,12 @@ interface FeedWalk {
   readonly out: ChatMessage[];
 }
 
-function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[], suppressAssistantReplyId?: string) {
+function appendCommittedItems(
+  walk: FeedWalk,
+  items: readonly CommittedFeedItem[],
+  suppressedAssistantReplyIds: ReadonlySet<string>,
+  presentations: ReadonlyMap<string, InflightPresentation> = new Map(),
+) {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (!item) continue;
@@ -120,7 +168,12 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
 
     if (item.kind !== "assistant") continue;
     if (item.content.length === 0 && !item.cutoff) continue;
-    const msg = buildAssistantMessage(stableId, item);
+    const presentation = item.replyId
+      ? presentations.get(item.replyId)
+      : item.turnId
+        ? presentations.get(item.turnId)
+        : undefined;
+    const msg = buildAssistantMessage(stableId, item, presentation);
 
     // Hide ONLY the committed row this live bubble is painting, matched on the
     // reply and nothing else. Prevents the "chunk pop" of committed text
@@ -132,7 +185,7 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
     // and a turn-keyed predicate matched BOTH, blanking the first stretch of
     // the reply for the length of the reveal. Mobile fixed exactly this in
     // `ObserveChatUseCase`; there is one row to hide and no reason to guess.
-    if (suppressAssistantReplyId && msg.replyId === suppressAssistantReplyId) continue;
+    if (msg.replyId && suppressedAssistantReplyIds.has(msg.replyId)) continue;
     walk.out.push(msg);
   }
 }
@@ -146,7 +199,12 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
  * NEWEST bubble only — the typewriter tracks exactly one turn (the one
  * currently producing tokens); anything older already has its full text.
  */
-function appendInflightMessages(walk: FeedWalk, inflight: readonly InFlightMessage[], visibleOverride?: string): void {
+function appendInflightMessages(
+  walk: FeedWalk,
+  inflight: readonly InFlightMessage[],
+  visibleOverride?: string,
+  presentations: ReadonlyMap<string, InflightPresentation> = new Map(),
+): void {
   for (let i = 0; i < inflight.length; i++) {
     const entry = inflight[i];
     if (!entry) continue;
@@ -155,15 +213,14 @@ function appendInflightMessages(walk: FeedWalk, inflight: readonly InFlightMessa
     // before the first delta. bubble-text renders a three-dot pulse when text
     // is empty AND isStreaming — so the user has feedback during LLM TTFB.
     const text = isNewest && visibleOverride !== undefined ? visibleOverride : entry.text;
+    const presentation = presentations.get(entry.replyId ?? entry.turnId);
     walk.out.push({
-      // Keyed by REPLY, falling back to the turn only against a gateway that
-      // does not stamp deltas. A rotation puts two open bubbles under one
-      // turnId, and a turn-keyed render id makes those two Preact siblings
-      // with the same key.
-      id: `inflight-${entry.replyId ?? entry.turnId}`,
+      // Presentation id survives placeholder → reply → committed projection.
+      // Reply rotations without a placeholder still receive distinct ids.
+      id: presentation?.id ?? `inflight-${entry.replyId ?? entry.turnId}`,
       role: "assistant",
       text,
-      timestamp: Date.now(),
+      timestamp: presentation?.timestamp ?? Date.now(),
       isStreaming: true,
       turnId: entry.turnId,
       ...(entry.replyId ? { replyId: entry.replyId } : {}),
@@ -189,9 +246,14 @@ export function deriveMessages(
   inflight: readonly InFlightMessage[],
   visibleOverride?: string,
   suppressAssistantReplyId?: string,
+  inflightPresentations?: ReadonlyMap<string, InflightPresentation>,
 ): ChatMessage[] {
   const walk: FeedWalk = { out: [] };
-  appendCommittedItems(walk, items, suppressAssistantReplyId);
-  appendInflightMessages(walk, inflight, visibleOverride);
+  // Gateway commits conversation.entry before turn.completed. Keep exact live
+  // twins hidden during that overlap so Preact never receives duplicate keys.
+  const suppressedAssistantReplyIds = new Set(inflight.flatMap((entry) => (entry.replyId ? [entry.replyId] : [])));
+  if (suppressAssistantReplyId) suppressedAssistantReplyIds.add(suppressAssistantReplyId);
+  appendCommittedItems(walk, items, suppressedAssistantReplyIds, inflightPresentations);
+  appendInflightMessages(walk, inflight, visibleOverride, inflightPresentations);
   return walk.out;
 }

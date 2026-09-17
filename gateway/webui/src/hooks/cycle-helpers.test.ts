@@ -10,14 +10,19 @@
 
 import type { CommittedFeedItem, InFlightMessage } from "@sentient/web-sdk";
 import { describe, expect, it } from "vitest";
-import { deriveMessages } from "./cycle-helpers.ts";
+import { type InflightPresentation, deriveMessages, updateInflightPresentations } from "./cycle-helpers.ts";
 
 function userEntry(content: string, ts: number): CommittedFeedItem {
   return { entryId: `e-${ts}`, ts, kind: "user", channel: "text", content };
 }
 
 function assistantEntry(content: string, ts: number, turnId?: string): CommittedFeedItem {
-  const base: CommittedFeedItem = { entryId: `e-${ts}`, ts, kind: "assistant", content };
+  const base: CommittedFeedItem = {
+    entryId: `e-${ts}`,
+    ts,
+    kind: "assistant",
+    content,
+  };
   return turnId === undefined ? base : { ...base, turnId };
 }
 
@@ -30,13 +35,55 @@ function liveBubble(turnId: string, replyId: string, text: string): InFlightMess
 }
 
 function triggerEntry(summary: string, ts: number): CommittedFeedItem {
-  return { entryId: `e-${ts}`, ts, kind: "trigger", source: "background-completion", summary };
+  return {
+    entryId: `e-${ts}`,
+    ts,
+    kind: "trigger",
+    source: "background-completion",
+    summary,
+  };
 }
 
 describe("cycle-helpers — one bubble per reply", () => {
+  it("keeps first-visible timestamp and identity through placeholder, deltas, and committed echo", () => {
+    const presentations = new Map<string, InflightPresentation>();
+    const placeholder: InFlightMessage = { turnId: "t1", text: "" };
+    const reply = liveBubble("t1", "m1", "first token");
+
+    updateInflightPresentations(presentations, [], [placeholder], 100);
+    updateInflightPresentations(presentations, [placeholder], [reply], 200);
+    const placeholderProjection = deriveMessages([], [placeholder], undefined, undefined, presentations)[0];
+    const firstDelta = deriveMessages([], [reply], undefined, undefined, presentations)[0];
+    updateInflightPresentations(presentations, [reply], [{ ...reply, text: "more" }], 300);
+    const laterDelta = deriveMessages([], [{ ...reply, text: "more" }], undefined, undefined, presentations)[0];
+    const committed = deriveMessages(
+      [assistantReply("complete", 999, "t1", "m1")],
+      [],
+      undefined,
+      undefined,
+      presentations,
+    )[0];
+
+    expect([placeholderProjection, firstDelta, laterDelta, committed].map((message) => message?.timestamp)).toEqual([
+      100, 100, 100, 100,
+    ]);
+    expect([placeholderProjection, firstDelta, laterDelta, committed].map((message) => message?.id)).toEqual([
+      "inflight-t1",
+      "inflight-t1",
+      "inflight-t1",
+      "inflight-t1",
+    ]);
+  });
+
   it("renders one bubble per assistant item, because the gateway already folded the reply", () => {
     const items = [
-      { entryId: "r1", ts: 1, kind: "assistant", replyId: "r1", content: "one reply, already whole" },
+      {
+        entryId: "r1",
+        ts: 1,
+        kind: "assistant",
+        replyId: "r1",
+        content: "one reply, already whole",
+      },
     ] as const;
     const out = deriveMessages(items as never, []);
     expect(out).toHaveLength(1);
@@ -81,17 +128,35 @@ describe("cycle-helpers — one bubble per reply", () => {
     expect(deriveMessages(committed, [], undefined, "m-other")).toHaveLength(1);
   });
 
+  it("keeps an earlier keyless reply before a later reply commits", () => {
+    const committed = [assistantEntry("earlier", 1, "t1"), userEntry("interruption", 2)];
+
+    expect(deriveMessages(committed, [liveBubble("t1", "m2", "current live")]).map((message) => message.text)).toEqual([
+      "earlier",
+      "interruption",
+      "current live",
+    ]);
+  });
+
   it("reconciles a growing live reply to its durable twin without ever rendering both", () => {
     const committed = [assistantReply("a whole reply", 1, "t1", "m1")];
     const live = [liveBubble("t1", "m1", "a whole reply")];
 
     const draining = deriveMessages(committed, live, "a whole", "m1");
     expect(draining).toHaveLength(1);
-    expect(draining[0]).toMatchObject({ id: "inflight-m1", text: "a whole", isStreaming: true });
+    expect(draining[0]).toMatchObject({
+      id: "inflight-m1",
+      text: "a whole",
+      isStreaming: true,
+    });
 
     const reconciled = deriveMessages(committed, []);
     expect(reconciled).toHaveLength(1);
-    expect(reconciled[0]).toMatchObject({ replyId: "m1", text: "a whole reply", isStreaming: false });
+    expect(reconciled[0]).toMatchObject({
+      replyId: "m1",
+      text: "a whole reply",
+      isStreaming: false,
+    });
   });
 
   it("preserves the protocol interruption distinction on the durable assistant row", () => {
@@ -100,7 +165,22 @@ describe("cycle-helpers — one bubble per reply", () => {
       cutoff: { kind: "interrupt", cancelledTaskIds: [] },
     } as const;
 
-    expect(deriveMessages([interrupted], [])[0]?.cutoff).toEqual({ kind: "interrupt", cancelledTaskIds: [] });
+    expect(deriveMessages([interrupted], [])[0]?.cutoff).toEqual({
+      kind: "interrupt",
+      cancelledTaskIds: [],
+    });
+  });
+
+  it("keeps gateway pending identity and captured streaming time stable across projection updates", () => {
+    const pendingUser = { ...userEntry("hello", 10), pendingId: "pending-1" };
+    const live = [liveBubble("t1", "m1", "growing")];
+    const presentations = new Map([["m1", { id: "inflight-m1", timestamp: 1234 }]]);
+
+    expect(deriveMessages([pendingUser], live, "g", undefined, presentations)).toMatchObject([
+      { pendingId: "pending-1", timestamp: 10 },
+      { replyId: "m1", timestamp: 1234, text: "g" },
+    ]);
+    expect(deriveMessages([pendingUser], live, "grow", undefined, presentations)[1]?.timestamp).toBe(1234);
   });
 
   it("keys the live bubble by reply, so two open bubbles of one turn are distinct render rows", () => {

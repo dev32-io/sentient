@@ -4,6 +4,7 @@ import type { InboundScanConfig, McpCatalog, OrchestratorConfig } from "@sentien
 import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { createFileScope } from "../access/file-scope.js";
+import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
 import { renderConfigsForExistingUsers } from "../admin/boot-migration.js";
 import { createHermesProfileProvisioner } from "../admin/hermes-profile-provisioner.js";
@@ -21,6 +22,10 @@ import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import { createCalendarQueryService } from "../calendar/calendar-query.js";
+import {
+  type CalendarReminderScheduler,
+  createCalendarReminderScheduler,
+} from "../calendar/calendar-reminder-scheduler.js";
 import { openCalendarPersistence } from "../calendar/calendar-store.js";
 import type { CalendarPersistence } from "../calendar/calendar-store.js";
 import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
@@ -64,6 +69,7 @@ import { createConfirmHook, createSessionPermissionBroker } from "../runtime/ses
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { type SessionRuntime, createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
+import type { ScheduleService } from "../scheduling/service.js";
 import { createInboundGate } from "../security/inbound-gate.js";
 import type { InboundGate } from "../security/inbound-gate.js";
 import { scanContent } from "../security/injection-scanner.js";
@@ -364,6 +370,8 @@ export function buildSessionCalendar(
   principal: UserPrincipal,
   resolvedConfig?: CalendarConfig,
   householdTimeZone?: string,
+  reminders?: CalendarReminderScheduler,
+  dbFileName?: string,
 ): SessionCalendar | null {
   if (!orchestratorCfg.calendar.enabled) return null;
 
@@ -380,7 +388,7 @@ export function buildSessionCalendar(
     // One fresh V2 handle per scope. The query service and all three adapters
     // share these handles; no compatibility facade or ambient principal is
     // introduced at the session boundary.
-    privateStore = openCalendarPersistence(privateCap, calendarCfg);
+    privateStore = openCalendarPersistence(privateCap, calendarCfg, dbFileName ? { dbFileName } : {});
     householdStore = openCalendarPersistence(householdCap, calendarCfg);
     const queryService = createCalendarQueryService({
       private: privateStore,
@@ -397,6 +405,7 @@ export function buildSessionCalendar(
         queryService,
         privateCap,
         householdCap,
+        ...(reminders ? { reminders } : {}),
       },
     });
     const nudgeBudget = {
@@ -629,6 +638,7 @@ export interface PhaseServicesInput {
   readonly cfg: StartupConfig;
   readonly auth: AuthService;
   readonly secretsStore: SecretsStore | null;
+  readonly schedules: ScheduleService | undefined;
 }
 
 export interface PhaseServicesOutput {
@@ -691,7 +701,7 @@ export interface PhaseServicesOutput {
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
-  const { cfg, auth, secretsStore } = input;
+  const { cfg, auth, secretsStore, schedules } = input;
   // Resolve this once at the app composition root. Sessions and REST receive
   // the same concrete value rather than independently resolving the sentinel.
   const calendarHouseholdTimeZone = resolveTimeZone().zone();
@@ -728,7 +738,15 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     delegatedNativeTools,
     startDreamScheduler,
     stopDreamScheduler,
-  } = await buildOrchestratorServices(cfg, secretsStore, profileStore, auth, calendarConfig, calendarHouseholdTimeZone);
+  } = await buildOrchestratorServices(
+    cfg,
+    secretsStore,
+    profileStore,
+    auth,
+    calendarConfig,
+    calendarHouseholdTimeZone,
+    schedules,
+  );
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -931,6 +949,7 @@ export async function buildOrchestratorServices(
    *  immutable calendar settings. Optional for direct test harnesses. */
   calendarConfig?: CalendarConfig,
   calendarHouseholdTimeZone?: string,
+  schedules?: ScheduleService,
 ): Promise<OrchestratorServices> {
   // `sharedDataRoot` is optional (T24 activates the household scope); when the
   // operator leaves `access.shared_data_root` unset the AccessManager derives it
@@ -1125,6 +1144,7 @@ export async function buildOrchestratorServices(
     dbFileName: cfg.store.db_filename,
     homeAdapter,
     musicAdapter,
+    ...(schedules ? { schedules } : {}),
   });
 
   // Nightly dreamer (memory-system spec §8, S3a). Wired only when memory + the
@@ -1499,6 +1519,8 @@ interface CreateSessionRuntimeFactoryDeps {
   homeAdapter: HomeAdapter | null;
   /** App-lifetime native Music Assistant connection owner. */
   musicAdapter: MusicAdapter;
+  /** Process-owned schedule commands shared with REST and the due runner. */
+  schedules?: ScheduleService;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -1688,6 +1710,20 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       principal,
       calendarConfig,
       calendarHouseholdTimeZone,
+      deps.schedules
+        ? createCalendarReminderScheduler({
+            schedules: deps.schedules,
+            accessManager,
+            calendarConfig,
+            dbFileName,
+            resolveUser: async (userId) => {
+              if (!auth) return null;
+              const found = await auth.users.get(userId);
+              return found.ok && found.value ? { role: found.value.role, householdId: "home" } : null;
+            },
+          })
+        : undefined,
+      dbFileName,
     );
 
     // The single `native` namespace map the broker resolves under
@@ -1771,6 +1807,14 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       },
       home: { ...(homeAdapter ? { adapter: homeAdapter } : {}) },
       music: { adapter: musicAdapter },
+      ...(deps.schedules
+        ? {
+            scheduled: {
+              schedules: deps.schedules,
+              resource: new PrivateScheduleResource(accessManager.grant(principal, "schedule-private")),
+            },
+          }
+        : {}),
     }))
       nativeTools.set(name, runner);
 
@@ -1828,6 +1872,18 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
       setTitle: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      setScheduledProvenance: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      setScheduledTurn: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      recordScheduledTerminal: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      findScheduledByOccurrence: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
       close: () => {},

@@ -52,9 +52,13 @@ Bump app release versions manually in `ios/project.yml`
 (`versionName`/`versionCode`). Keep Android and iOS app versions aligned for a joint release.
 The shared `mobile-sdk`/`mobile-data` module versions follow their own source track and need not
 numerically match the app release. An iOS-only release leaves the deprecated Android version
-unchanged. Regenerate `ios/App/Info.plist` from `ios/project.yml` with XcodeGen; do not hand-edit
-the generated plist or commit generated Xcode project/scheme state. The scripts do not bump versions.
+unchanged. Debug/Release bundle and APNs identities live in
+`shared/config/build-variants.json`; `scripts/ios-gen-project.sh` projects them into generated
+xcconfigs before XcodeGen runs. Regenerate `ios/App/Info.plist` from `ios/project.yml` with
+XcodeGen; do not hand-edit the generated plist, variant xcconfigs, or Xcode project/scheme state.
+The scripts do not bump versions.
 
-The design-refresh release uses iOS **1.5.0 (build 12)** and shared mobile SDK/data **0.7.0**.
-Its gateway/WebUI counterparts are **1.16.0 / 0.8.0**. These are source version bumps,
+The scheduled-messages and notifications release uses iOS **1.6.0 (build 13)** and shared
+mobile SDK/data **0.8.0**. Its gateway/WebUI counterparts are **1.17.0 / 0.9.0**.
+Deprecated Android remains **1.4.0 (code 15)**. These are source version bumps,
 not evidence that signed artifacts have been built or deployed.

@@ -9,6 +9,7 @@
 //   turn.started    → seed an empty buffer so the UI can render the
 //                     pre-first-token "thinking" placeholder.
 //   turn.text.delta → append text to THAT BUBBLE's buffer.
+//   conversation.entry → name an untouched zero-delta seed from its stamped reply.
 //   turn.completed  → commit + remove every buffer of that turn.
 //   turn.aborted    → drop that turn's buffers (no commit).
 //
@@ -26,6 +27,7 @@
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.sdk.ChatMessage
@@ -60,6 +62,7 @@ class InFlightMessageConnector(
         when (msg) {
             is ServerMessage.TurnStarted -> onTurnStarted(msg.turnId)
             is ServerMessage.TurnTextDelta -> onDelta(msg.turnId, msg.replyId, msg.text)
+            is ServerMessage.ConversationEntry -> onEntry(msg)
             is ServerMessage.TurnCompleted -> onCompleted(msg.turnId)
             is ServerMessage.TurnAborted -> onAborted(msg.turnId, msg.cutoff)
             else -> Unit // not owned by this connector
@@ -126,6 +129,18 @@ class InFlightMessageConnector(
         if (seeded.text.isNotEmpty()) return
         buffers.remove(turnId)
         buffers[key] = seeded.copy(replyId = replyId)
+    }
+
+    private fun onEntry(msg: ServerMessage.ConversationEntry) {
+        val turnId = msg.turnId ?: return
+        val replyId = msg.replyId ?: return
+        if (msg.item !is ConversationFeedItem.Assistant || (replyId != turnId && buffers.containsKey(replyId))) return
+        val seeded = buffers[turnId] ?: return
+        if (seeded.text.isNotEmpty()) return
+        buffers.remove(turnId)
+        buffers[replyId] = seeded.copy(replyId = replyId)
+        onUpdate?.invoke(inflight())
+        onEvent?.invoke(SdkEvent.MessageStarted(turnId, replyId))
     }
 
     private fun onCompleted(turnId: String) {

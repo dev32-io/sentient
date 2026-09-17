@@ -21,6 +21,29 @@ The implemented sessions REST surface is intentionally small:
 - `GET /api/v1/sessions`
 - `GET /api/v1/sessions/:id/messages`
 
+The additive scheduled-message contracts reserve these REST routes (their zod
+schemas are authoritative; runtime mounting lands separately):
+
+- `GET|POST /api/v1/schedules`
+- `PATCH|DELETE /api/v1/schedules/:scheduleId`
+- `GET /api/v1/scheduled-session-cards`
+- `POST /api/v1/push/registrations`
+- `GET|PATCH /api/v1/push/preferences`
+- `POST /api/v1/push/revocations`
+
+Creates carry an idempotency key and mutations carry an expected revision.
+Relative delays are accepted only on create/update input and are returned as one
+resolved absolute instant, so a retry never moves the due time. Cards are a
+bounded, newest-first session projection without read state. Push registration
+is iOS/APNs-only; an installation id is only a correlator. The separately
+returned revocation credential can only disable its exact binding generation.
+Invalid or expired revocation authority returns a typed error, never a false
+revocation acknowledgement. A replacement registration names the exact old
+binding generation. Its new binding remains `pending-old-binding-disable` and
+cannot deliver until that old binding is confirmed disabled; retrying the exact
+idempotent registration request reconciles to the same new binding in `active`
+state. Installation id alone cannot perform this transition.
+
 `conversation.activate` changes the live WebSocket attachment and produces
 `session.switched`; the client then loads committed history through the messages
 route. Search, rename, delete, and preferences are not part of this sessions

@@ -29,6 +29,7 @@ import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createSessionRetentionPolicy } from "../runtime/session-retention-policy.js";
+import { type ScheduleService, createScheduleService } from "../scheduling/service.ts";
 import type { InboundGate } from "../security/inbound-gate.js";
 import { type AuthenticatedSockets, createAuthenticatedSockets } from "../session-handlers/authenticated-sockets.js";
 import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
@@ -86,6 +87,8 @@ export interface GatewayServices {
   readonly installState: InstallState;
   readonly calendarConfig: CalendarConfig | undefined;
   readonly calendarHouseholdTimeZone: string | undefined;
+  /** One process-owned schedule service shared by REST, tools, execution, and reminder reconciliation. */
+  readonly schedules: ScheduleService | undefined;
   readonly hermesVersionPath: string;
   readonly sttHealthUrl: string;
   readonly ttsHealthUrl: string;
@@ -225,6 +228,17 @@ function resolveLostTaskThresholdMs(cfg: StartupConfig): number {
 
 export async function createGatewayServices(cfg: StartupConfig): Promise<GatewayServices> {
   const [auth, state] = await Promise.all([createAuthService(cfg.auth), runPhaseState(cfg)]);
+  const schedules = cfg.scheduling
+    ? createScheduleService({
+        userDataRoot: cfg.access.user_data_root,
+        graceMs: cfg.scheduling.missedGraceMs,
+        sessionDbFileName: cfg.store.db_filename,
+        cardsDefaultPageSize: cfg.scheduling.cardsDefaultPageSize,
+        cardsMaxPageSize: cfg.scheduling.cardsMaxPageSize,
+        inboxMaxEntries: cfg.scheduling.inboxMaxEntries,
+        inboxRetentionMs: cfg.scheduling.inboxRetentionMs,
+      })
+    : undefined;
 
   const {
     installState,
@@ -236,7 +250,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     internalSecretsStore,
   } = state;
 
-  const services = await runPhaseServices({ cfg, auth, secretsStore });
+  const services = await runPhaseServices({ cfg, auth, secretsStore, schedules });
 
   const { systemOrchestrator, bootReconcile } = await runPhaseOrchestrator({
     cfg,
@@ -287,6 +301,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     installState,
     calendarConfig: services.calendarConfig,
     calendarHouseholdTimeZone: services.calendarHouseholdTimeZone,
+    schedules,
     hermesVersionPath,
     sttHealthUrl: cfg.companions.stt_health_url,
     ttsHealthUrl: cfg.companions.tts_health_url,

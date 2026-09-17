@@ -280,10 +280,10 @@ export const DOCK_STYLES = `
 
 .dock-composer__frame > .dock-task-shelf {
   position: relative;
-  z-index: 1;
+  z-index: auto;
   margin: 0 var(--space-lg) -1px;
   padding: 7px 7px var(--space-sm);
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid color-mix(in oklab, var(--color-line) 86%, var(--color-bg-sunk));
   border-block-end: 0;
   border-radius: 14px 14px 0 0;
@@ -310,6 +310,40 @@ export const DOCK_STYLES = `
   flex-direction: column;
   container-type: inline-size;
   animation: dock-task-shelf-reveal 360ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.dock-task-shelf__pills-viewport {
+  position: relative;
+  z-index: 3;
+  min-width: 0;
+}
+.dock-task-shelf__pills-viewport::before,
+.dock-task-shelf__pills-viewport::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset-block: 0;
+  width: 28px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-feedback);
+}
+.dock-task-shelf__pills-viewport::before {
+  inset-inline-start: 0;
+  background: linear-gradient(to right, color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper)), transparent);
+}
+.dock-task-shelf__pills-viewport::after {
+  inset-inline-end: 0;
+  background: linear-gradient(to left, color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper)), transparent);
+}
+.dock-task-shelf__pills-viewport[data-overflow-start="true"]::before,
+.dock-task-shelf__pills-viewport[data-overflow-end="true"]::after {
+  opacity: 1;
+}
+:dir(rtl) .dock-task-shelf__pills-viewport::before {
+  background: linear-gradient(to left, color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper)), transparent);
+}
+:dir(rtl) .dock-task-shelf__pills-viewport::after {
+  background: linear-gradient(to right, color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper)), transparent);
 }
 .dock-task-shelf__pills {
   position: relative;
@@ -361,7 +395,7 @@ export const DOCK_STYLES = `
     inset 0 1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent),
     0 2px 0 color-mix(in oklab, var(--color-bg-sunk) 76%, var(--color-line)),
     0 6px 10px -9px color-mix(in oklab, var(--color-bg-sunk) 92%, transparent);
-  transform: translateY(1px);
+  transform: translateY(-3px);
 }
 .dock-task-pill__name {
   min-width: 0;
@@ -402,16 +436,14 @@ export const DOCK_STYLES = `
   box-shadow: 0 0 var(--space-sm) color-mix(in oklab, var(--color-stop) 48%, transparent);
 }
 .dock-task-shelf__detail-slot {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-rows: 0fr;
-  opacity: 0;
-  transform: translateY(6px);
-  transition: grid-template-rows 360ms cubic-bezier(.16, 1, .3, 1), opacity 180ms ease, transform 360ms cubic-bezier(.16, 1, .3, 1);
+  transition: grid-template-rows var(--motion-state);
 }
 .dock-task-shelf__detail-slot[data-open="true"] {
   grid-template-rows: 1fr;
-  opacity: 1;
-  transform: translateY(0);
 }
 .dock-task-shelf__detail-inner {
   min-height: 0;
@@ -429,7 +461,6 @@ export const DOCK_STYLES = `
   background: color-mix(in oklab, var(--color-paper) 72%, var(--color-bg-sunk));
   color: var(--color-ink);
   box-shadow: var(--plate-shadow);
-  animation: dock-task-detail-enter 220ms cubic-bezier(.16, 1, .3, 1) both;
 }
 .dock-task-shelf .tool-inline-detail__label {
   display: block;
@@ -449,9 +480,6 @@ export const DOCK_STYLES = `
 }
 @keyframes dock-task-shelf-reveal {
   from { opacity: 0; transform: translateY(10px) scale(0.985); }
-}
-@keyframes dock-task-detail-enter {
-  from { opacity: 0; transform: translateY(6px); }
 }
 @keyframes dock-task-pill-enter {
   from { opacity: 0; transform: translateY(6px) scale(0.96); }
@@ -1005,6 +1033,8 @@ export const DOCK_STYLES = `
   .dock-composer__interrupt,
   .dock-task-pill,
   .dock-task-pill__dot,
+  .dock-task-shelf__pills-viewport::before,
+  .dock-task-shelf__pills-viewport::after,
   .dock-task-shelf__detail-slot,
   .dock-voice-capture,
   .dock-voice-capture__primary,
@@ -1017,7 +1047,6 @@ export const DOCK_STYLES = `
     transition: none;
   }
   .dock-task-shelf,
-  .dock-task-shelf .tool-inline-detail,
   .dock-task-pill,
   .dock-task-pill__dot--running,
   .dock-voice-capture--auto::before,

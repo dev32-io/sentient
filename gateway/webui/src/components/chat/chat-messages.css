@@ -11,13 +11,26 @@
   justify-content: center;
   padding-block: 30px 16px;
   padding-inline: clamp(var(--space-md), 3vw, 34px);
-  mask-image: linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - 40px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - 40px),
+    transparent 100%
+  );
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklab, var(--color-ink) 14%, transparent) transparent;
+  scrollbar-color: color-mix(in oklab, var(--color-ink) 14%, transparent)
+    transparent;
 }
 
-.chat-view::-webkit-scrollbar { width: 8px; }
+.chat-view::-webkit-scrollbar {
+  width: 8px;
+}
 .chat-view::-webkit-scrollbar-thumb {
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--color-ink) 14%, transparent);
@@ -30,6 +43,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  padding-bottom: calc(
+    var(--chat-bottom-clear, 0px) + var(--chat-owned-tail, 0px)
+  );
 }
 
 .chat-view__transcript {
@@ -83,81 +99,99 @@
   background: var(--color-line-soft);
 }
 
-/* MessageGroup frame. Role-specific composites only choose identity and
-   semantic surface state; this stable frame owns chronology alignment. */
+/* Identity and body share one swept surface. Both roles keep assistant plate
+   elevation; semantic tint changes face, never depth. */
 .message-bubble {
-  width: min(100%, 840px);
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-md);
+  align-self: flex-start;
   margin-right: auto;
 }
 
 .message-bubble--continuation {
   margin-top: calc(var(--space-lg) * -1);
 }
-
 .message-bubble--user {
-  grid-template-columns: minmax(0, 1fr) 44px;
+  align-self: flex-end;
   margin-right: 0;
   margin-left: auto;
 }
 
-.message-bubble > .snt-avatar,
-.message-bubble__avatar-spacer {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.message-bubble--user > .snt-avatar {
-  grid-column: 2;
-}
-
-.message-bubble__avatar-spacer {
-  display: block;
-  min-height: 44px;
-}
-
 .message-bubble__body {
+  --slate-base: var(--color-paper);
+  --slate-border: var(--color-line-soft);
+  position: relative;
+  isolation: isolate;
+  width: fit-content;
+  max-width: min(100%, 62ch);
   min-width: 0;
-  display: flex;
-  grid-column: 2;
-  grid-row: 1;
-  flex-direction: column;
-  gap: 0;
 }
 
 .message-bubble--user .message-bubble__body {
-  width: min(100%, 58ch);
-  grid-column: 1;
-  justify-self: end;
-  align-items: stretch;
+  --slate-base: var(--color-accent-50);
+  --slate-border: var(--color-accent-soft);
+  max-width: min(100%, 58ch);
+  margin-left: auto;
+}
+
+.message-bubble[data-message-state="thinking"] .message-bubble__body,
+.message-bubble[data-message-state="responding"] .message-bubble__body {
+  width: min(100%, 62ch);
+  --slate-border: var(--color-accent-soft);
+}
+
+.message-bubble[data-message-state="interrupted"] .message-bubble__body {
+  --slate-border: var(--color-clay);
+}
+
+.message-bubble__surface {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.message-bubble__surface-ember {
+  display: none;
+}
+
+.message-bubble[data-message-state="thinking"] .message-bubble__surface-ember,
+.message-bubble[data-message-state="responding"]
+  .message-bubble__surface-ember {
+  display: block;
 }
 
 .message-bubble__meta {
   min-width: 0;
-  min-height: 20px;
+  width: fit-content;
+  max-width: 100%;
   display: flex;
   align-items: center;
-  gap: var(--space-xs);
-  margin: 0 0 var(--space-sm);
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-md) 0;
   color: var(--color-ink-2);
   font: var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
   flex-wrap: wrap;
 }
 
 .message-bubble--user .message-bubble__meta {
-  flex-direction: row;
   justify-content: flex-end;
+  margin-left: auto;
+}
+
+.message-bubble--user .message-bubble__meta > .snt-avatar {
+  order: 3;
 }
 
 .message-bubble__name {
   max-width: min(100%, 38ch);
   overflow: hidden;
   color: var(--color-ink);
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -165,7 +199,6 @@
 .message-bubble__sep {
   color: var(--color-ink-3);
 }
-
 .message-bubble__meta time {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
@@ -173,70 +206,43 @@
 
 .message-bubble__text-wrap {
   position: relative;
-  isolation: isolate;
-  width: fit-content;
-  max-width: min(100%, 62ch);
   min-width: 0;
-  overflow: visible;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
+  overflow: hidden;
 }
 
-.message-bubble[data-message-state="thinking"] .message-bubble__text-wrap,
-.message-bubble[data-message-state="responding"] .message-bubble__text-wrap {
-  width: min(100%, 62ch);
-}
-
-.message-bubble--user .message-bubble__text-wrap {
-  max-width: 100%;
-  margin-left: auto;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
-  color: inherit;
-}
-
-/* The surface is a semantic slate material. Its face and shadow recipe stay
-   in the generated foundation; chat only supplies the role/state base. */
-.message-bubble__surface {
-  --slate-base: var(--color-paper);
-  --slate-border: var(--color-line-soft);
+.message-bubble__activity {
   position: absolute;
-  z-index: -1;
+  z-index: 0;
   inset: 0;
   overflow: hidden;
-  border: 1px solid var(--slate-border);
-  border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
-  background: var(--slate-face);
-  box-shadow: var(--plate-shadow);
+  border-radius: var(--radius-lg);
   pointer-events: none;
-}
-
-.message-bubble--user .message-bubble__surface {
-  --slate-base: var(--color-accent-50);
-  --slate-border: var(--color-accent-soft);
-  border-radius: var(--radius-lg) var(--radius-sm) var(--radius-lg) var(--radius-lg);
-}
-
-.message-bubble[data-message-state="thinking"] .message-bubble__surface,
-.message-bubble[data-message-state="responding"] .message-bubble__surface {
-  --slate-base: var(--color-paper);
-  --slate-border: var(--color-accent-soft);
-}
-
-.message-bubble[data-message-state="interrupted"] .message-bubble__surface {
-  --slate-base: var(--color-paper);
-  --slate-border: var(--color-clay);
 }
 
 .message-bubble__text-inner {
   position: relative;
-  z-index: 0;
+  z-index: 1;
   min-width: 0;
-  padding: var(--space-md) var(--space-lg);
+  padding: var(--space-sm) var(--space-md) var(--space-md);
+}
+
+.message-bubble--continuation .message-bubble__text-inner {
+  padding-top: var(--space-md);
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-bubble--entering {
+  animation: message-enter var(--motion-state) both;
 }
 
 .bubble-text {
@@ -320,7 +326,7 @@
   padding-left: var(--space-md);
   border-left: 2px solid var(--color-accent);
   color: var(--color-ink-2);
-  opacity: .85;
+  opacity: 0.85;
 }
 
 .bubble-text__md a {
@@ -335,12 +341,15 @@
 
 /* Streaming presentation is intentionally outside the Markdown HTML so a
    growing response can update without changing the sanitized content shape. */
+.bubble-text--thinking {
+  display: flex;
+}
+
 .bubble-text__pulse {
-  display: inline-flex;
+  display: flex;
+  min-height: 1lh;
   align-items: center;
   gap: var(--space-xs);
-  height: 1em;
-  vertical-align: text-bottom;
 }
 
 .bubble-text__pulse-dot {
@@ -348,7 +357,7 @@
   height: 6px;
   border-radius: var(--radius-pill);
   background: var(--color-accent);
-  opacity: .4;
+  opacity: 0.4;
   animation: bubble-pulse-dot var(--motion-responding-cadence) infinite;
   animation-delay: initial;
 }
@@ -359,8 +368,16 @@
 }
 
 @keyframes bubble-pulse-dot {
-  0%, 80%, 100% { opacity: .3; transform: scale(.9); }
-  40% { opacity: 1; transform: scale(1.1); }
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.9);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
 }
 
 .bubble-text__caret {
@@ -375,7 +392,9 @@
 }
 
 @keyframes bubble-streaming-caret {
-  50% { opacity: 0; }
+  50% {
+    opacity: 0;
+  }
 }
 
 .bubble-speaking-wave {
@@ -399,9 +418,15 @@
 }
 
 @keyframes speaking-wave {
-  0% { background-position: -60% 0; }
-  50% { background-position: 160% 0; }
-  100% { background-position: -60% 0; }
+  0% {
+    background-position: -60% 0;
+  }
+  50% {
+    background-position: 160% 0;
+  }
+  100% {
+    background-position: -60% 0;
+  }
 }
 
 .interrupt-chip {
@@ -435,62 +460,22 @@
 
 @media (max-width: 860px) {
   .chat-view {
-    padding: 24px 18px var(--chat-bottom-clear, 220px);
+    padding: 24px 18px 16px;
   }
 }
 
 @media (max-width: 620px) {
   .chat-view {
-    padding: 16px 12px var(--chat-bottom-clear, 200px);
+    padding: 16px 12px;
   }
-
   .message-list {
     gap: var(--space-lg);
   }
-
-  .message-bubble {
-    grid-template-columns: 28px minmax(0, 1fr);
-    gap: var(--space-sm);
-  }
-
   .message-bubble--continuation {
     margin-top: calc(var(--space-md) * -1);
   }
-
-  .message-bubble--user {
-    grid-template-columns: minmax(0, 1fr) 28px;
-  }
-
-  .message-bubble > .snt-avatar,
-  .message-bubble__avatar-spacer {
-    min-height: 28px;
-  }
-
-  .message-bubble > .snt-avatar {
-    width: 28px;
-    height: 28px;
-    flex-basis: 28px;
-    font-size: var(--font-size-sm);
-  }
-
-  .message-bubble > .snt-avatar .sentient-identity,
-  .message-bubble > .snt-avatar canvas,
-  .message-bubble > .snt-avatar img {
-    width: 28px !important;
-    height: 28px !important;
-  }
-
   .message-bubble--user .message-bubble__body {
-    width: min(100%, 88%);
-  }
-
-  .message-bubble__meta {
-    min-height: 18px;
-    margin-bottom: var(--space-xs);
-  }
-
-  .message-bubble__text-inner {
-    padding: var(--space-md);
+    max-width: min(100%, 88vw);
   }
 
   .bubble-text__md p {
@@ -509,6 +494,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .message-bubble--entering,
   .bubble-text__pulse-dot,
   .bubble-text__caret,
   .bubble-speaking-wave {
@@ -520,7 +506,9 @@
     transform: none;
   }
 
-  .bubble-text__caret { display: none; }
+  .bubble-text__caret {
+    display: none;
+  }
 
   .bubble-speaking-wave {
     background-position: 50% 0;
@@ -528,8 +516,8 @@
 }
 
 @media (prefers-contrast: more) {
-  .message-bubble__surface {
-    border-color: var(--color-ink-3);
+  .message-bubble__body {
+    --slate-border: var(--color-ink-3);
   }
 
   .interrupt-chip {

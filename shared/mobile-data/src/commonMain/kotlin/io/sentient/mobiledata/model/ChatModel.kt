@@ -2,6 +2,7 @@ package io.sentient.mobiledata.model
 
 import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.protocol.TaskListItem
+import io.sentient.mobilesdk.sdk.AssistantActivityState
 import io.sentient.mobilesdk.sdk.ChatMessage
 
 data class ChatModel(
@@ -11,6 +12,8 @@ data class ChatModel(
      *  [messagesForUi]. */
     val tasks: List<TaskListItem> = emptyList(),
     val pending: List<PendingMessage> = emptyList(),
+    /** Sole assistant row eligible for thinking/responding presentation. */
+    val assistantActivity: AssistantActivityState = AssistantActivityState(),
     /**
      * True while an EXISTING-session switch is fetching history — between the
      * session.switched and the next conversation.snapshot. The message list shows a
@@ -31,6 +34,24 @@ data class ChatModel(
      */
     val reconciledPendingIds: Set<String> = emptySet(),
 ) {
+    /** Preserves existing Swift initializer after assistant activity became model state. */
+    constructor(
+        committed: List<ChatMessage>,
+        live: ChatMessage?,
+        tasks: List<TaskListItem>,
+        pending: List<PendingMessage>,
+        historyLoading: Boolean,
+        reconciledPendingIds: Set<String>,
+    ) : this(
+        committed = committed,
+        live = live,
+        tasks = tasks,
+        pending = pending,
+        assistantActivity = AssistantActivityState(),
+        historyLoading = historyLoading,
+        reconciledPendingIds = reconciledPendingIds,
+    )
+
     /** Committed rows plus the live bubble. Tool rows are NOT here — they are
      *  the composer strip's, fed straight from [tasks]. */
     fun messagesForUi(): List<ChatMessage> = if (live == null) committed else committed + live

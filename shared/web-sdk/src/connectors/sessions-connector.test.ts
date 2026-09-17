@@ -136,6 +136,32 @@ describe("SessionsConnector", () => {
     await expect(p).resolves.toBeUndefined();
   });
 
+  it.each(["unknown", "foreign"])(
+    "switchTo — rejects %s sessions immediately with the same unavailable result",
+    async () => {
+      const sdk = fakeSdk();
+      const c = new SessionsConnector({ rest: makeRest(), timeoutMs: 60_000 });
+      c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+
+      const pending = c.switchTo("s-refused");
+      sdk.emit("sessions.error", { code: "not_found", message: "unknown session" });
+
+      await expect(pending).rejects.toThrow("conversation unavailable");
+    },
+  );
+
+  it("switchTo — ignores request-bound session errors from unrelated commands", async () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest() });
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+
+    const pending = c.switchTo("s-1");
+    sdk.emit("sessions.error", { requestId: "new-chat-1", code: "validation", message: "unrelated" });
+    sdk.emit("session.switched", { sessionId: "s-1", ts: 42 });
+
+    await expect(pending).resolves.toBeUndefined();
+  });
+
   it("switchTo — dispatches switched change event on session.switched", async () => {
     const sdk = fakeSdk();
     const rest = makeRest();
@@ -160,6 +186,29 @@ describe("SessionsConnector", () => {
     const p = c.newChat();
     sdk.emit("session.draft", { draftKey: "d_abc", ts: 1 });
     await expect(p).resolves.toEqual({ draftKey: "d_abc" });
+  });
+
+  it("switchTo — rejects promptly when account connection detaches", async () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest(), timeoutMs: 60_000 });
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+
+    const pending = c.switchTo("s-1");
+    c.detach();
+
+    await expect(pending).rejects.toThrow("session connection closed");
+  });
+
+  it("switchTo — fences overlapping targets instead of misattributing an uncorrelated error", async () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest() });
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+
+    const first = c.switchTo("s-1");
+    await expect(c.switchTo("s-2")).rejects.toThrow("session switch already pending");
+    sdk.emit("session.switched", { sessionId: "s-1", ts: 1 });
+    await expect(first).resolves.toBeUndefined();
+    expect(sdk.sent).toHaveLength(1);
   });
 
   it("switchTo — rejects on timeout", async () => {

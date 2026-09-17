@@ -110,7 +110,11 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/README.md
 
+# Household runtime state accidentally created beneath the source tree.
+/shared/home/
+
 #Pi/PiBox
+/.pi/remote-pi/
 /.pibox/
 !/.pibox/
 /.pibox/*

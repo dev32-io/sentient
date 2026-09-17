@@ -35,12 +35,18 @@ plugins {
 // Bumped to 0.6.0: calendar V2 wire contracts and client operations.
 // Bumped to 0.7.0: design-refresh command binding, voice/lifecycle boundaries,
 // and shared design foundation projection.
-version = "0.7.0"
+// Bumped to 0.8.0: scheduled-message, personal-reminder, session-card, and
+// installation-owned iOS push lifecycle contracts.
+version = "0.8.0"
 
 // The gateway JSON is the cross-client wire fixture. Generate a test-only
 // Kotlin holder from that file instead of copying its values into SDK tests.
 val calendarWireFixture = rootProject.file("gateway/src/calendar/fixtures/calendar-wire.json")
 val generatedCalendarFixtureDir = layout.buildDirectory.dir("generated/calendar-test-fixture")
+val mobileWireFixtures = mapOf(
+    "scheduling/ScheduleGoldenFixture.kt" to rootProject.file("shared/protocol/src/fixtures/schedules-wire.json"),
+    "push/PushGoldenFixture.kt" to rootProject.file("shared/protocol/src/fixtures/push-wire.json"),
+)
 val generateCalendarWireFixture by tasks.registering {
     inputs.file(calendarWireFixture)
     val outputFile = generatedCalendarFixtureDir.map { it.file("io/sentient/mobilesdk/calendar/CalendarGoldenFixture.kt") }
@@ -61,6 +67,22 @@ internal object CalendarGoldenFixture {
 }
 """,
         )
+    }
+}
+
+val generateMobileWireFixtures by tasks.registering {
+    inputs.files(mobileWireFixtures.values)
+    val root = generatedCalendarFixtureDir
+    outputs.dir(root)
+    doLast {
+        mobileWireFixtures.forEach { (relative, fixture) ->
+            val packageName = "io.sentient.mobilesdk." + relative.substringBefore('/').replace('/', '.')
+            val objectName = relative.substringAfter('/').substringBefore('.')
+            val escaped = fixture.readText().replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n")
+            val output = root.get().file("io/sentient/mobilesdk/$relative").asFile
+            output.parentFile.mkdirs()
+            output.writeText("package $packageName\n\ninternal object $objectName { const val JSON: String = \"$escaped\" }\n")
+        }
     }
 }
 
@@ -102,6 +124,7 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
             implementation(libs.kopus)
         }
         commonTest {
@@ -142,7 +165,7 @@ kotlin {
 }
 
 tasks.matching { it.name.contains("compile") && it.name.contains("TestKotlin") }.configureEach {
-    dependsOn(generateCalendarWireFixture)
+    dependsOn(generateCalendarWireFixture, generateMobileWireFixtures)
 }
 
 // Stable KMP compatibility check used by the design-foundation generation harness.

@@ -1,0 +1,82 @@
+schemaVersion: 1
+id: shared-mobile-data
+title: Add shared mobile scheduling cards and device lifecycle data
+dependsOn:
+  - contracts-authority
+description: Provide portable SDK/data behavior used by iOS for
+  scheduled-message settings, simple session cards, personal calendar reminder
+  fields, and per-device push preferences. The iOS app remains a thin UI/OS
+  adapter; Android feature delivery is excluded because Android is deprecated.
+  Normal chat resume already accepts a sessionId; do not build another chat
+  transport or notification database. Pending push unlink must survive local
+  logout without retaining a general account token solely for cleanup.
+scope: >-
+  Own additions/changes inside `shared/mobile-sdk/` and `shared/mobile-data/`,
+  including their module build files, golden-fixture consumption,
+  calendar/session DTO mirrors, HTTP clients, stateless repositories,
+  usecases/experiences, authenticated-scope composition, and iOS export bridges.
+  Reuse `DeviceIdProvider`, existing secure storage patterns,
+  `ChatComponent`/settings user-scope ownership, exhaustive result envelopes,
+  and platform-neutral injected boundaries.
+
+
+  Do not edit Android/iOS app code, root Gradle version catalog, gateway, shared
+  TypeScript schemas, or canonical design-token values. Platform permission/APNs
+  calls belong to the iOS app. Narrow iOS secure storage adapters may live in
+  SDK platform source sets; commonMain must contain no platform types/APIs. Do
+  not add Android-specific feature adapters or FCM support. Contract fixtures
+  from `shared/protocol` are authoritative for the new API shapes; reuse the
+  existing generated-calendar-fixture approach instead of copying independent
+  wire examples.
+
+
+  Retain existing shared-module JVM/common test commands even where Gradle names
+  the target testDebugUnitTest: these prove shared logic consumed by iOS, not
+  Android app behavior. No :android app build, lint, test or emulator work is
+  required.
+delivery: >-
+  - Mirror validated once-at/once-after/recurring, pending next-run, reminder
+  omission/disable, device privacy/status/revocation, and bounded session-card
+  contracts exactly. Reject malformed responses and propagate cancellation with
+  typed user-safe failures.
+
+  - Build user-scoped state/actions for create/list/edit/pause/resume/delete
+  schedules, preview card loading and session selection, and calendar personal
+  reminders. Repositories remain stateless passthroughs; folding/multi-source
+  behavior belongs in usecases. Reuse the existing session resume path and do
+  not cache a second conversation or add unread state.
+
+  - Implement installation-level pending-unlink coordination outside the
+  authenticated session lifetime using only the frozen revoke-only grant and
+  necessary routing metadata. Authenticated data is cleared immediately on
+  logout. Retry bounded unlink when connectivity returns; maintain a truthful
+  pending warning until acknowledgement. New binding activation remains pending
+  until the old generation is revoked. Do not keep a login token or account
+  content solely for retry.
+
+  - Expose minimal native hooks for permission status/token availability,
+  explicit registration, token refresh, safe session-link destination, and
+  settings actions. Securely persist limited revocation credentials using
+  established platform storage; do not log them. Keep client UI and OS
+  notification presentation outside shared data.
+
+  - Add wire-fixture parity, malformed/error mapping, mutation rollback/reload,
+  user-scope teardown, offline unlink/reconnect, stale acknowledgement, invalid
+  grant, and account-switch fencing tests. These lifecycle/security assertions
+  must run without real push credentials. Use existing common/JVM test surfaces
+  and compile the iOS bridge.
+
+  - Leave both shared modules building with no new scheduler implementation,
+  platform APIs in commonMain, or duplicate repositories/transport.
+checks:
+  - bash -lc "source scripts/env.sh && ./gradlew
+    :shared:mobile-sdk:testDebugUnitTest :shared:mobile-data:testDebugUnitTest"
+  - bash -lc "source scripts/env.sh && ./gradlew
+    :shared:mobile-sdk:compileKotlinIosSimulatorArm64
+    :shared:mobile-data:compileKotlinIosSimulatorArm64 && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: Shared DTO/data/lifecycle work remains necessary for iOS and fits one
+    reusable data boundary; the dependent iOS task owns platform UI and provider
+    callbacks.

@@ -1,0 +1,16 @@
+# APNs-only transport. The manifest digest includes linux/arm64 and prevents tag drift.
+image: appleboy/gorush:1.22.0@sha256:2bc21bc98c2253f2d14b4aeb614ec89b72188b2e885d58490ac712cb85a9b8bd
+container_name: sentient-gorush
+networks: [sentient-external]
+ports:
+  - "127.0.0.1:8088:8088"
+env:
+  GORUSH_IOS_KEY_BASE64: ${GORUSH_APNS_KEY_BASE64}
+  GORUSH_IOS_KEY_ID: ${GORUSH_APNS_KEY_ID}
+  GORUSH_IOS_TEAM_ID: ${GORUSH_APNS_TEAM_ID}
+volumes:
+  - ${HOST_CONFIG_DIR}/gorush/config.yml:/config.yml:ro
+# Image entrypoint is /bin/gorush; command is arguments, not another binary.
+command: ["-c", "/config.yml"]
+mem_limit_bytes: 134217728
+cpus: 0.5

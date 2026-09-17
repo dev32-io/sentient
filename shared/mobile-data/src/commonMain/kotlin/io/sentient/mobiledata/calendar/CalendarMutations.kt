@@ -7,6 +7,9 @@ import io.sentient.mobilesdk.calendar.CalendarMutationCommand
 import io.sentient.mobilesdk.calendar.CalendarMutationResult
 import io.sentient.mobilesdk.calendar.CalendarMutationScope
 import io.sentient.mobilesdk.calendar.CalendarPatch
+import io.sentient.mobilesdk.calendar.CalendarReminderInput
+import io.sentient.mobilesdk.calendar.CalendarReminderMode
+import io.sentient.mobilesdk.calendar.CalendarReminderOutput
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.EffectiveOccurrence
 import io.sentient.mobilesdk.calendar.Importance
@@ -92,6 +95,10 @@ data class CalendarMutationDraft(
     val inputTimeZoneId: String? = null,
     /** Effective-occurrence marker; never inferred from occurrenceId alone. */
     val recurring: Boolean = false,
+    /** Current personal reminder. Null is the default-off create state. */
+    val reminder: CalendarReminderInput? = null,
+    /** Update-only intent marker: false omits reminder and preserves server state. */
+    val reminderChanged: Boolean = false,
 ) {
     val rawStart: String get() = start
     val rawEnd: String? get() = end
@@ -153,6 +160,7 @@ data class CalendarMutationDraft(
             expectedRevision = occurrence.revision,
             inputTimeZoneId = inputTimeZoneId,
             recurring = occurrence.isRecurringMutationTarget(),
+            reminder = occurrence.reminder?.toDraftInput(),
         )
 
         /** Adapts a reread result without normalizing its wire temporal values. */
@@ -177,6 +185,7 @@ data class CalendarMutationDraft(
             expectedRevision = event.revision,
             inputTimeZoneId = inputTimeZoneId,
             recurring = event.recurring || event.recurrence != null,
+            reminder = event.reminder?.toDraftInput(),
         )
     }
 }
@@ -467,6 +476,9 @@ private object CalendarCreateInputBuilder {
         require(draft.scope == CalendarScope.PRIVATE || draft.scope == CalendarScope.HOUSEHOLD) {
             validation("Choose a private or household calendar.", "invalid_scope")
         }
+        require(draft.reminder?.enabled != false) {
+            validation("Turn the reminder on or leave it off.", "invalid_reminder")
+        }
         return CalendarCreateInput(
             scope = draft.scope,
             title = draft.title.trim(),
@@ -478,6 +490,7 @@ private object CalendarCreateInputBuilder {
             group = draft.group?.trim()?.takeIf(String::isNotEmpty),
             tags = normalizeTags(draft.tags),
             recurrence = draft.recurrence,
+            reminder = draft.reminder,
         )
     }
 }
@@ -505,6 +518,9 @@ private object CalendarMutationRequestBuilder {
                 // update. Omit the member entirely; null is a clear operation
                 // and is therefore not equivalent to omission.
                 recurrence = recurrencePatch(draft, applyTo),
+                reminder = if (draft.reminderChanged) {
+                    draft.reminder ?: CalendarReminderInput(enabled = false)
+                } else null,
             ),
             scope = scope,
             originalStart = originalStart,
@@ -557,6 +573,7 @@ private fun validateDraft(
             }
         }
         validateRecurrence(draft.recurrence)
+        validateReminder(draft.reminder, draft.allDay)
     }
     if (requireIdentity) {
         if (draft.eventId.isNullOrBlank()) notFound("This calendar event is no longer available.")
@@ -568,6 +585,52 @@ private fun validateDraft(
                     code = "conflict",
                 ),
             )
+        }
+    }
+}
+
+private fun CalendarReminderOutput.toDraftInput(): CalendarReminderInput? = if (!enabled) null else CalendarReminderInput(
+    enabled = true,
+    mode = mode,
+    leadMinutes = leadMinutes,
+    localTime = localTime,
+    timeZone = timeZone,
+)
+
+private fun validateReminder(reminder: CalendarReminderInput?, allDay: Boolean) {
+    if (reminder == null) return
+    if (!reminder.enabled) {
+        require(reminder.mode == null && reminder.leadMinutes == null && reminder.localTime == null && reminder.timeZone == null) {
+            validation("Check the reminder settings.", "invalid_reminder")
+        }
+        return
+    }
+    val validMode = if (allDay) {
+        reminder.mode == CalendarReminderMode.ALL_DAY
+    } else {
+        reminder.mode == CalendarReminderMode.AT_START || reminder.mode == CalendarReminderMode.LEAD
+    }
+    require(validMode) {
+        validation("Choose a reminder time for this event.", "invalid_reminder")
+    }
+    require((reminder.mode == CalendarReminderMode.LEAD) == (reminder.leadMinutes != null)) {
+        validation("Check the reminder lead time.", "invalid_reminder")
+    }
+    reminder.leadMinutes?.let {
+        require(it in 1..43_200) { validation("Choose a reminder from one minute to 30 days before the event.", "invalid_reminder") }
+    }
+    val allDayFieldsPresent = reminder.localTime != null && reminder.timeZone != null
+    require((reminder.mode == CalendarReminderMode.ALL_DAY) == allDayFieldsPresent) {
+        validation("Choose a reminder time and time zone.", "invalid_reminder")
+    }
+    reminder.localTime?.let {
+        require(Regex("^(?:[01]\\d|2[0-3]):[0-5]\\d$").matches(it)) {
+            validation("Choose a valid reminder time.", "invalid_reminder")
+        }
+    }
+    reminder.timeZone?.let {
+        require(runCatching { kotlinx.datetime.TimeZone.of(it) }.isSuccess) {
+            validation("Choose a valid reminder time zone.", "invalid_reminder")
         }
     }
 }

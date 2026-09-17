@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark">
+<title>Sentient · Notification card</title>
+<link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/foundation.css"><link rel="stylesheet" href="style.css">
+<script src="prototype.js" defer></script>
+</head>
+<body>
+<svg class="defs" aria-hidden="true"><symbol id="close" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></symbol><symbol id="back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol><symbol id="more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol><symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol></svg>
+<main>
+<section class="phone" aria-label="Interactive iOS inbox mockup">
+<div class="statusbar" aria-hidden="true"><span>9:41</span><span class="island"></span><span>▰</span></div>
+<header><button class="key icon" aria-label="Back" id="back-button"><svg><use href="#back"/></svg></button><h1>Messages</h1><button class="key danger" id="clear-all">Clear all</button></header>
+<div class="inbox">
+<p class="intro">Scheduled conversations, ready when you are.</p>
+<div class="inbox-tools"><span id="swipe-hint">Swipe left to clear</span><button class="key quiet" id="edit" aria-pressed="false">Edit</button></div>
+<div id="cards"></div>
+<p class="empty" hidden>All clear.<br><span>Your chats are still here.</span></p>
+<p class="footnote">Clearing removes cards from this inbox.<br>Chats and schedules stay.</p>
+</div>
+<div class="home-indicator" aria-hidden="true"></div>
+</section>
+<aside>
+<p class="eyebrow">Sentient · Component study</p>
+<h2>One card.<br>Two surfaces.</h2>
+<p class="lede">The message slides away to reveal a recessed tray. Clear sits just inside its edges, anchored in place throughout the gesture.</p>
+<div class="study" aria-hidden="true">
+<div class="study-well"><div class="study-clear"><svg><use href="#close"/></svg><span>Clear</span></div><div class="study-card"><span>Today · 8:30 am</span><p>Your morning summary<br>is ready to pick up.</p></div></div>
+</div>
+<ol class="notes">
+<li><strong>Raised card</strong><span>Content sets the height. A concave graphite face and compact shadow give the message weight without extra chrome.</span></li>
+<li><strong>Fixed trailing action</strong><span>A slightly smaller clay key sits inside the recessed tray, with a narrow shadowed margin on every exposed side.</span></li>
+<li><strong>Full swipe</strong><span>Only the card travels. Clear keeps its size; “Release to clear” marks the threshold. Drag back to cancel.</span></li>
+</ol>
+<div class="demo-controls"><button class="key" id="reveal">Reveal Clear</button><button class="key quiet" id="reset">Reset demo</button></div>
+<p class="demo-note">Drag cards left, or use Edit to reveal clear actions. Keyboard: Left arrow reveals; Escape closes. Fictional content; no server calls.</p>
+<p id="announcement" class="announcement" role="status" aria-live="polite"></p>
+</aside>
+</main>
+<dialog id="dialog"><h2 id="dialog-title"></h2><p id="dialog-copy"></p><div class="dialog-actions"><button class="key" id="dialog-cancel">Close</button><button class="key danger" id="dialog-confirm" hidden>Clear all</button></div></dialog>
+</body>
+</html>

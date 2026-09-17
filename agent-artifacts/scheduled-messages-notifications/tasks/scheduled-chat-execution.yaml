@@ -1,0 +1,88 @@
+schemaVersion: 1
+id: scheduled-chat-execution
+title: Execute scheduled chats with atomic completion and delivery handoff
+dependsOn:
+  - schedule-service
+  - push-service
+description: "Own the complete scheduled-execution invariant: one claimed
+  occurrence creates one fresh normal chat session; its durable terminal result
+  is reconciled into a delivery reference and one-time consumption or recurring
+  advancement without replaying the message. This task alone implements the
+  terminal/session/outbox transaction and all crash-window proof. Keep ordinary
+  chat behavior unchanged; neither skill execution nor headless tool policy is
+  redesigned."
+scope: >-
+  Consume persistent schedule management and the provider-independent push
+  interfaces. Own a new `gateway/src/scheduled-chat/` adapter and completion
+  tests; occurrence/session association, finalization and outbox
+  schema/operations in `gateway/src/scheduling/`; the necessary socket-free
+  acquisition and terminal-observer seams in
+  `gateway/src/session-handlers/session-registry.ts`, shared session-handle
+  construction, `gateway/src/runtime/session-handles.ts` and
+  `session-runtime.ts`; and minimal provenance migration in the existing session
+  metadata/store. A narrow factory callback forwarding change in
+  `gateway/src/bootstrap/phase-services.ts` is permitted, but public service
+  mounting belongs to the next gateway task.
+
+
+  Do not implement REST card queries, central API router/tool metadata,
+  credential provisioning, calendar subscriptions/mutations, or client UI. Do
+  not create a second live-runtime registry, fake WebSocket, notification inbox
+  database, or independent response copy. The append-only session store remains
+  authoritative.
+delivery: >-
+  - Resolve the current owner principal, allocate or recover the occurrence's
+  session through existing mintSessionId/createSession mintKey uniqueness, and
+  submit the message through the normal conversational path. Stable
+  occurrence/pending identity prevents duplicate session allocation and
+  duplicate append after retries. Store only minimal scheduled
+  provenance/intended/actual timing metadata.
+
+  - Add a socket-free registry acquire/ensure path so a later client joins the
+  same runtime, fanout/journal and retention/revocation ownership. Preserve
+  normal no-window permission denial and normal background-work retention. Do
+  not dispose a still-working session merely because the scheduled originating
+  turn ended. Use a content-free emitter/observer; createLoggingTurnEmitter
+  currently logs text previews and must not be reused unmodified.
+
+  - Observe the originating turn's durable terminal outcome, not submit return,
+  running=false, or the retention-only onWorkSettled callback. Match completion
+  to the occurrence even if later ordinary turns occur. Failed/interrupted
+  attempts are consumed and recorded truthfully, not blindly replayed.
+
+  - Implement a single transaction in the schedule execution store that marks
+  the occurrence terminal, inserts an idempotent eligible session-response
+  outbox reference, and consumes its one-time job or advances the recurring job.
+  Queue references and receipts survive active-job deletion with no cascading
+  loss. The push service drains through its existing injected interface and
+  never calls the chat executor.
+
+  - Session outcome and schedule store are separate durable boundaries:
+  explicitly reconcile a saved session terminal record before finalization after
+  restart. A crash after assistant commit but before finalize must recover
+  without another turn; a crash after finalize must retain the outbox. Ambiguous
+  interrupted execution is recorded rather than retried. Expose the finished
+  queue adapter and runner factory for composition, including bounded
+  startup/shutdown/cancellation.
+
+  - Prove claim/session mint/append duplication, completion-before-cleanup
+  ordering, failures/interruption, all commit/crash boundaries, recurrent
+  advancement, stale edit/pause/delete generation, one-time cleanup independent
+  of push, and client attachment to a live scheduled session. Use controlled
+  provider outcomes and temporary stores, not real providers or special
+  skill/tool tests. Leave a clean committed execution boundary ready to mount.
+checks:
+  - bash -lc "source scripts/env.sh && bun test gateway/src/scheduled-chat
+    gateway/src/scheduling gateway/src/store
+    gateway/src/session-handlers/session-registry.test.ts"
+  - bash -lc "source scripts/env.sh && bun test
+    gateway/src/runtime/session-runtime.test.ts
+    gateway/src/runtime/session-retention.test.ts && bun run --filter
+    @sentient/gateway typecheck && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: The terminal observer, durable finalize/outbox transaction, and
+    replay fencing must stay together. Excluding REST projection, public
+    mounting, calendar integration and deployment keeps this a focused medium
+    implementation boundary.

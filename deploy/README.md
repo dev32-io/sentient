@@ -31,8 +31,9 @@ The image bakery builds:
 - `sentient/ingress-proxy:local`
 - `sentient/inbound-proxy:local`
 
-SearXNG and egress-proxy use configured public images that the gateway pulls
-and manages. Compose does not define runtime networks or start any service.
+SearXNG, egress-proxy, and optional Gorush use configured public images that
+the gateway pulls and manages. Compose does not define runtime networks or
+start any service.
 
 ## Build and install
 
@@ -117,6 +118,40 @@ The first-run web wizard stores admin, provider, and integration settings in
 the operator state tree. Process-only secrets required by a native addon, such
 as deep-memory's bearer tokens, must be provided to the gateway launchd
 environment and must not be placed in `config.yaml`.
+
+## Optional iOS push (Gorush)
+
+Gorush is APNs-only, loopback-published on port 8088, and optional: absent APNs
+credentials leave push unavailable without blocking gateway or voice use.
+In web settings, open **Provider keys → Apple Push Notifications → Update**.
+Select the Apple `.p8` file and enter its Key ID and Team ID, then **Save and
+apply**. The gateway validates and base64-encodes the private key into protected
+`~/.sentient/secrets/keys.yaml` (`0600`), alongside `push.apns_key_id` and
+`push.apns_team_id`. Never commit the file, paste it into chat, or log it.
+Base64 is not encryption. The key is used by the gateway at runtime, not by app
+builds. If activation fails after saving, **Apply saved credentials** retries
+without uploading the private key again. Applying may enable queued deliveries;
+it does not send a test notification. A running transport does not prove Apple
+accepted the credentials or that a phone displayed a notification.
+
+Each gateway stack serves one APNs app identity. Build variant owns topic and
+APNs environment: `bun run dev` selects Debug
+(`io.dev32.sentient.debug`, sandbox), while `deploy/setup-prod.py` packages
+Release through `scripts/build-gateway.sh --release`
+(`io.dev32.sentient`, production). iOS bundle identifiers and
+`aps-environment` use the same `shared/config/build-variants.json` source.
+`push.apns_topic` and `push.apns_sandbox` are not operator settings and are
+rejected, preventing config from contradicting app identity. Key scope, app
+entitlement, topic, and environment must match.
+
+Optional `push.provider_url` remains independent and accepts only a
+credential-free loopback HTTP `/api/push` endpoint. Real managed Gorush stays on
+8088; the credential-free QA stand-in must use a separate explicit port and
+disposable config. It is not an APNs delivery test. Never hand-start a
+production container or gateway; service activation uses the existing gateway
+supervisor and deployment uses the normal installer. Gorush retries are disabled
+and its logs hide tokens and bodies. Existing operator YAML and release rollback
+semantics remain unchanged.
 
 ## Native capabilities
 

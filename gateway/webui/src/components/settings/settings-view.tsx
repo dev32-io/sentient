@@ -30,6 +30,8 @@ import { MembersPane } from "./panes/members-pane.tsx";
 import { SecretsPane } from "./panes/secrets-pane.tsx";
 import { GetAppPane } from "./panes/get-app-pane.tsx";
 import { DiagnosticsPane } from "./panes/diagnostics-pane.tsx";
+import { ScheduledMessagesPane } from "./panes/scheduled-messages-pane.tsx";
+import { PushNotificationsPane } from "./panes/push-notifications-pane.tsx";
 import { ActionButton } from "../common/foundation.tsx";
 import { Icon } from "../common/icon.tsx";
 
@@ -363,6 +365,8 @@ export function SettingsView({
             />
           )}
           {tab === "account" && <AccountPane displayNameDraft={displayNameDraft} onDisplayNameDraftChange={setDisplayNameDraft} {...(onRequestLogout ? { onRequestLogout } : {})} />}
+          {tab === "scheduledMessages" && <ScheduledMessagesPane token={token} />}
+          {tab === "pushNotifications" && <PushNotificationsPane />}
           {tab === "members" && <MembersPane />}
           {tab === "secrets" && <SecretsPane onMark={markImperative} />}
           {tab === "getApp" && <GetAppPane />}

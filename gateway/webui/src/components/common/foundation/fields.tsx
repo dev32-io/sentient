@@ -36,7 +36,7 @@ export interface FieldProps {
   value?: string | undefined;
   defaultValue?: string | undefined;
   placeholder?: string | undefined;
-  type?: "text" | "password" | "email" | "tel" | "search" | undefined;
+  type?: "text" | "password" | "email" | "tel" | "search" | "number" | "date" | "datetime-local" | "time" | undefined;
   disabled?: boolean | undefined;
   required?: boolean | undefined;
   autoComplete?: string | undefined;

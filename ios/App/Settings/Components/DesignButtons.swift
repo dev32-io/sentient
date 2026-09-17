@@ -86,6 +86,7 @@ private struct DesignRaisedButtonCanvasBackground: View {
     let shape: DesignCanvasShape
     let role: DesignButtonRole
     let projection: DesignRaisedButtonKernelProjection
+    var baseColor: Color? = nil
 
     var body: some View {
         DesignCanvasKernel(
@@ -93,7 +94,8 @@ private struct DesignRaisedButtonCanvasBackground: View {
             role: role,
             state: projection.state,
             increasedContrast: projection.increasedContrast,
-            reduceMotion: projection.reduceMotion
+            reduceMotion: projection.reduceMotion,
+            baseColor: baseColor
         )
         .animation(
             DesignCanvasKernel.transitionAnimation(for: .hover, reduceMotion: projection.reduceMotion),
@@ -158,6 +160,10 @@ struct DesignButtonStyle: ButtonStyle {
     var minimumHeight: CGFloat = DesignMetrics.minimumTarget
     var horizontalPadding: CGFloat = DesignMetrics.actionButtonHorizontalPadding
     var visualHeight: CGFloat? = nil
+    var cornerRadius = DesignMetrics.actionButtonCornerRadius
+    var cornerStyle = RoundedCornerStyle.circular
+    var baseColor: Color? = nil
+    var fillsHeight = false
 
     func makeBody(configuration: Configuration) -> some View {
         let geometry = DesignRaisedButtonGeometry.make(
@@ -172,9 +178,10 @@ struct DesignButtonStyle: ButtonStyle {
             increasedContrast: contrast == .increased,
             reduceMotion: reduceMotion
         )
-        let cornerRadius = DesignMetrics.actionButtonCornerRadius
-        let clipShape = RoundedRectangle(cornerRadius: cornerRadius, style: .circular)
-        let canvasShape = DesignCanvasShape.roundedRectangle(cornerRadius: cornerRadius)
+        let clipShape = RoundedRectangle(cornerRadius: cornerRadius, style: cornerStyle)
+        let canvasShape = cornerStyle == .continuous
+            ? DesignCanvasShape.continuousRoundedRectangle(cornerRadius: cornerRadius)
+            : DesignCanvasShape.roundedRectangle(cornerRadius: cornerRadius)
 
         configuration.label
             // `.snt-surface button { font: inherit; }` is more specific than
@@ -183,13 +190,15 @@ struct DesignButtonStyle: ButtonStyle {
             .font(Typo.ui(TypeScale.base))
             .foregroundStyle(isEnabled ? DuskColors.ink : DuskColors.ink4)
             .frame(minHeight: geometry.faceHeight)
+            .frame(maxHeight: fillsHeight ? .infinity : nil)
             .padding(.horizontal, horizontalPadding)
             .clipShape(clipShape)
             .background {
                 DesignRaisedButtonCanvasBackground(
                     shape: canvasShape,
                     role: role,
-                    projection: projection
+                    projection: projection,
+                    baseColor: baseColor
                 )
             }
             .offset(y: projection.yOffset)
@@ -247,6 +256,84 @@ struct DesignActionButton: View {
         .accessibilityValue(state.accessibilityValue)
         .accessibilityIdentifier(accessibilityId ?? "")
         .accessibilityAddTraits(state.isSelected ? .isSelected : [])
+    }
+}
+
+/// Full-width raised notification face. Product content and gestures stay with
+/// the owning row; this primitive owns native Button semantics and material.
+struct DesignNotificationCardButton<Content: View>: View {
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    let accessibilityId: String
+    var state: DesignControlState = .normal
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(
+            DesignButtonStyle(
+                role: .secondary,
+                minimumHeight: 0,
+                horizontalPadding: 0,
+                cornerRadius: Radii.lg,
+                cornerStyle: .continuous,
+                baseColor: DuskColors.paper
+            )
+        )
+        .disabled(!state.isInteractive)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+        .accessibilityIdentifier(accessibilityId)
+    }
+}
+
+/// Fixed trailing notification action seated inside its recessed receiver.
+/// Width, inset, shape, and visibility belong to this reviewed surface family.
+struct DesignNotificationActionTray: View {
+    let title: String
+    let showsIcon: Bool
+    let isVisible: Bool
+    let isEnabled: Bool
+    let accessibilityLabel: String
+    let accessibilityId: String
+    let action: () -> Void
+
+    var body: some View {
+        Color.clear
+            .designWell(cornerRadius: Radii.lg)
+            .overlay(alignment: .trailing) {
+                Button(role: .destructive, action: action) {
+                    HStack(spacing: Space.sm) {
+                        if showsIcon { Image(systemName: "xmark") }
+                        Text(title).multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .designText(.label)
+                }
+                .buttonStyle(
+                    DesignButtonStyle(
+                        role: .destructive,
+                        minimumHeight: 0,
+                        horizontalPadding: 0,
+                        cornerRadius: Radii.md,
+                        cornerStyle: .continuous,
+                        fillsHeight: true
+                    )
+                )
+                .frame(width: DesignMetrics.notificationCardActionWidth)
+                .frame(maxHeight: .infinity)
+                .padding(DesignMetrics.notificationCardActionInset)
+                .disabled(!isEnabled || !isVisible)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityIdentifier(accessibilityId)
+                .accessibilityHidden(!isVisible)
+            }
+            .opacity(isVisible ? 1 : 0)
     }
 }
 

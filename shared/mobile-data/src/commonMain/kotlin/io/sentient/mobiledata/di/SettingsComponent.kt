@@ -33,6 +33,10 @@ import io.sentient.mobiledata.calendar.CalendarExperience
 import io.sentient.mobiledata.calendar.CalendarExperienceFactory
 import io.sentient.mobiledata.data.calendar.CalendarRepository
 import io.sentient.mobiledata.data.calendar.SdkCalendarRepository
+import io.sentient.mobiledata.data.push.PushRepository
+import io.sentient.mobiledata.data.push.SdkPushRepository
+import io.sentient.mobiledata.data.scheduling.ScheduleRepository
+import io.sentient.mobiledata.data.scheduling.SdkScheduleRepository
 import io.sentient.mobiledata.data.settings.AccountRepository
 import io.sentient.mobiledata.data.settings.AdminRepository
 import io.sentient.mobiledata.data.settings.ProfileRepository
@@ -48,6 +52,8 @@ import io.sentient.mobiledata.usecase.calendar.GetCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.ListCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.MutateCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.UpdateCalendarUseCase
+import io.sentient.mobiledata.usecase.push.PushSettingsUseCases
+import io.sentient.mobiledata.usecase.scheduling.ScheduleUseCases
 import io.sentient.mobiledata.usecase.settings.AccountUseCases
 import io.sentient.mobiledata.usecase.settings.AdminUseCases
 import io.sentient.mobiledata.usecase.settings.ApplyProfileChangeUseCase
@@ -57,6 +63,8 @@ import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.calendar.CalendarHttpClient
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
+import io.sentient.mobilesdk.push.PushHttpClient
+import io.sentient.mobilesdk.scheduling.ScheduleHttpClient
 import io.sentient.mobilesdk.settings.AdminHttpClient
 import io.sentient.mobilesdk.settings.FishHttpClient
 import io.sentient.mobilesdk.settings.ProfileEditHttpClient
@@ -97,6 +105,8 @@ class SettingsComponent(
      * Null preserves the legacy, explicitly non-persistent construction path.
      */
     calendarDependency: CalendarDependencyBoundary? = null,
+    /** Existing chat resume destination; scheduled cards never create another transport. */
+    onSessionSelected: (String) -> Unit = {},
 ) {
     private val protectedCalendarDependency = calendarDependency
     private val settingsHttpClient = httpClient
@@ -119,6 +129,8 @@ class SettingsComponent(
     val voicesRepository: VoicesRepository = SdkVoicesRepository(voicesHttp, fishHttp, servicesVersionsHttp)
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
+    val scheduleRepository: ScheduleRepository = SdkScheduleRepository(ScheduleHttpClient(httpClient, gatewayWsUrl, token))
+    val pushRepository: PushRepository = SdkPushRepository(PushHttpClient(httpClient, gatewayWsUrl, token))
     /**
      * A supplied authenticated boundary is selected before any repository is
      * constructed. This ordering is the fail-closed guarantee: a protected
@@ -186,12 +198,20 @@ class SettingsComponent(
     val account = AccountUseCases(accountRepository, onTokenRefreshed, onLoggedOut)
     val admin = AdminUseCases(adminRepository, profileRepository)
     val calendar = CalendarUseCases(calendarRepository)
+    val schedules = ScheduleUseCases(scheduleRepository, onSessionSelected)
+    val push = PushSettingsUseCases(pushRepository)
     val getCalendar: GetCalendarUseCase = calendar
     val listCalendar: ListCalendarUseCase = calendar
     val mutateCalendar: MutateCalendarUseCase = calendar
     val createCalendar: CreateCalendarUseCase = calendar
     val updateCalendar: UpdateCalendarUseCase = calendar
     val deleteCalendar: DeleteCalendarUseCase = calendar
+
+    /** Immediately drops all user-scoped scheduling and device-setting projections. */
+    fun close() {
+        schedules.close()
+        push.close()
+    }
 
     init {
         log.info("build")

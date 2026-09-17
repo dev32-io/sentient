@@ -39,53 +39,71 @@ struct HistorySidePanel: View {
     let onAskRename: (SessionRow) -> Void
     let onAskDelete: (SessionRow) -> Void
 
-    /// True when the load failed and there are NO rows to fall back on — the
-    /// list area is replaced by the SessionsErrorEmpty affordance. Guarded on
-    /// `!loading` so the in-flight spinner case isn't pre-empted by a stale error.
-    private var showsErrorEmpty: Bool {
-        model.error != nil && model.visible.isEmpty && !model.loading
+    var body: some View {
+        HistorySidePanelContent(
+            rows: model.visible,
+            query: $model.query,
+            loading: model.loading,
+            hasLoaded: model.hasLoaded,
+            hasError: model.error != nil,
+            isSearching: model.isSearching,
+            nowMs: nowMs,
+            userName: userName,
+            household: household,
+            activeSessionId: activeSessionId,
+            onSelect: onSelect,
+            onNewChat: onNewChat,
+            onSettings: onSettings,
+            onRetry: { Task { await model.refresh() } },
+            onAskRename: onAskRename,
+            onAskDelete: onAskDelete
+        )
     }
+}
 
-    /// True when saved rows remain visible during a refresh or after that
-    /// refresh fails. `loading` and `error` are the existing HistoryViewModel
-    /// signals; the panel does not create a second freshness owner.
-    private var showsStaleBanner: Bool {
-        !model.visible.isEmpty && (model.error != nil || model.loading)
-    }
+/// Stateless production composition shared by the ViewModel adapter and debug fixtures.
+struct HistorySidePanelContent: View {
+    let rows: [SessionRow]
+    @Binding var query: String
+    let loading: Bool
+    let hasLoaded: Bool
+    let hasError: Bool
+    let isSearching: Bool
+    let nowMs: Int64
+    let userName: String
+    let household: String
+    let activeSessionId: String?
+    let onSelect: (String) -> Void
+    let onNewChat: () -> Void
+    let onSettings: () -> Void
+    let onRetry: () -> Void
+    let onAskRename: (SessionRow) -> Void
+    let onAskDelete: (SessionRow) -> Void
 
-    /// Spinner while the first load is still pending (the open slide + initial
-    /// fetch, before `hasLoaded` latches) OR a refresh is in flight with nothing
-    /// cached. Once loaded, a genuinely empty history or a filtered-empty search
-    /// shows the (empty) list, never a perpetual spinner.
+    private var showsErrorEmpty: Bool { hasError && rows.isEmpty && !loading }
+    private var showsStaleBanner: Bool { !rows.isEmpty && (hasError || loading) }
     private var showsLoadingSpinner: Bool {
-        (model.loading || !model.hasLoaded) && model.visible.isEmpty && !showsErrorEmpty
+        (loading || !hasLoaded) && rows.isEmpty && !showsErrorEmpty
     }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
-                HistoryAccountHeader(
-                    name: userName,
-                    household: household,
-                    onSettings: onSettings
-                )
+                HistoryAccountHeader(name: userName, household: household, onSettings: onSettings)
                 searchField
                 pastChatsTitle
                 if showsStaleBanner {
-                    SessionsStaleBanner(
-                        onRetry: { Task { await model.refresh() } },
-                        checking: model.loading
-                    )
-                    .padding(.horizontal, Space.md)
-                    .padding(.bottom, Space.xs)
+                    SessionsStaleBanner(onRetry: onRetry, checking: loading)
+                        .padding(.horizontal, Space.md)
+                        .padding(.bottom, Space.xs)
                 }
                 if showsErrorEmpty {
-                    SessionsErrorEmpty(onRetry: { Task { await model.refresh() } })
+                    SessionsErrorEmpty(onRetry: onRetry)
                     Spacer(minLength: 0)
                 } else if showsLoadingSpinner {
                     historyLoadingSpinner
                     Spacer(minLength: 0)
-                } else if model.visible.isEmpty {
+                } else if rows.isEmpty {
                     historyEmptyState
                     Spacer(minLength: 0)
                 } else {
@@ -97,14 +115,12 @@ struct HistorySidePanel: View {
         .background(DuskColors.bg)
     }
 
-    // ── Search pill ──────────────────────────────────────────────────────────
-
     private var searchField: some View {
         DesignSearchField(
             prompt: "Search past chats",
-            query: $model.query,
+            query: $query,
             accessibilityId: "history-search",
-            onClear: model.query.isEmpty ? nil : { model.query = "" },
+            onClear: query.isEmpty ? nil : { query = "" },
             textFont: Typo.ui(HistorySurfaceLayout.searchTextRole.baseSize),
             leadingPadding: Space.lg,
             trailingPadding: Space.lg,
@@ -118,8 +134,6 @@ struct HistorySidePanel: View {
         .padding(.vertical, Space.sm)
     }
 
-    // ── Section title ────────────────────────────────────────────────────────
-
     private var pastChatsTitle: some View {
         Text("Past chats")
             .font(Typo.display(19, .medium))
@@ -129,12 +143,10 @@ struct HistorySidePanel: View {
             .padding(.bottom, Space.xs)
     }
 
-    // ── Session list ─────────────────────────────────────────────────────────
-
     private var sessionList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Space.xs) {
-                ForEach(model.visible, id: \.sessionId) { row in
+                ForEach(rows, id: \.sessionId) { row in
                     HistoryRow(
                         row: row,
                         nowMs: nowMs,
@@ -146,14 +158,12 @@ struct HistorySidePanel: View {
                 }
             }
             .padding(.horizontal, Space.md)
-            // Bottom padding ensures content is not occluded by the FAB.
             .padding(.bottom, fabSize + Space.lg * 2)
         }
     }
 
-    @ViewBuilder
-    private var historyEmptyState: some View {
-        if model.isSearching {
+    @ViewBuilder private var historyEmptyState: some View {
+        if isSearching {
             HistorySearchNoMatchState()
                 .accessibilityIdentifier("history-no-match")
         } else {
@@ -166,8 +176,6 @@ struct HistorySidePanel: View {
         }
     }
 
-    // ── History loading spinner ───────────────────────────────────────────────
-
     private var historyLoadingSpinner: some View {
         ProgressView()
             .tint(DuskColors.accent)
@@ -175,8 +183,6 @@ struct HistorySidePanel: View {
             .padding(.top, Space.xl)
             .accessibilityIdentifier("history-loading")
     }
-
-    // ── New-chat FAB ─────────────────────────────────────────────────────────
 
     private var fab: some View {
         Button(action: onNewChat) {

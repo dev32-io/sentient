@@ -36,6 +36,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
     @ViewBuilder let footer: () -> Footer
 
     @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
+    @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.sentientIdentityMeasurement) private var measurement
+    @State private var identitySize = CGSize.zero
 
     init(
         role: MessageBubbleRole,
@@ -117,63 +120,72 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
 
     private var row: some View {
         HStack(alignment: .top, spacing: 0) {
-            if role.isUser {
-                Spacer(minLength: BubbleLayout.edgeMin)
-                VStack(alignment: .trailing, spacing: Space.xs) {
-                    if !continuation {
-                        MessageMeta(name: name, timestamp: timestamp, hidesTimestamp: isStreaming, muted: metadataMuted)
-                    }
-                    bubbleBody
-                    footer()
-                }
-                avatarColumn
-            } else {
-                avatarColumn
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    if !continuation {
-                        MessageMeta(name: name, timestamp: timestamp, hidesTimestamp: isStreaming, muted: metadataMuted)
-                    }
-                    bubbleBody
-                    footer()
-                }
-                Spacer(minLength: BubbleLayout.edgeMin)
+            if role.isUser { Spacer(minLength: BubbleLayout.edgeMin) }
+            VStack(alignment: role.isUser ? .trailing : .leading, spacing: Space.xs) {
+                bubbleBody
+                footer()
             }
+            if !role.isUser { Spacer(minLength: BubbleLayout.edgeMin) }
         }
         .frame(maxWidth: .infinity)
     }
 
-    @ViewBuilder
-    private var avatarColumn: some View {
-        if continuation {
-            Color.clear
-                .frame(width: BubbleLayout.avatarSize + Space.md, height: 1)
-                .accessibilityHidden(true)
-        } else if role.isUser {
-            UserAvatar(name: name, size: BubbleLayout.avatarSize)
-                .padding(.leading, Space.md)
-                .accessibilityHidden(true)
-        } else {
-            SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
-                .padding(.trailing, Space.md)
-                .accessibilityHidden(true)
-        }
-    }
-
     private var bubbleBody: some View {
-        content()
-            .padding(Space.padMsg)
-            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
-            // Content remains native and independently accessible. Only the
-            // decorative face is delegated to Canvas.
-            .clipShape(bubbleShape)
-            .fixedSize(horizontal: false, vertical: true)
-            .background {
+        VStack(alignment: role.isUser ? .trailing : .leading, spacing: Space.sm) {
+            measuredIdentity
+            content()
+                .padding(.horizontal, Space.md)
+                .padding(.bottom, Space.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: bubbleMaxWidth, alignment: role.isUser ? .trailing : .leading)
+        // Content remains native and independently accessible. Only decorative
+        // face is delegated to asynchronously rendered Canvas.
+        .clipShape(bubbleShape)
+        .fixedSize(horizontal: false, vertical: true)
+        .background {
+            if !measurement {
                 BubbleCanvasChrome(
                     shape: bubbleShape,
                     style: bubbleChromeStyle,
                     breathes: !role.isUser && avatarMode == .responding
                 )
             }
+        }
+    }
+
+    @ViewBuilder
+    private var measuredIdentity: some View {
+        if measurement {
+            identity
+        } else {
+            identity
+                .onGeometryChange(for: CGSize.self, of: { $0.size }) { identitySize = $0 }
+        }
+    }
+
+    private var identity: some View {
+        HStack(spacing: 6) {
+            if !role.isUser { identityAvatar }
+            MessageMeta(name: name, timestamp: timestamp, hidesTimestamp: false, muted: metadataMuted)
+            if role.isUser { identityAvatar }
+        }
+        .padding(.horizontal, Space.md)
+        .padding(.top, Space.md)
+        .frame(minHeight: BubbleLayout.identityHeight + Space.md)
+    }
+
+    @ViewBuilder
+    private var identityAvatar: some View {
+        if measurement {
+            Color.clear.frame(width: BubbleLayout.avatarSize, height: BubbleLayout.avatarSize)
+        } else if role.isUser {
+            UserAvatar(name: name, size: BubbleLayout.avatarSize)
+                .accessibilityHidden(true)
+        } else {
+            SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
+                .accessibilityHidden(true)
+        }
     }
 
     private var bubbleChromeStyle: BubbleChromeStyle {
@@ -196,21 +208,79 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         return "\(position), pending"
     }
 
-    /// Flush the corner nearest the sender while retaining the central radius
-    /// tokens used by the committed and pending user surfaces.
-    private var bubbleShape: UnevenRoundedRectangle {
-        let r = Radii.lg
-        let flush = BubbleLayout.flushCorner
-        if role.isUser {
-            return UnevenRoundedRectangle(
-                topLeadingRadius: r, bottomLeadingRadius: r,
-                bottomTrailingRadius: r, topTrailingRadius: flush
-            )
-        }
-        return UnevenRoundedRectangle(
-            topLeadingRadius: flush, bottomLeadingRadius: r,
-            bottomTrailingRadius: r, topTrailingRadius: r
+    private var bubbleShape: SweptBubbleShape {
+        SweptBubbleShape(
+            identityWidth: identitySize.width,
+            identityHeight: identitySize.height,
+            sweepsFromTrailing: role.isUser != (layoutDirection == .rightToLeft)
         )
+    }
+}
+
+struct SweptBubbleShape: Shape {
+    let identityWidth: CGFloat
+    let identityHeight: CGFloat
+    let sweepsFromTrailing: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(Radii.lg, rect.width / 2, rect.height / 2)
+        guard identityWidth > 0, identityHeight > 0,
+              identityWidth + 6 <= rect.width - 52 else {
+            return RoundedRectangle(cornerRadius: radius, style: .continuous).path(in: rect)
+        }
+        let cap = min(rect.width, identityWidth + 6)
+        let shoulderY = min(rect.maxY - radius, rect.minY + max(0, identityHeight - 10))
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + max(radius, cap - 12), y: rect.minY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX + min(rect.width - radius, cap + 36), y: shoulderY),
+            control1: CGPoint(x: rect.minX + cap + 12, y: rect.minY),
+            control2: CGPoint(x: rect.minX + cap + 8, y: shoulderY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: shoulderY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: shoulderY + radius),
+            control: CGPoint(x: rect.maxX, y: shoulderY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + radius, y: rect.minY),
+            control: CGPoint(x: rect.minX, y: rect.minY)
+        )
+        path.closeSubpath()
+        guard sweepsFromTrailing else { return path }
+        return path.applying(
+            CGAffineTransform(translationX: rect.minX + rect.maxX, y: 0)
+                .scaledBy(x: -1, y: 1)
+        )
+    }
+
+    func path(in rect: CGRect, inset requestedInset: CGFloat) -> Path {
+        guard rect.width > 0, rect.height > 0 else { return Path() }
+        let inset = min(max(0, requestedInset), max(0, (min(rect.width, rect.height) - 1) / 2))
+        guard inset > 0 else { return path(in: rect) }
+        let insetRect = rect.insetBy(dx: inset, dy: inset)
+        let scaleX = insetRect.width / rect.width
+        let scaleY = insetRect.height / rect.height
+        return path(in: rect).applying(CGAffineTransform(
+            a: scaleX,
+            b: 0,
+            c: 0,
+            d: scaleY,
+            tx: insetRect.minX - rect.minX * scaleX,
+            ty: insetRect.minY - rect.minY * scaleY
+        ))
     }
 }
 
@@ -225,33 +295,40 @@ private enum BubbleChromeStyle: Equatable {
 /// and contained speaking sweep. Native content remains the layout authority,
 /// so streaming keeps its established inline measure and grows only vertically.
 private struct BubbleCanvasChrome: View {
-    let shape: UnevenRoundedRectangle
+    let shape: SweptBubbleShape
     let style: BubbleChromeStyle
     let breathes: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.layoutDirection) private var layoutDirection
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion || !breathes)) { timeline in
-            GeometryReader { proxy in
-                let overflow = BubbleLayout.chromeOverflow
-                let faceRect = CGRect(
-                    x: overflow, y: overflow,
-                    width: proxy.size.width, height: proxy.size.height
-                )
-                let phase = breathPhase(at: timeline.date)
-
-                Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
-                    draw(phase: phase, in: &context, faceRect: faceRect)
-                }
-                .frame(
-                    width: proxy.size.width + overflow * 2,
-                    height: proxy.size.height + overflow * 2
-                )
-                .offset(x: -overflow, y: -overflow)
+        if breathes && !reduceMotion {
+            TimelineView(.animation) { timeline in
+                chrome(phase: breathPhase(at: timeline.date))
             }
+        } else {
+            chrome(phase: nil)
+        }
+    }
+
+    private func chrome(phase: Double?) -> some View {
+        GeometryReader { proxy in
+            let overflow = shadowOverflow(phase: phase)
+            let faceRect = CGRect(
+                x: overflow, y: overflow,
+                width: proxy.size.width, height: proxy.size.height
+            )
+
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
+                draw(phase: phase, in: &context, faceRect: faceRect)
+            }
+            .frame(
+                width: proxy.size.width + overflow * 2,
+                height: proxy.size.height + overflow * 2
+            )
+            .offset(x: -overflow, y: -overflow)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -264,6 +341,22 @@ private struct BubbleCanvasChrome: View {
             .truncatingRemainder(dividingBy: period) / period
     }
 
+    private func shadowOverflow(phase: Double?) -> CGFloat {
+        let plate = DesignCanvasSurfaceRecipe.make(tier: .plate, increasedContrast: contrast == .increased)
+        var overflow = [plate.cast, plate.contact].map {
+            DesignCanvasEffects.overflow(
+                blur: $0.geometry.radius,
+                x: $0.geometry.x,
+                y: $0.geometry.y
+            )
+        }.max() ?? 0
+        if style == .activeAssistant {
+            let shadow = activeShadow(phase: phase)
+            overflow = max(overflow, DesignCanvasEffects.overflow(blur: shadow.blur, y: shadow.y))
+        }
+        return overflow
+    }
+
     private func draw(
         phase: Double?,
         in context: inout GraphicsContext,
@@ -271,15 +364,7 @@ private struct BubbleCanvasChrome: View {
     ) {
         let facePath = path(in: faceRect)
         drawRoleShadow(phase: phase, in: &context, faceRect: faceRect)
-        drawShadow(
-            color: .black, opacity: 0.90, blur: 30, y: 18, sourceInset: 22,
-            in: &context, faceRect: faceRect
-        )
-        drawShadow(
-            color: DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.22),
-            opacity: 1, blur: 0, y: 2, sourceInset: 1,
-            in: &context, faceRect: faceRect
-        )
+        drawPlateElevation(in: &context, faceRect: faceRect)
 
         let face = faceColors
         context.fill(facePath, with: .linearGradient(
@@ -287,7 +372,7 @@ private struct BubbleCanvasChrome: View {
             startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
             endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
         ))
-        drawRoleRadial(in: &context, faceRect: faceRect, facePath: facePath)
+        drawCommonBow(in: &context, faceRect: faceRect, facePath: facePath)
         if let phase, breathes {
             drawSpeakingWave(phase: phase, in: &context, faceRect: faceRect, facePath: facePath)
         }
@@ -299,16 +384,8 @@ private struct BubbleCanvasChrome: View {
     }
 
     private var faceColors: (top: Color, bottom: Color) {
-        switch style {
-        case .assistant:
-            (DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.03), DuskColors.paper)
-        case .user:
-            (DuskColors.accent50.overlaying(DuskColors.paper, opacity: 0.10), DuskColors.accent50)
-        case .activeAssistant:
-            (DuskColors.paper.overlaying(DuskColors.accentSoft, opacity: 0.04), DuskColors.paper)
-        case .interrupted:
-            (DuskColors.paper.overlaying(DuskColors.clay, opacity: 0.08), DuskColors.paper)
-        }
+        let base = style == .user ? DuskColors.accent50 : DuskColors.paper
+        return (base.overlaying(DuskColors.ink, opacity: 0.04), base)
     }
 
     private var borderColor: Color {
@@ -321,18 +398,27 @@ private struct BubbleCanvasChrome: View {
         }
     }
 
+    private func drawPlateElevation(
+        in context: inout GraphicsContext,
+        faceRect: CGRect
+    ) {
+        let plate = DesignCanvasSurfaceRecipe.make(tier: .plate, increasedContrast: contrast == .increased)
+        for shadow in [plate.cast, plate.contact] {
+            drawShadow(
+                color: shadow.color, opacity: shadow.opacity,
+                blur: shadow.geometry.radius, y: shadow.geometry.y,
+                sourceInset: shadow.geometry.sourceInset,
+                in: &context, faceRect: faceRect
+            )
+        }
+    }
+
     private func drawRoleShadow(
         phase: Double?,
         in context: inout GraphicsContext,
         faceRect: CGRect
     ) {
         switch style {
-        case .user:
-            drawShadow(
-                color: DuskColors.accent, opacity: 0.34,
-                blur: 22, y: 14, sourceInset: 18,
-                in: &context, faceRect: faceRect
-            )
         case .activeAssistant:
             let shadow = activeShadow(phase: phase)
             drawShadow(
@@ -340,7 +426,7 @@ private struct BubbleCanvasChrome: View {
                 blur: shadow.blur, y: shadow.y, sourceInset: shadow.inset,
                 in: &context, faceRect: faceRect
             )
-        case .assistant, .interrupted:
+        case .assistant, .user, .interrupted:
             break
         }
     }
@@ -377,70 +463,23 @@ private struct BubbleCanvasChrome: View {
         )
     }
 
-    private func drawRoleRadial(
+    private func drawCommonBow(
         in context: inout GraphicsContext,
         faceRect: CGRect,
         facePath: Path
     ) {
-        switch style {
-        case .assistant:
-            drawRadial(
-                color: DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.16),
-                center: CGPoint(x: 0.50, y: 0.55), scale: CGSize(width: 0.90, height: 1.20),
-                fadeStop: 0.78, in: &context, faceRect: faceRect, facePath: facePath
-            )
-        case .user:
-            drawRadial(
-                color: DuskColors.accent50.overlaying(DuskColors.bgSunk, opacity: 0.22),
-                center: CGPoint(x: 0.50, y: 0.55), scale: CGSize(width: 0.90, height: 1.20),
-                fadeStop: 0.78, in: &context, faceRect: faceRect, facePath: facePath
-            )
-        case .activeAssistant:
-            let origin = CGPoint(
-                x: faceRect.minX + faceRect.width * 0.10,
-                y: faceRect.midY
-            )
-            let radius = hypot(
-                max(origin.x - faceRect.minX, faceRect.maxX - origin.x),
-                max(origin.y - faceRect.minY, faceRect.maxY - origin.y)
-            )
-            drawRadial(
-                color: DuskColors.accent.opacity(0.08),
-                center: CGPoint(x: 0.10, y: 0.50),
-                scale: CGSize(width: radius / faceRect.width, height: radius / faceRect.height),
-                fadeStop: 0.42, in: &context, faceRect: faceRect, facePath: facePath
-            )
-        case .interrupted:
-            break
-        }
-    }
-
-    private func drawRadial(
-        color: Color,
-        center: CGPoint,
-        scale: CGSize,
-        fadeStop: CGFloat,
-        in context: inout GraphicsContext,
-        faceRect: CGRect,
-        facePath: Path
-    ) {
-        let origin = CGPoint(
-            x: faceRect.minX + faceRect.width * center.x,
-            y: faceRect.minY + faceRect.height * center.y
-        )
-        let radius = CGSize(width: faceRect.width * scale.width, height: faceRect.height * scale.height)
-        guard radius.width > 0, radius.height > 0 else { return }
-
-        var layer = context
-        layer.clip(to: facePath)
-        layer.translateBy(x: origin.x, y: origin.y)
-        layer.scaleBy(x: radius.width, y: radius.height)
-        layer.fill(
+        guard faceRect.width > 0, faceRect.height > 0 else { return }
+        var bow = context
+        bow.clip(to: facePath)
+        bow.translateBy(x: faceRect.midX, y: faceRect.midY)
+        bow.scaleBy(x: faceRect.width / 2, y: faceRect.height / 2)
+        bow.fill(
             Path(CGRect(x: -1, y: -1, width: 2, height: 2)),
             with: .radialGradient(
                 Gradient(stops: [
-                    .init(color: color, location: 0),
-                    .init(color: color.opacity(0), location: fadeStop),
+                    .init(color: DuskColors.bgSunk.opacity(0.24), location: 0),
+                    .init(color: DuskColors.bgSunk.opacity(0.12), location: 0.65),
+                    .init(color: DuskColors.bgSunk.opacity(0), location: 1),
                 ]),
                 center: .zero, startRadius: 0, endRadius: 1
             )
@@ -489,20 +528,7 @@ private struct BubbleCanvasChrome: View {
     }
 
     private func path(in rect: CGRect, inset: CGFloat = 0) -> Path {
-        let insetRect = rect.insetBy(dx: inset, dy: inset)
-        guard insetRect.width > 0, insetRect.height > 0 else { return Path() }
-        let corners = shape.cornerRadii
-        let topLeading = layoutDirection == .rightToLeft ? corners.topTrailing : corners.topLeading
-        let bottomLeading = layoutDirection == .rightToLeft ? corners.bottomTrailing : corners.bottomLeading
-        let bottomTrailing = layoutDirection == .rightToLeft ? corners.bottomLeading : corners.bottomTrailing
-        let topTrailing = layoutDirection == .rightToLeft ? corners.topLeading : corners.topTrailing
-        return UnevenRoundedRectangle(
-            topLeadingRadius: max(0, topLeading - inset),
-            bottomLeadingRadius: max(0, bottomLeading - inset),
-            bottomTrailingRadius: max(0, bottomTrailing - inset),
-            topTrailingRadius: max(0, topTrailing - inset),
-            style: shape.style
-        ).path(in: insetRect)
+        shape.path(in: rect, inset: inset)
     }
 }
 
@@ -511,12 +537,11 @@ private struct BubbleCanvasChrome: View {
 enum BubbleLayout {
     static let standardOffset: CGFloat = .zero
     static let continuationPullup = -Space.lg
-    static let flushCorner: CGFloat = 8
-    static let avatarSize: CGFloat = DesignMetrics.minimumTarget
+    static let avatarSize: CGFloat = 28
+    static let identityHeight: CGFloat = 34
     static let edgeMin: CGFloat = 12
     static let pulseDot: CGFloat = 5
     static let pulseGap: CGFloat = 4
     static let pulseDuration: Double = 1.2
     static let pulseStagger: Double = 0.14
-    static let chromeOverflow: CGFloat = 32
 }

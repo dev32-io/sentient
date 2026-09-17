@@ -632,7 +632,7 @@ struct CalendarSurfaceTests {
             eventId: "event", occurrenceId: "occurrence", originalStart: originalStart,
             recurring: false, revision: 1, scope: .household, title: "School pickup",
             description: nil, start: "2028-02-14T15:20:00Z", end: "2028-02-14T16:00:00Z",
-            visibility: .everyone, importance: .important, group: "Family", tags: ["school"], recurrence: nil
+            visibility: .everyone, importance: .important, group: "Family", tags: ["school"], recurrence: nil, reminder: nil
         )
     }
 

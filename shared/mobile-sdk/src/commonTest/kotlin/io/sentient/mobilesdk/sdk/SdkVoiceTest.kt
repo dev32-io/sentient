@@ -43,6 +43,36 @@ import kotlin.test.assertFalse
  * toggles and assert the idempotent collapse + audio.start/audio.end edge order.
  */
 class SdkVoiceTest {
+    @Test
+    fun route_replacement_invalidates_queued_capture_before_new_route_can_start() = runTest {
+        val controls = mutableListOf<ClientMessage>()
+        val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = {})
+        var id = 0
+        val voice = SdkVoice(
+            voiceAudio = null,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+            onUplinkForceLocalTerminal = { connector.forceLocalTerminalCleanup(it) },
+            scope = backgroundScope,
+            createCaptureId = { "capture-${++id}" },
+        )
+        voice.requestStart(TurnMode.Manual)
+        voice.invalidateCaptureForRoute()
+        voice.requestStart(TurnMode.Manual)
+        runCurrent()
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart("capture-2", "manual")), controls)
+        voice.invalidateCaptureForRoute()
+        runCurrent()
+        assertFalse(connector.hasActiveCapture)
+        voice.requestStart(TurnMode.Manual)
+        runCurrent()
+        assertEquals(ClientMessage.AudioStart("capture-3", "manual"), controls.last())
+        voice.shutdownLane()
+    }
+
 
     @Test
     fun rapid_mic_toggles_serialize_and_never_race() = runTest {

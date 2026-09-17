@@ -12,7 +12,9 @@ import type {
   McpCatalog,
   OrchestratorConfig as OrchestratorYaml,
   ProvidersConfig as ProvidersYaml,
+  PushConfig as PushYaml,
   STTConfig as STTYaml,
+  SchedulingConfig as SchedulingYaml,
   SessionConfig as SessionYaml,
   StoreConfig as StoreYaml,
   SystemOrchestratorConfig as SystemOrchestratorYaml,
@@ -20,6 +22,7 @@ import type {
   TlsConfig as TlsYaml,
   WebuiConfig as WebuiYaml,
 } from "@sentient/config";
+import { getBuildVariant } from "@sentient/config";
 import { getLog } from "../logging/logger.ts";
 import { resolveWebDistDir } from "./asset-root.ts";
 import { loadGatewayConfig } from "./gateway-config.ts";
@@ -77,6 +80,36 @@ export interface LoggingConfig {
   levelOverrides: Record<string, string>;
 }
 
+export interface SchedulingStartupConfig {
+  tickIntervalMs: number;
+  missedGraceMs: number;
+  claimLeaseMs: number;
+  dueClaimLimit: number;
+  maxRelativeDelayMs: number;
+  maxMessageChars: number;
+  cardsDefaultPageSize: number;
+  cardsMaxPageSize: number;
+  inboxMaxEntries: number;
+  inboxRetentionMs: number;
+  outboxClaimLimit: number;
+  outboxLeaseMs: number;
+}
+
+export interface PushStartupConfig {
+  providerUrl: string;
+  apnsTopic: string;
+  apnsSandbox: boolean;
+  requestTimeoutMs: number;
+  drainIntervalMs: number;
+  drainClaimLimit: number;
+  maxAttempts: number;
+  retryBaseMs: number;
+  retryMaxMs: number;
+  payloadMaxBytes: number;
+  contentPreviewMaxChars: number;
+  revocationTtlMs: number;
+}
+
 export interface StartupConfig {
   logging: LoggingConfig;
 
@@ -112,6 +145,11 @@ export interface StartupConfig {
    *  orchestrator runtime MUST fail loudly if this is absent when the
    *  orchestrator is enabled — do not add that check here. */
   orchestrator: OrchestratorYaml | undefined;
+
+  /** Optional, explicitly operator-configured scheduling policy. */
+  scheduling: SchedulingStartupConfig | undefined;
+  /** Optional iOS/APNs delivery policy; never contains provider credentials. */
+  push: PushStartupConfig | undefined;
 
   /** Top-level language ("auto" | "en" | "zh") mirrored from stt.language for
    * ergonomics. "auto" = Whisper autodetects (bilingual households). */
@@ -168,6 +206,45 @@ export function loadLoggingConfig(): LoggingConfig {
     logDir: process.env.LOG_DIR ?? gatewayStateDir("logs"),
     retentionDays: cfg.logging.retention_days,
     levelOverrides: cfg.logging.level_overrides,
+  };
+}
+
+function mapSchedulingConfig(value: SchedulingYaml | undefined): SchedulingStartupConfig | undefined {
+  if (!value) return undefined;
+  return {
+    tickIntervalMs: value.tick_interval_ms,
+    missedGraceMs: value.missed_grace_ms,
+    claimLeaseMs: value.claim_lease_ms,
+    dueClaimLimit: value.due_claim_limit,
+    maxRelativeDelayMs: value.max_relative_delay_ms,
+    maxMessageChars: value.max_message_chars,
+    cardsDefaultPageSize: value.cards_default_page_size,
+    cardsMaxPageSize: value.cards_max_page_size,
+    inboxMaxEntries: value.inbox_max_entries,
+    inboxRetentionMs: value.inbox_retention_ms,
+    outboxClaimLimit: value.outbox_claim_limit,
+    outboxLeaseMs: value.outbox_lease_ms,
+  };
+}
+
+function mapPushConfig(
+  value: PushYaml | undefined,
+  identity: ReturnType<typeof getBuildVariant>,
+): PushStartupConfig | undefined {
+  if (!value) return undefined;
+  return {
+    providerUrl: value.provider_url ?? "http://127.0.0.1:8088/api/push",
+    apnsTopic: identity.bundleId,
+    apnsSandbox: identity.apnsSandbox,
+    requestTimeoutMs: value.request_timeout_ms,
+    drainIntervalMs: value.drain_interval_ms,
+    drainClaimLimit: value.drain_claim_limit,
+    maxAttempts: value.max_attempts,
+    retryBaseMs: value.retry_base_ms,
+    retryMaxMs: value.retry_max_ms,
+    payloadMaxBytes: value.payload_max_bytes,
+    contentPreviewMaxChars: value.content_preview_max_chars,
+    revocationTtlMs: value.revocation_ttl_ms,
   };
 }
 
@@ -236,6 +313,8 @@ export function loadStartupConfig(): StartupConfig {
     },
     store: cfg.store,
     orchestrator: cfg.orchestrator,
+    scheduling: mapSchedulingConfig(cfg.scheduling),
+    push: mapPushConfig(cfg.push, getBuildVariant()),
 
     language: cfg.stt.language,
 

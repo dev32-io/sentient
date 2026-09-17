@@ -49,6 +49,7 @@ private val COMMAND_TYPES = setOf(
     "permission.response",
     "audio.start",
     "audio.end",
+    "audio.cancel",
 )
 
 private const val TYPE_KEY = "type"

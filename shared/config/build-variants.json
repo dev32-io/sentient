@@ -1,0 +1,12 @@
+{
+  "Debug": {
+    "bundleId": "io.dev32.sentient.debug",
+    "apsEnvironment": "development",
+    "apnsSandbox": true
+  },
+  "Release": {
+    "bundleId": "io.dev32.sentient",
+    "apsEnvironment": "production",
+    "apnsSandbox": false
+  }
+}

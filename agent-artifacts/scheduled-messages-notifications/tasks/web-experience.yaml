@@ -1,0 +1,81 @@
+schemaVersion: 1
+id: web-experience
+title: Build token-backed web schedule settings and session-card inbox
+dependsOn:
+  - contracts-authority
+description: Deliver the web Scheduled messages page, informational Push
+  notifications page, personal calendar reminder controls, and bell-accessible
+  simple message-card list. A card is a bounded preview that resumes an existing
+  session. Browser push is not included. Use the existing Sentient design
+  language and actual component library, never a new palette, inline styling, or
+  page-local imitation of shared controls.
+scope: >-
+  Own `gateway/webui/` and any required `shared/web-sdk/` REST/session-connector
+  additions. In particular own web services/hooks/controllers, `app.tsx`,
+  shell/topbar/route-state, settings navigation/panes, new inbox components, and
+  calendar UI/API mirror changes. Consume the frozen shared protocol fixtures
+  and use mock HTTP boundaries only in focused client tests until gateway
+  composition is integrated. Do not edit gateway services, KMP, native apps, or
+  canonical shared design tokens.
+
+
+  Read `DESIGN.md` and `gateway/webui/src/styles/README.md`. Component
+  inventory: page/settings structure uses
+  PageChrome/PaneChrome/SettingsCard/SettingsRow; message/timing inputs use
+  TextArea/Field/ValidatedField and SelectControl; recurrence/privacy/enablement
+  uses SegmentedControl/ToggleControl; actions use
+  ActionButton/FoundationIconButton; cards use SurfaceAction or a minimal shared
+  extension of the past-chat OverflowActionRow; errors/loading use
+  Notice/AsyncState. Existing settings primitives are adapters, not a second
+  design system. New calendar reminder visual code belongs in a checked leaf
+  component embedded by the old calendar views.
+delivery: >-
+  - Implement accessible create/edit once-at/once-after/recurring forms,
+  timezone/next-run display, pause/resume/delete, pending/error recovery, and
+  removal of consumed one-time entries on reload. Show current actor's
+  default-off reminders, lead time/all-day time, omission-preserving updates,
+  and actionable typed failures without changing calendar visibility semantics.
+
+  - Activate the bell as a newest-first list of compact truncated message cards
+  matching past-chat density. No read/unread badge/state, history dashboard,
+  full-message feed, or duplicated conversation store. Clicking resumes by
+  sessionId; preserve a pending deep-link destination through AppInner's
+  fresh-login route reset and clear invalid/wrong-account targets safely.
+
+  - Push settings accurately explain deferred browser delivery and never present
+  unsupported registration as enabled. Disabled push cannot hide cards or
+  disable schedules.
+
+  - Keep server-owned session state in the existing connector/hook boundary,
+  local drafts in controllers, and leaf components pure. Preserve
+  settings-departure handling, existing chat/audio behavior, keyboard/focus
+  semantics, phone/desktop layouts, zoom, and reduced motion.
+
+  - Every added control/card must map to the component inventory above. No
+  inline style props, raw page controls, literal
+  colors/spacing/radii/type/motion, prototype runtime imports, token copies, or
+  new transitional allowlist exemptions. If a missing semantic primitive is
+  necessary, implement the smallest reusable token-backed variant in common and
+  test its behavior. Existing excluded calendar files may only embed the new
+  checked controls, not acquire new visual recipes; changed-line component/token
+  review is a required acceptance condition.
+
+  - Add focused API/state/form/navigation regression tests, including one-time
+  disappearance, reminder updates, empty/error states, bounded cards, and
+  cold-login session routing. Preserve visual/accessibility coverage for the new
+  surfaces in the existing local review/test infrastructure; do not add tests
+  that merely pin labels or constants. Leave clean tested source.
+checks:
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/web-sdk
+    test:unit && bun run --filter @sentient/webui test:unit"
+  - bash -lc "source scripts/env.sh && bun run --filter @sentient/webui
+    typecheck && bun run --filter @sentient/webui build"
+  - bash -lc "source scripts/env.sh && bun
+    scripts/design/web-foundation-check.ts && bun test
+    scripts/design/web-foundation-check.test.ts && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: One web owner keeps shared shell/navigation and calendar controls
+    coherent; existing tokens/components and stable wire fixtures bound the
+    implementation.

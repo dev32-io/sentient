@@ -41,6 +41,7 @@ class SdkAudio(
     voiceAudio: VoiceAudio?,
     scope: CoroutineScope,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
+    onActiveTurnChanged: (String?) -> Unit = {},
     armPlayback: suspend () -> Boolean = { true },
     disarmPlayback: () -> Unit = {},
 ) {
@@ -60,6 +61,7 @@ class SdkAudio(
         scope = scope,
         outputSampleRate = audioConfig.outputSampleRate,
         onStateChanged = onStateChanged,
+        onActiveTurnChanged = onActiveTurnChanged,
         playbackDrainSettleMs = audioConfig.playbackDrainSettleMs,
         armPlayback = armPlayback,
         disarmPlayback = disarmPlayback,

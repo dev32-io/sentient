@@ -7,6 +7,7 @@ import { Topbar } from "./topbar.tsx";
 
 function renderTopbar(isAdmin = false) {
   const onSettingsClick = vi.fn();
+  const onNotificationsClick = vi.fn();
   const result = render(
     <Topbar
       householdName="My Home"
@@ -16,19 +17,22 @@ function renderTopbar(isAdmin = false) {
       onCalendarClick={vi.fn()}
       onSettingsClick={onSettingsClick}
       onMenuClick={vi.fn()}
+      onNotificationsClick={onNotificationsClick}
       user={{ userId: "u-1", displayName: "Sam", isAdmin, avatarTint: "sage" }}
       onLogout={vi.fn()}
       onOpenAccount={vi.fn()}
     />,
   );
-  return { onSettingsClick, container: result.container };
+  return { onSettingsClick, onNotificationsClick, container: result.container };
 }
 
 describe("Topbar", () => {
-  it("presents notifications as visibly unavailable without fabricated telemetry", () => {
-    const { container } = renderTopbar();
-    const notifications = screen.getByRole("button", { name: "Notifications — coming soon" });
-    expect((notifications as HTMLButtonElement).disabled).toBe(true);
+  it("opens the card inbox without fabricated telemetry", () => {
+    const { container, onNotificationsClick } = renderTopbar();
+    const messages = screen.getByRole("button", { name: "Messages" });
+    expect((messages as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(messages);
+    expect(onNotificationsClick).toHaveBeenCalledOnce();
     expect(container.textContent).not.toMatch(/devices? online|14 devices/i);
   });
 

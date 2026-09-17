@@ -141,12 +141,22 @@ const TURN_FAILURE_NOTICE = "Sorry — something went wrong while I was answerin
 // baked-in template is a boot-time failure, not a per-turn surprise.
 const COMPACTION_SUMMARIZER_PROMPT = loadCompactionSummarizerPrompt();
 
+export type TurnTerminalRecord = Readonly<{
+  turnId: string;
+  outcome: "completed" | "failed" | "interrupted";
+  completedAt: string;
+  entryId: string | null;
+}>;
+
 export interface SessionRuntime {
   readonly userId: UserId;
   /** Conversational text or a background-task completion. Appends to the
    *  store; steers the running turn if one is in flight, otherwise starts
    *  one. Never throws — a `submit` after `dispose()` is a logged no-op. */
   submit(stimulus: Stimulus): void;
+  /** Submit a stimulus and resolve only after that exact originating turn has a
+   * durable terminal record. Intended for socket-free scheduled execution. */
+  submitAndObserve?(stimulus: Stimulus): Promise<TurnTerminalRecord>;
   /** True the instant a turn is in flight (set synchronously by `submit`,
    *  cleared synchronously when that turn's `runTurn` promise settles). */
   readonly running: boolean;
@@ -442,6 +452,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const store: SessionStore = openSessionStore(cap, deps.dbFileName);
 
   let inFlight: InFlightTurn | null = null;
+  const terminalObservers = new Map<string, Array<(record: TurnTerminalRecord) => void>>();
 
   // After `inFlight` above, not before: `currentReplyId` closes over it, and a
   // feed constructed first would capture the binding in its temporal dead zone.
@@ -635,11 +646,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
    * Whatever partial text had already streamed rides along, so what the reload
    * shows still matches what the person was looking at (spec §3.2 Invariant B).
    */
-  function commitTurnFailure(turnId: string): void {
+  function commitTurnFailure(turnId: string, replyId: string): void {
     const partial = turnText;
     turnText = ""; // durable now — a later cutoff commit must not re-append it.
     const text = partial.length > 0 ? `${partial}\n\n${TURN_FAILURE_NOTICE}` : TURN_FAILURE_NOTICE;
-    const entry = store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text });
+    const entry = store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text, replyId });
     log.warn("session-runtime.turn.failure-committed", {
       userId,
       sessionId,
@@ -774,7 +785,17 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     //     two user gestures) while a third terminal frame would break the
     //     frozen wire contract.
     const failed = !result.completed && !signal.aborted;
-    if (failed) commitTurnFailure(turnId);
+    if (failed) {
+      // Persist the classification before writing the generic failure notice.
+      // If the process dies between these two commits, restart reconciliation
+      // still records a truthful failed attempt rather than mistaking the
+      // notice for a successful answer.
+      if (terminalObservers.has(turnId))
+        store.recordScheduledTerminal?.(sessionId, turnId, "failed", new Date().toISOString(), null);
+      // `onTurnSettled` belongs to the one active turn. Carry its authoritative
+      // reply identity into the durable failure twin; never derive one client-side.
+      commitTurnFailure(turnId, inFlight!.replyId);
+    }
 
     // Turn boundary: release everything still outstanding on the committed
     // feed — the reply that was still open (the ONLY thing `publishAll`'s
@@ -828,6 +849,43 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         iterations: result.iterations,
         reason: "aborted by a user gesture — cancellation.ts owns this turn's terminal frame",
       });
+    }
+
+    // Ordinary chat pays no extra projection read. Only a caller explicitly
+    // observing this turn (the scheduled adapter) needs the durable reference.
+    if (terminalObservers.has(turnId)) {
+      const terminalEntry = store
+        .readSession(sessionId)
+        .filter(
+          (entry) =>
+            entry.turnId === turnId &&
+            entry.kind === "assistant" &&
+            typeof entry.text === "string" &&
+            entry.text.trim().length > 0,
+        )
+        .at(-1);
+      // A completed scheduled turn must reference usable assistant content.
+      // Without it, persist failure provenance so cards and recovery never
+      // advertise a completed response that cannot be resumed or previewed.
+      const terminalOutcome: TurnTerminalRecord["outcome"] =
+        result.completed && terminalEntry ? "completed" : signal.aborted ? "interrupted" : "failed";
+      const terminalRecord: TurnTerminalRecord = {
+        turnId,
+        outcome: terminalOutcome,
+        completedAt: new Date().toISOString(),
+        entryId: terminalOutcome === "completed" && terminalEntry ? String(terminalEntry.seq) : null,
+      };
+      // Persist before notifying. A restarted schedule runner reconciles this
+      // record directly and never submits the occurrence again.
+      store.recordScheduledTerminal?.(
+        sessionId,
+        turnId,
+        terminalRecord.outcome,
+        terminalRecord.completedAt,
+        terminalRecord.entryId,
+      );
+      for (const observer of terminalObservers.get(turnId) ?? []) observer(terminalRecord);
+      terminalObservers.delete(turnId);
     }
 
     // TITLING (spec §6), after the terminal frame and gated on a NATURAL
@@ -1113,7 +1171,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     );
   }
 
-  function submit(stimulus: Stimulus): void {
+  function submitInternal(stimulus: Stimulus, observe?: (record: TurnTerminalRecord) => void): void {
     if (disposed) {
       log.warn("session-runtime.submit.disposed", { userId, sessionId, kind: stimulus.kind });
       return;
@@ -1168,6 +1226,17 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     }
 
     const turnId = crypto.randomUUID();
+    if (observe) terminalObservers.set(turnId, [...(terminalObservers.get(turnId) ?? []), observe]);
+    if (stimulus.kind === "conversational" && stimulus.pendingId) {
+      const metadata = store.getSession(sessionId);
+      if (
+        metadata?.scheduled?.occurrenceId === stimulus.pendingId &&
+        !store.setScheduledTurn?.(sessionId, stimulus.pendingId, turnId)
+      ) {
+        terminalObservers.delete(turnId);
+        throw new Error("scheduled turn provenance could not be recorded");
+      }
+    }
     const entry = appendStimulus(stimulus, turnId);
     // Before `startTurn`, so the user's own bubble reaches the client ahead of
     // the `turn.started` it triggers — there is no optimistic client-side echo.
@@ -1193,6 +1262,40 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
 
     log.info("session-runtime.submit.start-turn", { userId, sessionId, kind: stimulus.kind, seq: entry.seq, turnId });
     startTurn(turnId, stimulusTrigger(stimulus));
+  }
+
+  function submit(stimulus: Stimulus): void {
+    submitInternal(stimulus);
+  }
+
+  function submitAndObserve(stimulus: Stimulus): Promise<TurnTerminalRecord> {
+    return new Promise((resolve, reject) => {
+      if (disposed || revokedReason !== null) {
+        reject(new Error("session runtime cannot start an observed turn"));
+        return;
+      }
+      if (inFlight) {
+        reject(new Error("session runtime already has a turn in flight"));
+        return;
+      }
+      if (
+        stimulus.kind !== "conversational" ||
+        !stimulus.pendingId ||
+        store.getSession(sessionId)?.scheduled?.occurrenceId !== stimulus.pendingId
+      ) {
+        reject(new Error("observed turn requires matching scheduled provenance"));
+        return;
+      }
+      if (alreadyCommitted(stimulus)) {
+        reject(new Error("observed stimulus was already committed without a reconciled terminal record"));
+        return;
+      }
+      try {
+        submitInternal(stimulus, resolve);
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   /**
@@ -1272,6 +1375,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   return {
     userId,
     submit,
+    submitAndObserve,
     get running() {
       return inFlight !== null;
     },

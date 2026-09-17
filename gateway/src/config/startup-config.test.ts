@@ -90,6 +90,73 @@ describe("loadStartupConfig — access root expansion", () => {
   });
 });
 
+describe("loadStartupConfig — scheduling/push carry-through", () => {
+  it("maps explicit YAML policy without inventing provider credentials", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentient-startup-scheduling-"));
+    const path = join(dir, "config.yaml");
+    writeFileSync(
+      path,
+      `${CONFIG_WITH_TILDE_SHARED_ROOT}
+scheduling:
+  tick_interval_ms: 1000
+  missed_grace_ms: 900000
+  claim_lease_ms: 60000
+  due_claim_limit: 25
+  max_relative_delay_ms: 31536000000
+  max_message_chars: 12000
+  cards_default_page_size: 20
+  cards_max_page_size: 100
+  inbox_max_entries: 500
+  inbox_retention_ms: 2592000000
+  outbox_claim_limit: 50
+  outbox_lease_ms: 60000
+push:
+  request_timeout_ms: 5000
+  drain_interval_ms: 1000
+  drain_claim_limit: 50
+  max_attempts: 5
+  retry_base_ms: 1000
+  retry_max_ms: 60000
+  payload_max_bytes: 4096
+  content_preview_max_chars: 280
+  revocation_ttl_ms: 2592000000
+`,
+    );
+    const previousPath = process.env.GATEWAY_CONFIG_PATH;
+    const previousVariant = process.env.SENTIENT_BUILD_VARIANT;
+    process.env.GATEWAY_CONFIG_PATH = path;
+    process.env.SENTIENT_BUILD_VARIANT = "Debug";
+    try {
+      const cfg = loadStartupConfig();
+      expect(cfg.scheduling?.missedGraceMs).toBe(900000);
+      expect(cfg.scheduling).toMatchObject({
+        cardsDefaultPageSize: 20,
+        cardsMaxPageSize: 100,
+        inboxMaxEntries: 500,
+        inboxRetentionMs: 2592000000,
+      });
+      expect(cfg.push?.payloadMaxBytes).toBe(4096);
+      expect(cfg.push).toMatchObject({
+        providerUrl: "http://127.0.0.1:8088/api/push",
+        apnsTopic: "io.dev32.sentient.debug",
+        apnsSandbox: true,
+      });
+      process.env.SENTIENT_BUILD_VARIANT = "Release";
+      expect(loadStartupConfig().push).toMatchObject({
+        providerUrl: "http://127.0.0.1:8088/api/push",
+        apnsTopic: "io.dev32.sentient",
+        apnsSandbox: false,
+      });
+      expect(cfg.push).not.toHaveProperty("apnsKey");
+    } finally {
+      if (previousPath === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
+      else process.env.GATEWAY_CONFIG_PATH = previousPath;
+      if (previousVariant === undefined) process.env.SENTIENT_BUILD_VARIANT = undefined;
+      else process.env.SENTIENT_BUILD_VARIANT = previousVariant;
+    }
+  });
+});
+
 describe("loadStartupConfig — security.inbound_scan carry-through", () => {
   it("threads an operator-disabled channel into StartupConfig.inboundScan", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentient-startup-config-"));

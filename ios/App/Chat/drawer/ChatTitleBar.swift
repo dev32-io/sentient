@@ -9,8 +9,8 @@
 import SwiftUI
 
 struct ChatTitleBar: View {
-    let markMode: SentientIdentityState
     let onOpenPanel: () -> Void
+    let onOpenInbox: () -> Void
     let onNewChat: () -> Void
 
     private static let title = "Sentient"
@@ -28,13 +28,19 @@ struct ChatTitleBar: View {
             .accessibilityIdentifier("history-open")
             Spacer()
             HStack(spacing: Space.sm) {
-                SentientMark(size: ChatLayout.markSize, mode: markMode)
+                StaticSentientMark(size: ChatLayout.markSize)
                 Text(Self.title)
                     .font(Typo.display(TypeScale.lg, .semibold))
                     .foregroundStyle(DuskColors.ink)
                     .accessibilityIdentifier("chat-screen")
             }
             Spacer()
+            DesignIconButton(
+                systemName: "bell",
+                label: "Scheduled messages",
+                accessibilityId: "scheduled-inbox-open",
+                action: onOpenInbox
+            )
             Button(action: onNewChat) {
                 Image(systemName: "plus")
                     .font(.system(size: TypeScale.lg))

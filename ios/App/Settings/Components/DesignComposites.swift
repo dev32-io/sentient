@@ -1048,7 +1048,7 @@ struct DesignPinKeypad: View {
             .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
             .overlay(Circle().strokeBorder(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
             .background {
-                Canvas { context, size in
+                Canvas(rendersAsynchronously: true) { context, size in
                     var context = context
                     let face = CGRect(x: 15, y: 15, width: size.width - 30, height: size.height - 30)
                     DesignCanvasEffects.outerShadow(

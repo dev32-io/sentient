@@ -1,20 +1,25 @@
+import { createPrivateKey } from "node:crypto";
 import { ADMIN_ROLE, type UserRole } from "@sentient/protocol";
 import { z } from "zod";
 import type { InstallState } from "../../admin/install-state.js";
-import type { LlmProvider, SecretsStore } from "../../admin/secrets-store.js";
+import type { KeysYaml, LlmProvider, SecretsStore } from "../../admin/secrets-store.js";
 import { getLog } from "../../logging/logger.js";
+import type { OrchestratorStatus, ServiceName } from "../../system-orchestrator/types.js";
 
 const log = getLog(["sentient", "gateway", "api", "secrets"]);
 
 // --- HTTP status constants ---------------------------------------------------
 
 const HTTP_OK = 200;
+const HTTP_REQUEST_TIMEOUT = 408;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD_NOT_ALLOWED = 405;
 const HTTP_PRECONDITION_FAILED = 412;
+const HTTP_PAYLOAD_TOO_LARGE = 413;
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_INTERNAL_ERROR = 500;
+const HTTP_SERVICE_UNAVAILABLE = 503;
 
 // --- Known paths -------------------------------------------------------------
 
@@ -28,8 +33,17 @@ const PATH_HA_LOCAL_IP = "/api/v1/admin/secrets/home_assistant/local_ip";
 const PATH_MA_TOKEN = "/api/v1/admin/secrets/music_assistant";
 const PATH_MA_URL = "/api/v1/admin/secrets/music_assistant/url";
 const PATH_MA_LOCAL_IP = "/api/v1/admin/secrets/music_assistant/local_ip";
+const PATH_APNS = "/api/v1/admin/secrets/push/apns";
+const PATH_APNS_APPLY = `${PATH_APNS}/apply`;
 
 const LLM_PROVIDERS = ["ollama-cloud", "openrouter", "custom"] as const;
+const GORUSH_SERVICE = "gorush" satisfies ServiceName;
+const MANAGED_GORUSH_URL = "http://127.0.0.1:8088/api/push";
+const MAX_APNS_BODY_BYTES = 16 * 1024;
+const BODY_READ_TIMEOUT_MS = 5_000;
+const APNS_ID_RE = /^[A-Z0-9]{10}$/;
+const PKCS8_PEM_RE =
+  /^-----BEGIN PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/]{1,64}={0,2}\r?\n)+-----END PRIVATE KEY-----\r?\n?$/;
 
 // --- Zod schemas -------------------------------------------------------------
 
@@ -46,6 +60,13 @@ const LlmKeyPatchSchema = z
 
 const SecretValueSchema = z.object({ value: z.string() });
 const ActiveProviderSchema = z.object({ provider: z.enum(LLM_PROVIDERS) });
+const ApnsCredentialsSchema = z
+  .object({
+    private_key_p8: z.string(),
+    key_id: z.string().regex(APNS_ID_RE),
+    team_id: z.string().regex(APNS_ID_RE),
+  })
+  .strict();
 
 // --- Deps -------------------------------------------------------------------
 
@@ -58,6 +79,10 @@ export interface SecretsDeps {
   installState: InstallState;
   secretsStore: SecretsStore;
   requireAdmin: RequireAdminFn;
+  systemOrchestrator?: {
+    applySubset(names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus>;
+  } | null;
+  pushProviderUrl?: string;
 }
 
 // --- Handler ----------------------------------------------------------------
@@ -68,7 +93,8 @@ export function createSecretsHandler(deps: SecretsDeps): (req: Request) => Promi
     const path = url.pathname;
     const method = req.method;
 
-    if (method !== "GET" && method !== "PUT") {
+    const isApnsApply = path === PATH_APNS_APPLY && method === "POST";
+    if (method !== "GET" && method !== "PUT" && !isApnsApply) {
       return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed", `${method} not allowed`);
     }
 
@@ -96,6 +122,8 @@ export function createSecretsHandler(deps: SecretsDeps): (req: Request) => Promi
     if (path === PATH_MA_TOKEN && method === "PUT") return handlePutMaToken(deps, req);
     if (path === PATH_MA_URL && method === "PUT") return handlePutMaUrl(deps, req);
     if (path === PATH_MA_LOCAL_IP && method === "PUT") return handlePutMaLocalIp(deps, req);
+    if (path === PATH_APNS && method === "PUT") return handlePutApns(deps, req);
+    if (isApnsApply) return handleApplyApns(deps);
 
     const llmMatch = path.match(LLM_PROVIDER_RE);
     if (llmMatch?.[1] && method === "PUT") return handlePutLlmProvider(deps, req, llmMatch[1] as LlmProvider);
@@ -135,11 +163,17 @@ async function handleGetSecrets(deps: SecretsDeps): Promise<Response> {
       mcp_server_token: { has_token: keys.home_assistant.mcp_server_token !== null },
     },
     music_assistant: { url: keys.music_assistant.url, has_token: keys.music_assistant.token !== null },
+    push: {
+      has_key: Boolean(keys.push?.apns_key_base64),
+      has_key_id: Boolean(keys.push?.apns_key_id),
+      has_team_id: Boolean(keys.push?.apns_team_id),
+    },
   };
   log.debug("secrets.get", {
     activeLlm: keys.llm.active,
     hasHaObserve: keys.home_assistant.observe_token !== null,
     hasMa: keys.music_assistant.token !== null,
+    hasApns: Boolean(keys.push?.apns_key_base64),
   });
   return Response.json(body, { status: HTTP_OK });
 }
@@ -291,6 +325,81 @@ async function handlePutMaLocalIp(deps: SecretsDeps, req: Request): Promise<Resp
   return Response.json({ ok: true }, { status: HTTP_OK });
 }
 
+// --- PUT /secrets/push/apns --------------------------------------------------
+
+async function handlePutApns(deps: SecretsDeps, req: Request): Promise<Response> {
+  const body = await parseBoundedJsonBody(req);
+  if (!body.ok) {
+    if (body.error === "too-large") {
+      return jsonError(HTTP_PAYLOAD_TOO_LARGE, "body-too-large", `JSON body exceeds ${MAX_APNS_BODY_BYTES} bytes`);
+    }
+    if (body.error === "timeout") {
+      return jsonError(HTTP_REQUEST_TIMEOUT, "request-timeout", "Timed out reading JSON body");
+    }
+    return jsonError(HTTP_UNPROCESSABLE, "schema", "Invalid JSON body");
+  }
+
+  const parsed = ApnsCredentialsSchema.safeParse(body.value);
+  if (!parsed.success || !isP256Pkcs8PrivateKey(parsed.data.private_key_p8)) {
+    return jsonError(HTTP_UNPROCESSABLE, "schema", "Valid APNs P-256 credentials required");
+  }
+
+  const result = await deps.secretsStore.setApnsCredentials({
+    keyBase64: Buffer.from(parsed.data.private_key_p8, "utf8").toString("base64"),
+    keyId: parsed.data.key_id,
+    teamId: parsed.data.team_id,
+  });
+  if (!result.ok) return jsonError(HTTP_INTERNAL_ERROR, "io-error", result.error.kind);
+
+  log.info("secrets.push.apns-set", { hasKey: true, hasKeyId: true, hasTeamId: true });
+  return Response.json({ ok: true }, { status: HTTP_OK });
+}
+
+// --- POST /secrets/push/apns/apply -----------------------------------------
+
+async function handleApplyApns(deps: SecretsDeps): Promise<Response> {
+  if (deps.pushProviderUrl !== MANAGED_GORUSH_URL) {
+    return jsonError(
+      HTTP_PRECONDITION_FAILED,
+      "push-provider-not-managed",
+      "APNs transport apply requires managed local Gorush",
+    );
+  }
+  if (!deps.systemOrchestrator) {
+    return jsonError(HTTP_SERVICE_UNAVAILABLE, "push-transport-unavailable", "APNs transport is unavailable");
+  }
+
+  let keys: KeysYaml;
+  try {
+    keys = await deps.secretsStore.load();
+  } catch {
+    return jsonError(HTTP_INTERNAL_ERROR, "io-error", "Could not read stored APNs credentials");
+  }
+  if (!keys.push?.apns_key_base64 || !keys.push.apns_key_id || !keys.push.apns_team_id) {
+    return jsonError(
+      HTTP_PRECONDITION_FAILED,
+      "push-credentials-incomplete",
+      "Complete APNs credentials must be stored before apply",
+    );
+  }
+
+  let status: OrchestratorStatus;
+  try {
+    status = await deps.systemOrchestrator.applySubset(new Set([GORUSH_SERVICE]));
+  } catch {
+    log.warn("secrets.push.apply-failed", { reason: "orchestrator-error" });
+    return jsonError(HTTP_SERVICE_UNAVAILABLE, "push-transport-unavailable", "APNs transport failed to start");
+  }
+  const gorush = status.services.find((service) => service.name === GORUSH_SERVICE);
+  if (gorush?.state !== "ready") {
+    log.warn("secrets.push.apply-failed", { reason: gorush ? "target-not-ready" : "target-missing" });
+    return jsonError(HTTP_SERVICE_UNAVAILABLE, "push-transport-unavailable", "APNs transport failed to start");
+  }
+
+  log.info("secrets.push.apply-complete", { transport: "running" });
+  return Response.json({ ok: true, transport: "running" }, { status: HTTP_OK });
+}
+
 // --- Helpers -----------------------------------------------------------------
 
 function jsonError(status: number, code: string, detail: string): Response {
@@ -302,5 +411,59 @@ async function parseJsonBody(req: Request): Promise<unknown> {
     return await req.json();
   } catch {
     return null;
+  }
+}
+
+type BoundedJsonResult = { ok: true; value: unknown } | { ok: false; error: "invalid" | "too-large" | "timeout" };
+
+async function parseBoundedJsonBody(req: Request): Promise<BoundedJsonResult> {
+  const declaredLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_APNS_BODY_BYTES) {
+    void req.body?.cancel().catch(() => undefined);
+    return { ok: false, error: "too-large" };
+  }
+  if (!req.body) return { ok: false, error: "invalid" };
+
+  const reader = req.body.getReader();
+  const signal = AbortSignal.any([req.signal, AbortSignal.timeout(BODY_READ_TIMEOUT_MS)]);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const cancel = () => void reader.cancel().catch(() => undefined);
+  signal.addEventListener("abort", cancel, { once: true });
+  if (signal.aborted) cancel();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) return { ok: false, error: "timeout" };
+      if (done) break;
+      if (total + value.byteLength > MAX_APNS_BODY_BYTES) {
+        void reader.cancel().catch(() => undefined);
+        return { ok: false, error: "too-large" };
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+    try {
+      return { ok: true, value: JSON.parse(Buffer.concat(chunks, total).toString("utf8")) as unknown };
+    } catch {
+      return { ok: false, error: "invalid" };
+    }
+  } catch {
+    return { ok: false, error: signal.aborted ? "timeout" : "invalid" };
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+}
+
+function isP256Pkcs8PrivateKey(pem: string): boolean {
+  if (!PKCS8_PEM_RE.test(pem)) return false;
+  try {
+    const key = createPrivateKey({ key: pem, format: "pem" });
+    return (
+      key.type === "private" && key.asymmetricKeyType === "ec" && key.asymmetricKeyDetails?.namedCurve === "prime256v1"
+    );
+  } catch {
+    return false;
   }
 }

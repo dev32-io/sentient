@@ -1,0 +1,75 @@
+schemaVersion: 1
+id: schedule-service
+title: Build persistent schedule management and due-occurrence selection
+dependsOn:
+  - contracts-authority
+description: Implement the reusable timing and schedule-management layer behind
+  the validated scheduling contracts. Settings and model calls must
+  create/view/edit/pause/resume/delete user-owned one-time or recurring messages
+  with identical semantics. Timing decides what is due; it must not create
+  calendar events, call an LLM, send push, or delete a one-time job merely
+  because dispatch started.
+scope: >-
+  Own `gateway/src/scheduling/` except the established contracts and the later
+  scheduled-chat completion/outbox implementation; new
+  `gateway/src/api/handlers/scheduled-messages.ts`; and new
+  `gateway/src/bootstrap/product-tools/scheduled-message-provider.ts`. Reuse
+  `gateway/src/calendar/expand-recurrence.ts` and temporal helpers where
+  applicable, extracting only genuinely reusable pure helpers with preserved
+  calendar regressions if needed. Do not change calendar mutation/provider
+  integration, session runtime/store, push code, central API
+  router/bootstrap/tool metadata, config exports, or YAML values owned by the
+  boundary task.
+
+
+  Consume the shared validated schemas, capability classes and injected
+  clock/executor/transaction interfaces. Provide ready-to-mount handler/provider
+  factories but no service activation. Keep durable due claims and an explicit
+  transaction extension for later terminal/session/outbox reconciliation; the
+  actual completion transaction is not independently implemented here.
+delivery: >-
+  - Persist definitions and occurrence identities beneath capability-confined
+  user data roots, using forward-compatible migrations and temporary isolated
+  roots in tests. A body-supplied owner cannot select another user's store.
+  Bound collection/mutation operations and use typed failures/cancellation at
+  adapters.
+
+  - Resolve relative delay once on accepted create; prevent duplicate mutation
+  retries from shifting time or creating multiple jobs. Support pending once and
+  recurring entries, next run, edit/pause/resume/delete, and stale-update
+  handling.
+
+  - Implement bounded due selection and stable claim fencing. Recurring jobs
+  preserve local wall time: skip DST gaps/invalid monthly dates and use the
+  first overlap instant. At boot only the latest missed occurrence within the
+  configured 15-minute default grace is eligible; older slots expire without
+  backlog replay. Keep cleanup of expired once entries gateway-owned.
+
+  - Provide a transaction-safe extension point for associating the claimed
+  occurrence with a session and subsequently finalizing it with durable delivery
+  effects. Never expose a delete-on-submit shortcut or acknowledge unfinished
+  chat work. Preserve paused/deleted/mutated generation checks against claims.
+
+  - Model tool and argument descriptions distinguish ordinary future messages
+  from real-world calendar events, explicitly describe once versus recurring and
+  automatic once cleanup, and use contrasting examples including chat in 30
+  minutes and daily news. Use existing role/per-tool mediation; do not implement
+  a second policy system.
+
+  - Focused tests establish API ownership, mutation idempotency,
+  recurrence/DST/month boundaries, expired-once cleanup, latest-only catch-up,
+  and pause/edit/delete/claim races. No tests that re-prove ordinary chat
+  skills/tools. Commit the reusable service and factories without starting
+  runtime or production services.
+checks:
+  - bash -lc "source scripts/env.sh && bun test gateway/src/scheduling
+    gateway/src/api/handlers/scheduled-messages.test.ts
+    gateway/src/bootstrap/product-tools/scheduled-message-provider.test.ts"
+  - bash -lc "source scripts/env.sh && bun test
+    gateway/src/calendar/expand-recurrence.test.ts && bun run --filter
+    @sentient/gateway typecheck && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: A bounded persistent scheduler and management adapters form one
+    coherent implementation boundary with deterministic state-machine tests.

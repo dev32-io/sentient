@@ -11,6 +11,16 @@ export type CalendarScope = "private" | "household";
 export type CalendarReadScope = CalendarScope | "all";
 export type CalendarVisibility = "everyone" | "adults";
 export type CalendarImportance = "normal" | "important" | "pinned";
+export type CalendarReminder =
+  | { enabled: false }
+  | { reminderId?: string; enabled: true; mode: "at-start" }
+  | { reminderId?: string; enabled: true; mode: "lead"; leadMinutes: number }
+  | { reminderId?: string; enabled: true; mode: "all-day"; localTime: string; timeZone: string };
+export type CalendarReminderInput =
+  | { enabled: false }
+  | { enabled: true; mode: "at-start" }
+  | { enabled: true; mode: "lead"; leadMinutes: number }
+  | { enabled: true; mode: "all-day"; localTime: string; timeZone: string };
 
 export type CalendarWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
 export interface CalendarRecurrence {
@@ -35,6 +45,7 @@ export interface CalendarEventV2 {
   importance: CalendarImportance;
   group?: string;
   tags: readonly string[];
+  reminder?: CalendarReminder;
 }
 
 /** The V2 effective occurrence shape on the wire. */
@@ -60,6 +71,7 @@ export type CalendarUpdateChanges = {
   group?: string | null;
   tags?: readonly string[];
   recurrence?: CalendarRecurrence | null;
+  reminder?: CalendarReminderInput;
 };
 
 export type CalendarMutationCommand =
@@ -136,6 +148,7 @@ export type CalendarEvent = {
   group?: string;
   tags: readonly string[];
   notificationPolicy?: Record<string, unknown>;
+  reminder?: CalendarReminder;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -204,6 +217,7 @@ export type CalendarCreateInput = {
   group?: string;
   tags?: readonly string[];
   notificationPolicy?: Record<string, unknown>;
+  reminder?: Exclude<CalendarReminderInput, { enabled: false }>;
 };
 
 export type CalendarGetResult = CalendarEvent | CalendarOccurrence;
@@ -261,6 +275,28 @@ function sourceRecurrence(value: unknown): CalendarRecurrence | undefined {
   if (typeof value.frequency !== "string") return undefined;
   return value as unknown as CalendarRecurrence;
 }
+function sourceReminder(value: unknown): CalendarReminder | undefined {
+  if (!isRecord(value) || typeof value.enabled !== "boolean") return undefined;
+  if (!value.enabled) return Object.keys(value).length === 1 ? { enabled: false } : undefined;
+  const reminderId = typeof value.reminderId === "string" ? value.reminderId : undefined;
+  if (value.mode === "at-start") return { enabled: true, mode: "at-start", ...(reminderId ? { reminderId } : {}) };
+  if (value.mode === "lead" && Number.isInteger(value.leadMinutes) && (value.leadMinutes as number) > 0)
+    return {
+      enabled: true,
+      mode: "lead",
+      leadMinutes: value.leadMinutes as number,
+      ...(reminderId ? { reminderId } : {}),
+    };
+  if (value.mode === "all-day" && typeof value.localTime === "string" && typeof value.timeZone === "string")
+    return {
+      enabled: true,
+      mode: "all-day",
+      localTime: value.localTime,
+      timeZone: value.timeZone,
+      ...(reminderId ? { reminderId } : {}),
+    };
+  return undefined;
+}
 function sourceEvent(value: unknown): CalendarEvent {
   if (!isRecord(value) || typeof value.eventId !== "string" || typeof value.title !== "string")
     throw new Error("invalid calendar event");
@@ -282,6 +318,8 @@ function sourceEvent(value: unknown): CalendarEvent {
     if (recurrence) event.recurrence = recurrence;
   }
   if (typeof value.group === "string") event.group = value.group;
+  const reminder = sourceReminder(value.reminder);
+  if (reminder) event.reminder = reminder;
   return event;
 }
 function sourceOccurrence(value: unknown): CalendarOccurrence {
@@ -366,6 +404,7 @@ function createPayload(event: CalendarCreateInput): Record<string, unknown> {
   if (event.recurrence !== undefined) payload.recurrence = recurrencePayload(event.recurrence);
   if (event.group !== undefined) payload.group = event.group;
   if (event.notificationPolicy !== undefined) payload.notificationPolicy = event.notificationPolicy;
+  if (event.reminder !== undefined) payload.reminder = event.reminder;
   if (event.scope !== undefined) payload.scope = event.scope;
   return payload;
 }
@@ -379,6 +418,7 @@ function changesPayload(patch: CalendarPatch): CalendarUpdateChanges {
   if (patch.importance !== undefined) changes.importance = patch.importance;
   if (patch.group !== undefined) changes.group = patch.group;
   if (patch.tags !== undefined) changes.tags = [...patch.tags];
+  if (patch.reminder !== undefined) changes.reminder = patch.reminder;
   if (patch.recurrence !== undefined) {
     if (patch.recurrence === null) changes.recurrence = null;
     else {

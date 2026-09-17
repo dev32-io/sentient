@@ -11,6 +11,8 @@ import MarkdownUI
 struct PulseDots: View {
     @State private var pulsing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .body) private var bodyLineHeight =
+        DesignTextRole.body.baseSize * CGFloat(DesignTextRole.body.lineHeight)
 
     var body: some View {
         HStack(spacing: BubbleLayout.pulseGap) {
@@ -28,6 +30,7 @@ struct PulseDots: View {
                     )
             }
         }
+        .frame(height: bodyLineHeight, alignment: .leading)
         .onAppear { pulsing = !reduceMotion }
         .onChange(of: reduceMotion) { _, reduced in pulsing = !reduced }
         .accessibilityLabel("Assistant is thinking")

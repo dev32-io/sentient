@@ -99,7 +99,7 @@ inbound_proxy:
 # stack — dev launcher budgets (scripts/stack.sh)
 # ---------------------------------------------------------------------------
 stack:
-  readiness_timeout_ms: 60000   # total wait for gateway health AND https://localhost/. Range 5000-300000.
+  readiness_timeout_ms: 120000  # total wait for cold managed-service reconcile AND https://localhost/. Range 5000-300000.
   readiness_poll_ms: 500        # retry interval within that budget. Range 100-5000.
   docker_wait_s: 30             # seconds to wait for the docker daemon before refusing. Range 0-120.
 
@@ -192,6 +192,43 @@ session:
   input_arbitration_window_ms: 100      # 100 ms. Range 0–5000. 0 disables arbitration (every input applied).
 
 # ---------------------------------------------------------------------------
+# Scheduled messages — execution and bounded session-card projection
+# Optional at the schema boundary for old operator files; this checked-in policy
+# is authoritative when the service is later mounted.
+# ---------------------------------------------------------------------------
+scheduling:
+  tick_interval_ms: 1000              # Due scan cadence. Range 100–60000.
+  missed_grace_ms: 900000             # Run only the newest missed occurrence within 15 min. Range 0–86400000.
+  claim_lease_ms: 60000               # Durable due-claim lease; must exceed tick interval. Range 1000–3600000.
+  due_claim_limit: 25                 # Max occurrences claimed per tick. Range 1–1000.
+  max_relative_delay_ms: 31536000000  # One year. Relative delays resolve once at API acceptance.
+  max_message_chars: 12000            # Saved normal user-message bound. Range 1–12000.
+  cards_default_page_size: 20         # Newest-first inbox page size. Range 1–100.
+  cards_max_page_size: 100            # Hard request page bound. Range 1–100.
+  inbox_max_entries: 500              # Retained notification cards per user. Range 1–10000.
+  inbox_retention_ms: 2592000000      # 30 days; expiry is durable and never deletes chat content. Range 60000–31536000000.
+  outbox_claim_limit: 50              # Content-reference deliveries claimed per drain. Range 1–1000.
+  outbox_lease_ms: 60000              # Delivery lease independent of schedule cleanup. Range 1000–3600000.
+
+# ---------------------------------------------------------------------------
+# Native push — iOS/APNs policy only. Provider credentials are provisioned
+# locally and never belong in this file.
+# ---------------------------------------------------------------------------
+push:
+  # APNs topic/environment come from the embedded Debug/Release build identity.
+  # provider_url remains operator-tunable; QA uses its own explicit loopback port.
+  # provider_url: http://127.0.0.1:8088/api/push
+  request_timeout_ms: 5000            # Bounded provider request. Range 100–60000.
+  drain_interval_ms: 1000             # Pending delivery scan cadence. Range 100–60000.
+  drain_claim_limit: 50               # Max deliveries per drain. Range 1–1000.
+  max_attempts: 5                     # Bounded retries; never reruns a chat. Range 1–20.
+  retry_base_ms: 1000                 # Initial retry delay. Range 100–3600000.
+  retry_max_ms: 60000                 # Retry delay ceiling. Range 100–86400000.
+  payload_max_bytes: 4096             # APNs payload ceiling. Range 512–4096.
+  content_preview_max_chars: 280      # Plain-text preview cap when device opts in. Range 1–280.
+  revocation_ttl_ms: 2592000000       # 30 days for narrow pending-unlink retries. Range 60000–31536000000.
+
+# ---------------------------------------------------------------------------
 # Access — capability minting + per-user physical isolation (spec §2.1, §2.5)
 # ---------------------------------------------------------------------------
 access:
@@ -206,11 +243,11 @@ access:
   # shared_data_root: ~/.sentient/gateway/shared
 
 # ---------------------------------------------------------------------------
-# Store — durable per-user session history (spec §3)
+# Store — durable per-user data (sessions, scheduling, inbox, private calendar)
 # ---------------------------------------------------------------------------
 store:
-  # SQLite filename created inside each user's home dir (<user_data_root>/<userId>/).
-  # One DB per user: physical isolation plus a natural per-user WAL write lane.
+  # SQLite filename inside each user's home dir (<user_data_root>/<userId>/).
+  # Domain stores share this file, not authority. Household/global stores stay separate.
   db_filename: sessions.db
 
 # ---------------------------------------------------------------------------
@@ -928,6 +965,22 @@ managed_services:
       noop: true
     depends_on: []
     optional: false
+
+  # Optional APNs transport. Missing signing credentials causes registry skip;
+  # push reports unavailable without holding gateway readiness.
+  gorush:
+    template: gorush.yaml
+    allowed_images: ["appleboy/gorush:1.22.0@sha256:2bc21bc98c2253f2d14b4aeb614ec89b72188b2e885d58490ac712cb85a9b8bd"]
+    networks: ["sentient-external"]
+    secrets:
+      GORUSH_APNS_KEY_BASE64: push.apns_key_base64
+      GORUSH_APNS_KEY_ID: push.apns_key_id
+      GORUSH_APNS_TEAM_ID: push.apns_team_id
+    healthcheck:
+      url: http://127.0.0.1:8088/healthz
+      timeout_ms: 10000
+    depends_on: []
+    optional: true
 
   outbound-worker:
     template: outbound-worker.yaml

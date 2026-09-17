@@ -48,6 +48,34 @@ describe("session metadata", () => {
     expect(db.query("SELECT name FROM sqlite_master WHERE name='sessions'").all()).toHaveLength(1);
   });
 
+  it("MIGRATION: preserves scheduled metadata without recreating notification cards", () => {
+    const db = openStoreAtSchemaVersion(6);
+    db.exec(`
+      INSERT INTO sessions (
+        session_id,mint_key,created_at,updated_at,version,scheduled_schedule_id,
+        scheduled_occurrence_id,scheduled_intended_at,scheduled_actual_at,
+        scheduled_turn_id,scheduled_outcome,scheduled_completed_at
+      ) VALUES
+        ('s_terminal','mint-terminal',1,1,1,'schedule','occurrence-terminal','2026-08-01T00:00:00Z',
+         '2026-08-01T00:00:01Z','turn-terminal','failed','2026-08-01T00:00:02Z'),
+        ('s_pending','mint-pending',2,2,1,'schedule','occurrence-pending','2026-08-01T00:00:00Z',
+         '2026-08-01T00:00:01Z','turn-pending',NULL,NULL)
+    `);
+
+    migrateStore(db, "u_test");
+    const rows = db
+      .query<{ session_id: string; scheduled_outcome: string | null }, []>(
+        "SELECT session_id,scheduled_outcome FROM sessions ORDER BY session_id",
+      )
+      .all();
+    expect(rows).toEqual([
+      { session_id: "s_pending", scheduled_outcome: null },
+      { session_id: "s_terminal", scheduled_outcome: "failed" },
+    ]);
+    expect(db.query("SELECT occurrence_id FROM notification_cards").all()).toEqual([]);
+    db.close();
+  });
+
   it("INVARIANT: creating a session twice with one mint key yields one row", () => {
     const store = openSessionStore(cap);
     const first = store.createSession("s_aaa", "mint-1");

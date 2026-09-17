@@ -145,6 +145,27 @@ describe("GET /api/v1/mcp-catalog — product groups", () => {
     expect(view.groups.memory?.tools.find((tool) => tool.name === "memory_read")?.permission).toBe("allow");
   });
 
+  it("projects scheduled-message tools with role defaults and public descriptions", async () => {
+    const view = await viewFor();
+    const tools = view.groups.scheduled?.tools;
+    expect(tools?.map((tool) => tool.name)).toEqual([
+      "scheduled_message_list",
+      "scheduled_message_create",
+      "scheduled_message_edit",
+      "scheduled_message_pause",
+      "scheduled_message_resume",
+      "scheduled_message_delete",
+    ]);
+    expect(tools?.find((tool) => tool.name === "scheduled_message_list")?.permission).toBe("allow");
+    expect(tools?.find((tool) => tool.name === "scheduled_message_create")).toMatchObject({
+      permission: "ask",
+      dispatch: { kind: "native" },
+    });
+    expect(tools?.find((tool) => tool.name === "scheduled_message_create")?.description).toContain(
+      "do not create real-world calendar events",
+    );
+  });
+
   it("describes native Home management and exposes confirmation-tier removals", async () => {
     const view = await viewFor();
     expect(view.groups.home?.description).toContain("scenes, automations, scripts, and todo items");

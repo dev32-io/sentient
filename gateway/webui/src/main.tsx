@@ -9,6 +9,7 @@ import "./components/settings/settings-shell.css";
 import "./components/settings/sidebar/sidebar.css";
 import "./components/settings/apply-bar/apply-bar.css";
 import "./components/settings/panes/panes.css";
+import "./components/common/scheduling-surfaces.css";
 import "./components/common/dialog.css";
 import "./components/chat/chat-messages.css";
 import "./components/sessions/drawer.css";

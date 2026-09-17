@@ -83,7 +83,7 @@ html.is-paused *::after {
   height: 100vh;
   height: 100dvh; /* iOS safe-area aware, ignored where unsupported */
   display: grid;
-  grid-template-rows: auto 1fr auto; /* topbar, messages, dock */
+  grid-template-rows: auto minmax(0, 1fr); /* topbar, full-height scroll surface */
   grid-template-columns: minmax(0, 1fr); /* don't grow grid column to fit content */
   background:
     radial-gradient(1000px 500px at 10% -10%, color-mix(in oklab, var(--color-accent) 10%, transparent), transparent 60%),
@@ -111,8 +111,30 @@ html.is-paused *::after {
   overflow: hidden;
 }
 .app-shell__dock {
-  /* A normal grid row. Its intrinsic height sets how tall the dock area is,
-     and the messages area naturally ends at the dock's top edge. */
+  position: fixed;
+  z-index: 9;
+  inset-inline: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.app-shell__dock::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-inline: 0;
+  bottom: 0;
+  height: calc(100% + var(--space-3xl));
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in oklab, var(--color-bg) 72%, transparent) 42%,
+    color-mix(in oklab, var(--color-bg) 94%, transparent) 100%
+  );
+}
+.app-shell__dock > * {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 /* ─── IconButton (topbar + shared generic) ─── */

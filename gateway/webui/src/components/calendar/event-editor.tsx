@@ -35,6 +35,7 @@ import {
   CalendarEditorScopeSection,
 } from "./calendar-editor-sections.tsx";
 import { CalendarEditorFooter } from "./calendar-editor-footer.tsx";
+import { CalendarReminderControls } from "./calendar-reminder-controls.tsx";
 import { CalendarDiscardChangesDialog } from "./calendar-editor-overlays.tsx";
 import type {
   CalendarEditorApiResult,
@@ -356,6 +357,7 @@ function EventEditorLifetime({
         <form id={formId.current} class="calendar-editor" onSubmit={(event) => void submit(event)}>
           <CalendarEditorBasicsSection draft={draft} formId={formId.current} titleRef={titleRef} onChange={setDraftValue} />
           <CalendarEditorDateTimeSection draft={draft} formId={formId.current} onChange={setDraftValue} onToggleAllDay={toggleAllDay} />
+          <CalendarReminderControls draft={draft} formId={formId.current} onChange={setDraftValue} />
           <CalendarEditorMetadataSection
             draft={draft}
             formId={formId.current}

@@ -85,12 +85,14 @@ struct ToolsServerCard: View {
         if toolRows.isEmpty {
             placeholder("No tools declared for this server.")
         } else {
-            ForEach(toolRows) { row in
-                ToolPermissionRow(
-                    row: row,
-                    accessibilityId: "settings-tools-tool-\(id)-\(row.name)",
-                    onChange: { onToolChange(row.name, $0) }
-                )
+            LazyVStack(spacing: 0) {
+                ForEach(toolRows) { row in
+                    ToolPermissionRow(
+                        row: row,
+                        accessibilityId: "settings-tools-tool-\(id)-\(row.name)",
+                        onChange: { onToolChange(row.name, $0) }
+                    )
+                }
             }
         }
     }

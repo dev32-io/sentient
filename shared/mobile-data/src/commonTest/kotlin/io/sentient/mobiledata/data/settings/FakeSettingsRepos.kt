@@ -136,11 +136,15 @@ class FakeAccountRepository : AccountRepository {
     var updateResult: SentientResult<AuthResponse> = meResult
     var changePinResult: AuthResult<Unit> = AuthResult.Success(Unit)
     var logoutResult: SentientResult<Unit> = SentientResult.Success(Unit)
+    var beforeLogout: () -> Unit = {}
 
     override suspend fun me() = meResult
     override suspend fun updateDisplayName(displayName: String) = updateResult
     override suspend fun changePin(currentPin: String, newPin: String) = changePinResult
-    override suspend fun logout() = logoutResult
+    override suspend fun logout(): SentientResult<Unit> {
+        beforeLogout()
+        return logoutResult
+    }
 }
 
 /** AdminRepository fake — thin, all-success. Records the last createUser request for assertions. */

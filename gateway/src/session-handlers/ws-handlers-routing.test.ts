@@ -933,6 +933,23 @@ describe("ws-handlers routing — conversation.activate", () => {
     expect(ws.data.conversationId).toBeNull();
   });
 
+  it("SECURITY: a valid deep-link id owned by another user cannot activate or disclose that session", async () => {
+    const services = activateServices();
+    const foreignSessionId = seedActivatableSession(services.accessManager, "u_cafebabe");
+    const ws = fakeAuthedWs(null);
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId: foreignSessionId }),
+      services,
+    );
+
+    expect(ws.sent).toEqual([{ type: "sessions.error", code: "not_found", message: expect.any(String) }]);
+    expect(ws.data.conversationId).toBeNull();
+    expect(ws.data.attachment).toBeNull();
+    expect(ws.data.runtime).toBeNull();
+  });
+
   it("SECURITY: a draft key is refused rather than treated as a session id", async () => {
     const services = activateServices();
     const ws = fakeAuthedWs(null);

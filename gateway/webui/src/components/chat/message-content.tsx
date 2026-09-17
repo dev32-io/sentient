@@ -14,13 +14,23 @@ export interface MessageContentProps {
  * The content boundary owns Markdown rendering and the transient states around
  * it. The HTML is sanitized by renderMarkdown before it reaches the DOM.
  */
-export function MessageContent({ text, isStreaming, cutoff }: MessageContentProps): JSX.Element {
+export function MessageContent({
+  text,
+  isStreaming,
+  cutoff,
+}: MessageContentProps): JSX.Element {
   const showPlaceholder = isStreaming && text.length === 0;
   const htmlProp = { __html: renderMarkdown(text) };
 
   return (
-    <div class="bubble-text">
-      {showPlaceholder ? <ThinkingPulse /> : <div class="bubble-text__md" dangerouslySetInnerHTML={htmlProp} />}
+    <div
+      class={`bubble-text${showPlaceholder ? " bubble-text--thinking" : ""}`}
+    >
+      {showPlaceholder ? (
+        <ThinkingPulse />
+      ) : (
+        <div class="bubble-text__md" dangerouslySetInnerHTML={htmlProp} />
+      )}
       {isStreaming && text.length > 0 && <StreamingCaret />}
       {cutoff && <MessageCutoff variant="inline" cutoffKind={cutoff.kind} />}
     </div>

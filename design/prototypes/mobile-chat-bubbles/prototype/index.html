@@ -1,0 +1,59 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sentient · Selected chat bubbles</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400&display=swap" rel="stylesheet"><link rel="stylesheet" href="tokens.css"><style>
+*{box-sizing:border-box}body{margin:0;background:var(--color-bg-sunk);color:var(--color-ink);font:15px/1.6 var(--font-ui)}main{max-width:1120px;margin:auto;padding:32px 24px}h1{font:400 32px/1.2 var(--font-display);margin:0 0 12px}p{margin:0}.intro{max-width:680px;color:var(--color-ink-2)}button,select{min-height:44px;font:inherit;color:var(--color-ink);padding:8px 12px;border:1px solid var(--color-line-soft);border-radius:8px;background:var(--slate-face);box-shadow:var(--slate-shadow);cursor:pointer}button[aria-pressed=true]{background:var(--color-accent-soft);color:var(--color-accent)}button:active{transform:translateY(1px);box-shadow:var(--slate-shadow-pressed)}button:disabled{cursor:default;box-shadow:var(--slate-shadow-disabled)}select{background-color:var(--color-paper)}:focus-visible{outline:2px solid var(--color-accent);outline-offset:4px}.sizes{display:flex;gap:12px;align-items:center;margin:24px 0}.study{display:flex;align-items:flex-start;gap:44px}.phone{width:390px;max-width:100%;flex-shrink:0;background:var(--color-bg);border:1px solid var(--color-line);border-radius:26px;overflow:hidden;box-shadow:0 20px 45px -25px #000}.phone-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--color-line-soft)}.phone-head img{width:28px;height:28px}.phone-head strong{font:400 22px var(--font-display)}.phone-head small{margin-left:auto;color:var(--color-ink-2);font-size:12.5px}.thread{padding:18px 8px 26px;display:flex;flex-direction:column;gap:18px;--contour:none;--radius:18px}.day{font-size:12.5px;text-align:center;color:var(--color-ink-2);margin-bottom:4px}.message{position:relative;isolation:isolate;min-width:0;max-width:100%;display:flex;flex-direction:column;align-self:flex-start;--base:var(--color-paper)}.message.user{align-self:flex-end;--base:var(--color-accent-50)}.surface{position:absolute;inset:0;width:100%;height:100%;z-index:-1;overflow:visible;pointer-events:none;filter:drop-shadow(0 2px 1px #17130f) drop-shadow(0 4px 4px #0003)}.active .surface{filter:drop-shadow(0 2px 1px #17130f) drop-shadow(0 7px 6px #f2a06a25)}.face{min-width:0;overflow-wrap:anywhere;padding:8px 12px 12px}.face p+p{margin-top:10px}.face ul{padding-left:18px;margin:10px 0}.face li+li{margin-top:4px}.identity{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;line-height:1.4;color:var(--color-ink-2);min-width:0;order:-1;position:relative;align-self:flex-start;width:fit-content;max-width:100%;padding:6px 12px 0;min-height:34px}.identity strong{font-weight:500}.identity img,.avatar{width:28px;height:28px;flex-shrink:0}.identity img{display:block}.avatar{place-items:center;border-radius:50%}.user .identity{justify-content:flex-end;align-self:flex-end}.user .avatar{order:3}.state{color:var(--color-accent)}.state::before{content:'·';margin-right:6px}
+.avatar {
+  display:grid;
+  border:1px solid transparent;
+  font:600 14px/1 var(--font-display);
+  --avatar-accent: var(--color-accent);
+  --slate-base: color-mix(in oklab, var(--color-paper) 82%, var(--color-accent-soft));
+  --slate-border: color-mix(in oklab, var(--color-bg-sunk) 78%, var(--avatar-accent));
+  --slate-glow: var(--avatar-accent);
+  --avatar-face:
+    radial-gradient(
+      circle at 50% 54%,
+      color-mix(in oklab, var(--slate-base) 72%, var(--color-bg-sunk)) 0%,
+      color-mix(in oklab, var(--slate-base) 82%, var(--color-bg-sunk)) 48%,
+      var(--slate-base) 70%,
+      color-mix(in oklab, var(--color-bg-sunk) 90%, var(--avatar-accent)) 100%
+    );
+  border-color: transparent;
+  background: var(--avatar-face);
+  color: var(--avatar-accent);
+  box-shadow:
+    0 2px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 96%, var(--avatar-accent)),
+    0 9px 13px -8px rgba(0, 0, 0, .98),
+    0 13px 19px -15px color-mix(in oklab, var(--avatar-accent) 40%, transparent);
+}
+
+.foot{padding:12px 16px;border-top:1px solid var(--color-line-soft);font-size:12.5px;color:var(--color-ink-2)}.notes{max-width:390px;padding-top:6px}.notes h2{font:400 26px/1.25 var(--font-display);margin:0 0 12px}.notes h3{font-size:15px;font-weight:500;margin:22px 0 8px}.notes p{color:var(--color-ink-2);margin-bottom:16px}.notes a{color:var(--color-accent);text-underline-offset:3px}
+@media(max-width:740px){main{padding:24px 0}h1,.intro,.sizes{margin-left:16px;margin-right:16px}.study{flex-direction:column;align-items:center;gap:24px}.notes{padding:0 18px}.phone{border-radius:18px}}
+</style></head><body><main><h1>Your selected design.</h1><p class="intro">Sweep · Same face · Continuous · Compact line · Close-set</p>
+<div class="sizes"><label for="size">Preview width</label><select id="size"><option value="320">320 px</option><option value="390" selected>390 px</option><option value="430">430 px</option></select></div><div class="study"><section class="phone" aria-label="Mobile conversation preview"><header class="phone-head"><img src="avatars/sentient-mark.svg" alt=""><strong>Sentient</strong><small>Bubble study</small></header><div class="thread" id="thread"><div class="day">Today · Example conversation</div><article class="message user" aria-label="Message from Maya"><div class="face"><p>Any good co-op games for a quiet evening? Something we can pick up without a long tutorial.</p></div><footer class="identity"><span class="avatar" aria-hidden="true">m</span><strong>Maya</strong><span>· 6:41 pm</span></footer></article><article class="message" aria-label="Message from Sentient"><div class="face"><p><strong>Try a little shared adventure.</strong> These are easy to get into, with room to explore together.</p><ul><li><strong>Unravel Two</strong> — gentle puzzles, one couch.</li><li><strong>Moving Out 2</strong> — cheerful chaos in short rounds.</li></ul><p>Would you rather solve something together, or laugh at things going wrong?</p></div><footer class="identity"><img src="avatars/sentient-mark.svg" alt=""><strong>Sentient</strong><span>· 6:42 pm</span></footer></article><article class="message user" aria-label="Message from Maya"><div class="face"><p>A little of both.</p></div><footer class="identity"><span class="avatar" aria-hidden="true">m</span><strong>Maya</strong><span>· 6:43 pm</span></footer></article><article class="message active" aria-label="Sentient response, active appearance sample"><div class="face"><p>Then I’d start with <strong>Moving Out 2</strong>. Short rounds make it easy to stop whenever you like.</p></div><footer class="identity"><img src="avatars/sentient-mark.svg" alt=""><strong>Sentient</strong><span class="state">Responding</span></footer></article></div><footer class="foot">Static activity sample · Composer unchanged</footer></section><aside class="notes"><h2>Locked combination restored.</h2><p>Sweep outline. Identity above, on the same continuous face. Compact 28px avatars and close-set elevation.</p><p>Full-width message text, rounded body, and localized ember cast on the active reply. No experimental layout controls.</p></aside></div></main><script>
+document.querySelector('#size').addEventListener('change',event=>document.querySelector('.phone').style.width=event.target.value+'px');
+const messages=[...document.querySelectorAll('.message')];
+messages.forEach((message,index)=>{
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','surface');
+  svg.setAttribute('aria-hidden','true');
+  svg.innerHTML=`<defs><linearGradient id="face-${index}" x2="0" y2="1"><stop stop-color="color-mix(in oklab,var(--base) 96%,var(--color-ink))"/><stop offset="1" stop-color="var(--base)"/></linearGradient><radialGradient id="bow-${index}"><stop stop-color="var(--color-bg-sunk)" stop-opacity=".24"/><stop offset=".65" stop-color="var(--color-bg-sunk)" stop-opacity=".12"/><stop offset="1" stop-color="var(--color-bg-sunk)" stop-opacity="0"/></radialGradient></defs><g><path fill="url(#face-${index})"/><path fill="url(#bow-${index})"/><path fill="none" stroke="var(--color-line-soft)" stroke-width="1"/></g>`;
+  message.prepend(svg);
+});
+function drawSurfaces(){
+  messages.forEach(message=>{
+    const w=message.clientWidth,h=message.clientHeight;
+    const identity=message.querySelector('.identity');
+    const cap=identity.offsetWidth+6,top=identity.offsetHeight-10,r=18,right=w-1,bottom=h-1;
+    const crown=cap>w-52
+      ? `M ${r} 1 H ${w-r} Q ${right} 1 ${right} ${r}`
+      : `M ${r} 1 H ${cap-12} C ${cap+12} 1 ${cap+8} ${top} ${cap+36} ${top} H ${w-r} Q ${right} ${top} ${right} ${top+r}`;
+    const path=`${crown} V ${h-r} Q ${right} ${bottom} ${w-r} ${bottom} H ${r} Q 1 ${bottom} 1 ${h-r} V ${r} Q 1 1 ${r} 1 Z`;
+    const svg=message.querySelector('.surface');
+    svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
+    svg.querySelector('g').setAttribute('transform',message.classList.contains('user')?`translate(${w} 0) scale(-1 1)`:'');
+    svg.querySelectorAll('path').forEach(node=>node.setAttribute('d',path));
+  });
+}
+const observer=new ResizeObserver(drawSurfaces);
+messages.forEach(message=>{observer.observe(message);observer.observe(message.querySelector('.identity'));});
+drawSurfaces();
+</script></body></html>

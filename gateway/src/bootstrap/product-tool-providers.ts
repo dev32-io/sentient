@@ -1,11 +1,13 @@
-import type { ProductToolGroup } from "@sentient/config";
+import type { FoundationProductToolGroup, ProductToolGroup } from "@sentient/config";
 import type { NativeToolRunner } from "../tools/tool-broker.js";
 import { calendarProductToolProvider } from "./product-tools/calendar-provider.js";
 import { homeProductToolProvider } from "./product-tools/home-provider.js";
 import { musicProductToolProvider } from "./product-tools/music-provider.js";
+import { scheduledMessageProductToolProvider } from "./product-tools/scheduled-message-provider.js";
 import { webProductToolProvider } from "./product-tools/web-provider.js";
 
-export type FoundationProductGroup = "web" | "home" | "music" | "calendar";
+/** Foundation groups are composed through one metadata-checked registry. */
+export type FoundationProductGroup = FoundationProductToolGroup;
 
 /** A group-owned contribution slot. Future providers implement only their
  * factory and receive only their own configuration object; this registry and
@@ -20,6 +22,7 @@ export interface ProductToolProviderSlots {
   readonly home: ProductToolProvider<"home">;
   readonly music: ProductToolProvider<"music">;
   readonly calendar: ProductToolProvider<"calendar">;
+  readonly scheduled: ProductToolProvider<"scheduled">;
 }
 
 export interface ProductToolProviderConfig {
@@ -27,6 +30,7 @@ export interface ProductToolProviderConfig {
   readonly home?: Readonly<Record<string, unknown>>;
   readonly music?: Readonly<Record<string, unknown>>;
   readonly calendar?: Readonly<Record<string, unknown>>;
+  readonly scheduled?: Readonly<Record<string, unknown>>;
 }
 
 /** Stable bootstrap-owned slots. Each value lives in its independently-owned
@@ -36,6 +40,7 @@ export const EMPTY_PRODUCT_TOOL_PROVIDERS: ProductToolProviderSlots = {
   home: homeProductToolProvider,
   music: musicProductToolProvider,
   calendar: calendarProductToolProvider,
+  scheduled: scheduledMessageProductToolProvider,
 };
 
 /** Produces one authoritative native runner map and rejects cross-provider
@@ -45,7 +50,7 @@ export function composeProductToolProviders(
   config: ProductToolProviderConfig = {},
 ): Map<string, NativeToolRunner> {
   const out = new Map<string, NativeToolRunner>();
-  for (const provider of [slots.web, slots.home, slots.music, slots.calendar] as const) {
+  for (const provider of [slots.web, slots.home, slots.music, slots.calendar, slots.scheduled] as const) {
     const providerConfig = config[provider.group] ?? {};
     for (const runner of provider.create(providerConfig)) {
       if (runner.definition.productGroup !== (provider.group satisfies ProductToolGroup)) {

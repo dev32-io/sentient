@@ -1,0 +1,102 @@
+schemaVersion: 1
+id: scheduled-chat-execution
+title: Complete preserved durable scheduled-chat execution
+dependsOn: []
+description: Complete the scheduled execution boundary by reusing the preserved
+  implementation, not rebuilding it. Recover source commits
+  7d0b5c24969aec72c25f72465fd41cd08a7de86d and
+  f1bca428ab6cfe1fa80bff502c6e48abb572b1a6 in that order into the assigned
+  workspace if absent. The existing base already contains schedule CRUD/claims,
+  push transport, shared protocols and client data. One claimed occurrence must
+  submit one ordinary user message in a fresh session, reconcile its durable
+  terminal result, and atomically finalize the occurrence with a
+  response-reference outbox and one-time consumption or recurring advancement.
+  Prior commits are inputs, not proof that this boundary is complete.
+scope: >-
+  Own `gateway/src/scheduled-chat/`, scheduled finalization/association and
+  outbox operations in `gateway/src/scheduling/`, minimal provenance/schema
+  changes in the existing session store, and required runtime/registry/handle
+  forwarding changes. Preserve the single session registry, current capability
+  authority and normal chat policy. The preserved source adds
+  createScheduledExecutionAuthorizer, createScheduledMessageSubmitter,
+  createScheduledChatRunner, a push-outbox adapter and terminal observation;
+  inspect these current implementations and finish missing behavior and
+  regression coverage rather than introducing replacements.
+
+
+  The preserved finalizer also writes a separate scheduled_cards table with null
+  previews. Do not extend that into a notification history or response mirror:
+  remove its redundant finalization writes while retaining authoritative
+  occurrence/deduplication/outbox bookkeeping. Include the scheduleId,
+  occurrenceId and intended/actual timestamps needed by the existing card DTO in
+  minimal session provenance so the later gateway owner can implement the real
+  session-backed query after one-time deletion. Preserve stored sessions and use
+  additive migrations; public card reads remain outside this task.
+
+
+  A narrow callback-forwarding change in
+  `gateway/src/bootstrap/phase-services.ts` is included; public service
+  activation, API card projection, router/tool metadata, calendar mutation
+  integration, and client UI are excluded. Do not edit existing workflow
+  artifacts or old worktrees, discard code, fake a WebSocket, add a second live
+  runtime registry, or copy response content into another database. Replay only
+  missing source commits; retain and resolve ordinary integration conflicts
+  without destructive resets or hiding unrelated changes.
+delivery: >-
+  - Deliver socket-free acquisition through the existing registry so client
+  attachment uses the same session/runtime. Use stable occurrence
+  mintKey/pending identity to prevent duplicate session allocation and input
+  append. Preserve ordinary background retention, revocation, no-window
+  permission rules and content-free emission; do not reuse a message-preview
+  logger unmodified.
+
+  - Resolve the current user and actual household/capability context at
+  execution and recovery. Persisted owner/source identifiers are not authority.
+  Calendar-source execution must require a current authorization/validation
+  callback, ready for later integration. Preserve stale claim/edit/pause/delete
+  fencing and check cancellation before submission.
+
+  - Observe the originating turn's durable terminal outcome, not submit return,
+  running=false, a later assistant turn or retention-only settlement. Match
+  interrupted/failed outcomes to their session and do not blindly replay them.
+  Previously saved input without a reliable terminal outcome must be reconciled
+  conservatively.
+
+  - Keep one schedule-store transaction for terminal receipt, idempotent
+  reference-only outbox insertion, and once cleanup/recurring advancement. Do
+  not cascade-delete delivery bookkeeping with active jobs. Reconcile the
+  separate session-store commit after restart: saved terminal response before
+  finalize must not trigger another turn, and finalized work must retain its
+  outbox after a crash.
+
+  - Complete bounded runner startup/shutdown/cancellation and adapter error
+  handling, including no overlapping execution or accumulating timer/abort
+  listeners. Push retry remains independent and never invokes the chat
+  submitter. Expose the ready runner/finalizer/outbox factories for the public
+  gateway composition.
+
+  - Add meaningful executor/runner consumer-boundary regression tests under
+  `gateway/src/scheduled-chat/`, not only service-unit assertions. Use temporary
+  real stores and controlled provider/runtime inputs to prove mint/append
+  idempotency, original-turn completion, client attachment, current authority
+  during recovery, interruption, commit/crash windows, outbox survival,
+  generation races and recurring progress. Existing chat tests own skill/tool
+  internals; do not add special skill verification.
+
+  - Leave recovered and completed source committed and passing the declared
+  checks. Preserve all prior source and private data; no production actions.
+checks:
+  - bash -lc "source scripts/env.sh && bun test gateway/src/scheduled-chat
+    gateway/src/scheduling gateway/src/store
+    gateway/src/session-handlers/session-registry.test.ts"
+  - bash -lc "source scripts/env.sh && bun test
+    gateway/src/runtime/session-runtime.test.ts
+    gateway/src/runtime/session-retention.test.ts && bun run --filter
+    @sentient/gateway typecheck && git diff --check"
+assignment:
+  agent: implementer
+  tier: medium
+  rationale: This preserves the coupled terminal-observation/finalization/replay
+    invariant under one owner. Existing implementation supplies the base;
+    composition and calendar integration remain separate, bounded follow-on
+    work.

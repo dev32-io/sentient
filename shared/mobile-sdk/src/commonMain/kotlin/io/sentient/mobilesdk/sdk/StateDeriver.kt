@@ -51,6 +51,51 @@ class StateDeriver(private val clock: Clock) {
     var authExpired: Boolean = false
     var lastTurnError: Boolean = false
 
+    private var cognitionTurnId: String? = null
+    private var audioTurnId: String? = null
+    private var latestAssistantTurnId: String? = null
+    private var latestAssistantReplyId: String? = null
+    private val observedAssistantTurnIds = mutableSetOf<String>()
+
+    fun applyInflight(message: InFlightMessage?) {
+        inflight = message
+        if (message != null) noteLatestReply(message.turnId, message.replyId)
+    }
+
+    fun applyCognitionActivity(state: CognitionState, turnId: String?) {
+        cognitionTurnId = turnId?.takeIf { state != CognitionState.IDLE && noteLatestReply(it, inflight?.takeIf { msg -> msg.turnId == it }?.replyId) }
+    }
+
+    fun applyAudioTurn(turnId: String?) {
+        audioTurnId = turnId
+    }
+
+    /** Hide current activity while retaining turn tombstones for same-epoch late frames. */
+    fun interruptAssistantActivity() {
+        cognitionTurnId = null
+        audioTurnId = null
+        latestAssistantTurnId = null
+        latestAssistantReplyId = null
+    }
+
+    /** Start a new transport/session presentation epoch. */
+    fun clearAssistantActivity() {
+        interruptAssistantActivity()
+        observedAssistantTurnIds.clear()
+    }
+
+    /** Returns false when an older observed turn tries to reclaim presentation. */
+    private fun noteLatestReply(turnId: String, replyId: String?): Boolean {
+        if (turnId.isEmpty()) return false
+        if (latestAssistantTurnId != turnId) {
+            if (!observedAssistantTurnIds.add(turnId)) return false
+            latestAssistantTurnId = turnId
+            latestAssistantReplyId = null
+        }
+        if (replyId != null) latestAssistantReplyId = replyId
+        return true
+    }
+
     /**
      * Set the committed feed, clearing the live STT [transcript] when a speech
      * user entry whose content matches the current preview has committed.
@@ -66,6 +111,19 @@ class StateDeriver(private val clock: Clock) {
      */
     fun applyFeed(items: List<ConversationFeedItem>) {
         feed = items
+        val latestTurn = latestAssistantTurnId
+        if (latestTurn != null) {
+            val eligibleReplies = items.filterIsInstance<ConversationFeedItem.Assistant>().filter {
+                it.turnId == latestTurn && it.cutoff == null && it.replyId != null
+            }
+            val currentReplyId = latestAssistantReplyId
+            val currentCommittedIndex = eligibleReplies.indexOfLast { it.replyId == currentReplyId }
+            // Missing means current reply is still in-flight: an older committed row must
+            // not steal ownership before the newer reply's commit arrives.
+            if (currentReplyId == null || currentCommittedIndex >= 0) {
+                eligibleReplies.lastOrNull()?.replyId?.let { latestAssistantReplyId = it }
+            }
+        }
         if (transcript.isEmpty()) return
         val lastSpeechUser = items.asReversed().firstOrNull {
             it is ConversationFeedItem.User && it.channel == SPEECH_CHANNEL
@@ -85,6 +143,27 @@ class StateDeriver(private val clock: Clock) {
         audioState = audioState,
         cognition = cognition,
     )
+
+    fun deriveAssistantActivity(): AssistantActivityState {
+        val thinkingTurn = cognitionTurnId
+        if (thinkingTurn != null) {
+            val live = inflight?.takeIf { it.turnId == thinkingTurn }
+            return AssistantActivityState(
+                phase = if (live?.text?.isNotEmpty() == true) AssistantActivityPhase.RESPONDING else AssistantActivityPhase.THINKING,
+                turnId = thinkingTurn,
+                replyId = live?.replyId ?: latestAssistantReplyId.takeIf { latestAssistantTurnId == thinkingTurn },
+            )
+        }
+        val speakingTurn = audioTurnId
+        if (isSpeaking && speakingTurn != null && speakingTurn == latestAssistantTurnId) {
+            return AssistantActivityState(
+                phase = AssistantActivityPhase.RESPONDING,
+                turnId = speakingTurn,
+                replyId = latestAssistantReplyId,
+            )
+        }
+        return AssistantActivityState()
+    }
 
     /**
      * Project committed-only messages (no live in-flight bubble).

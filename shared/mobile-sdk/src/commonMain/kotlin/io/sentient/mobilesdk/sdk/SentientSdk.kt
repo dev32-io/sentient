@@ -15,12 +15,14 @@ import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
+import io.sentient.mobilesdk.connectors.SessionsTransportException
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ResumeParams
+import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.secure.DeviceIdProvider
@@ -45,6 +47,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -55,10 +58,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.CoroutineContext
@@ -68,6 +73,17 @@ import kotlin.random.Random
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
 private const val DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS = 1_000L
 private const val DEFAULT_TRANSPORT_TEARDOWN_TIMEOUT_MS = 1_000L
+
+/** Durable navigation proof, independent of transport attachment. */
+data class AcknowledgedSessionRoute(val sessionId: String, val generation: Long)
+
+private enum class RoutePhase { ATTACHED, FENCED, PREPARING_DRAFT, DRAFT, MINTING, RECOVERING_MINT }
+
+private class SessionActivationRequest(val sessionId: String, val routeGeneration: Long) {
+    val result = CompletableDeferred<Unit>()
+    var job: Job? = null
+    var awaitingAck: Boolean = false
+}
 
 /** Restartable root used only by the voice lane. Terminal logout cancels and joins the
  * current root; reconnect creates a fresh root before restarting the lane. */
@@ -100,7 +116,7 @@ class SentientSdk(
     private val scope: CoroutineScope,
     newId: () -> String = { Random.nextLong().toString(16) },
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
-    sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
+    private val sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
     private val captureTeardownTimeoutMs: Long = DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS,
     private val transportTeardownTimeoutMs: Long = DEFAULT_TRANSPORT_TEARDOWN_TIMEOUT_MS,
     /** REST client for session queries. Null in tests that don't exercise REST. */
@@ -125,6 +141,9 @@ class SentientSdk(
 
     private val _timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
     val timeline: StateFlow<List<ChatMessage>> = _timeline.asStateFlow()
+
+    private val _assistantActivity = MutableStateFlow(AssistantActivityState())
+    val assistantActivity: StateFlow<AssistantActivityState> = _assistantActivity.asStateFlow()
 
     // Open L3 confirm prompts (§7.1). A StateFlow is conflation-SAFE here only because
     // every emitted value carries EVERY still-open prompt — never model this as a single
@@ -177,6 +196,29 @@ class SentientSdk(
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
 
+    // Send authority for the current transport. Unlike the durable anchor above,
+    // this is cleared on every transport edge and route intent, then restored only
+    // by an acknowledged switch/create/draft or recovered resume.
+    private val _outboundSessionId = MutableStateFlow<String?>(null)
+    val outboundSessionId: StateFlow<String?> = _outboundSessionId.asStateFlow()
+
+    // Local route-instance identity. Changes on every user route intent, even when
+    // the target session id repeats; reconnect restoration preserves it.
+    // Delivery-attempt identity survives conflation of fast drop/reconnect state changes.
+    private val _transportGeneration = MutableStateFlow(0L)
+    val transportGeneration: StateFlow<Long> = _transportGeneration.asStateFlow()
+    private var nextOutboundRouteGeneration = 0L
+    private val _outboundRouteGeneration = MutableStateFlow<Long?>(null)
+    val outboundRouteGeneration: StateFlow<Long?> = _outboundRouteGeneration.asStateFlow()
+    private var desiredSessionId: String? = null
+    // Inbound target gate only. Outbound stays independently gated by outboundSessionId.
+    private var routePhase = RoutePhase.ATTACHED
+    private val routeFenced: Boolean
+        get() = routePhase == RoutePhase.FENCED || routePhase == RoutePhase.PREPARING_DRAFT || routePhase == RoutePhase.RECOVERING_MINT
+    private var draftRequestId: String? = null
+    private val _acknowledgedRoute = MutableStateFlow<AcknowledgedSessionRoute?>(null)
+    val acknowledgedRoute: StateFlow<AcknowledgedSessionRoute?> = _acknowledgedRoute.asStateFlow()
+
     // True once the SDK has reached READY at least once on this orchestrator.
     // Distinguishes a RECONNECT-READY (re-establish the anchored session) from
     // the FIRST connect-READY (nothing to restore). Never reset — survives
@@ -190,9 +232,19 @@ class SentientSdk(
 
     // The session id a reconnect re-establish switch is currently awaiting
     // confirmation for. Set when the re-establish switch fires; cleared when its
-    // session.switched lands. A `forbidden` while this is non-null means the
-    // anchored session was revoked → drop the anchor (see onSessionForbidden).
+    // session.switched lands. An unavailable error while this is non-null means
+    // the anchored session was revoked → drop the anchor.
     private var reestablishingSessionId: String? = null
+    private val reestablishing = MutableStateFlow(false)
+
+    // Explicit activations are serialized because conversation.activate errors carry no
+    // requestId. Latest intent fences stale session.attached/switched frames globally.
+    private val activationMutex = Mutex()
+    private var latestActivation: SessionActivationRequest? = null
+    private var inFlightActivation: SessionActivationRequest? = null
+    private var activationCorrelationDirty = false
+    private val staleActivationIds = mutableSetOf<String>()
+    private val activationTimeoutMs = sessionsTimeoutMs * 2
 
     // FaultHooks declared early so the lifecycle can reference it (network/transport faults).
     private val faultHooks = FaultHooks()
@@ -224,6 +276,7 @@ class SentientSdk(
         voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
+        onActiveTurnChanged = { turnId -> deriver.applyAudioTurn(turnId); emit() },
         // Lazy-arm the downlink engine on the first TTS turn (mirrors web-sdk's
         // arm-on-audio.start model). Deferred accessors — `voice` is constructed AFTER
         // `audio`, but these only fire at audio.start / drain, long after construction.
@@ -250,7 +303,7 @@ class SentientSdk(
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop
         // (audio.start before frames, audio.end after). Lazily deref'd — connectors
         // is only deref'd when the consumer invokes these, exactly like audioInput.
-        onUplinkStart = { capture, turnMode -> connectors.audioInput.startStreaming(capture, turnMode) },
+        onUplinkStart = { capture, turnMode -> canSendUserInput() && connectors.audioInput.startStreaming(capture, turnMode) },
         onUplinkBeginTerminal = { capture -> connectors.audioInput.beginTerminal(capture) },
         onUplinkTerminal = { capture, terminal -> connectors.audioInput.completeTerminal(capture, terminal) },
         onUplinkForceLocalTerminal = { generation -> connectors.audioInput.forceLocalTerminalCleanup(generation) },
@@ -316,6 +369,7 @@ class SentientSdk(
         emit = ::emit,
         emitEvent = ::emitEvent,
         send = ::sendControl,
+        sendAwaited = ::sendControlAwaited,
         sendBinary = ::sendBinary,
         newId = newId,
         sessionsTimeoutMs = sessionsTimeoutMs,
@@ -325,6 +379,7 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
+        onCognitionActivityChanged = ::onCognitionActivityChanged,
         onPermissionsChanged = { prompts -> _permissions.value = prompts },
         onDelegationsChanged = { list -> _delegations.value = list },
         onTasksChanged = { list -> _tasks.value = list },
@@ -334,7 +389,16 @@ class SentientSdk(
         // change still folds into the deriver (UI toggle state) inside PreferencesConnector.
     )
 
-    private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
+    private var routedFrameDepth = 0
+    private val router = MessageRouter(
+        connectors = connectors.all,
+        audioConnector = connectors.audioOutput,
+        onRouteStart = { routedFrameDepth++ },
+        onRouteComplete = { success ->
+            routedFrameDepth--
+            if (success && routedFrameDepth == 0) emit()
+        },
+    )
 
     private fun onAudioStateChanged(isSpeaking: Boolean, fsmState: AudioState) {
         deriver.isSpeaking = isSpeaking
@@ -346,6 +410,10 @@ class SentientSdk(
     private fun onCognitionChanged(state: CognitionState) {
         deriver.cognition = state
         refreshStuckWatch()
+    }
+
+    private fun onCognitionActivityChanged(state: CognitionState, turnId: String?) {
+        deriver.applyCognitionActivity(state, turnId)
         emit()
     }
 
@@ -355,7 +423,8 @@ class SentientSdk(
      * stays in the same conversation. Nothing conversation-scoped belongs here; that
      * is [clearConversationScopedState].
      */
-    private fun clearActiveToIdle() {
+    private fun clearActiveToIdle(preserveTurnFence: Boolean = false) {
+        if (preserveTurnFence) deriver.interruptAssistantActivity() else deriver.clearAssistantActivity()
         connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
         connectors.permission.reset() // fail-closed: drop open prompts, never auto-approve
         audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
@@ -395,7 +464,7 @@ class SentientSdk(
 
     private fun onStuckTimeout() {
         log.warn("stuck-state.reset", mapOf("status" to deriver.status, "cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
-        clearActiveToIdle()
+        clearActiveToIdle(preserveTurnFence = true)
     }
 
     private fun refreshStuckWatch() {
@@ -488,6 +557,7 @@ class SentientSdk(
         if (clearSession && terminallyDisconnected) return@withLock
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
+        _outboundSessionId.value = null
         voice.beginTeardown()
         // Teardown is a genuine capture loss. Reset shared TalkMode, then fence the voice
         // lane before transport/audio disposal. This guarantees producer stop/join and the
@@ -499,6 +569,7 @@ class SentientSdk(
             log.warn("capture.teardown-timeout", mapOf("timeoutMs" to captureTeardownTimeoutMs))
         }
         reconnectController.cancel()
+        cancelSessionActivations()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
         // (reconnect) keeps them so TTS survives the next reconnect.
@@ -512,6 +583,8 @@ class SentientSdk(
         } else {
             lifecycle.teardown()
         }
+        staleActivationIds.clear()
+        clearTransportSessionState()
         if (clearSession && deriver.hasSession) {
             log.info("hasSession.clear", mapOf("trigger" to "logout"))
             deriver.hasSession = false
@@ -519,7 +592,11 @@ class SentientSdk(
         if (clearSession) {
             log.info("session.anchor.clear", mapOf("trigger" to "logout"))
             _currentSessionId.value = null
-            reestablishingSessionId = null
+            _outboundRouteGeneration.value = null
+            desiredSessionId = null
+            _acknowledgedRoute.value = null
+            draftRequestId = null
+            routePhase = RoutePhase.FENCED
         }
         setStatus(SdkStatus.DISCONNECTED)
         stuckWatchdog.disarm()
@@ -557,6 +634,7 @@ class SentientSdk(
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */
     fun sendText(text: String, pendingId: String? = null) {
+        if (!canSendUserInput()) return
         markInteraction()
         connectors.text.sendText(text, pendingId)
     }
@@ -567,7 +645,7 @@ class SentientSdk(
         log.info("interrupt")
         markInteraction()
         connectors.turnError.noteInterrupt(null)
-        clearActiveToIdle()
+        clearActiveToIdle(preserveTurnFence = true)
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
@@ -587,6 +665,7 @@ class SentientSdk(
      *  emits audio.start, runs VoiceAudio.configure (mic tap up), and starts the uplink
      *  collect — in that order, serialized with stopMic and setTtsEnabled. */
     fun startMic() {
+        if (!canSendUserInput()) return
         log.info("startMic", mapOf("voiceAudioWired" to (bundle.voiceAudio != null)))
         markInteraction()
         deriver.voiceMode = VoiceMode.ACTIVE
@@ -613,6 +692,7 @@ class SentientSdk(
 
     /** Idle → Hold. Press-to-talk begins (press IS the barge-in). */
     fun pressMic() {
+        if (!canSendUserInput()) return
         log.info("pressMic")
         markInteraction()
         talkModeController.pressMic()
@@ -629,6 +709,7 @@ class SentientSdk(
 
     /** Hold → Continuous. Slide-to-lock: the manual segment finalizes, a semantic turn opens. */
     fun lockMic() {
+        if (!canSendUserInput()) return
         log.info("lockMic")
         markInteraction()
         talkModeController.lockMic()
@@ -701,25 +782,148 @@ class SentientSdk(
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
         connectors.sessions.list(limit, offset)
 
-    /** Switch to a session; awaits the session.switched broadcast. */
+    /**
+     * Activate a session only after READY and return only after matching
+     * session.switched. Concurrent calls use latest-intent-wins semantics.
+     */
     @Throws(
         SessionsRequestException::class,
         SessionsTimeoutException::class,
+        SessionsTransportException::class,
         kotlin.coroutines.cancellation.CancellationException::class,
     )
     suspend fun switchSession(sessionId: String) {
-        markInteraction()
-        connectors.turnError.reset()
-        clearConversationScopedState("switch")
-        // Problem 1: drop the current session's messages NOW so the spinner
-        // renders over an empty chat, not stale history, while the target loads.
-        connectors.history.clearForSwitch()
-        connectors.sessions.switchTo(sessionId)
-        // Bug #3: switching to a past chat must drop stale active cognition
-        // (THINKING / interrupt) from the current view — the gateway cancels the
-        // current turn on switch but emits no cognition idle. Clear AFTER the
-        // switch is sent so it can never gate the request.
-        clearActiveToIdle()
+        val request = SessionActivationRequest(sessionId, claimOutboundRoute())
+        beginSessionActivation(request)
+        try {
+            request.result.await()
+        } catch (cancelled: CancellationException) {
+            cancelSessionActivation(request)
+            throw cancelled
+        }
+    }
+
+    private fun beginSessionActivation(request: SessionActivationRequest) {
+        if (consumerDisconnected || terminallyDisconnected) {
+            request.result.completeExceptionally(CancellationException("session activation cancelled by disconnect"))
+            return
+        }
+        if (_currentSessionId.value != request.sessionId) resumeCursor.reset()
+        val ambiguousMint = routePhase == RoutePhase.MINTING || routePhase == RoutePhase.RECOVERING_MINT
+        desiredSessionId = request.sessionId
+        if (_outboundSessionId.value != request.sessionId) {
+            _outboundSessionId.value = null
+            routePhase = RoutePhase.FENCED
+            lifecycle.activeTransport?.commandBinding = null
+            voice.invalidateCaptureForRoute()
+        }
+        if (ambiguousMint) resetAmbiguousActivationTransport()
+        val previous = latestActivation
+        if (previous != null && previous !== request) {
+            previous.result.completeExceptionally(SessionsRequestException("superseded", ""))
+            if (inFlightActivation === previous) staleActivationIds += previous.sessionId
+            else previous.job?.cancel()
+        }
+        staleActivationIds -= request.sessionId
+        latestActivation = request
+        request.job = scope.launch { runSessionActivation(request) }
+    }
+
+    private suspend fun runSessionActivation(request: SessionActivationRequest) {
+        try {
+            withTimeout(activationTimeoutMs) {
+                activationMutex.withLock {
+                    while (true) {
+                        requireLatestActivation(request)
+                        if (
+                            connection.value.status == SdkStatus.READY &&
+                            _outboundSessionId.value == request.sessionId
+                        ) return@withLock
+
+                        val ready = connection.first {
+                            it.status == SdkStatus.READY || it.status == SdkStatus.ERROR
+                        }
+                        if (ready.status != SdkStatus.READY) throw SessionsTransportException()
+                        requireLatestActivation(request)
+                        if (connection.value.status != SdkStatus.READY) continue
+                        if (_outboundSessionId.value == request.sessionId) return@withLock
+
+                        if (activationCorrelationDirty) {
+                            resetAmbiguousActivationTransport()
+                            continue
+                        }
+
+                        markInteraction()
+                        connectors.turnError.reset()
+                        connectors.history.clearForSwitch()
+                        clearConversationScopedState("switch")
+                        clearActiveToIdle()
+                        inFlightActivation = request
+                        request.awaitingAck = true
+                        var acknowledged = false
+                        try {
+                            connectors.sessions.switchTo(request.sessionId)
+                            acknowledged = true
+                            request.awaitingAck = false
+                            requireLatestActivation(request)
+                            return@withLock
+                        } catch (failure: SessionsRequestException) {
+                            request.awaitingAck = false
+                            throw failure
+                        } catch (failure: SessionsTimeoutException) {
+                            if (failure.frameType == "connector reset" && latestActivation === request) {
+                                request.awaitingAck = false
+                                continue
+                            }
+                            resetAmbiguousActivationTransport()
+                            request.awaitingAck = false
+                            throw failure
+                        } catch (failure: SessionsTransportException) {
+                            resetAmbiguousActivationTransport()
+                            request.awaitingAck = false
+                            throw failure
+                        } finally {
+                            if (!acknowledged) staleActivationIds += request.sessionId
+                            if (inFlightActivation === request) inFlightActivation = null
+                        }
+                    }
+                }
+            }
+            acknowledgeRoute(request.sessionId)
+            request.result.complete(Unit)
+        } catch (_: TimeoutCancellationException) {
+            if (request.awaitingAck) resetAmbiguousActivationTransport()
+            request.awaitingAck = false
+            request.result.completeExceptionally(SessionsTimeoutException("session activation"))
+        } catch (cancelled: CancellationException) {
+            request.result.completeExceptionally(cancelled)
+        } catch (failure: Throwable) {
+            request.result.completeExceptionally(failure)
+        } finally {
+            if (latestActivation === request) latestActivation = null
+        }
+    }
+
+    private fun requireLatestActivation(request: SessionActivationRequest) {
+        if (latestActivation !== request) throw SessionsRequestException("superseded", "")
+    }
+
+    private fun cancelSessionActivation(request: SessionActivationRequest) {
+        if (latestActivation !== request) return
+        latestActivation = null
+        request.result.cancel()
+        if (inFlightActivation === request) staleActivationIds += request.sessionId
+        else request.job?.cancel()
+    }
+
+    private fun cancelSessionActivations() {
+        val request = latestActivation
+        latestActivation = null
+        if (request != null) {
+            request.result.cancel()
+            if (inFlightActivation === request) staleActivationIds += request.sessionId
+            else request.job?.cancel()
+        }
     }
 
     /** Start a fresh chat; awaits the session.created broadcast. */
@@ -729,6 +933,7 @@ class SentientSdk(
         kotlin.coroutines.cancellation.CancellationException::class,
     )
     suspend fun newChat(): String {
+        ownFreshRoute()
         markInteraction()
         connectors.turnError.reset()
         clearConversationScopedState("new-chat")
@@ -764,6 +969,13 @@ class SentientSdk(
      * asynchronous so typing is never blocked.
      */
     fun startFreshChat() {
+        beginFreshChatRoute()
+    }
+
+    /** Start a fresh route and return the local generation its VM cache must bind. */
+    fun beginFreshChatRoute(): Long {
+        if (consumerDisconnected || terminallyDisconnected) return nextOutboundRouteGeneration
+        val generation = ownFreshRoute()
         markInteraction()
         connectors.turnError.reset()
         clearConversationScopedState("new-chat-fire")
@@ -774,38 +986,71 @@ class SentientSdk(
         dropAnchorForNewChat()
         connectors.sessions.startFreshChat()
         clearActiveToIdle()
+        return generation
+    }
+
+    private fun ownFreshRoute(): Long {
+        if (consumerDisconnected || terminallyDisconnected) throw CancellationException("fresh route cancelled by disconnect")
+        val generation = claimOutboundRoute()
+        val inFlight = inFlightActivation
+        cancelSessionActivations()
+        if (inFlight != null) {
+            activationCorrelationDirty = true
+            inFlight.job?.cancel()
+        }
+        desiredSessionId = null
+        _outboundSessionId.value = null
+        val ambiguous = routePhase == RoutePhase.MINTING || routePhase == RoutePhase.RECOVERING_MINT || activationCorrelationDirty
+        routePhase = RoutePhase.PREPARING_DRAFT
+        draftRequestId = null
+        lifecycle.activeTransport?.commandBinding = null
+        voice.invalidateCaptureForRoute()
+        if (ambiguous) resetAmbiguousActivationTransport()
+        resumeCursor.reset()
+        return generation
+    }
+
+    private fun claimOutboundRoute(): Long {
+        nextOutboundRouteGeneration += 1
+        _outboundRouteGeneration.value = nextOutboundRouteGeneration
+        return nextOutboundRouteGeneration
     }
 
     /** Compatibility alias for older platform callers. */
     fun sendNewChat() = startFreshChat()
 
-    /**
-     * Fire-and-forget switch (A2). Sends conversation.activate and returns immediately —
-     * the gateway emits session.switched only; the client loads history via REST.
-     * NEVER awaits, NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
-     */
+    /** Compatibility facade for synchronous platform routes. */
     fun sendSwitchSession(id: String) {
-        // Problem 1: drop the current session's messages NOW so the spinner
-        // renders over an empty chat, not stale history, while the target loads.
-        connectors.history.clearForSwitch()
-        // …and with them the conversation's background-delegation rows. This is the
-        // path the UI actually takes (SwitchConversationUseCase → switchToFireAndForget);
-        // the awaited [switchSession] is not wired to any screen.
-        clearConversationScopedState("switch-fire")
-        // Send the activate FIRST (never gated), THEN drop stale active cognition
-        // (THINKING / interrupt) from the current view (bug #3). The reconnect
-        // re-establish path uses fireSwitch directly (no cognition clear AND no
-        // mirror clear — that path is managed by onReadyReached / onStreamResumed),
-        // so a recovered resume's preserved state is never wiped here.
-        fireSwitch(id)
-        clearActiveToIdle()
+        beginSessionRoute(id)
     }
 
-    /**
-     * Raw fire-and-forget conversation.activate WITHOUT touching cognition. The
-     * shared core of [sendSwitchSession] (UI) and [reestablishAnchoredSession]
-     * (reconnect). NEVER throws.
-     */
+    /** Start a session route and return the local generation its VM cache must bind. */
+    fun beginSessionRoute(id: String): Long {
+        if (consumerDisconnected || terminallyDisconnected) return nextOutboundRouteGeneration
+        val request = SessionActivationRequest(id, claimOutboundRoute())
+        if (
+            connection.value.status == SdkStatus.READY &&
+            _outboundSessionId.value == id
+        ) {
+            acknowledgeRoute(id)
+            return request.routeGeneration
+        }
+        connectors.history.clearForSwitch()
+        clearConversationScopedState("switch-fire")
+        clearActiveToIdle()
+        beginSessionActivation(request)
+        scope.launch {
+            try {
+                request.result.await()
+            } catch (_: CancellationException) {
+            } catch (failure: Throwable) {
+                log.warn("switch.fire-and-forget-failed", mapOf("code" to failure::class.simpleName))
+            }
+        }
+        return request.routeGeneration
+    }
+
+    /** Raw fire-and-forget conversation.activate used only for reconnect re-establishment. */
     private fun fireSwitch(id: String) {
         markInteraction()
         connectors.turnError.reset()
@@ -914,22 +1159,50 @@ class SentientSdk(
     }
 
     private fun onConnectionDrop() {
-        lifecycleCancel("transport-drop")
-        audio.suspendForReconnect()
-        // Guard against a second loop: a non-clean signal may arrive while the
-        // loop launched by a prior drop is already recovering.
+        // Every signal ends transport-scoped focus, including a duplicate signal
+        // while recovery is already running.
+        voice.invalidateCaptureForRoute()
+        connectors.sessions.reset()
+        lifecycle.teardown()
+        clearTransportSessionState()
         if (deriver.status == SdkStatus.RECONNECTING) {
             deriver.connectionLost = true
             return
         }
+        lifecycleCancel("transport-drop")
+        audio.suspendForReconnect()
         deriver.connectionLost = true
         setStatus(SdkStatus.RECONNECTING)
         scope.launch { reconnectController.runReconnectLoop() }
     }
 
     private fun onReconnectExhausted() {
+        clearTransportSessionState()
         deriver.connectionLost = true
         setStatus(SdkStatus.DISCONNECTED)
+    }
+
+    private fun clearTransportSessionState() {
+        deriver.clearAssistantActivity()
+        reestablishingSessionId = null
+        reestablishing.value = false
+        activationCorrelationDirty = false
+        _outboundSessionId.value = null
+        when (routePhase) {
+            RoutePhase.MINTING, RoutePhase.RECOVERING_MINT -> {
+                // Keep the acknowledged draft key until configure resolves it. Even an
+                // attachment seen before the lost created frame is not yet our anchor.
+                routePhase = RoutePhase.RECOVERING_MINT
+                desiredSessionId = null
+            }
+            RoutePhase.PREPARING_DRAFT -> Unit
+            else -> routePhase = if (_currentSessionId.value != null || desiredSessionId != null) RoutePhase.FENCED else RoutePhase.ATTACHED
+        }
+    }
+
+    private fun resetAmbiguousActivationTransport() {
+        if (deriver.status == SdkStatus.ERROR || consumerDisconnected) return
+        onConnectionDrop()
     }
 
     // ── State plumbing — fan-in to connection + timeline ─────────────────────────
@@ -937,6 +1210,9 @@ class SentientSdk(
     private fun emit() {
         _connection.value = deriver.deriveConnection()
         _timeline.value = deriver.deriveTimeline()
+        // Connector callbacks fire while one frame is still broadcasting. Publish this
+        // identity surface only after every connector has folded that frame.
+        if (routedFrameDepth == 0) _assistantActivity.value = deriver.deriveAssistantActivity()
     }
 
     private fun setStatus(next: SdkStatus) {
@@ -986,6 +1262,17 @@ class SentientSdk(
         val wasReconnect = hasReachedReadyOnce
         hasReachedReadyOnce = true
         val anchored = _currentSessionId.value
+        if (routePhase == RoutePhase.PREPARING_DRAFT) {
+            connectors.sessions.retryPendingMint()
+            return
+        }
+        // Configure resolves a spent draft with attached before ready, or returns
+        // the still-unspent draft after ready. Neither path needs conversation.activate.
+        if (routePhase == RoutePhase.RECOVERING_MINT || (anchored != null && _outboundSessionId.value == anchored)) return
+        if (desiredSessionId != null && desiredSessionId != anchored) {
+            log.info("ready.route-transition-pending", mapOf("sessionId" to desiredSessionId))
+            return
+        }
         // Mirror resumeParams's exact gate: resume was/will be carried in configure
         // iff the cursor carries a seq. Read here so the defer decision matches the wire.
         val resumeWillBeAttempted = resumeCursor.snapshot.lastSeq > 0L
@@ -1006,9 +1293,13 @@ class SentientSdk(
                 // resume already carried in session.configure; await stream.resumed.
                 log.info("ready.reconnect.defer-to-resume", mapOf("sessionId" to anchored))
             ReadyAction.REESTABLISH_AND_CLEAR -> {
-                log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
-                reestablishAnchoredSession(anchored!!)
-                clearActiveToIdle()
+                if (latestActivation != null) {
+                    log.info("ready.reconnect.activation-pending", mapOf("sessionId" to latestActivation?.sessionId))
+                } else {
+                    log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
+                    reestablishAnchoredSession(anchored!!)
+                    clearActiveToIdle()
+                }
             }
         }
     }
@@ -1023,6 +1314,7 @@ class SentientSdk(
      */
     private fun reestablishAnchoredSession(sessionId: String) {
         reestablishingSessionId = sessionId
+        reestablishing.value = true
         // fireSwitch, NOT sendSwitchSession: the reconnect path must NOT clear
         // cognition here. onReadyReached (REESTABLISH_AND_CLEAR) and onStreamResumed
         // (RECOVER_TO_IDLE) own that decision; the resume PRESERVE path keeps state.
@@ -1039,18 +1331,37 @@ class SentientSdk(
      * fires [SdkConnectors.loadHistoryForSession] directly from its onHistoryNeeded
      * callback AFTER bumping the generation — no ordering dependency here.
      */
+    private fun onSessionAttached(sessionId: String) {
+        if (routePhase == RoutePhase.RECOVERING_MINT) onSessionAnchored(sessionId)
+        if (desiredSessionId == null || desiredSessionId == sessionId) {
+            if (routePhase != RoutePhase.MINTING) routePhase = RoutePhase.ATTACHED
+            desiredSessionId = sessionId
+        }
+    }
+
     private fun onSessionAnchored(sessionId: String) {
         if (sessionId.isEmpty()) {
             log.debug("session.anchor.ignored-empty")
             return
         }
         // A re-establish switch we were awaiting just confirmed.
-        if (sessionId == reestablishingSessionId) reestablishingSessionId = null
+        if (sessionId == reestablishingSessionId) {
+            reestablishingSessionId = null
+            reestablishing.value = false
+        }
+        _outboundSessionId.value = sessionId
+        routePhase = RoutePhase.ATTACHED
+        acknowledgeRoute(sessionId)
         val isNewSession = _currentSessionId.value != sessionId
         if (isNewSession) {
             log.info("session.anchor", mapOf("sessionId" to sessionId))
             _currentSessionId.value = sessionId
         }
+    }
+
+    private fun acknowledgeRoute(sessionId: String) {
+        val generation = _outboundRouteGeneration.value ?: return
+        _acknowledgedRoute.value = AcknowledgedSessionRoute(sessionId, generation)
     }
 
     /**
@@ -1061,11 +1372,12 @@ class SentientSdk(
      * not be reopened (the next send mints a fresh conversation). A forbidden with
      * no re-establish in flight is unrelated (e.g. an explicit op) and left alone.
      */
-    private fun onSessionForbidden() {
+    private fun onSessionUnavailable() {
         val pending = reestablishingSessionId ?: return
-        log.info("session.anchor.cleared-forbidden", mapOf("sessionId" to pending))
-        reestablishingSessionId = null
+        log.info("session.anchor.cleared-unavailable", mapOf("sessionId" to pending))
+        clearTransportSessionState()
         _currentSessionId.value = null
+        routePhase = RoutePhase.ATTACHED
         log.info("event.reopen-failed", mapOf("sessionId" to pending))
         emitEvent(SdkEvent.ReopenFailed)
     }
@@ -1101,6 +1413,7 @@ class SentientSdk(
      * and the gateway runs the fresh path. Mirrors web-sdk buildConfigureResume.
      */
     private fun resumeParams(): ResumeParams? {
+        if (desiredSessionId != null && desiredSessionId != _currentSessionId.value) return null
         cursorPersistence.seedIfEmpty()
         val (epoch, lastSeq) = resumeCursor.snapshot
         if (lastSeq == 0L) {
@@ -1130,8 +1443,14 @@ class SentientSdk(
      */
     private fun onStreamResumed(recovered: Boolean) {
         when (decideOnResumed(recovered)) {
-            ResumedAction.PRESERVE_IN_FLIGHT ->
+            ResumedAction.PRESERVE_IN_FLIGHT -> {
+                val anchored = _currentSessionId.value
+                if (desiredSessionId == null || desiredSessionId == anchored) {
+                    _outboundSessionId.value = anchored
+                    routePhase = RoutePhase.ATTACHED
+                }
                 log.info("stream.resumed.recovered", mapOf("epoch" to resumeCursor.snapshot.epoch))
+            }
             ResumedAction.RECOVER_TO_IDLE -> {
                 log.info("stream.resumed.not-recovered — clear-to-idle + refetch + re-establish")
                 resumeCursor.reset()
@@ -1139,6 +1458,10 @@ class SentientSdk(
                 // it (Task 4.7 clear) so the NEXT relaunch doesn't re-seed a dead epoch.
                 cursorPersistence.clearAnchored()
                 clearActiveToIdle()
+                if (latestActivation != null) {
+                    log.info("stream.resumed.activation-pending", mapOf("sessionId" to latestActivation?.sessionId))
+                    return
+                }
                 val sessionId = _currentSessionId.value
                 if (sessionId == null) {
                     log.warn("stream.resumed.no-session — cannot refetch")
@@ -1151,6 +1474,9 @@ class SentientSdk(
     }
 
     private fun setError(authExpired: Boolean) {
+        cancelSessionActivations()
+        connectors.sessions.reset()
+        clearTransportSessionState()
         deriver.authExpired = authExpired
         // Terminal auth failure ends the session → gate falls back to login.
         // Idle/drop never route here, so hasSession survives those by construction.
@@ -1173,19 +1499,54 @@ class SentientSdk(
      * Fire-and-forget control frame. Silently drops if no active transport exists (pre-READY).
      * Callers that need guaranteed delivery must defer until READY or use the pending-mint retry.
      */
+    private fun canSendUserInput(): Boolean = !consumerDisconnected && !terminallyDisconnected && !routeFenced &&
+        (desiredSessionId == null || _outboundSessionId.value == desiredSessionId)
+
+    private fun canSendCommand(msg: ClientMessage): Boolean = when (msg) {
+        is ClientMessage.Auth, is ClientMessage.SessionConfigure, is ClientMessage.Ping,
+        is ClientMessage.ConversationActivate, is ClientMessage.SessionNew, is ClientMessage.UserPreferencesPatch -> true
+        is ClientMessage.TextInput, is ClientMessage.AudioStart -> canSendUserInput()
+        else -> !routeFenced
+    }
+
+    private fun noteUserInput(msg: ClientMessage) {
+        if (routePhase == RoutePhase.DRAFT && (msg is ClientMessage.TextInput || msg is ClientMessage.AudioStart)) {
+            routePhase = RoutePhase.MINTING
+        }
+    }
+
     private fun sendControl(msg: ClientMessage) {
+        if (!canSendCommand(msg)) return
+        if (msg is ClientMessage.SessionNew && routePhase == RoutePhase.PREPARING_DRAFT) draftRequestId = msg.requestId
+        val tx = lifecycle.activeTransport ?: return
+        val generation = _outboundRouteGeneration.value
         scope.launch {
-            val tx = lifecycle.activeTransport
-            if (tx == null) {
-                log.warn("sendControl.dropped", mapOf("type" to msg::class.simpleName, "reason" to "no-active-transport-pre-ready"))
-                return@launch
-            }
+            if (tx !== lifecycle.activeTransport || generation != _outboundRouteGeneration.value || !canSendCommand(msg)) return@launch
+            noteUserInput(msg)
             tx.send(msg)
         }
     }
 
+    private suspend fun sendControlAwaited(msg: ClientMessage) {
+        val tx = lifecycle.activeTransport ?: throw SessionsTransportException()
+        if (!canSendCommand(msg)) throw SessionsTransportException()
+        try {
+            noteUserInput(msg)
+            tx.send(msg)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            throw SessionsTransportException()
+        }
+    }
+
     private fun sendBinary(bytes: ByteArray) {
-        scope.launch { lifecycle.activeTransport?.sendBinary(bytes) }
+        if (!canSendUserInput()) return
+        val tx = lifecycle.activeTransport ?: return
+        val generation = _outboundRouteGeneration.value
+        scope.launch {
+            if (tx === lifecycle.activeTransport && generation == _outboundRouteGeneration.value && canSendUserInput()) tx.sendBinary(bytes)
+        }
     }
 
     private fun mergedCapabilities(): List<String> =
@@ -1196,13 +1557,64 @@ class SentientSdk(
     private inner class Hooks : LifecycleHooks {
         override fun setStatus(next: SdkStatus) = this@SentientSdk.setStatus(next)
         override fun onReady(sessionId: String) { /* tunables folded in lifecycle */ }
+        override fun onTransportDetached() {
+            clearTransportSessionState()
+            _transportGeneration.value += 1
+        }
+        override fun isRouteFenced(): Boolean = routeFenced
+        override fun onSessionAttached(sessionId: String) = this@SentientSdk.onSessionAttached(sessionId)
+        override fun shouldRouteSessionFrame(msg: ServerMessage, sessionId: String): Boolean {
+            if (routePhase == RoutePhase.RECOVERING_MINT) {
+                // Only this reconnect's configure response can resolve our anchored
+                // draft. Old transports are detached; new route intents leave this phase.
+                return when (msg) {
+                    is ServerMessage.SessionAttached -> deriver.status == SdkStatus.AUTHENTICATING && _currentSessionId.value != null
+                    is ServerMessage.SessionDraft -> msg.requestId == null && sessionId == _currentSessionId.value
+                    else -> false
+                }
+            }
+            if (routePhase == RoutePhase.PREPARING_DRAFT) {
+                return msg is ServerMessage.SessionDraft && draftRequestId != null && msg.requestId == draftRequestId
+            }
+            if (routePhase == RoutePhase.DRAFT && msg !is ServerMessage.SessionDraft) return false
+            if (routePhase == RoutePhase.MINTING && (msg is ServerMessage.SessionDraft || msg is ServerMessage.SessionSwitched)) return false
+            // An activation's attachment/reconstruction is not a mint completion.
+            if (msg is ServerMessage.SessionCreated && desiredSessionId != null &&
+                _outboundSessionId.value == null && routePhase != RoutePhase.MINTING) return false
+            if (msg is ServerMessage.SessionDraft && msg.requestId != null && msg.requestId != draftRequestId) return false
+            val desired = desiredSessionId
+            if (desired != null && desired != sessionId) return false
+            val latest = latestActivation
+            if (latest?.sessionId == sessionId) {
+                staleActivationIds -= sessionId
+                return true
+            }
+            if (latest != null) return false
+            return sessionId !in staleActivationIds
+        }
+        override fun onDiscardedSessionSwitched(sessionId: String) {
+            staleActivationIds -= sessionId
+            connectors.sessions.acknowledgeIgnoredSwitch(sessionId)
+            if (sessionId == reestablishingSessionId) {
+                reestablishingSessionId = null
+                reestablishing.value = false
+            }
+        }
+        override fun hasInFlightActivation(): Boolean = inFlightActivation != null
         override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
-        override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
+        override fun onDraftAnchored(draftKey: String) {
+            onSessionAnchored(draftKey)
+            routePhase = RoutePhase.DRAFT
+            desiredSessionId = null
+        }
+        override fun onSessionUnavailable() = this@SentientSdk.onSessionUnavailable()
         override fun onPong() = this@SentientSdk.onPong()
         override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
         override fun onTurnSettled() = cursorPersistence.flush()
         override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
-        override fun currentConversationId(): String? = _currentSessionId.value
+        override fun currentConversationId(): String? = _currentSessionId.value.takeIf {
+            desiredSessionId == null || desiredSessionId == it
+        }
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()

@@ -261,7 +261,7 @@ gw_stop() {
 }
 gw_start() {
   mkdir -p "$(dirname "$GATEWAY_DEV_LOG")"
-  ( cd "$REPO_ROOT/gateway" && nohup bun --watch src/main.ts >>"$GATEWAY_DEV_LOG" 2>&1 & )
+  ( cd "$REPO_ROOT/gateway" && export SENTIENT_BUILD_VARIANT=Debug && nohup bun --watch src/main.ts >>"$GATEWAY_DEV_LOG" 2>&1 & )
   gw_wait_healthy
 }
 gw_restart() { gw_stop; gw_start; }

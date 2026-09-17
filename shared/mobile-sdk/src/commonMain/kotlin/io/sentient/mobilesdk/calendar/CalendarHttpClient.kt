@@ -126,6 +126,7 @@ open class CalendarHttpClient(
 
     open suspend fun create(input: CalendarCreateInput): AuthResult<CalendarEvent> = safeSettingsCall(log) {
         withTimeout(requestTimeoutMillis) {
+            input.reminder?.validate(start = input.start, create = true)
             val response = httpClient.post("$baseUrl$EVENTS_PATH") {
                 bearer()
                 jsonBody(CalendarCreateInput.serializer(), input)

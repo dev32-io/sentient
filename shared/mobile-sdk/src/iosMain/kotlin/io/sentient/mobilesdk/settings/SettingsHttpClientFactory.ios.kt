@@ -26,6 +26,7 @@ import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import io.sentient.mobilesdk.auth.installAuthenticatedBearer401Observer
 import io.sentient.mobilesdk.log.createLogger
 import kotlinx.serialization.json.Json
 import platform.Foundation.NSURLAuthenticationChallenge
@@ -56,11 +57,23 @@ private const val SETTINGS_REQUEST_TIMEOUT_MS = 120_000L
  * as its single injected HttpClient.
  *
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
+ * @param followRedirects Disable for requests carrying host-bound capabilities.
+ * @param token Optional current token supplier; omitted clients do not observe auth expiry.
  */
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-fun createSettingsHttpClient(allowSelfSignedDevHost: Boolean): HttpClient {
+fun createSettingsHttpClient(
+    allowSelfSignedDevHost: Boolean,
+    followRedirects: Boolean = true,
+    token: (() -> String)? = null,
+    isOwnerActive: () -> Boolean = { true },
+    onAuthenticationRequired: (() -> Unit)? = null,
+): HttpClient {
     log.info("create", mapOf("allowSelfSignedDevHost" to allowSelfSignedDevHost))
     return HttpClient(Darwin) {
+        this.followRedirects = followRedirects
+        if (token != null && onAuthenticationRequired != null) {
+            installAuthenticatedBearer401Observer(token, isOwnerActive, onAuthenticationRequired)
+        }
         engine {
             if (allowSelfSignedDevHost) {
                 log.warn(

@@ -1,11 +1,11 @@
 {
   "name": "@sentient/gateway",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/main.ts",
-    "build": "bun build src/main.ts --outdir dist --target bun",
+    "dev": "SENTIENT_BUILD_VARIANT=Debug bun --watch src/main.ts",
+    "build": "bun build src/main.ts --outdir dist --target bun --define 'process.env.SENTIENT_BUILD_VARIANT=\"Debug\"'",
     "start": "bun dist/main.js",
     "test": "cd src && bun test",
     "test:unit": "cd src && bun test",

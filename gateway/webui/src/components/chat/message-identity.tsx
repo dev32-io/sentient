@@ -15,7 +15,7 @@ export interface UserMessageIdentityProps {
 
 export function UserMessageIdentity({ currentUser }: UserMessageIdentityProps): JSX.Element {
   const initial = currentUser.displayName.charAt(0).toUpperCase() || "?";
-  return <Avatar kind="user" initial={initial} name={currentUser.displayName} tint={currentUser.avatarTint} size="lg" />;
+  return <Avatar kind="user" initial={initial} name={currentUser.displayName} tint={currentUser.avatarTint} size="sm" />;
 }
 
 export interface AssistantMessageIdentityProps {
@@ -23,7 +23,7 @@ export interface AssistantMessageIdentityProps {
 }
 
 export function AssistantMessageIdentity({ state }: AssistantMessageIdentityProps): JSX.Element {
-  return <Avatar kind="assistant" mode={state} name={ASSISTANT_NAME} size="lg" />;
+  return <Avatar kind="assistant" mode={state} name={ASSISTANT_NAME} size="sm" />;
 }
 
 export function MessageContinuationIdentity(): JSX.Element {

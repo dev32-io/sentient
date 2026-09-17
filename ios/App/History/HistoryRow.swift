@@ -71,7 +71,7 @@ struct HistoryRow: View {
 /// without introducing another stacked face or changing the native row target.
 private struct HistorySelectedRowCanvas: View {
     var body: some View {
-        Canvas { context, size in
+        Canvas(rendersAsynchronously: true) { context, size in
             let shape = RoundedRectangle(cornerRadius: Radii.md)
             context.fill(
                 shape.path(in: CGRect(origin: .zero, size: size)),

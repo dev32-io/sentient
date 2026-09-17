@@ -360,7 +360,7 @@ export class SentientSDK {
     // this must not depend on that wiring detail.
     this.addMessageHandler("sessions.error", (msg: unknown) => {
       const m = msg as { code?: string };
-      if (m.code !== "forbidden") return;
+      if (m.code !== "forbidden" && m.code !== "not_found") return;
       clearRefusedSessionId(null);
     });
   }

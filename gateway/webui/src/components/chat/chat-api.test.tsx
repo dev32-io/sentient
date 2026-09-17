@@ -32,6 +32,9 @@ describe("chat public component API", () => {
     const userArticle = container.querySelector("article");
     expect(userArticle?.getAttribute("data-message-role")).toBe("user");
     expect(userArticle?.querySelector(".message-bubble__surface")).not.toBeNull();
+    expect(userArticle?.querySelector("filter[id$='-plate'] feMorphology[radius='22']")).not.toBeNull();
+    expect(userArticle?.querySelector("filter[id$='-plate'] feGaussianBlur[stdDeviation='15']")).not.toBeNull();
+    expect(userArticle?.querySelector("filter[id$='-ember'] feMorphology[radius='16']")).not.toBeNull();
     expect(userArticle?.querySelector(".message-bubble__text-wrap")).not.toBeNull();
 
     rerender(
@@ -64,7 +67,8 @@ describe("chat public component API", () => {
       />,
     );
     expect(container.querySelector(".bubble-text__caret")).not.toBeNull();
-    expect(container.querySelector(".bubble-speaking-wave")).not.toBeNull();
+    expect(container.querySelector(".message-bubble__surface-ember")).not.toBeNull();
+    expect(container.querySelector(".bubble-speaking-wave")).toBeNull();
 
     rerender(
       <MessageBubble
@@ -88,7 +92,7 @@ describe("chat public component API", () => {
     expect(screen.getByRole("status").textContent).toContain("unavailable");
   });
 
-  it("nests the active assistant effect in the face while text remains an unclipped sibling", () => {
+  it("keeps active assistant glow on the full swept contour and outside message text", () => {
     const { container } = render(
       <MessageBubble
         message={message({ id: "a1", role: "assistant", text: "Growing", timestamp: 1, isStreaming: true })}
@@ -97,10 +101,10 @@ describe("chat public component API", () => {
       />,
     );
     const surface = container.querySelector(".message-bubble__surface");
-    const wave = container.querySelector(".bubble-speaking-wave");
+    const ember = container.querySelector(".message-bubble__surface-ember");
 
-    expect(wave?.parentElement).toBe(surface);
-    expect(surface?.nextElementSibling?.classList.contains("message-bubble__text-inner")).toBe(true);
+    expect(surface?.parentElement?.classList.contains("message-bubble__body")).toBe(true);
+    expect(ember?.closest("svg")).toBe(surface);
     expect(surface?.contains(screen.getByText("Growing"))).toBe(false);
   });
 

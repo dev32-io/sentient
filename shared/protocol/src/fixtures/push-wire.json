@@ -1,0 +1,150 @@
+{
+  "routes": {
+    "registrations": "/api/v1/push/registrations",
+    "preferences": "/api/v1/push/preferences",
+    "revocations": "/api/v1/push/revocations"
+  },
+  "registration": {
+    "idempotencyKey": "register-install-1",
+    "installationId": "ios-install-1",
+    "platform": "ios",
+    "apnsDeviceToken": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "issued": {
+    "binding": {
+      "bindingId": "bind_1",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 7,
+      "state": "active",
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T15:00:00.000Z",
+      "updatedAt": "2026-08-01T15:00:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_1",
+      "generation": 7,
+      "credential": "test-revocation-authority",
+      "expiresAt": "2026-08-31T15:00:00.000Z"
+    },
+    "replayed": false
+  },
+  "preferenceGet": {
+    "query": { "installationId": "ios-install-1" },
+    "response": {
+      "binding": {
+        "bindingId": "bind_1",
+        "installationId": "ios-install-1",
+        "platform": "ios",
+        "generation": 7,
+        "state": "active",
+        "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+        "createdAt": "2026-08-01T15:00:00.000Z",
+        "updatedAt": "2026-08-01T15:00:00.000Z"
+      }
+    }
+  },
+  "linked": {
+    "state": "linked",
+    "binding": {
+      "bindingId": "bind_1",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 7,
+      "state": "active",
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T15:00:00.000Z",
+      "updatedAt": "2026-08-01T15:00:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_1",
+      "generation": 7,
+      "credential": "test-revocation-authority",
+      "expiresAt": "2026-08-31T15:00:00.000Z"
+    }
+  },
+  "hiddenPayload": {
+    "bindingId": "bind_1",
+    "generation": 7,
+    "sessionId": "ses_scheduled_1",
+    "title": "New message",
+    "mode": "hidden"
+  },
+  "contentPayload": {
+    "bindingId": "bind_1",
+    "generation": 7,
+    "sessionId": "ses_scheduled_1",
+    "title": "New message",
+    "mode": "content",
+    "body": "Your morning briefing is ready."
+  },
+  "pendingUnlink": {
+    "state": "pending-unlink",
+    "request": {
+      "idempotencyKey": "logout-bind-1-generation-7",
+      "bindingId": "bind_1",
+      "generation": 7,
+      "revocationCredential": "test-revocation-authority"
+    },
+    "deliveryMayContinue": true
+  },
+  "revokeAcknowledgement": {
+    "bindingId": "bind_1",
+    "generation": 7,
+    "status": "revoked",
+    "acknowledgedAt": "2026-08-01T16:00:00.000Z"
+  },
+  "replacementRegistration": {
+    "idempotencyKey": "replace-2",
+    "installationId": "ios-install-1",
+    "platform": "ios",
+    "apnsDeviceToken": "1111111111111111111111111111111111111111111111111111111111111111",
+    "replaces": { "bindingId": "bind_1", "generation": 7 }
+  },
+  "replacementPending": {
+    "binding": {
+      "bindingId": "bind_2",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 8,
+      "state": "pending-old-binding-disable",
+      "replaces": { "bindingId": "bind_1", "generation": 7 },
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T16:01:00.000Z",
+      "updatedAt": "2026-08-01T16:01:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_2",
+      "generation": 8,
+      "credential": "replacement-revocation-authority",
+      "expiresAt": "2026-08-31T16:01:00.000Z"
+    },
+    "replayed": false
+  },
+  "replacementActive": {
+    "binding": {
+      "bindingId": "bind_2",
+      "installationId": "ios-install-1",
+      "platform": "ios",
+      "generation": 8,
+      "state": "active",
+      "replaces": { "bindingId": "bind_1", "generation": 7 },
+      "preferences": { "enabled": true, "previewMode": "hidden", "revision": 1 },
+      "createdAt": "2026-08-01T16:01:00.000Z",
+      "updatedAt": "2026-08-01T16:02:00.000Z"
+    },
+    "revocation": {
+      "bindingId": "bind_2",
+      "generation": 8,
+      "credential": "replacement-revocation-authority",
+      "expiresAt": "2026-08-31T16:01:00.000Z"
+    },
+    "replayed": true
+  },
+  "retryableFailure": {
+    "error": { "code": "provider_unavailable", "message": "Push provider is temporarily unavailable", "retryable": true }
+  },
+  "expiredAuthority": {
+    "error": { "code": "expired_revocation_authority", "message": "Revocation authority expired", "retryable": false }
+  }
+}

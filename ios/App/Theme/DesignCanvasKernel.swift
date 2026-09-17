@@ -957,9 +957,10 @@ struct DesignCanvasSurfaceKernel: View {
                 displayScale: displayScale
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
+                let facePath = shape.path(in: faceRect)
                 for pass in DesignCanvasSurfacePass.ordered {
-                    draw(pass, in: &context, faceRect: faceRect, recipe: recipe)
+                    draw(pass, in: &context, faceRect: faceRect, facePath: facePath, recipe: recipe)
                 }
             }
             .frame(width: fieldSize.width, height: fieldSize.height)
@@ -973,9 +974,9 @@ struct DesignCanvasSurfaceKernel: View {
         _ pass: DesignCanvasSurfacePass,
         in context: inout GraphicsContext,
         faceRect: CGRect,
+        facePath: Path,
         recipe: DesignCanvasSurfaceRecipe
     ) {
-        let facePath = shape.path(in: faceRect)
         switch pass {
         case .emberCast:
             if let emberCast = recipe.emberCast {
@@ -1120,9 +1121,10 @@ struct DesignCanvasKernel: View, Animatable {
                 displayScale: displayScale
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
+                let facePath = shape.path(in: faceRect)
                 for pass in DesignCanvasPass.ordered {
-                    draw(pass, in: &context, faceRect: faceRect, recipe: recipe)
+                    draw(pass, in: &context, faceRect: faceRect, facePath: facePath, recipe: recipe)
                 }
             }
             .frame(width: fieldSize.width, height: fieldSize.height)
@@ -1139,9 +1141,9 @@ struct DesignCanvasKernel: View, Animatable {
         _ pass: DesignCanvasPass,
         in context: inout GraphicsContext,
         faceRect: CGRect,
+        facePath: Path,
         recipe: DesignCanvasMaterialRecipe
     ) {
-        let facePath = shape.path(in: faceRect)
         switch pass {
         case .glow:
             if let glow = recipe.glow {
@@ -1351,9 +1353,10 @@ struct DesignCanvasWellKernel: View, Animatable {
                 displayScale: displayScale
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
+                let facePath = shape.path(in: faceRect)
                 for pass in DesignCanvasWellPass.ordered {
-                    draw(pass, in: &context, faceRect: faceRect, recipe: recipe)
+                    draw(pass, in: &context, faceRect: faceRect, facePath: facePath, recipe: recipe)
                 }
             }
             .frame(width: fieldSize.width, height: fieldSize.height)
@@ -1370,9 +1373,9 @@ struct DesignCanvasWellKernel: View, Animatable {
         _ pass: DesignCanvasWellPass,
         in context: inout GraphicsContext,
         faceRect: CGRect,
+        facePath: Path,
         recipe: DesignCanvasWellRecipe
     ) {
-        let facePath = shape.path(in: faceRect)
         switch pass {
         case .stateCast:
             drawOuterShadow(recipe.stateCast, in: &context, faceRect: faceRect)
@@ -2612,7 +2615,7 @@ struct DesignCanvasSmallControlRecipe {
 
 
 /// Decorative-only selection/range renderer. Every profile is painted by one
-/// synchronous non-linear Canvas and carries no content, gesture, focus owner,
+/// asynchronous non-linear Canvas and carries no content, gesture, focus owner,
 /// accessibility semantics, timeline, or value mutation.
 struct DesignCanvasSmallControlKernel: View, Animatable {
     let profile: DesignCanvasSmallControlProfile
@@ -2684,7 +2687,7 @@ struct DesignCanvasSmallControlKernel: View, Animatable {
                 displayScale: displayScale
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 var context = context
                 drawInterpolatedProfile(in: &context, faceRect: faceRect)
             }

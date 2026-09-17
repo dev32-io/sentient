@@ -162,17 +162,10 @@ private struct ConnectionBannerSurface: View {
 }
 
 // ── Host modifier ───────────────────────────────────────────────────────────
-//
-// Composes the floating banner overlay + the authExpired→logout side effect so
-// the host (ChatView) attaches one modifier instead of inlining both. The
-// overlay is top-pinned (mirrors webui's fixed-top banner); the side effect
-// lives in .onChange, never in body, per the swiftui rule.
 
 private struct ConnectionStateModifier: ViewModifier {
     let banner: ConnectionBannerState?
     let onReconnect: () -> Void
-    let authExpired: Bool
-    let onAuthExpired: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -184,28 +177,16 @@ private struct ConnectionStateModifier: ViewModifier {
                 }
             }
             .animation(.easeInOut(duration: Motion.normal), value: banner)
-            .onChange(of: authExpired) { _, expired in
-                if expired { onAuthExpired() }
-            }
     }
 }
 
 extension View {
-    /// Attach the connection-state affordances (floating banner + auth-expired
-    /// logout). `banner == nil` renders nothing; `authExpired` fires once on the
-    /// false→true edge. web-sdk parity (app.tsx connectionLost + authExpired).
+    /// Attach connection-state banner. Auth expiry belongs to authenticated host.
     func connectionState(
         banner: ConnectionBannerState?,
-        onReconnect: @escaping () -> Void,
-        authExpired: Bool,
-        onAuthExpired: @escaping () -> Void
+        onReconnect: @escaping () -> Void
     ) -> some View {
-        modifier(ConnectionStateModifier(
-            banner: banner,
-            onReconnect: onReconnect,
-            authExpired: authExpired,
-            onAuthExpired: onAuthExpired
-        ))
+        modifier(ConnectionStateModifier(banner: banner, onReconnect: onReconnect))
     }
 }
 

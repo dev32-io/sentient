@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Capability } from "../../access/capability.js";
 import { createCalendarEvent, mutateCalendarEvent } from "../../calendar/calendar-mutations.js";
 import { CalendarQueryService } from "../../calendar/calendar-query.js";
+import type { CalendarReminderScheduler } from "../../calendar/calendar-reminder-scheduler.js";
 import type { CalendarPersistence } from "../../calendar/calendar-store.js";
 import {
   normalizeCalendarEventTimes,
@@ -13,9 +14,10 @@ import {
   type CalendarMutationCommand,
   type CalendarReadScope,
   type CalendarScope,
-  calendarCreateInputSchema,
   calendarOccurrenceChangesSchema,
   calendarReadScopeSchema,
+  calendarRecurrenceInputSchema,
+  calendarReminderEnabledInputSchema,
   calendarTimeInputSchema,
   calendarUpdateChangesSchema,
   calendarWriteScopeSchema,
@@ -28,7 +30,7 @@ const READ = "read" as const;
 const WRITE = "write" as const;
 const CONFIRM = "confirm" as const;
 const schedulerFence =
-  "This calendar stores durable dated/timed events only. Relative reminders (for example, 'remind me tomorrow morning'), recurring briefings (for example, '9am every Monday'), and interval reminders (for example, 'every 4h') belong to a future scheduler, not the calendar.";
+  "This calendar stores durable dated/timed events only. Future assistant messages and standalone reminders belong to scheduled-message tools. An explicit event-plus-reminder request creates this event with one linked personal reminder, not a second independent schedule.";
 
 export const CALENDAR_TOOL_SETTINGS = [
   { name: "calendar_list", description: `List durable dated/timed calendar events. ${schedulerFence}`, tier: READ },
@@ -59,6 +61,7 @@ export interface CalendarProductToolConfig extends Readonly<Record<string, unkno
   readonly queryService?: CalendarQueryService;
   readonly privateCap?: Capability;
   readonly householdCap?: Capability;
+  readonly reminders?: CalendarReminderScheduler;
 }
 
 const time = calendarTimeInputSchema;
@@ -83,11 +86,12 @@ const createSchema = z
     description: z.string().min(1).optional(),
     start: time,
     end: time.optional(),
-    recurrence: calendarCreateInputSchema.shape.recurrence,
+    recurrence: calendarRecurrenceInputSchema.optional(),
     visibility: z.enum(["everyone", "adults"]).default("everyone"),
     importance: z.enum(["normal", "important", "pinned"]).default("normal"),
     group: z.string().min(1).optional(),
     tags: z.array(z.string()).default([]),
+    reminder: calendarReminderEnabledInputSchema.optional(),
     scope: writeScope.optional(),
   })
   .strict();
@@ -130,23 +134,130 @@ function validateMutationTarget(value: { applyTo: string; originalStart?: unknow
 const updateSchema = updateSchemaBase.superRefine(validateMutationTarget);
 const deleteSchema = deleteSchemaBase.superRefine(validateMutationTarget);
 
+const legacyMinuteReminderSchema = z.union([
+  z.object({ minutes: z.number().int().min(0).max(43_200) }).strict(),
+  z.object({ minutes_before: z.number().int().min(0).max(43_200) }).strict(),
+  z.object({ offset_minutes: z.literal(0) }).strict(),
+]);
+const legacyWhenReminderSchema = z.object({ enabled: z.literal(true), when: z.string().min(1) }).strict();
+
+function normalizeModelReminder(value: unknown, eventStart: unknown): unknown {
+  const minuteReminder = legacyMinuteReminderSchema.safeParse(value);
+  if (minuteReminder.success) {
+    const minutes =
+      "minutes" in minuteReminder.data
+        ? minuteReminder.data.minutes
+        : "minutes_before" in minuteReminder.data
+          ? minuteReminder.data.minutes_before
+          : minuteReminder.data.offset_minutes;
+    return minutes === 0 ? { enabled: true, mode: "at-start" } : { enabled: true, mode: "lead", leadMinutes: minutes };
+  }
+  const whenReminder = legacyWhenReminderSchema.safeParse(value);
+  if (whenReminder.success && typeof eventStart === "string" && whenReminder.data.when === eventStart) {
+    return { enabled: true, mode: "at-start" };
+  }
+  return value;
+}
+
+/** Providers occasionally retain older reminder field names despite receiving
+ * the canonical schema. Normalize only observed, unambiguous model-tool forms;
+ * REST and shared calendar contracts remain strict. */
+function parseCreateArgs(args: Record<string, unknown>): z.infer<typeof createSchema> | ToolResult {
+  const canonical = createSchema.safeParse(args);
+  if (canonical.success) return canonical.data;
+  if (!("reminder" in args)) return invalidArguments(canonical.error);
+  const normalized = createSchema.safeParse({
+    ...args,
+    reminder: normalizeModelReminder(args.reminder, args.start),
+  });
+  return normalized.success ? normalized.data : invalidArguments(normalized.error);
+}
+
+function parseUpdateArgs(args: Record<string, unknown>): z.infer<typeof updateSchema> | ToolResult {
+  const canonical = updateSchema.safeParse(args);
+  if (canonical.success) return canonical.data;
+  const changes = args.changes;
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || !("reminder" in changes)) {
+    return invalidArguments(canonical.error);
+  }
+  const changeRecord = changes as Record<string, unknown>;
+  const normalized = updateSchema.safeParse({
+    ...args,
+    changes: {
+      ...changeRecord,
+      reminder: normalizeModelReminder(changeRecord.reminder, changeRecord.start),
+    },
+  });
+  return normalized.success ? normalized.data : invalidArguments(normalized.error);
+}
+
 function failure(code: string, message: string): ToolResult {
   return { content: JSON.stringify({ outcome: "error", code, message }), isError: true };
 }
 function aborted(): ToolResult {
   return failure("aborted", "The calendar operation was cancelled; retry it.");
 }
+const safeArgumentFields = new Set([
+  "applyTo",
+  "changes",
+  "count",
+  "description",
+  "enabled",
+  "end",
+  "eventId",
+  "expectedRevision",
+  "frequency",
+  "from",
+  "group",
+  "importance",
+  "interval",
+  "leadMinutes",
+  "localTime",
+  "mode",
+  "originalStart",
+  "query",
+  "recurrence",
+  "reminder",
+  "scope",
+  "start",
+  "tags",
+  "timeZone",
+  "title",
+  "to",
+  "until",
+  "visibility",
+  "weekdays",
+]);
 function invalidArguments(error: z.ZodError): ToolResult {
-  const diagnostics = error.issues.map((issue) => {
-    const path = issue.path.length
-      ? issue.path.map((part) => (typeof part === "number" ? "item" : part)).join(".")
-      : "arguments";
-    // Zod's unrecognized_keys diagnostic includes the supplied key names. Do
-    // not echo those names: model input can contain private calendar content.
-    const message = issue.code === "unrecognized_keys" ? "unsupported field; remove it" : issue.message;
-    return `${path}: ${message}`;
-  });
-  return failure("invalid_arguments", `Correct the calendar arguments. ${diagnostics.join("; ")}`);
+  const issues: Array<{ path: string; code: string }> = [];
+  const seen = new Set<string>();
+  const pending = [...error.issues];
+  while (pending.length > 0 && issues.length < 8) {
+    const issue = pending.shift();
+    if (!issue) break;
+    if (issue.code === "invalid_union") {
+      for (const unionError of issue.unionErrors) pending.push(...unionError.issues);
+      continue;
+    }
+    const path =
+      issue.path
+        .map((part) => (typeof part === "number" ? "item" : safeArgumentFields.has(part) ? part : "field"))
+        .join(".") || "arguments";
+    const key = `${path}:${issue.code}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    issues.push({ path, code: issue.code });
+  }
+  return {
+    content: JSON.stringify({
+      outcome: "error",
+      code: "invalid_arguments",
+      ...(issues.length > 0 ? { issues } : {}),
+      expected:
+        "Use reminder {enabled:true,mode:'at-start'}, {enabled:true,mode:'lead',leadMinutes:15}, or for all-day events {enabled:true,mode:'all-day',localTime:'09:00',timeZone:'America/Toronto'}. Only calendar_update may use {enabled:false}. Occurrence-scoped mutations require originalStart; entire_series must omit it.",
+    }),
+    isError: true,
+  };
 }
 function parse<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T | ToolResult {
   const parsed = schema.safeParse(args);
@@ -204,6 +315,56 @@ const filtersParameter = {
   tags: { type: "array", items: { type: "string" } },
   importance: importanceParameter,
 };
+const reminderEnabledVariants = [
+  {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean", enum: [true] },
+      mode: { type: "string", enum: ["at-start"] },
+    },
+    required: ["enabled", "mode"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean", enum: [true] },
+      mode: { type: "string", enum: ["lead"] },
+      leadMinutes: { type: "integer", minimum: 1, maximum: 43200 },
+    },
+    required: ["enabled", "mode", "leadMinutes"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean", enum: [true] },
+      mode: { type: "string", enum: ["all-day"] },
+      localTime: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$", description: "HH:mm" },
+      timeZone: { type: "string", minLength: 1, description: "IANA timezone" },
+    },
+    required: ["enabled", "mode", "localTime", "timeZone"],
+    additionalProperties: false,
+  },
+] as const;
+const createReminderParameter = {
+  description:
+    "Optional acting-user reminder linked to this event. Omit it to create no reminder. Timed starts use {enabled:true,mode:'at-start'} or {enabled:true,mode:'lead',leadMinutes:15}; date-only/all-day starts require {enabled:true,mode:'all-day',localTime:'09:00',timeZone:'America/Toronto'}.",
+  anyOf: reminderEnabledVariants,
+};
+const updateReminderParameter = {
+  description:
+    "Optional acting-user reminder change. Omit to preserve it; use {enabled:false} to remove it. Timed starts use {enabled:true,mode:'at-start'} or {enabled:true,mode:'lead',leadMinutes:15}; date-only/all-day starts require {enabled:true,mode:'all-day',localTime:'09:00',timeZone:'America/Toronto'}.",
+  anyOf: [
+    ...reminderEnabledVariants,
+    {
+      type: "object",
+      properties: { enabled: { type: "boolean", enum: [false] } },
+      required: ["enabled"],
+      additionalProperties: false,
+    },
+  ],
+};
 const changesParameter = {
   type: "object",
   properties: {
@@ -216,6 +377,7 @@ const changesParameter = {
     importance: importanceParameter,
     group: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
+    reminder: updateReminderParameter,
   },
   additionalProperties: false,
 };
@@ -231,6 +393,7 @@ const createParameters = {
     importance: importanceParameter,
     group: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
+    reminder: createReminderParameter,
     scope: writeScopeParameter,
   },
   required: ["title", "start"],
@@ -262,8 +425,17 @@ const getParameters = {
 };
 const mutationTargetParameters = {
   eventId: { type: "string" },
-  applyTo: { type: "string", enum: ["this_occurrence", "this_and_following", "entire_series"] },
-  originalStart: timeParameter,
+  applyTo: {
+    type: "string",
+    enum: ["this_occurrence", "this_and_following", "entire_series"],
+    description:
+      "Choose this_occurrence or this_and_following with originalStart; choose entire_series without originalStart.",
+  },
+  originalStart: {
+    ...timeParameter,
+    description:
+      "Required when applyTo is this_occurrence or this_and_following; must be omitted when applyTo is entire_series.",
+  },
   expectedRevision: { type: "integer", minimum: 1 },
   scope: writeScopeParameter,
 };
@@ -398,6 +570,17 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         const gate = writeGate(value.scope as CalendarScope | undefined);
         return gate ?? preflight?.(value) ?? null;
       };
+    const validateParsedWrite =
+      <T extends Record<string, unknown>>(
+        parser: (args: Record<string, unknown>) => T | ToolResult,
+        preflight?: (value: Record<string, unknown>) => ToolResult | null,
+      ) =>
+      (args: Record<string, unknown>): ToolResult | null => {
+        const parsed = parser(args);
+        if (isToolResult(parsed)) return parsed;
+        const gate = writeGate(parsed.scope as CalendarScope | undefined);
+        return gate ?? preflight?.(parsed) ?? null;
+      };
 
     return [
       runner(
@@ -486,23 +669,29 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         CALENDAR_TOOL_SETTINGS[3].description,
         WRITE,
         createParameters,
-        validateWrite(createSchema, validateCreate),
+        validateParsedWrite(parseCreateArgs, validateCreate),
         async (args, ctx) => {
           if (ctx.signal.aborted) return aborted();
-          const parsed = parse(createSchema, args);
+          const parsed = parseCreateArgs(args);
           if (isToolResult(parsed)) return parsed;
-          const p = parsed as z.infer<typeof createSchema>;
+          const p = parsed;
           const gate = writeGate(p.scope);
           if (gate) return gate;
           const selected = target(p.scope);
           if (!selected) return failure("forbidden", "The household calendar is unavailable.");
-          return domainResult(
-            createCalendarEvent(
-              { ...p, scope: p.scope ?? "private" },
-              { persistence: selected.persistence, config: calendarConfig, signal: ctx.signal },
-            ),
-            calendarConfig,
+          const result = createCalendarEvent(
+            { ...p, scope: p.scope ?? "private" },
+            { persistence: selected.persistence, config: calendarConfig, signal: ctx.signal },
           );
+          if (result.ok && supplied.reminders) {
+            // Mutation and reminder intent are already durable. Best-effort
+            // prompt reconciliation must never turn committed success into a
+            // retryable tool failure that can duplicate calendar mutations.
+            await supplied.reminders
+              .reconcile(selected.persistence, result.value.eventId, p.scope ?? "private")
+              .catch(() => undefined);
+          }
+          return domainResult(result, calendarConfig);
         },
       ),
       runner(
@@ -510,25 +699,38 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         CALENDAR_TOOL_SETTINGS[4].description,
         WRITE,
         updateParameters,
-        validateWrite(updateSchema, validateChanges),
+        validateParsedWrite(parseUpdateArgs, validateChanges),
         async (args, ctx) => {
           if (ctx.signal.aborted) return aborted();
-          const parsed = parse(updateSchema, args);
+          const parsed = parseUpdateArgs(args);
           if (isToolResult(parsed)) return parsed;
-          const p = parsed as z.infer<typeof updateSchema>;
+          const p = parsed;
           const gate = writeGate(p.scope);
           if (gate) return gate;
           const selected = target(p.scope);
           if (!selected) return failure("forbidden", "The household calendar is unavailable.");
           const command = { ...p, operation: "update", scope: p.scope ?? "private" } as CalendarMutationCommand;
-          return domainResult(
-            mutateCalendarEvent(command, {
-              persistence: selected.persistence,
-              config: calendarConfig,
-              signal: ctx.signal,
-            }),
-            calendarConfig,
-          );
+          const result = mutateCalendarEvent(command, {
+            persistence: selected.persistence,
+            config: calendarConfig,
+            signal: ctx.signal,
+          });
+          if (result.ok && supplied.reminders) {
+            const ids = new Set(
+              [
+                p.eventId,
+                result.value.eventId,
+                "successorEventId" in result.value ? result.value.successorEventId : undefined,
+              ].filter((id): id is string => Boolean(id)),
+            );
+            for (const id of ids) {
+              const original = id === p.eventId && p.applyTo === "this_occurrence" ? p.originalStart : undefined;
+              await supplied.reminders
+                .reconcile(selected.persistence, id, p.scope ?? "private", undefined, original)
+                .catch(() => undefined);
+            }
+          }
+          return domainResult(result, calendarConfig);
         },
       ),
       runner(
@@ -547,14 +749,23 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
           const selected = target(p.scope);
           if (!selected) return failure("forbidden", "The household calendar is unavailable.");
           const command = { ...p, operation: "delete", scope: p.scope ?? "private" } as CalendarMutationCommand;
-          return domainResult(
-            mutateCalendarEvent(command, {
-              persistence: selected.persistence,
-              config: calendarConfig,
-              signal: ctx.signal,
-            }),
-            calendarConfig,
-          );
+          const result = mutateCalendarEvent(command, {
+            persistence: selected.persistence,
+            config: calendarConfig,
+            signal: ctx.signal,
+          });
+          if (result.ok && supplied.reminders) {
+            await supplied.reminders
+              .reconcile(
+                selected.persistence,
+                p.eventId,
+                p.scope ?? "private",
+                undefined,
+                p.applyTo === "this_occurrence" ? p.originalStart : undefined,
+              )
+              .catch(() => undefined);
+          }
+          return domainResult(result, calendarConfig);
         },
       ),
     ];

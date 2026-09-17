@@ -250,6 +250,15 @@ enum DesignMetrics {
     // Native custom-font metrics place the glyph run below the CSS line box;
     // this shared lift keeps text alignment separate from the hit target.
     static let actionButtonTextBaselineOffset: CGFloat = 2
+    // Notification cards pair a full-width raised face with a fixed action in
+    // its recessed receiver. Gesture thresholds complete that reviewed recipe.
+    static let notificationCardActionWidth: CGFloat = 96
+    static let notificationCardActionInset: CGFloat = 6
+    static let notificationCardRevealDistance: CGFloat = 114
+    static let notificationCardSnapDistance: CGFloat = 48
+    static let notificationCardIntentDistance: CGFloat = 8
+    // Leave room to arm from a center-origin swipe before reaching the screen edge.
+    static let notificationCardArmFraction: CGFloat = 0.42
     static let checkboxSize: CGFloat = 22
     static let checkboxGap: CGFloat = 10
     static let checkboxCornerRadius: CGFloat = 6

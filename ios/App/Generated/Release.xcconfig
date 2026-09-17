@@ -1,0 +1,3 @@
+// Generated from shared/config/build-variants.json. Do not edit.
+PRODUCT_BUNDLE_IDENTIFIER = io.dev32.sentient
+APS_ENVIRONMENT = production

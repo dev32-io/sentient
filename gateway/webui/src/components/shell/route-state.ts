@@ -1,10 +1,11 @@
 import type { TopbarRoute } from "./topbar.tsx";
 
 export const ROUTE_STORAGE_KEY = "sentient:route";
+export const PENDING_SESSION_KEY = "sentient:pendingSessionId";
 
 type RouteStorage = Pick<Storage, "getItem" | "setItem">;
 
-function browserStorage(): RouteStorage | undefined {
+function browserStorage(): Storage | undefined {
   try {
     return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
   } catch {
@@ -19,6 +20,38 @@ export function loadStoredRoute(storage: Pick<RouteStorage, "getItem"> | undefin
     return saved === "settings" || saved === "calendar" ? saved : "chat";
   } catch {
     return "chat";
+  }
+}
+
+export function loadPendingSession(
+  storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = browserStorage(),
+): string | null {
+  if (!storage) return null;
+  try {
+    const query = typeof location === "undefined" ? null : new URLSearchParams(location.search).get("sessionId");
+    if (query && query.length <= 200) {
+      storage.setItem(PENDING_SESSION_KEY, query);
+      return query;
+    }
+    const stored = storage.getItem(PENDING_SESSION_KEY);
+    if (stored && stored.length <= 200) return stored;
+    if (stored !== null) storage.removeItem(PENDING_SESSION_KEY);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingSession(storage: Pick<Storage, "removeItem"> | undefined = browserStorage()): void {
+  try {
+    storage?.removeItem(PENDING_SESSION_KEY);
+  } catch {
+    /* navigation remains safe without storage */
+  }
+  if (typeof history !== "undefined" && typeof location !== "undefined") {
+    const url = new URL(location.href);
+    url.searchParams.delete("sessionId");
+    history.replaceState(history.state, "", url);
   }
 }
 

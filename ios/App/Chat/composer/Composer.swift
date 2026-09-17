@@ -743,7 +743,7 @@ private struct ComposerFaceBackground: View {
                 cornerRadius: cornerRadius
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 ComposerCanvasDrawing.drawShadow(
                     in: &context,
                     faceRect: faceRect,
@@ -1119,7 +1119,7 @@ private struct ComposerControlCanvas: View {
                 cornerRadius: cornerRadius
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 if isPressed {
                     ComposerCanvasDrawing.drawShadow(
                         in: &context,

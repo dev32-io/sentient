@@ -155,7 +155,7 @@ struct ModelScreen: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, Space.lg)
         } else {
-            VStack(spacing: Space.sm) {
+            LazyVStack(spacing: Space.sm) {
                 ForEach(list, id: \.id) { entry in
                     ModelCard(
                         entry: entry,

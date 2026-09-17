@@ -23,7 +23,7 @@ import { AppShell } from "./components/shell/app-shell.tsx";
 import { ToastHost } from "./components/common/toast.tsx";
 import { GateState } from "./components/common/gate-state.tsx";
 import { ConnectionBanner } from "./components/shell/connection-banner.tsx";
-import { loadStoredRoute, storeRoute } from "./components/shell/route-state.ts";
+import { clearPendingSession, loadPendingSession, loadStoredRoute, storeRoute } from "./components/shell/route-state.ts";
 import { useSettingsDeparture } from "./components/shell/settings-departure.tsx";
 import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
 import { SessionsProvider } from "./context/sessions.tsx";
@@ -31,6 +31,7 @@ import { createUseSessions, type UseSessions } from "./hooks/use-sessions.ts";
 import { useVoiceClient } from "./hooks/use-voice-client.ts";
 import { useInstallState } from "./hooks/use-install-state.ts";
 import { WizardShell } from "./components/wizard/wizard-shell.tsx";
+import { MessageInbox } from "./components/inbox/message-inbox.tsx";
 
 const log = createLogger(["sentient", "webui", "app"]);
 
@@ -175,6 +176,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
     },
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   // Build the sessions hook ONCE per SessionsConnector identity. The
   // connector is stable per useVoiceClient resources memo (rebuilt only
   // when wsUrl/token change), so this also rebuilds across token changes.
@@ -191,6 +193,11 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
     sessionsRef.current = null;
   }, []);
   const sessions = sessionsRef.current.hook;
+  const pendingSessionRef = useRef<string | null>(loadPendingSession());
+  const [sessionRouteState, setSessionRouteState] = useState<"idle" | "loading" | "unavailable">(
+    pendingSessionRef.current === null ? "idle" : "loading",
+  );
+  const sessionRouteAttemptRef = useRef(0);
   // Gate against double-click: skip if a TTS toggle PUT is already in flight.
   const togglingRef = useRef(false);
   const cycleStatus = client.cycleStatus.value;
@@ -220,6 +227,26 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   const connectionLost = client.connectionLost.value;
   const authExpired = client.authExpired.value;
   const connectionReady = sdkStatus === "ready";
+  useEffect(() => () => { sessionRouteAttemptRef.current += 1; }, []);
+  useEffect(() => {
+    const target = pendingSessionRef.current;
+    if (!target || sdkStatus !== "ready") return;
+    const attempt = ++sessionRouteAttemptRef.current;
+    pendingSessionRef.current = null;
+    setSessionRouteState("loading");
+    void sessions.switchTo(target).then((opened) => {
+      if (sessionRouteAttemptRef.current !== attempt) return;
+      clearPendingSession();
+      setSessionRouteState(opened ? "idle" : "unavailable");
+      if (opened) onRouteChange("chat");
+    });
+  }, [sessions, sdkStatus, onRouteChange]);
+
+  const recoverSessionRoute = () => {
+    sessionRouteAttemptRef.current += 1;
+    setSessionRouteState("idle");
+    onRouteChange("chat");
+  };
 
   // Profile API instance — also used by SettingsView via its own factory call,
   // which is fine: createProfileApi() is stateless (just wraps fetch). Held
@@ -302,6 +329,8 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
             onSettingsClick={() => void leaveSettings(onOpenSettings)}
             onCalendarClick={() => void leaveSettings(() => onRouteChange("calendar"))}
             onMenuClick={() => setDrawerOpen(true)}
+            onNotificationsClick={() => setInboxOpen((open) => !open)}
+            notificationsOpen={inboxOpen}
             user={user}
             onLogout={() => void leaveSettings(() => { void auth.logout(); })}
             onOpenAccount={() => void leaveSettings(onOpenAccount)}
@@ -310,12 +339,13 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
         main={
           route === "chat" ? (
             <ChatView
-              messages={messages}
-              transcript={client.transcript.value}
+              messages={sessionRouteState === "idle" ? messages : []}
+              localSendIds={client.localSendIds.value}
+              transcript={sessionRouteState === "idle" ? client.transcript.value : ""}
               currentTurnId={currentTurnId}
               activeCycleState={activeCycleState}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
-              status={connectionLost ? "error" : connectionReady ? "ready" : "loading"}
+              status={sessionRouteState === "unavailable" ? "unavailable" : sessionRouteState === "loading" ? "loading" : connectionLost ? "error" : connectionReady ? "ready" : "loading"}
             />
           ) : route === "calendar" ? (
             <CalendarView token={token} />
@@ -334,7 +364,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
           route === "chat" ? (
             <ChatComposer
               cycleStatus={cycleStatus}
-              connectionReady={connectionReady}
+              connectionReady={connectionReady && sessionRouteState === "idle"}
               captureActive={client.voiceMode.value === "active"}
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
@@ -387,11 +417,12 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
           ) : undefined
         }
       />
+      <MessageInbox open={inboxOpen} token={token} onClose={() => setInboxOpen(false)} onOpenedSession={recoverSessionRoute} />
       <Drawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         onBeforeSessionChange={departure.request}
-        onSessionSelected={() => onRouteChange("chat")}
+        onSessionSelected={recoverSessionRoute}
       />
       {departure.dialog}
       {connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}

@@ -104,7 +104,7 @@ private struct UserAvatarCanvasBackground: View {
                 height: proxy.size.height + overflow * 2
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: false) { context, _ in
+            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
                 drawMaterial(in: &context, faceRect: faceRect)
             }
             .frame(width: fieldSize.width, height: fieldSize.height)

@@ -27,6 +27,7 @@ class AudioPipelineTurnQueueTest {
         scope: CoroutineScope,
         fsm: AudioFsm = AudioFsm(),
         onStateChanged: (Boolean, AudioState) -> Unit = { _, _ -> },
+        onActiveTurnChanged: (String?) -> Unit = {},
         opusDecoder: io.sentient.mobilesdk.audio.opus.OpusDecoderPort = FakeOpusDecoderPort(),
     ): AudioPipeline = AudioPipeline(
         playback = sink,
@@ -35,6 +36,7 @@ class AudioPipelineTurnQueueTest {
         scope = scope,
         outputSampleRate = 24_000,
         onStateChanged = onStateChanged,
+        onActiveTurnChanged = onActiveTurnChanged,
         playbackDrainSettleMs = 100,
         armPlayback = { sink.configure(mic = false, playback = true); true },
         disarmPlayback = { },
@@ -85,6 +87,23 @@ class AudioPipelineTurnQueueTest {
             sink.playedFrames.map { it[0] },
             "t2's buffered frames drain after t1's, in arrival order",
         )
+    }
+
+    @Test
+    fun activityOwner_tracksHeadPromotion_notQueuedArrival() = runTest {
+        val owners = mutableListOf<String?>()
+        val sink = FakeVoiceAudio()
+        val p = pipeline(sink, this, onActiveTurnChanged = { owners += it })
+
+        p.onAudioStart("t1")
+        p.onAudioStart("t2")
+        assertEquals(listOf<String?>("t1"), owners, "queued t2 cannot steal ownership from playing t1")
+
+        p.onAudioDone("t1")
+        assertEquals(listOf<String?>("t1", "t2"), owners, "promotion transfers ownership to t2")
+
+        p.onPlaybackStop("interrupt", "t2")
+        assertEquals(listOf<String?>("t1", "t2", null), owners)
     }
 
     @Test

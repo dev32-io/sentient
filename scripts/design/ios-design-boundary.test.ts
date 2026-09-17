@@ -10,8 +10,11 @@ import {
 } from "./ios-design-boundary";
 
 describe("iOS design boundary", () => {
-  test("keeps the checked-in Theme and non-Calendar Settings graph closed", () => {
+  test("keeps the checked-in Theme, non-Calendar Settings, and inbox graph closed", () => {
     expect(findIosDesignBoundaryViolations(readIosDesignSources())).toEqual([]);
+    expect(findPageBoundaryViolations([
+      { path: "ios/App/Inbox/FutureInbox.swift", source: "Button(\"Open\") {}\n.font(.body)" },
+    ]).join("\n")).toContain("raw styled Button");
   });
 
   test("exempts only the exact split foundation modules", () => {

@@ -39,6 +39,10 @@ export interface ApiRouterDeps {
   handleSessions: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/calendar/*` path. Bearer auth per route. */
   handleCalendar?: (request: Request) => Promise<Response>;
+  /** Handles scheduled-message CRUD and the session-backed card inbox. */
+  handleScheduledMessages?: (request: Request) => Promise<Response>;
+  /** Handles per-installation iOS push registration/preferences/revocation. */
+  handlePush?: (request: Request) => Promise<Response>;
   /** Handles `POST /api/v1/diagnostics/logs`. Bearer auth applied per route. */
   handleDiagnostics: (request: Request) => Promise<Response>;
   /** Serves a static file or the SPA fallback. Returns null when the path
@@ -71,6 +75,15 @@ export function createApiRouter(deps: ApiRouterDeps): ApiRouter {
     if (pathname.startsWith(`${API_V1}/sessions`)) return deps.handleSessions(request);
     if (pathname.startsWith(`${API_V1}/calendar`))
       return deps.handleCalendar?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
+    if (
+      pathname === `${API_V1}/schedules` ||
+      pathname.startsWith(`${API_V1}/schedules/`) ||
+      pathname === `${API_V1}/scheduled-session-cards` ||
+      pathname.startsWith(`${API_V1}/scheduled-session-cards/`)
+    )
+      return deps.handleScheduledMessages?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
+    if (pathname.startsWith(`${API_V1}/push/`))
+      return deps.handlePush?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
     if (pathname.startsWith(`${API_V1}/diagnostics`)) return deps.handleDiagnostics(request);
     if (pathname === `${API_V1}/health`) return deps.handleHealth(request);
     if (pathname === `${API_V1}/ready`) return deps.handleReady(request);

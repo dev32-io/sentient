@@ -29,4 +29,11 @@ music_assistant:
   local_ip: null
   token: null
 
+# Optional APNs signing values for the managed Gorush addon. Put the base64 of
+# the .p8 file here; never commit the key or place it in gateway/config.yaml.
+push:
+  apns_key_base64: null
+  apns_key_id: null
+  apns_team_id: null
+
 admin_token: "{{admin_token}}"

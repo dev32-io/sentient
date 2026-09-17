@@ -120,7 +120,7 @@ private struct SessionsStaleMaterialCanvas: View {
     let topBorder: Color
 
     var body: some View {
-        Canvas { context, size in
+        Canvas(rendersAsynchronously: true) { context, size in
             let rect = CGRect(origin: .zero, size: size)
             let shape = RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
             context.fill(shape.path(in: rect), with: .color(face))

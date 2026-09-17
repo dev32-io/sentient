@@ -5,7 +5,6 @@ import { MessageContent } from "./message-content.tsx";
 import { MessageBubbleFrame } from "./message-frame.tsx";
 import { ASSISTANT_NAME, AssistantMessageIdentity, MessageContinuationIdentity } from "./message-identity.tsx";
 import { messageStateFor } from "./message-state.ts";
-import { SpeakingWave } from "./streaming-presentation.tsx";
 
 export interface AssistantMessageBubbleProps {
   message: ChatMessage;
@@ -25,7 +24,6 @@ export function AssistantMessageBubble({ message, identityState, continuation, p
       continuation={continuation}
       position={position}
       total={total}
-      surfaceEffect={<SpeakingWave active={identityState === "responding"} />}
       content={<MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} />}
     />
   );

@@ -223,6 +223,19 @@ describe("SentientSDK — the per-tab session pointer", () => {
     expect(stored()).toBe(SESSION_ID);
   });
 
+  it.each(["not_found", "forbidden"] as const)(
+    "drops the presented id when gateway rejects it with sessions.error %s",
+    (code) => {
+      sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, SESSION_ID);
+
+      handshake();
+      expect(presented()).toBe(SESSION_ID);
+      wire.deliver({ type: "sessions.error", code, message: "unknown session" });
+
+      expect(stored()).toBeNull();
+    },
+  );
+
   it("drops the presented id when the gateway refuses it with session.draft", () => {
     sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, SESSION_ID);
 

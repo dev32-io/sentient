@@ -1,5 +1,7 @@
-# Identity comes from ENV (set by scripts/build-ios.sh ← scripts/release.local.conf).
-# Nothing personal is committed here: the bundle id is already public in project.yml.
-app_identifier "io.dev32.sentient"
+require "json"
+
+# App and gateway Release identity share one checked-in build-variant source.
+variants = JSON.parse(File.read(File.expand_path("../shared/config/build-variants.json", __dir__)))
+app_identifier variants.fetch("Release").fetch("bundleId")
 team_id(ENV["IOS_TEAM_ID"]) if ENV["IOS_TEAM_ID"]
 apple_id(ENV["APPLE_ID"]) if ENV["APPLE_ID"]   # optional; unused for local ad-hoc
