@@ -37,7 +37,7 @@ plugins {
 // and shared design foundation projection.
 // Bumped to 0.8.0: scheduled-message, personal-reminder, session-card, and
 // installation-owned iOS push lifecycle contracts.
-version = "0.8.0"
+version = "0.9.0"
 
 // The gateway JSON is the cross-client wire fixture. Generate a test-only
 // Kotlin holder from that file instead of copying its values into SDK tests.
