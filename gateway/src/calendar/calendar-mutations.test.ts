@@ -1187,4 +1187,75 @@ describe("calendar mutation boundary", () => {
     }
     persistence.close();
   });
+
+  it("denies a child reminder-only this_and_following split without touching the shared series", () => {
+    const base = root();
+    const adult = openCalendarPersistence(cap(base, "calendar-household", "adult"), config);
+    const created = createCalendarEvent(
+      createInput({
+        recurrence: { frequency: "daily", count: 3 },
+        scope: "household",
+      }),
+      adult,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    adult.close();
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+
+    const child = openCalendarPersistence(cap(base, "calendar-household", "child"), config);
+    const before = child.read(eventId);
+    const denied = mutateCalendarEvent(
+      mutation({
+        operation: "update",
+        eventId,
+        applyTo: "this_and_following",
+        originalStart: "2026-01-06T14:00:00.000Z",
+        scope: "household",
+        changes: { reminder: { enabled: true, mode: "at-start" } },
+      }),
+      child,
+      config,
+    );
+    expect(denied).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(child.read(eventId)).toEqual(before);
+    expect(
+      child.readBaseCandidates(10, {
+        timedFrom: "2026-01-01T00:00:00.000Z" as never,
+        timedTo: "2026-01-31T00:00:00.000Z" as never,
+      }),
+    ).toMatchObject({ ok: true, value: { ids: [eventId] } });
+
+    const personal = mutateCalendarEvent(
+      mutation({
+        operation: "update",
+        eventId,
+        applyTo: "this_occurrence",
+        originalStart: "2026-01-06T14:00:00.000Z",
+        scope: "household",
+        changes: { reminder: { enabled: true, mode: "at-start" } },
+      }),
+      child,
+      config,
+    );
+    expect(personal).toMatchObject({ ok: true, value: { operation: "update", appliedTo: "this_occurrence" } });
+    child.close();
+
+    const followAdult = openCalendarPersistence(cap(base, "calendar-household", "adult"), config);
+    const allowed = mutateCalendarEvent(
+      mutation({
+        operation: "update",
+        eventId,
+        applyTo: "this_and_following",
+        originalStart: "2026-01-07T14:00:00.000Z",
+        scope: "household",
+        changes: { reminder: { enabled: true, mode: "at-start" } },
+      }),
+      followAdult,
+      config,
+    );
+    expect(allowed).toMatchObject({ ok: true, value: { appliedTo: "this_and_following" } });
+    followAdult.close();
+  });
 });

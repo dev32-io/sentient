@@ -359,6 +359,10 @@ function reminderWasMutated(command: MutationCommand): boolean {
 }
 function isActorPersonalReminderMutation(command: MutationCommand): boolean {
   if (command.operation !== "update" || command.changes.reminder === undefined) return false;
+  // Splitting a series rewrites base, successor, and child rows for every
+  // member, so it is never an actor-personal edit even when the only declared
+  // change is the actor's own reminder.
+  if (command.applyTo === "this_and_following") return false;
   return Object.keys(command.changes).every((key) => key === "reminder");
 }
 function invalidMutationScope(message: string): FailureResult {
