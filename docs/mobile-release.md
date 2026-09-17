@@ -58,6 +58,7 @@ xcconfigs before XcodeGen runs. Regenerate `ios/App/Info.plist` from `ios/projec
 XcodeGen; do not hand-edit the generated plist, variant xcconfigs, or Xcode project/scheme state.
 The scripts do not bump versions.
 
-The design-refresh release uses iOS **1.5.0 (build 12)** and shared mobile SDK/data **0.7.0**.
-Its gateway/WebUI counterparts are **1.16.0 / 0.8.0**. These are source version bumps,
+The scheduled-messages and notifications release uses iOS **1.6.0 (build 13)** and shared
+mobile SDK/data **0.8.0**. Its gateway/WebUI counterparts are **1.17.0 / 0.9.0**.
+Deprecated Android remains **1.4.0 (code 15)**. These are source version bumps,
 not evidence that signed artifacts have been built or deployed.
