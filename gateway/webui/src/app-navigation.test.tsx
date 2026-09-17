@@ -58,7 +58,7 @@ beforeEach(() => {
     error: signal(null), currentId: signal(null), items: signal([]), searchHits: signal(null), loading: signal(false),
   };
   observed.client = {
-    sessionsConnector: {}, cycleStatus: signal("idle"), tasks: signal([]), messages: signal([]), currentTurnId: signal(null),
+    sessionsConnector: {}, cycleStatus: signal("idle"), tasks: signal([]), messages: signal([]), localSendIds: signal([]), currentTurnId: signal(null),
     sdkStatus: signal("ready"), connectionLost: signal(false), authExpired: signal(false), commandRejection: signal(null),
     transcript: signal(""), voiceMode: signal("off"), prefs: signal({ ttsEnabled: false }), permissionRequest: signal(null),
     patchPreferences: vi.fn(), seedPreferences: vi.fn(),

@@ -4,6 +4,27 @@ import UIKit
 
 typealias MessagePositionScheduler = (@escaping () -> Void) -> Void
 
+struct KeyboardAnimationTiming: Equatable {
+    let duration: TimeInterval
+    let options: UIView.AnimationOptions
+
+    static let fallback = KeyboardAnimationTiming(
+        duration: Motion.normal,
+        options: .curveEaseInOut
+    )
+}
+
+func parsedKeyboardAnimationTiming(from notification: Notification) -> KeyboardAnimationTiming? {
+    guard let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey]
+            as? TimeInterval,
+          let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey]
+            as? Int else { return nil }
+    return KeyboardAnimationTiming(
+        duration: duration,
+        options: UIView.AnimationOptions(rawValue: UInt(curve << 16))
+    )
+}
+
 struct MessageCollectionView: UIViewRepresentable {
     let rows: [MessageLayoutRow]
     let messageCount: Int
@@ -11,6 +32,7 @@ struct MessageCollectionView: UIViewRepresentable {
     let historyLoading: Bool
     let initialExistingHistory: Bool?
     let playbackEnabled: Bool
+    let bottomOcclusion: CGFloat
     let environmentRevision: String
     let imageLoader: any NetworkImageLoader
     let positionScheduler: MessagePositionScheduler
@@ -37,7 +59,15 @@ struct MessageCollectionView: UIViewRepresentable {
         view.delegate = context.coordinator
         view.onBoundsChange = { [weak coordinator = context.coordinator, weak view] in
             guard let coordinator, let view else { return }
-            coordinator.receiveWidthChange(view)
+            coordinator.receiveViewportChange(view)
+        }
+        view.onKeyboardOverlapChange = { [weak coordinator = context.coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.receiveKeyboardOverlapChange(view)
+        }
+        view.onStableLayout = { [weak coordinator = context.coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.receiveStableLayout(view)
         }
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.dismissKeyboard))
         tap.cancelsTouchesInView = false
@@ -53,6 +83,8 @@ struct MessageCollectionView: UIViewRepresentable {
             userName: userName,
             historyLoading: historyLoading,
             playbackEnabled: playbackEnabled,
+            bottomOcclusion: bottomOcclusion,
+            reduceMotion: context.environment.accessibilityReduceMotion,
             environmentRevision: environmentRevision,
             onRetry: onRetry,
             onMeasurementLoadingChange: onMeasurementLoadingChange,
@@ -72,13 +104,17 @@ struct MessageCollectionView: UIViewRepresentable {
         private var messageCount = 0
         private var userName = "You"
         private var playbackEnabled = true
+        private var reduceMotion = false
         private var environmentRevision = ""
         private var onRetry: (String) -> Void = { _ in }
         private var onMeasurementLoadingChange: (Bool) -> Void = { _ in }
         private var heightCache: [String: CGFloat] = [:]
+        private var pendingRenderedHeights: [String: (key: String, height: CGFloat)] = [:]
+        private var heightUpdateScheduled = false
         private var generation = 0
         private var measurementTask: Task<Void, Never>?
         private var signature = ""
+        private var publishedSizingContext = ""
         private var boundsSize = CGSize.zero
         private let initialExistingHistory: Bool?
         private var positionedHistory = false
@@ -90,8 +126,13 @@ struct MessageCollectionView: UIViewRepresentable {
         private var positionGeneration = 0
         private var sendAnchorState = SendAnchorState()
         private var ownedSendID: String?
+        private var ownedSendUsesContextOffset = false
+        private var ownedSendPlacement: CGFloat = 0
         private var retainedTail: CGFloat = 0
         private var loading = false
+        private var positioningAnimationActive = false
+        private var positioningAnimationGeneration = 0
+        private var pendingViewportPlacementRefresh = false
 
         init(
             imageLoader: any NetworkImageLoader,
@@ -119,6 +160,8 @@ struct MessageCollectionView: UIViewRepresentable {
             userName: String,
             historyLoading: Bool,
             playbackEnabled: Bool,
+            bottomOcclusion: CGFloat,
+            reduceMotion: Bool,
             environmentRevision: String,
             onRetry: @escaping (String) -> Void,
             onMeasurementLoadingChange: @escaping (Bool) -> Void,
@@ -128,9 +171,11 @@ struct MessageCollectionView: UIViewRepresentable {
             self.messageCount = messageCount
             self.userName = userName
             self.playbackEnabled = playbackEnabled
+            self.reduceMotion = reduceMotion
             self.environmentRevision = environmentRevision
             self.onRetry = onRetry
             self.onMeasurementLoadingChange = onMeasurementLoadingChange
+            collectionView.setBottomOcclusion(bottomOcclusion)
             let historyFinished = previousHistoryLoading && !historyLoading
             if historyLoading && !previousHistoryLoading { resetForHistoryReload(in: collectionView) }
             previousHistoryLoading = historyLoading
@@ -138,7 +183,7 @@ struct MessageCollectionView: UIViewRepresentable {
             if rows.isEmpty, !historyLoading, !positionedHistory { startedEmpty = true }
             updateAvatarPlayback()
 
-            boundsSize = collectionView.bounds.size
+            if boundsSize == .zero { boundsSize = collectionView.bounds.size }
             let nextSignature = measurementSignature(in: collectionView)
             let changed = nextSignature != signature
             signature = nextSignature
@@ -159,6 +204,7 @@ struct MessageCollectionView: UIViewRepresentable {
             positionGeneration += 1
             measurementTask?.cancel()
             measurementTask = nil
+            pendingRenderedHeights.removeAll()
             setLoading(false)
             positionedHistory = false
             startedEmpty = false
@@ -167,26 +213,59 @@ struct MessageCollectionView: UIViewRepresentable {
             pendingSendIDsDuringHistory = []
             sendAnchorState = SendAnchorState()
             ownedSendID = nil
+            ownedSendUsesContextOffset = false
+            ownedSendPlacement = 0
+            pendingViewportPlacementRefresh = false
+            cancelPositioningAnimation(in: collectionView)
             retainedTail = 0
             layout?.tailHeight = 0
             collectionView.collectionViewLayout.invalidateLayout()
         }
 
-        func receiveWidthChange(_ collectionView: MessageUICollectionView) {
+        func receiveViewportChange(_ collectionView: MessageUICollectionView) {
             guard collectionView.bounds.width > 0, collectionView.bounds.size != boundsSize else { return }
+            let previousSize = boundsSize
+            let widthChanged = collectionView.bounds.width != previousSize.width
+            let heightChanged = collectionView.bounds.height != previousSize.height
             boundsSize = collectionView.bounds.size
+
+            if heightChanged {
+                refreshOwnedSendPlacement(in: collectionView)
+                refreshTail(in: collectionView)
+            }
+            guard widthChanged else {
+                guard !positioningAnimationActive,
+                      !collectionView.isDragging, !collectionView.isDecelerating else { return }
+                if !alignOwnedSendIfNeeded(in: collectionView) {
+                    setOffset(collectionView.contentOffset.y, in: collectionView)
+                }
+                return
+            }
+            pendingViewportPlacementRefresh = true
+            if positioningAnimationActive {
+                positionGeneration += 1
+                cancelPositioningAnimation(in: collectionView)
+            }
             let next = measurementSignature(in: collectionView)
             if next != signature {
                 signature = next
                 measureAndPublish(in: collectionView)
-            } else {
-                retainedTail = tailHeight(in: collectionView)
-                layout?.tailHeight = retainedTail
-                collectionView.collectionViewLayout.invalidateLayout()
-                collectionView.layoutIfNeeded()
-                if !collectionView.isDragging && !collectionView.isDecelerating {
-                    _ = alignOwnedSendIfNeeded(in: collectionView)
-                }
+            }
+        }
+
+        func receiveKeyboardOverlapChange(_ collectionView: MessageUICollectionView) {
+            // Keyboard is occlusion, not viewport geometry. Keep current offset and
+            // captured send placement; only update tail needed for reachable content.
+            refreshTail(in: collectionView)
+        }
+
+        func receiveStableLayout(_ collectionView: MessageUICollectionView) {
+            guard pendingViewportPlacementRefresh else { return }
+            pendingViewportPlacementRefresh = false
+            refreshTail(in: collectionView)
+            if !positioningAnimationActive,
+               !collectionView.isDragging, !collectionView.isDecelerating {
+                _ = alignOwnedSendIfNeeded(in: collectionView)
             }
         }
 
@@ -194,12 +273,27 @@ struct MessageCollectionView: UIViewRepresentable {
             rows.contains { heightCache[cacheKey(for: $0, in: view)] == nil }
         }
 
+        /// A mounted row can lay out its next revision using its current bounds.
+        /// This bootstrap is never cached as an exact measurement. Unseen rows and
+        /// changed layout environments still require exact sizing before publication.
+        private func displayHeight(for row: MessageLayoutRow, in view: UICollectionView) -> CGFloat? {
+            if let height = heightCache[cacheKey(for: row, in: view)] { return height }
+            guard !previousHistoryLoading, !pendingInitialHistoryPosition,
+                  publishedSizingContext == sizingContext(in: view),
+                  let index = displayedRows.firstIndex(where: { $0.id == row.id }),
+                  view.indexPathsForVisibleItems.contains(IndexPath(item: index, section: 0)),
+                  let cell = view.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageHostingCell,
+                  cell.configurationKey == configurationKey(for: displayedRows[index], in: view),
+                  let layout, layout.rowHeights.indices.contains(index) else { return nil }
+            return layout.rowHeights[index]
+        }
+
         private func measureAndPublish(in collectionView: MessageUICollectionView) {
             guard collectionView.bounds.width > 0 else { return }
             generation += 1
             let currentGeneration = generation
             measurementTask?.cancel()
-            let pending = rows.filter { heightCache[cacheKey(for: $0, in: collectionView)] == nil }
+            let pending = rows.filter { displayHeight(for: $0, in: collectionView) == nil }
             guard !pending.isEmpty else {
                 publish(
                     rows,
@@ -242,12 +336,17 @@ struct MessageCollectionView: UIViewRepresentable {
             initialHistory: Bool,
             canPosition: Bool
         ) {
-            guard nextRows.allSatisfy({ heightCache[cacheKey(for: $0, in: collectionView)] != nil }) else {
+            // Recheck visibility after asynchronous history measurement: a row that
+            // left the viewport must not publish a bootstrap as unseen exact geometry.
+            let nextHeights = nextRows.compactMap { displayHeight(for: $0, in: collectionView) }
+            guard nextHeights.count == nextRows.count else {
                 measureAndPublish(in: collectionView)
                 return
             }
             let anchor = visibleAnchor(in: collectionView)
             let previousIDs = displayedRows.map(\.id)
+            let previousIDSet = Set(previousIDs)
+            let insertedIDs = Set(nextRows.map(\.id)).subtracting(previousIDSet)
             let identities = sendIdentities(in: nextRows)
             let pendingRowIdentities = nextRows.compactMap { row -> String? in
                 if case .pending = row.row { return row.id }
@@ -272,6 +371,7 @@ struct MessageCollectionView: UIViewRepresentable {
             let shouldPositionHistory = canPosition && firstContent
                 && pendingInitialHistoryPosition && newSend == nil
             displayedRows = nextRows
+            publishedSizingContext = sizingContext(in: collectionView)
             let liveKeys = Set(nextRows.map { cacheKey(for: $0, in: collectionView) })
             heightCache = heightCache.filter { liveKeys.contains($0.key) }
             if canPosition, !shouldPositionHistory {
@@ -282,25 +382,47 @@ struct MessageCollectionView: UIViewRepresentable {
                 pendingSendIDsDuringHistory = []
                 awaitingHistory = false
                 ownedSendID = newSend
+                if let index = nextRows.firstIndex(where: { $0.id == newSend }) {
+                    ownedSendUsesContextOffset = nextRows[..<index].contains { row in
+                        switch row.row {
+                        case .message, .pending: true
+                        case .divider: false
+                        }
+                    }
+                } else {
+                    ownedSendUsesContextOffset = false
+                }
+                refreshOwnedSendPlacement(in: collectionView)
                 positionedHistory = true
             }
 
-            layout?.update(
-                rowHeights: nextRows.map { heightCache[cacheKey(for: $0, in: collectionView)] ?? 0 },
-                width: collectionView.bounds.width,
-                scale: collectionView.traitCollection.displayScale
-            )
+            let rowGeometryChanged = layout?.rowHeights != nextHeights
+                || layout?.rowFrames.first?.width != collectionView.bounds.width
+            if rowGeometryChanged {
+                layout?.update(
+                    rowHeights: nextHeights,
+                    width: collectionView.bounds.width,
+                    scale: collectionView.traitCollection.displayScale
+                )
+            }
+            let viewportGeometryChanged = pendingViewportPlacementRefresh
+            if viewportGeometryChanged {
+                refreshOwnedSendPlacement(in: collectionView)
+            }
             retainedTail = tailHeight(in: collectionView)
             if ownedSendID == nil, retainedTail > 0,
                !collectionView.isDragging, !collectionView.isDecelerating {
                 retainedTail = min(retainedTail, requiredRetainedTail(in: collectionView))
             }
+            let tailChanged = layout?.tailHeight != retainedTail
             layout?.tailHeight = retainedTail
             let structureChanged = previousIDs != nextRows.map(\.id)
             if structureChanged { collectionView.reloadData() }
-            else { updateAvatarPlayback() }
-            collectionView.collectionViewLayout.invalidateLayout()
-            collectionView.layoutIfNeeded()
+            else { updateAvatarPlayback(refreshContent: true) }
+            if structureChanged || rowGeometryChanged || tailChanged {
+                collectionView.collectionViewLayout.invalidateLayout()
+                collectionView.layoutIfNeeded()
+            }
 
             positionGeneration += 1
             let currentPositionGeneration = positionGeneration
@@ -318,12 +440,20 @@ struct MessageCollectionView: UIViewRepresentable {
                     sendAnchorState = SendAnchorState(observed: Set(identities))
                 } else if let newSend,
                           let index = displayedRows.firstIndex(where: { $0.id == newSend }) {
-                    scrollRowToTop(index, in: collectionView)
-                } else if !collectionView.isDragging && !collectionView.isDecelerating,
+                    scrollToOwnedSend(index, animated: !reduceMotion, in: collectionView)
+                } else if !positioningAnimationActive,
+                          !collectionView.isDragging && !collectionView.isDecelerating,
                           !alignOwnedSendIfNeeded(in: collectionView) {
                     restore(anchor, in: collectionView)
                 }
+                if !insertedIDs.isEmpty && !reduceMotion && !shouldPositionHistory && !(firstContent && newSend == nil) {
+                    collectionView.layoutIfNeeded()
+                    animateInsertedRows(insertedIDs, in: collectionView)
+                }
                 updateAvatarPlayback()
+                if viewportGeometryChanged {
+                    collectionView.requestStableLayoutCallback()
+                }
             }
             // UICollectionView applies its own content-size offset adjustment after
             // reload/layout. Position once on the next main turn, fenced to this
@@ -341,7 +471,7 @@ struct MessageCollectionView: UIViewRepresentable {
                 - collectionView.adjustedContentInset.top
                 - collectionView.adjustedContentInset.bottom
             let extent = layout.contentHeightWithoutTail - layout.rowFrames[index].minY
-            return max(0, usable - extent)
+            return max(0, usable - sendPlacement(in: collectionView) - extent)
         }
 
         private func sendIdentities(in rows: [MessageLayoutRow]) -> [String] {
@@ -363,9 +493,76 @@ struct MessageCollectionView: UIViewRepresentable {
             setOffset(frame.minY - anchor.delta - collectionView.adjustedContentInset.top, in: collectionView)
         }
 
-        private func scrollRowToTop(_ index: Int, in collectionView: UICollectionView) {
+        private func scrollToOwnedSend(
+            _ index: Int,
+            animated: Bool,
+            in collectionView: UICollectionView
+        ) {
             guard let frame = layout?.rowFrames[index] else { return }
-            setOffset(frame.minY - collectionView.adjustedContentInset.top, in: collectionView)
+            let target = clampedOffset(
+                frame.minY - collectionView.adjustedContentInset.top
+                    - sendPlacement(in: collectionView),
+                in: collectionView
+            )
+            guard animated else {
+                collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
+                return
+            }
+            positioningAnimationGeneration += 1
+            let animationGeneration = positioningAnimationGeneration
+            positioningAnimationActive = true
+            let timing = (collectionView as? MessageUICollectionView)?.keyboardAnimationTiming
+                ?? .fallback
+            UIView.animate(
+                withDuration: timing.duration,
+                delay: 0,
+                options: timing.options.union(
+                    UIView.AnimationOptions([.beginFromCurrentState, .allowUserInteraction])
+                )
+            ) {
+                collectionView.contentOffset = CGPoint(x: 0, y: target)
+            } completion: { [weak self, weak collectionView] _ in
+                guard let self, let collectionView = collectionView as? MessageUICollectionView,
+                      animationGeneration == self.positioningAnimationGeneration else { return }
+                collectionView.positioningAnimationCompletionCount += 1
+                self.positioningAnimationActive = false
+                if !collectionView.isDragging && !collectionView.isDecelerating {
+                    _ = self.alignOwnedSendIfNeeded(in: collectionView)
+                }
+            }
+        }
+
+        private func cancelPositioningAnimation(in collectionView: UICollectionView) {
+            guard positioningAnimationActive else { return }
+            positioningAnimationGeneration += 1
+            positioningAnimationActive = false
+            collectionView.layer.removeAllAnimations()
+        }
+
+        private func sendPlacement(in collectionView: UICollectionView) -> CGFloat {
+            ownedSendUsesContextOffset ? ownedSendPlacement : 0
+        }
+
+        private func refreshOwnedSendPlacement(in collectionView: UICollectionView) {
+            guard ownedSendUsesContextOffset else {
+                ownedSendPlacement = 0
+                return
+            }
+            let usable = collectionView.bounds.height
+                - collectionView.adjustedContentInset.top
+                - collectionView.adjustedContentInset.bottom
+            ownedSendPlacement = max(0, usable) * 0.20
+        }
+
+        private func refreshTail(in collectionView: UICollectionView) {
+            retainedTail = tailHeight(in: collectionView)
+            if ownedSendID == nil, retainedTail > 0,
+               !collectionView.isDragging, !collectionView.isDecelerating {
+                retainedTail = min(retainedTail, requiredRetainedTail(in: collectionView))
+            }
+            layout?.tailHeight = retainedTail
+            collectionView.collectionViewLayout.invalidateLayout()
+            collectionView.layoutIfNeeded()
         }
 
         @discardableResult
@@ -374,6 +571,7 @@ struct MessageCollectionView: UIViewRepresentable {
                   let index = displayedRows.firstIndex(where: { $0.id == ownedSendID }),
                   let frame = layout?.rowFrames[index] else { return false }
             let target = frame.minY - collectionView.adjustedContentInset.top
+                - sendPlacement(in: collectionView)
             let scale = max(collectionView.traitCollection.displayScale, 1)
             guard abs(collectionView.contentOffset.y - target) > 1 / scale else { return true }
             setOffset(target, in: collectionView)
@@ -390,6 +588,12 @@ struct MessageCollectionView: UIViewRepresentable {
         }
 
         private func setOffset(_ proposed: CGFloat, in collectionView: UICollectionView) {
+            collectionView.setContentOffset(
+                CGPoint(x: 0, y: clampedOffset(proposed, in: collectionView)), animated: false
+            )
+        }
+
+        private func clampedOffset(_ proposed: CGFloat, in collectionView: UICollectionView) -> CGFloat {
             let minimum = -collectionView.adjustedContentInset.top
             let publishedHeight = layout?.collectionViewContentSize.height
                 ?? collectionView.contentSize.height
@@ -398,13 +602,40 @@ struct MessageCollectionView: UIViewRepresentable {
                 publishedHeight - collectionView.bounds.height
                     + collectionView.adjustedContentInset.bottom
             )
-            collectionView.setContentOffset(
-                CGPoint(x: 0, y: min(maximum, max(minimum, proposed))), animated: false
-            )
+            return min(maximum, max(minimum, proposed))
+        }
+
+        private func animateInsertedRows(_ ids: Set<String>, in collectionView: UICollectionView) {
+            guard !ids.isEmpty else { return }
+            for cell in collectionView.visibleCells {
+                guard let index = collectionView.indexPath(for: cell)?.item,
+                      displayedRows.indices.contains(index), ids.contains(displayedRows[index].id) else { continue }
+                if case .divider = displayedRows[index].row { continue }
+                (collectionView as? MessageUICollectionView)?.entranceAnimationCount += 1
+                cell.alpha = 0
+                cell.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(
+                    withDuration: Motion.fast,
+                    delay: 0,
+                    options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut]
+                ) {
+                    cell.alpha = 1
+                    cell.transform = .identity
+                }
+            }
+        }
+
+        private func sizingContext(in view: UICollectionView) -> String {
+            "\(measurementSignature(in: view))|\(userName)"
         }
 
         private func cacheKey(for row: MessageLayoutRow, in view: UICollectionView) -> String {
-            "\(measurementSignature(in: view))|\(row.id)|\(row.revision)|\(userName)"
+            "\(sizingContext(in: view))|\(row.id)|\(row.measurementRevision)"
+        }
+
+        private func configurationKey(for row: MessageLayoutRow, in view: UICollectionView) -> String {
+            // Total is part of the row's accessibility chronology, not its height.
+            "\(sizingContext(in: view))|\(row.id)|\(row.revision)|\(messageCount)"
         }
 
         private func measurementSignature(in view: UICollectionView) -> String {
@@ -442,10 +673,27 @@ struct MessageCollectionView: UIViewRepresentable {
             return cell
         }
 
+        func collectionView(
+            _ collectionView: UICollectionView,
+            didEndDisplaying cell: UICollectionViewCell,
+            forItemAt indexPath: IndexPath
+        ) {
+            guard let cell = cell as? MessageHostingCell,
+                  let key = cell.measurementKey, heightCache[key] == nil else { return }
+            // A rapid drag can recycle a revised cell before its geometry report.
+            // Finish exact sizing if it is still unseen after queued reports apply.
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let view = collectionView as? MessageUICollectionView,
+                      self.needsMeasurement(self.rows, in: view) else { return }
+                self.measureAndPublish(in: view)
+            }
+        }
+
         private func configure(_ cell: MessageHostingCell, at index: Int) {
             guard displayedRows.indices.contains(index), let collectionView else { return }
             let row = displayedRows[index]
             let key = cacheKey(for: row, in: collectionView)
+            let playback = avatarPlaybackEnabled(for: index, in: collectionView)
             cell.accessibilityIdentifier = row.accessibilityIdentifier
             cell.set(rootView: AnyView(MessageRowLayout(
                 row: row.row,
@@ -453,42 +701,55 @@ struct MessageCollectionView: UIViewRepresentable {
                 paneWidth: collectionView.bounds.width,
                 userName: userName,
                 avatarMode: row.avatarMode,
-                avatarPlaybackEnabled: avatarPlaybackEnabled(for: index, in: collectionView),
+                avatarPlaybackEnabled: playback,
                 measurement: false,
                 imageCache: imageCache,
-                onRetry: onRetry,
+                onRetry: { [weak self] id in self?.onRetry(id) },
+                heightRevision: key,
                 onHeightChange: { [weak self] height in
                     self?.renderedHeightDidChange(height, rowID: row.id, key: key)
                 }
-            )))
+            )), avatarPlaybackEnabled: playback,
+                configurationKey: configurationKey(for: row, in: collectionView), measurementKey: key)
         }
 
         private func renderedHeightDidChange(_ height: CGFloat, rowID: String, key: String) {
-            guard height > 0, let collectionView,
-                  let index = displayedRows.firstIndex(where: { $0.id == rowID }),
-                  cacheKey(for: displayedRows[index], in: collectionView) == key else { return }
+            guard height.isFinite, height > 0, let collectionView,
+                  let row = displayedRows.first(where: { $0.id == rowID }),
+                  cacheKey(for: row, in: collectionView) == key else { return }
+            pendingRenderedHeights[rowID] = (key, height)
+            guard !heightUpdateScheduled else { return }
+            heightUpdateScheduled = true
+            // Geometry callbacks run during SwiftUI layout. Apply their latest values
+            // together next main turn, rather than recursively forcing layout per row.
+            DispatchQueue.main.async { [weak self] in self?.applyRenderedHeights() }
+        }
+
+        private func applyRenderedHeights() {
+            heightUpdateScheduled = false
+            let pending = pendingRenderedHeights
+            pendingRenderedHeights.removeAll()
+            guard let collectionView, let layout else { return }
             let scale = max(collectionView.traitCollection.displayScale, 1)
-            guard abs((heightCache[key] ?? 0) - height) > 1 / scale else { return }
+            var heights = layout.rowHeights
+            var changed = false
+            for (index, row) in displayedRows.enumerated() {
+                guard heights.indices.contains(index), let report = pending[row.id],
+                      report.key == cacheKey(for: row, in: collectionView) else { continue }
+                // Even an equal-height revision needs an exact cache entry before
+                // recycling; the previous revision's height was only a bootstrap.
+                heightCache[report.key] = report.height
+                if abs(heights[index] - report.height) > 1 / scale {
+                    heights[index] = report.height
+                    changed = true
+                }
+            }
+            guard changed else { return }
             let anchor = visibleAnchor(in: collectionView)
-            heightCache[key] = height
-            if let layout {
-                var heights = layout.rowHeights
-                heights[index] = height
-                layout.update(
-                    rowHeights: heights,
-                    width: collectionView.bounds.width,
-                    scale: collectionView.traitCollection.displayScale
-                )
-            }
-            retainedTail = tailHeight(in: collectionView)
-            if ownedSendID == nil, retainedTail > 0,
-               !collectionView.isDragging, !collectionView.isDecelerating {
-                retainedTail = min(retainedTail, requiredRetainedTail(in: collectionView))
-            }
-            layout?.tailHeight = retainedTail
-            collectionView.collectionViewLayout.invalidateLayout()
-            collectionView.layoutIfNeeded()
-            if !collectionView.isDragging && !collectionView.isDecelerating,
+            layout.update(rowHeights: heights, width: collectionView.bounds.width, scale: scale)
+            refreshTail(in: collectionView)
+            if !positioningAnimationActive,
+               !collectionView.isDragging && !collectionView.isDecelerating,
                !alignOwnedSendIfNeeded(in: collectionView) {
                 restore(anchor, in: collectionView)
             }
@@ -497,12 +758,15 @@ struct MessageCollectionView: UIViewRepresentable {
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             guard !displayedRows.isEmpty else { return }
             positionGeneration += 1
+            if let collectionView { cancelPositioningAnimation(in: collectionView) }
             pendingInitialHistoryPosition = false
             pendingSendIDsDuringHistory = []
             awaitingHistory = false
             positionedHistory = true
             sendAnchorState.observed.formUnion(sendIdentities(in: displayedRows))
             ownedSendID = nil
+            ownedSendUsesContextOffset = false
+            ownedSendPlacement = 0
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) { updateAvatarPlayback() }
@@ -535,10 +799,15 @@ struct MessageCollectionView: UIViewRepresentable {
             scrollView.layoutIfNeeded()
         }
 
-        private func updateAvatarPlayback() {
+        private func updateAvatarPlayback(refreshContent: Bool = false) {
             guard let collectionView else { return }
             for case let cell as MessageHostingCell in collectionView.visibleCells {
                 guard let index = collectionView.indexPath(for: cell)?.item else { continue }
+                // Content publication must refresh rows; scrolling only changes eligibility.
+                guard displayedRows.indices.contains(index) else { continue }
+                let contentChanged = refreshContent
+                    && cell.configurationKey != configurationKey(for: displayedRows[index], in: collectionView)
+                guard contentChanged || cell.avatarPlaybackEnabled != avatarPlaybackEnabled(for: index, in: collectionView) else { continue }
                 configure(cell, at: index)
             }
         }
@@ -573,14 +842,85 @@ struct MessageCollectionView: UIViewRepresentable {
 
 final class MessageUICollectionView: UICollectionView {
     var onBoundsChange: (() -> Void)?
+    var onKeyboardOverlapChange: (() -> Void)?
+    var onStableLayout: (() -> Void)?
     var measuredRowCount = 0
+    var entranceAnimationCount = 0
+    var positioningAnimationCompletionCount = 0
+    private(set) var keyboardAnimationTiming = KeyboardAnimationTiming.fallback
+    private(set) var keyboardOverlap: CGFloat = 0
+    private var bottomOcclusion: CGFloat = 0
+    private var keyboardEndFrameInScreen = CGRect.null
     private var previousSize = CGSize.zero
+    private var stableLayoutCallbackRequested = false
+
+    override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
+        super.init(frame: frame, collectionViewLayout: layout)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(receiveKeyboardAnimation(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func receiveKeyboardAnimation(_ notification: Notification) {
+        if let timing = parsedKeyboardAnimationTiming(from: notification) {
+            keyboardAnimationTiming = timing
+        }
+        if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+            keyboardEndFrameInScreen = frame
+            refreshKeyboardOverlap()
+        }
+    }
+
+    func setBottomOcclusion(_ value: CGFloat) {
+        bottomOcclusion = max(0, value)
+        applyBottomInset()
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard bounds.size != previousSize else { return }
-        previousSize = bounds.size
-        onBoundsChange?()
+        refreshKeyboardOverlap()
+        if bounds.size != previousSize {
+            previousSize = bounds.size
+            onBoundsChange?()
+        }
+        if stableLayoutCallbackRequested {
+            stableLayoutCallbackRequested = false
+            DispatchQueue.main.async { [weak self] in self?.onStableLayout?() }
+        }
+    }
+
+    func requestStableLayoutCallback() {
+        stableLayoutCallbackRequested = true
+        setNeedsLayout()
+    }
+
+    private func refreshKeyboardOverlap() {
+        let frame = convert(keyboardEndFrameInScreen, from: nil)
+        let overlap = bounds.intersection(frame).height
+        guard abs(keyboardOverlap - overlap) > 0.5 else { return }
+        keyboardOverlap = overlap
+        applyBottomInset()
+        onKeyboardOverlapChange?()
+    }
+
+    private func applyBottomInset() {
+        // Subtract only safe-area clearance UIScrollView actually adds. SwiftUI may
+        // already place this view inside safe area even when safeAreaInsets is nonzero.
+        let automaticBottom = max(0, adjustedContentInset.bottom - contentInset.bottom)
+        let bottom = bottomOcclusion + max(0, keyboardOverlap - automaticBottom)
+        guard abs(contentInset.bottom - bottom) > 0.5 else { return }
+        let offset = contentOffset
+        contentInset.bottom = bottom
+        verticalScrollIndicatorInsets.bottom = bottom
+        contentOffset = offset
     }
 }
 
@@ -644,6 +984,10 @@ final class ExactMessageLayout: UICollectionViewLayout {
 final class MessageHostingCell: UICollectionViewCell {
     static let reuseIdentifier = "message-host"
     private let host = UIHostingController(rootView: AnyView(EmptyView()))
+    private(set) var avatarPlaybackEnabled = false
+    private(set) var configurationCount = 0
+    private(set) var configurationKey: String?
+    private(set) var measurementKey: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -663,11 +1007,22 @@ final class MessageHostingCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         accessibilityIdentifier = nil
+        alpha = 1
+        transform = .identity
+        avatarPlaybackEnabled = false
+        configurationKey = nil
+        measurementKey = nil
         host.rootView = AnyView(EmptyView())
     }
 
-    func set(rootView: AnyView) {
-        host.rootView = rootView
+    func set(rootView: AnyView, avatarPlaybackEnabled: Bool, configurationKey: String, measurementKey: String) {
+        self.configurationKey = configurationKey
+        self.measurementKey = measurementKey
+        self.avatarPlaybackEnabled = avatarPlaybackEnabled
+        configurationCount += 1
+        // SwiftUI otherwise centers a taller intrinsic row in the old cell bounds
+        // until its height report resizes the cell, producing a half-growth jump.
+        host.rootView = AnyView(rootView.frame(minHeight: 0, maxHeight: .infinity, alignment: .top))
         host.view.frame = contentView.bounds
     }
 }

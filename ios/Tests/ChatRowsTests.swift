@@ -133,12 +133,19 @@ struct ChatRowsTests {
         #expect(ids[0] != ids[1]) // fixed rule does not
     }
 
-    @Test func streamingToCommittedHandoffSameRowId() {
-        // Streaming bubble (entryId empty) and its committed twin (entryId = R)
-        // share replyId — must yield the SAME row id so the handoff never remounts.
-        let streaming = assistantMsg(0, turnId: nil, replyId: "R9", entryId: "", streaming: true)
-        let committed = assistantMsg(1_700_000_000_000, turnId: nil, replyId: "R9", entryId: "R9")
-        #expect(ChatRow.message(streaming, index: 0, continuation: false).id == ChatRow.message(committed, index: 1, continuation: false).id)
+    @Test func turnSeedAdoptionAndCommittedEchoKeepPresentationRowId() {
+        let identity = "presentation:turn:T9"
+        let seed = assistantMsg(1_700_000_000_000, turnId: "T9", entryId: identity, streaming: true)
+        let adopted = assistantMsg(
+            1_700_000_000_000, turnId: "T9", replyId: "R9", entryId: identity, streaming: true
+        )
+        let committed = assistantMsg(
+            1_700_000_000_000, turnId: "T9", replyId: "R9", entryId: identity
+        )
+        let ids = [seed, adopted, committed].map {
+            ChatRow.message($0, index: 0, continuation: false).id
+        }
+        #expect(ids == [identity, identity, identity])
     }
 
     @Test func adjacentSameSpeakerGroupsWithoutLosingRows() {

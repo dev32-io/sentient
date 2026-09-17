@@ -6,6 +6,7 @@ import {
   type CognitionState,
   CognitionStatusConnector,
   type CommittedFeedItem,
+  type Connector,
   ConversationHistoryConnector,
   DelegationProgressConnector,
   type DelegationProgressItem,
@@ -17,10 +18,10 @@ import {
   PreferencesConnector,
   type SDKStatus,
   SentientSDK,
+  type SentientSDKInternal,
   SessionsConnector,
   TaskListConnector,
   UserAudioInputConnector,
-  UserTextInputConnector,
   createEchoGate,
   createLogger,
   createSessionsRest,
@@ -59,7 +60,12 @@ import {
 // component already takes.
 import type { ChatMessage } from "../types.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
-import { deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
+import {
+  type InflightPresentation,
+  deriveCycleStatus,
+  deriveMessages,
+  updateInflightPresentations,
+} from "./cycle-helpers.ts";
 import { reducePermissionPrompt } from "./permission-helpers.ts";
 import { type DrainBubble, clearConversationScopedState } from "./session-boundary.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
@@ -88,6 +94,22 @@ const COMMAND_REJECTION_FALLBACK = "That didn't go through. Please try again.";
 // Hook public interface
 // ---------------------------------------------------------------------------
 
+class LocalTextInputConnector implements Connector {
+  readonly capability = "text.input";
+  readonly kind = "input" as const;
+  private sdk: SentientSDKInternal | null = null;
+
+  attach(sdk: SentientSDKInternal): void {
+    this.sdk = sdk;
+  }
+  detach(): void {
+    this.sdk = null;
+  }
+  sendText(text: string, pendingId: string): void {
+    this.sdk?.send({ type: "text.input", text, pendingId });
+  }
+}
+
 export interface UseVoiceClientOptions {
   /** Override the default gateway URL. Defaults to `wss://<same origin>/api/v1/ws`. */
   wsUrl?: string;
@@ -106,8 +128,14 @@ export interface UseVoiceClientOptions {
 // ---------------------------------------------------------------------------
 
 export function useVoiceClient(options: UseVoiceClientOptions) {
-  const status = useSignal<VoiceStatus>({ state: "inactive", label: "Ready", canSpeak: false, isActive: false });
+  const status = useSignal<VoiceStatus>({
+    state: "inactive",
+    label: "Ready",
+    canSpeak: false,
+    isActive: false,
+  });
   const messages = useSignal<readonly ChatMessage[]>([]);
+  const localSendIds = useSignal<readonly string[]>([]);
   // tasks signal exposed to UI — the gateway's full-state tasklist.state list.
   const tasks = useSignal<readonly TaskListItem[]>([]);
   /**
@@ -118,7 +146,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
    * webui-wide change, not this fix's.
    */
   const transcript = useSignal<string>("");
-  const cycleStatus = useSignal(deriveCycleStatus({ cognition: "idle", audioPlaying: false, runningTasks: 0 }));
+  const cycleStatus = useSignal(
+    deriveCycleStatus({
+      cognition: "idle",
+      audioPlaying: false,
+      runningTasks: 0,
+    }),
+  );
   const currentTurnId = useSignal<string | null>(null);
   const voiceMode = useSignal<"off" | "active">("off");
   /**
@@ -136,7 +170,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   // Audio preferences (TTS on/off, channel). Seeded from the persisted
   // profile via `seedPreferences` once the app loads it; updated server-side
   // via the PreferencesConnector's `session.preferences.changed` frame.
-  const prefs = useSignal<AudioPreferences>({ ttsEnabled: true, channel: "voice" });
+  const prefs = useSignal<AudioPreferences>({
+    ttsEnabled: true,
+    channel: "voice",
+  });
 
   // Connection signals exposed to UI. `sdkStatus` mirrors the SDK's raw
   // status; `connectionLost` flips true after the SDK exhausts its
@@ -188,13 +225,21 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       tailHoldMs: ECHO_GATE_TAIL_HOLD_MS,
     });
     echoGate.onStateChange((snap) => {
-      log.debug("echo-gate.state", { state: snap.state, threshold: snap.threshold });
+      log.debug("echo-gate.state", {
+        state: snap.state,
+        threshold: snap.threshold,
+      });
     });
 
     // Every turn still mid-stream, oldest first — one streaming bubble each
     // (spec §7.2). Empty when idle.
-    const inflightRef: { current: readonly InFlightMessage[] } = { current: [] };
-    const committedRef: { current: readonly CommittedFeedItem[] } = { current: [] };
+    const inflightRef: { current: readonly InFlightMessage[] } = {
+      current: [],
+    };
+    const inflightPresentations = new Map<string, InflightPresentation>();
+    const committedRef: { current: readonly CommittedFeedItem[] } = {
+      current: [],
+    };
     // Post-stream drain state: when turn.completed fires, the connector drops
     // the turn's buffer but the typewriter may still be mid-reveal. We keep
     // rendering a synthetic inflight bubble (driven by the typewriter) until
@@ -207,7 +252,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     // status; on next conversation snapshot post-reconnect, compare. Empty
     // result + nonzero prior == server-side PersonSession archive cycled.
     const priorCommittedCountRef: { current: number } = { current: 0 };
-    const awaitingHistoryAfterReconnectRef: { current: boolean } = { current: false };
+    const awaitingHistoryAfterReconnectRef: { current: boolean } = {
+      current: false,
+    };
 
     function refreshStatus(): void {
       // Compare by field values before writing — avoids re-renders when
@@ -254,6 +301,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         effectiveInflight,
         effectiveInflight.length > 0 ? typewriterRef.current.visible.value : undefined,
         drain?.replyId,
+        inflightPresentations,
       );
       messages.value = base;
     }
@@ -275,7 +323,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     // window for residual TTS echo to re-trigger barge-in.
     const audioInputConnector = new UserAudioInputConnector({
       onTurnStarted: () => {
-        log.debug("speech-gate.close", { reason: "turn.started", stateBefore: speechGate.state() });
+        log.debug("speech-gate.close", {
+          reason: "turn.started",
+          stateBefore: speechGate.state(),
+        });
         speechGate.close();
         denoiser?.reset();
       },
@@ -389,7 +440,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       });
     }
 
-    const textInputConnector = new UserTextInputConnector();
+    const textInputConnector = new LocalTextInputConnector();
 
     let activeCaptureId: string | null = null;
     let captureAcceptingStarts = true;
@@ -574,7 +625,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
           if (awaitingHistoryAfterReconnectRef.current) {
             awaitingHistoryAfterReconnectRef.current = false;
             if (items.length === 0 && priorCommittedCountRef.current > 0) {
-              log.warn("history-archived", { priorCount: priorCommittedCountRef.current });
+              log.warn("history-archived", {
+                priorCount: priorCommittedCountRef.current,
+              });
               options.onHistoryArchived?.();
             }
             priorCommittedCountRef.current = 0;
@@ -588,6 +641,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
 
     const inflightMessageConnector = new InFlightMessageConnector({
       onUpdate: (inflight) => {
+        updateInflightPresentations(inflightPresentations, inflightRef.current, inflight);
         // The typewriter reveals exactly ONE turn: the newest still-producing
         // one. Older still-open turns (§7.2's second bubble) render their full
         // buffered text — they are no longer the turn emitting tokens.
@@ -655,7 +709,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         permissionRequest.value =
           head === undefined
             ? null
-            : reducePermissionPrompt(permissionRequest.peek(), { type: "request", request: head });
+            : reducePermissionPrompt(permissionRequest.peek(), {
+                type: "request",
+                request: head,
+              });
       },
       onResolved: (requestId, outcome) => {
         // The gateway decided first — answered on another surface, or the
@@ -705,7 +762,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         if (prev === "ready" && status !== "ready") {
           priorCommittedCountRef.current = committedRef.current.length;
           awaitingHistoryAfterReconnectRef.current = priorCommittedCountRef.current > 0;
-          log.debug("history-watch armed", { priorCount: priorCommittedCountRef.current });
+          log.debug("history-watch armed", {
+            priorCount: priorCommittedCountRef.current,
+          });
         }
         // Visibility-driven reconnect on success clears any stale "lost" flag
         // so the banner disappears once we're back to ready.
@@ -750,6 +809,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         kind: e.kind,
         sessionId: e.kind === "draft" ? e.draftKey : e.sessionId,
       });
+      localSendIds.value = [];
+      inflightPresentations.clear();
       clearConversationScopedState(e.kind, {
         drain: drainTurnRef,
         inflight: inflightRef,
@@ -843,7 +904,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       if (drain) {
         if (visibleText.length >= drain.snapshot.text.length) {
           drainTurnRef.current = null;
-          log.debug("typewriter-drain-complete", { turnId: drain.turnId, finalLen: visibleText.length });
+          log.debug("typewriter-drain-complete", {
+            turnId: drain.turnId,
+            finalLen: visibleText.length,
+          });
         }
         refreshMessages();
       }
@@ -945,6 +1009,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     currentTurnId,
     voiceMode,
     messages,
+    localSendIds,
     tasks,
     transcript,
     /** L3 confirm prompt awaiting a decision, or null. Drives PermissionDialog. */
@@ -959,7 +1024,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       prefs.value = next;
     },
     /** Send a preferences patch to the gateway. Server echoes via `session.preferences.changed`. */
-    patchPreferences: (patch: { ttsEnabled?: boolean; channel?: "voice" | "text" }) => {
+    patchPreferences: (patch: {
+      ttsEnabled?: boolean;
+      channel?: "voice" | "text";
+    }) => {
       resources.preferencesConnector.patch(patch);
     },
     /**
@@ -972,7 +1040,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     respondToPermission: (approved: boolean) => {
       const current = permissionRequest.peek();
       if (!current) return;
-      log.info("permission.respond", { requestId: current.requestId, approved });
+      log.info("permission.respond", {
+        requestId: current.requestId,
+        approved,
+      });
       resources.permissionConnector.respond(current.requestId, approved);
     },
     /** Sessions connector — wired for past-chats drawer + cross-tab sync. */
@@ -1000,7 +1071,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       // Arm the Interrupt bridge from the moment Send is clicked.
       // The awaiting-tracker handles its own disarm transitions.
       resources.awaiting.arm();
-      resources.textInputConnector.sendText(text);
+      const pendingId = globalThis.crypto.randomUUID();
+      localSendIds.value = [...localSendIds.peek(), pendingId];
+      resources.textInputConnector.sendText(text, pendingId);
       resources.refreshStatus();
     },
     /**

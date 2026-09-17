@@ -9,6 +9,168 @@ import MobileData
 @MainActor
 @Suite(.serialized)
 struct MessageListScrollTests {
+    @Test func hostedContentStaysTopAlignedBeforeAndAfterCellHeightCatchesUp() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 733)
+        let controller = UIViewController()
+        window.rootViewController = controller
+        let cell = MessageHostingCell(frame: CGRect(x: 0, y: 150, width: 393, height: 80))
+        controller.view.addSubview(cell)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        var reports: [CGRect] = []
+        for height: CGFloat in [80, 200, 120, 260] {
+            let before = reports.count
+            cell.set(rootView: AnyView(
+                Color.clear.frame(width: 393, height: height)
+                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) {
+                        reports.append($0)
+                    }
+            ), avatarPlaybackEnabled: false, configurationKey: "\(height)", measurementKey: "\(height)")
+            try await waitUntil(timeout: 3) {
+                cell.setNeedsLayout()
+                cell.layoutIfNeeded()
+                return reports.count > before && abs((reports.last?.height ?? 0) - height) < 1
+            }
+            // Content changes before the recycler applies its newly reported height.
+            // The old cell bounds must not vertically center the new content.
+            let top = cell.convert(CGPoint.zero, to: nil).y
+            #expect(reports.dropFirst(before).allSatisfy { abs($0.minY - top) < 1 })
+            cell.frame.size.height = height
+            cell.setNeedsLayout()
+            cell.layoutIfNeeded()
+            try await DisplayFrameWaiter.next()
+            #expect(abs((reports.last?.minY ?? 0) - top) < 1)
+        }
+    }
+
+    @Test func scrollingUnchangedLongMarkdownDoesNotReconfigureVisibleCells() async throws {
+        let content = (1...100).map {
+            "\($0). **Greeting variant** with a [reference](https://example.com) and `inline code`."
+        }.joined(separator: "\n")
+        let harness = try Harness(messages: [Self.message(id: "long-list", role: "assistant", content: content)])
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1, timeout: 10)
+        let cells = collection.visibleCells.compactMap { $0 as? MessageHostingCell }
+        #expect(!cells.isEmpty)
+        let counts = cells.map(\.configurationCount)
+        let offset = collection.contentOffset
+        for index in 0..<20 {
+            collection.setContentOffset(CGPoint(x: 0, y: offset.y - CGFloat(index % 2)), animated: false)
+            collection.delegate?.scrollViewDidScroll?(collection)
+        }
+        #expect(cells.map(\.configurationCount) == counts)
+
+        // Content updates still invalidate the displayed row, even with an idle avatar.
+        harness.model.messages = [Self.message(
+            id: "long-list", role: "assistant", content: content + "\n\nA newly completed paragraph."
+        )]
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1, timeout: 10)
+        #expect(zip(cells, counts).contains { $0.0.configurationCount > $0.1 })
+    }
+
+    @Test(arguments: DynamicTypeSetting.allCases)
+    fileprivate func visibleGrowingListUsesRenderedHeightWithoutRemeasuringHistory(setting: DynamicTypeSetting) async throws {
+        func messages(_ count: Int, streaming: Bool = true) -> [ChatMessage] {
+            [
+                Self.message(id: "list-user", role: "user", content: "List items"),
+                Self.message(id: "list-reply", role: "assistant", content: (1...count).map {
+                    "\($0). **Item** with enough text to wrap onto another line at phone width."
+                }.joined(separator: "\n"), streaming: streaming),
+            ]
+        }
+        let harness = try Harness(messages: messages(1), dynamicType: setting, initialExistingHistory: false)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 3)
+        let native = try #require(collection as? MessageUICollectionView)
+        let measured = native.measuredRowCount
+        let neighbor = try #require(collection.cellForItem(at: IndexPath(item: 1, section: 0)) as? MessageHostingCell)
+        let neighborConfigurations = neighbor.configurationCount
+        let layout = try #require(collection.collectionViewLayout as? ExactMessageLayout)
+        var height = layout.rowHeights[2]
+        for count in [5, 20, 50, 100] {
+            harness.model.messages = messages(count)
+            try await waitUntil(timeout: 5) { layout.rowHeights[2] > height + 1 }
+            try await settle(collection, hostView: harness.host.view, minimumItems: 3, timeout: 10)
+            height = layout.rowHeights[2]
+            #expect(native.measuredRowCount == measured)
+            #expect(neighbor.configurationCount == neighborConfigurations)
+        }
+        // Commit changes renderer phase but must retain the same visible sizing path.
+        harness.model.messages = messages(100, streaming: false)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 3, timeout: 10)
+        #expect(native.measuredRowCount == measured)
+        let finalHeight = layout.rowHeights[2]
+        let extent = collection.contentSize.height
+        let samples = try await traverse(collection, hostView: harness.host.view)
+        #expect(samples.allSatisfy { abs($0 - extent) < 1 })
+        #expect(native.measuredRowCount == measured)
+
+        // Cold exact measurement remains an independent reference for rendered size.
+        let reference = try Harness(messages: messages(100, streaming: false), dynamicType: setting)
+        defer { reference.close() }
+        let referenceCollection = try await mountedCollection(in: reference.host.view)
+        try await settle(referenceCollection, hostView: reference.host.view, minimumItems: 3, timeout: 10)
+        let referenceLayout = try #require(referenceCollection.collectionViewLayout as? ExactMessageLayout)
+        #expect(abs(finalHeight - referenceLayout.rowHeights[2]) < 1)
+    }
+
+    @Test func equalHeightRevisionIsCachedBeforeRecycleAndUnseenGrowthStillMeasuresExactly() async throws {
+        var messages = Self.readerHistory + [Self.message(
+            id: "cached-live", role: "assistant", content: "One.", streaming: true
+        )]
+        let harness = try Harness(messages: messages, initialExistingHistory: true)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count, timeout: 10)
+        let native = try #require(collection as? MessageUICollectionView)
+        let measured = native.measuredRowCount
+        let lastIndex = collection.numberOfItems(inSection: 0) - 1
+        let lastCell = try #require(collection.cellForItem(at: IndexPath(item: lastIndex, section: 0)) as? MessageHostingCell)
+        let configurations = lastCell.configurationCount
+        let extent = collection.contentSize.height
+        messages[messages.count - 1] = Self.message(id: "cached-live", role: "assistant", content: "Two.", streaming: true)
+        harness.model.messages = messages
+        try await waitUntil(timeout: 5) { lastCell.configurationCount > configurations }
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        #expect(abs(collection.contentSize.height - extent) < 1)
+        #expect(native.measuredRowCount == measured)
+
+        collection.setContentOffset(CGPoint(x: 0, y: minimumOffset(of: collection)), animated: false)
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        #expect(!collection.indexPathsForVisibleItems.contains(IndexPath(item: lastIndex, section: 0)))
+        // Force a receive with the same text after the revised cell is recycled.
+        harness.model.bottomOcclusion = 1
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        #expect(native.measuredRowCount == measured)
+
+        let previous = messages[messages.count - 1]
+        messages[messages.count - 1] = ChatMessage(
+            ts: previous.ts, role: previous.role, content: previous.content,
+            streaming: true, cutoffKind: nil, turnId: "resolved-turn",
+            replyId: previous.replyId, pendingId: nil, entryId: previous.entryId
+        )
+        harness.model.messages = messages
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        #expect(native.measuredRowCount == measured)
+
+        messages[messages.count - 1] = Self.message(
+            id: "cached-live", role: "assistant",
+            content: (1...30).map { "\($0). More list content." }.joined(separator: "\n"), streaming: true
+        )
+        harness.model.messages = messages
+        try await waitUntil(timeout: 5) { native.measuredRowCount > measured }
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        #expect(native.measuredRowCount == measured + 1)
+        #expect(collection.contentSize.height > extent + 100)
+        let grownExtent = collection.contentSize.height
+        let samples = try await traverse(collection, hostView: harness.host.view)
+        #expect(samples.allSatisfy { abs($0 - grownExtent) < 1 })
+    }
+
     @Test func coldAndWarmHistoryKeepMeasuredExtentThroughFirstAndLaterTraversal() async throws {
         for setting in DynamicTypeSetting.allCases {
             let harness = try Harness(messages: Self.gfmHistory, dynamicType: setting)
@@ -65,7 +227,99 @@ struct MessageListScrollTests {
         }
 
         let frame = try mountedCellFrame(id: "chat-user-row-\(origin.pendingID)", in: collection)
-        #expect(abs(frame.minY - usableViewportFrame(of: collection).minY) <= 1)
+        #expect(abs(frame.minY - expectedSendMinY(in: collection, priorContent: origin != .empty)) <= 1)
+    }
+
+    @Test func floatingComposerOcclusionKeepsFullViewportAndAddsScrollableClearance() async throws {
+        let harness = try Harness(messages: Self.readerHistory)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        harness.model.pending = [PendingMessage(
+            id: "occlusion-send", text: "send", status: .queued, sentAtMs: nil
+        )]
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-occlusion-send"
+        )
+        let bounds = collection.bounds.size
+        let sendMinY = try mountedCellFrame(
+            id: "chat-user-row-occlusion-send", in: collection
+        ).minY
+
+        harness.model.bottomOcclusion = 180
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-occlusion-send"
+        )
+
+        #expect(collection.bounds.size == bounds)
+        #expect(abs(collection.contentInset.bottom - 180) < 0.5)
+        #expect(abs(try mountedCellFrame(
+            id: "chat-user-row-occlusion-send", in: collection
+        ).minY - sendMinY) <= 1)
+        collection.setContentOffset(CGPoint(x: 0, y: maximumOffset(of: collection)), animated: false)
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) < 0.5)
+    }
+
+    @Test func softwareKeyboardAddsClearanceWithoutRetargetingOwnedSend() async throws {
+        let harness = try Harness(messages: Self.readerHistory)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        harness.model.bottomOcclusion = 80
+        harness.model.pending = [PendingMessage(
+            id: "keyboard-send", text: "send", status: .queued, sentAtMs: nil
+        )]
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-keyboard-send"
+        )
+        let native = try #require(collection as? MessageUICollectionView)
+        let sendY = try mountedCellFrame(id: "chat-user-row-keyboard-send", in: collection).minY
+        let offset = collection.contentOffset.y
+        let screenFrame = collection.convert(collection.bounds, to: nil)
+        let keyboardHeight: CGFloat = 260
+
+        postKeyboardFrame(CGRect(
+            x: screenFrame.minX, y: screenFrame.maxY - keyboardHeight,
+            width: screenFrame.width, height: keyboardHeight
+        ))
+        harness.host.view.layoutIfNeeded()
+
+        #expect(abs(native.keyboardOverlap - keyboardHeight) < 1)
+        #expect(abs(collection.adjustedContentInset.bottom - (80 + keyboardHeight)) < 1)
+        #expect(abs(collection.contentOffset.y - offset) < 1)
+        #expect(abs(try mountedCellFrame(
+            id: "chat-user-row-keyboard-send", in: collection
+        ).minY - sendY) < 1)
+
+        harness.model.messages[0] = Self.message(
+            id: "keyboard-growth", role: "user",
+            content: Array(repeating: Self.readerDetail, count: 8).joined(separator: "\n\n")
+        )
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-keyboard-send"
+        )
+        try await waitUntil(timeout: 1) {
+            guard let y = try? self.mountedCellFrame(
+                id: "chat-user-row-keyboard-send", in: collection
+            ).minY else { return false }
+            return abs(y - sendY) < 1
+        }
+
+        collection.setContentOffset(CGPoint(x: 0, y: maximumOffset(of: collection)), animated: false)
+        let last = try mountedCellFrame(id: "chat-user-row-keyboard-send", in: collection)
+        #expect(last.maxY <= usableViewportFrame(of: collection).maxY + 1)
+
+        collection.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+        postKeyboardFrame(CGRect(
+            x: screenFrame.minX, y: screenFrame.maxY,
+            width: screenFrame.width, height: keyboardHeight
+        ))
+        #expect(native.keyboardOverlap == 0)
+        #expect(abs(collection.contentOffset.y - offset) < 1)
     }
 
     @Test func pendingCommitKeepsActualMountedRowAnchor() async throws {
@@ -94,6 +348,179 @@ struct MessageListScrollTests {
         )
 
         #expect(abs(try mountedCellFrame(id: "chat-user-row-\(id)", in: collection).minY - before) <= 1)
+    }
+
+    @Test func newRowsAnimateOnceWhileEchoAndStreamingRevisionsKeepIdentity() async throws {
+        let harness = try Harness(messages: Self.readerHistory)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        let native = try #require(collection as? MessageUICollectionView)
+        let baseline = native.entranceAnimationCount
+
+        let pendingID = "entrance"
+        harness.model.pending = [PendingMessage(id: pendingID, text: "new send", status: .queued, sentAtMs: nil)]
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-\(pendingID)"
+        )
+        #expect(native.entranceAnimationCount == baseline + 1)
+        let pendingCell = try #require(collection.visibleCells.first {
+            $0.accessibilityIdentifier == "chat-user-row-\(pendingID)"
+        })
+        let pendingPath = try #require(collection.indexPath(for: pendingCell))
+        let exactLayout = try #require(collection.collectionViewLayout as? ExactMessageLayout)
+        #expect(abs(exactLayout.rowFrames[pendingPath.item].height - pendingCell.bounds.height) < 0.5)
+
+        harness.model.messages.append(Self.message(
+            id: "echo", role: "user", content: "new send", pendingID: pendingID
+        ))
+        harness.model.pending = []
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-\(pendingID)"
+        )
+        #expect(native.entranceAnimationCount == baseline + 1)
+
+        let presentationID = "presentation:turn:stream-turn"
+        harness.model.messages.append(ChatMessage(
+            ts: Self.today, role: "assistant", content: "",
+            streaming: true, cutoffKind: nil, turnId: "stream-turn",
+            replyId: nil, pendingId: nil, entryId: presentationID
+        ))
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 2)
+        let afterInsert = native.entranceAnimationCount
+        #expect(afterInsert == baseline + 2)
+        harness.model.messages[harness.model.messages.count - 1] = ChatMessage(
+            ts: Self.today, role: "assistant", content: "streaming tokens",
+            streaming: true, cutoffKind: nil, turnId: "stream-turn",
+            replyId: "stream-reply", pendingId: nil, entryId: presentationID
+        )
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 2)
+        #expect(native.entranceAnimationCount == afterInsert)
+        harness.model.messages[harness.model.messages.count - 1] = ChatMessage(
+            ts: Self.today, role: "assistant", content: "streaming tokens",
+            streaming: false, cutoffKind: nil, turnId: "stream-turn",
+            replyId: "stream-reply", pendingId: nil, entryId: presentationID
+        )
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 2)
+        #expect(native.entranceAnimationCount == afterInsert)
+    }
+
+    @Test func keyboardNotificationSuppliesNativeSendAnimationTiming() throws {
+        let collection = MessageUICollectionView(
+            frame: .zero,
+            collectionViewLayout: UICollectionViewFlowLayout()
+        )
+        NotificationCenter.default.post(
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            userInfo: [
+                UIResponder.keyboardAnimationDurationUserInfoKey: 0.42,
+                UIResponder.keyboardAnimationCurveUserInfoKey: 7,
+            ]
+        )
+
+        #expect(collection.keyboardAnimationTiming.duration == 0.42)
+        #expect(collection.keyboardAnimationTiming.options.rawValue == UInt(7 << 16))
+    }
+
+    @Test func heightOnlyViewportChangeRefreshesOwnedPlacementAndClamp() async throws {
+        let harness = try Harness(messages: Self.readerHistory)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        harness.model.pending = [PendingMessage(
+            id: "height-only-send", text: "send", status: .queued, sentAtMs: nil
+        )]
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-height-only-send"
+        )
+
+        harness.window.frame.size.height -= 120
+        harness.host.view.frame = harness.window.bounds
+        harness.host.view.layoutIfNeeded()
+        try await waitUntil(timeout: 1) {
+            guard let y = try? self.mountedCellFrame(
+                id: "chat-user-row-height-only-send", in: collection
+            ).minY else { return false }
+            return abs(y - self.expectedSendMinY(in: collection, priorContent: true)) <= 1
+        }
+
+        #expect(abs(try mountedCellFrame(
+            id: "chat-user-row-height-only-send", in: collection
+        ).minY - expectedSendMinY(in: collection, priorContent: true)) <= 1)
+        let maximum = maximumOffset(of: collection)
+        collection.setContentOffset(CGPoint(x: 0, y: maximum), animated: false)
+        #expect(abs(collection.contentOffset.y - maximum) < 1)
+    }
+
+    @Test func heightChangeDoesNotCancelActiveSendAnimation() async throws {
+        let scheduler = HeldMessagePositionScheduler()
+        let harness = try Harness(messages: Self.readerHistory, positionScheduler: scheduler.schedule)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        scheduler.runAll()
+        let native = try #require(collection as? MessageUICollectionView)
+        let completions = native.positioningAnimationCompletionCount
+
+        harness.model.pending = [PendingMessage(
+            id: "height-send", text: "send", status: .queued, sentAtMs: nil
+        )]
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 1)
+        scheduler.runLast()
+        harness.window.frame.size.height -= 120
+        harness.host.view.frame = harness.window.bounds
+        harness.host.view.layoutIfNeeded()
+
+        try await waitUntil(timeout: 1) {
+            native.positioningAnimationCompletionCount == completions + 1
+        }
+        #expect(abs(try mountedCellFrame(
+            id: "chat-user-row-height-send", in: collection
+        ).minY - expectedSendMinY(in: collection, priorContent: true)) <= 1)
+    }
+
+    @Test func streamingPublicationDuringSendAnimationCompletesAndTracksCurrentGeometry() async throws {
+        let scheduler = HeldMessagePositionScheduler()
+        let harness = try Harness(messages: Self.readerHistory, positionScheduler: scheduler.schedule)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        scheduler.runAll()
+        let native = try #require(collection as? MessageUICollectionView)
+        let completions = native.positioningAnimationCompletionCount
+
+        harness.model.pending = [PendingMessage(
+            id: "animated-send", text: "send", status: .queued, sentAtMs: nil
+        )]
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1
+        )
+        scheduler.runLast()
+
+        harness.model.messages.append(ChatMessage(
+            ts: Self.today, role: "assistant", content: "stream",
+            streaming: true, cutoffKind: nil, turnId: "animated-turn",
+            replyId: "animated-reply", pendingId: nil, entryId: ""
+        ))
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 2)
+        scheduler.runAll()
+        try await waitUntil(timeout: 1) {
+            native.positioningAnimationCompletionCount == completions + 1
+        }
+
+        harness.model.messages[0] = Self.message(
+            id: "geometry-before-send", role: "user",
+            content: Array(repeating: Self.readerDetail, count: 8).joined(separator: "\n\n")
+        )
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 2)
+        scheduler.runAll()
+        let sendMinY = try mountedCellFrame(id: "chat-user-row-animated-send", in: collection).minY
+        #expect(abs(sendMinY - expectedSendMinY(in: collection, priorContent: true)) <= 1)
     }
 
     @Test func simulatedDelegateDragPreventsFollowDuringShortAndLongResponseGrowth() async throws {
@@ -157,15 +584,21 @@ struct MessageListScrollTests {
             minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-\(id)"
         )
         let narrow = try mountedCellFrame(id: "chat-user-row-\(id)", in: collection)
-        #expect(abs(narrow.minY - usableViewportFrame(of: collection).minY) <= 1)
+        #expect(abs(narrow.minY - expectedSendMinY(in: collection, priorContent: true)) <= 1)
         harness.window.frame.size = CGSize(width: 520, height: 430)
         harness.host.view.frame = harness.window.bounds
         try await settle(
             collection, hostView: harness.host.view,
             minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-\(id)"
         )
+        try await waitUntil(timeout: 1) {
+            guard let y = try? self.mountedCellFrame(
+                id: "chat-user-row-\(id)", in: collection
+            ).minY else { return false }
+            return abs(y - self.expectedSendMinY(in: collection, priorContent: true)) <= 1
+        }
         let wide = try mountedCellFrame(id: "chat-user-row-\(id)", in: collection)
-        #expect(abs(wide.minY - usableViewportFrame(of: collection).minY) <= 1)
+        #expect(abs(wide.minY - expectedSendMinY(in: collection, priorContent: true)) <= 1)
         #expect(abs(wide.height - narrow.height) > 1)
     }
 
@@ -353,7 +786,7 @@ struct MessageListScrollTests {
         )
         #expect(abs(
             try mountedCellFrame(id: "chat-user-row-held-send-2", in: collection).minY
-                - usableViewportFrame(of: collection).minY
+                - expectedSendMinY(in: collection, priorContent: true)
         ) <= 1)
     }
 
@@ -508,7 +941,7 @@ struct MessageListScrollTests {
         )
         #expect(abs(
             try mountedCellFrame(id: "chat-user-row-\(id)", in: collection).minY
-                - usableViewportFrame(of: collection).minY
+                - expectedSendMinY(in: collection, priorContent: true)
         ) <= 1)
     }
 
@@ -570,7 +1003,7 @@ struct MessageListScrollTests {
             rowID: "chat-user-row-batch-2"
         )
         let before = try mountedCellFrame(id: "chat-user-row-batch-2", in: collection).minY
-        #expect(abs(before - usableViewportFrame(of: collection).minY) <= 1)
+        #expect(abs(before - expectedSendMinY(in: collection, priorContent: true)) <= 1)
 
         harness.model.messages.append(contentsOf: [
             Self.message(id: "echo-1", role: "user", content: "first", pendingID: "batch-1"),
@@ -727,6 +1160,18 @@ struct MessageListScrollTests {
         return extents
     }
 
+    private func postKeyboardFrame(_ frame: CGRect) {
+        NotificationCenter.default.post(
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            userInfo: [
+                UIResponder.keyboardFrameEndUserInfoKey: frame,
+                UIResponder.keyboardAnimationDurationUserInfoKey: 0.25,
+                UIResponder.keyboardAnimationCurveUserInfoKey: 7,
+            ]
+        )
+    }
+
     private func position(_ collection: UICollectionView, at origin: SendOrigin) {
         let fraction: CGFloat
         switch origin {
@@ -754,6 +1199,11 @@ struct MessageListScrollTests {
     private func usableViewportFrame(of collection: UICollectionView) -> CGRect {
         let viewport = collection.superview!
         return collection.convert(collection.bounds.inset(by: collection.adjustedContentInset), to: viewport)
+    }
+
+    private func expectedSendMinY(in collection: UICollectionView, priorContent: Bool) -> CGFloat {
+        let viewport = usableViewportFrame(of: collection)
+        return viewport.minY + (priorContent ? viewport.height * 0.20 : 0)
     }
 
     private func descendants(_ view: UIView) -> [UIView] {
@@ -790,11 +1240,12 @@ struct MessageListScrollTests {
         id: String,
         role: String,
         content: String = readerDetail,
-        pendingID: String? = nil
+        pendingID: String? = nil,
+        streaming: Bool = false
     ) -> ChatMessage {
         ChatMessage(
             ts: today, role: role, content: content,
-            streaming: false, cutoffKind: nil, turnId: id,
+            streaming: streaming, cutoffKind: nil, turnId: id,
             replyId: role == "assistant" ? id : nil, pendingId: pendingID, entryId: id
         )
     }
@@ -835,6 +1286,7 @@ private final class MessageListScrollModel: ObservableObject {
     @Published var messages: [ChatMessage]
     @Published var pending: [PendingMessage]
     @Published var historyLoading = false
+    @Published var bottomOcclusion: CGFloat = 0
     let initialExistingHistory: Bool?
     let imageLoader: any NetworkImageLoader
     let positionScheduler: MessagePositionScheduler
@@ -874,6 +1326,7 @@ private struct MessageListScrollFixture: View {
             messages: model.messages,
             pending: model.pending,
             historyLoading: model.historyLoading,
+            bottomOcclusion: model.bottomOcclusion,
             initialExistingHistory: model.initialExistingHistory,
             imageLoader: model.imageLoader,
             positionScheduler: model.positionScheduler,

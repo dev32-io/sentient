@@ -11,7 +11,7 @@
 
 import type { TaskListItem } from "@sentient/protocol";
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ToolInlineDetail } from "../chat/tool-inline-detail.tsx";
 
 export interface ComposerTaskShelfProps {
@@ -85,26 +85,65 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
  * pill row, so an anchored dock grows the combined surface upward.
  */
 export function ComposerTaskShelf({ items }: ComposerTaskShelfProps): JSX.Element | null {
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{ id: string; open: boolean } | null>(null);
+  const [overflow, setOverflow] = useState({ start: false, end: false });
+  const pillsRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const pills = pillsRef.current;
+    if (!pills) return;
+
+    const measure = () => {
+      const first = pills.firstElementChild?.getBoundingClientRect();
+      const last = pills.lastElementChild?.getBoundingClientRect();
+      if (!first || !last || pills.scrollWidth <= pills.clientWidth + 1) {
+        setOverflow((value) => value.start || value.end ? { start: false, end: false } : value);
+        return;
+      }
+      const bounds = pills.getBoundingClientRect();
+      const rtl = getComputedStyle(pills).direction === "rtl";
+      const next = rtl
+        ? { start: first.right > bounds.right + 1, end: last.left < bounds.left - 1 }
+        : { start: first.left < bounds.left - 1, end: last.right > bounds.right + 1 };
+      setOverflow((value) => value.start === next.start && value.end === next.end ? value : next);
+    };
+
+    measure();
+    pills.addEventListener("scroll", measure, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(pills);
+    for (const pill of pills.children) observer?.observe(pill);
+    return () => {
+      pills.removeEventListener("scroll", measure);
+      observer?.disconnect();
+    };
+  }, [items]);
 
   if (items.length === 0) return null;
 
   function toggle(id: string): void {
-    setOpenId((prev) => (prev === id ? null : id));
+    setSelection((prev) => prev?.id === id ? { id, open: !prev.open } : { id, open: true });
   }
 
-  const open = openId !== null ? items.find((t) => t.id === openId) : undefined;
+  const detail = selection !== null ? items.find((t) => t.id === selection.id) : undefined;
+  const detailOpen = detail !== undefined && selection?.open === true;
 
   return (
     <div class="dock-task-shelf">
-      <div class="dock-task-shelf__pills">
-        {items.map((t) => (
-          <ToolPillButton key={t.id} task={t} isOpen={openId === t.id} onToggle={toggle} />
-        ))}
+      <div
+        class="dock-task-shelf__pills-viewport"
+        data-overflow-start={String(overflow.start)}
+        data-overflow-end={String(overflow.end)}
+      >
+        <div class="dock-task-shelf__pills" ref={pillsRef}>
+          {items.map((t) => (
+            <ToolPillButton key={t.id} task={t} isOpen={detailOpen && selection?.id === t.id} onToggle={toggle} />
+          ))}
+        </div>
       </div>
-      <div class="dock-task-shelf__detail-slot" data-open={String(open !== undefined)}>
+      <div class="dock-task-shelf__detail-slot" data-open={String(detailOpen)} aria-hidden={!detailOpen}>
         <div class="dock-task-shelf__detail-inner">
-          {open && <ToolInlineDetail key={open.id} item={open} direction="up" />}
+          {detail && <ToolInlineDetail key={detail.id} item={detail} direction="up" />}
         </div>
       </div>
     </div>

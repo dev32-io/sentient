@@ -646,11 +646,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
    * Whatever partial text had already streamed rides along, so what the reload
    * shows still matches what the person was looking at (spec §3.2 Invariant B).
    */
-  function commitTurnFailure(turnId: string): void {
+  function commitTurnFailure(turnId: string, replyId: string): void {
     const partial = turnText;
     turnText = ""; // durable now — a later cutoff commit must not re-append it.
     const text = partial.length > 0 ? `${partial}\n\n${TURN_FAILURE_NOTICE}` : TURN_FAILURE_NOTICE;
-    const entry = store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text });
+    const entry = store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text, replyId });
     log.warn("session-runtime.turn.failure-committed", {
       userId,
       sessionId,
@@ -792,7 +792,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       // notice for a successful answer.
       if (terminalObservers.has(turnId))
         store.recordScheduledTerminal?.(sessionId, turnId, "failed", new Date().toISOString(), null);
-      commitTurnFailure(turnId);
+      // `onTurnSettled` belongs to the one active turn. Carry its authoritative
+      // reply identity into the durable failure twin; never derive one client-side.
+      commitTurnFailure(turnId, inFlight!.replyId);
     }
 
     // Turn boundary: release everything still outstanding on the committed

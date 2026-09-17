@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
+import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 import kotlin.test.Test
@@ -51,6 +52,42 @@ class InFlightMessageConnectorTest {
         c.handle(ServerMessage.TurnStarted(turnId = "c-1", trigger = "test"))
         c.handle(ServerMessage.TurnTextDelta(turnId = "c-1", text = "Hi"))
         assertEquals(InFlightMessage("c-1", "Hi"), c.inflight())
+    }
+
+    @Test
+    fun stamped_assistant_entry_adopts_untouched_zero_delta_seed() {
+        val events = mutableListOf<SdkEvent>()
+        val c = InFlightMessageConnector(onEvent = { events += it })
+        c.handle(ServerMessage.TurnStarted(turnId = "c-1", trigger = "test"))
+        c.handle(
+            ServerMessage.ConversationEntry(
+                item = ConversationFeedItem.Assistant(content = "Something went wrong"),
+                turnId = "c-1",
+                replyId = "r-1",
+            ),
+        )
+
+        assertEquals(InFlightMessage("c-1", "", "r-1"), c.inflight())
+        assertEquals(SdkEvent.MessageStarted("c-1", "r-1"), events.last())
+
+        c.handle(ServerMessage.TurnCompleted("c-1"))
+        assertNull(c.inflight())
+        assertEquals("r-1", (events.last() as SdkEvent.MessageCommitted).message.replyId)
+    }
+
+    @Test
+    fun stamped_assistant_entry_does_not_rekey_nonempty_buffer() {
+        val (c, _) = connectorWithUpdates()
+        c.handle(ServerMessage.TurnStarted(turnId = "c-1", trigger = "test"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c-1", text = "legacy"))
+        c.handle(
+            ServerMessage.ConversationEntry(
+                item = ConversationFeedItem.Assistant(content = "legacy"),
+                turnId = "c-1",
+                replyId = "r-1",
+            ),
+        )
+        assertEquals(InFlightMessage("c-1", "legacy"), c.inflight())
     }
 
     @Test

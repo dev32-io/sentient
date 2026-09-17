@@ -13,11 +13,12 @@ struct MessageRowLayout: View {
     let measurement: Bool
     let imageCache: MarkdownImageCache
     let onRetry: (String) -> Void
+    var heightRevision = ""
     var onHeightChange: ((CGFloat) -> Void)?
 
     private var bubbleMaxWidth: CGFloat {
-        let chrome = Space.lg * 2 + BubbleLayout.avatarSize + Space.md + BubbleLayout.edgeMin
-        return min(Space.msgMax, max(0, paneWidth - chrome))
+        let margins = Space.lg * 2 + BubbleLayout.edgeMin
+        return min(Space.msgMax, max(0, paneWidth - margins))
     }
 
     var body: some View {
@@ -36,7 +37,7 @@ struct MessageRowLayout: View {
                 if let onHeightChange {
                     GeometryReader { proxy in
                         Color.clear
-                            .onAppear { onHeightChange(proxy.size.height) }
+                            .onChange(of: heightRevision, initial: true) { _, _ in onHeightChange(proxy.size.height) }
                             .onChange(of: proxy.size.height) { _, height in onHeightChange(height) }
                     }
                 }
@@ -74,6 +75,7 @@ struct MessageLayoutRow {
     let row: MessageChronologyRow
     let id: String
     let revision: String
+    let measurementRevision: String
     let accessibilityIdentifier: String?
     let avatarMode: SentientIdentityState
 
@@ -83,14 +85,19 @@ struct MessageLayoutRow {
         self.avatarMode = avatarMode
         switch row {
         case let .divider(label, id):
-            revision = "divider|\(id)|\(label)"
+            measurementRevision = "divider|\(label)"
+            revision = "\(measurementRevision)|\(id)"
             accessibilityIdentifier = nil
         case let .message(message, index, continuation):
-            revision = [
+            // Identity, chronology labels, and avatar playback change presentation,
+            // not layout. Streaming/terminal content and cutoff markers can change it.
+            measurementRevision = [
                 "message", message.role, message.content, String(message.ts),
-                String(message.streaming), message.cutoffKind ?? "", message.turnId ?? "",
-                message.replyId ?? "", message.pendingId ?? "", message.entryId,
-                String(index), String(continuation), String(describing: avatarMode),
+                String(message.streaming), message.cutoffKind ?? "", String(continuation),
+            ].joined(separator: "|")
+            revision = [
+                measurementRevision, message.turnId ?? "", message.replyId ?? "",
+                message.pendingId ?? "", message.entryId, String(index), String(describing: avatarMode),
             ].joined(separator: "|")
             if message.role == "user" {
                 accessibilityIdentifier = "chat-user-row-\(message.pendingId ?? message.entryId)"
@@ -98,10 +105,9 @@ struct MessageLayoutRow {
                 accessibilityIdentifier = nil
             }
         case let .pending(message, index):
-            revision = [
-                "pending", message.id, message.text, String(describing: message.status),
-                String(describing: message.sentAtMs), String(index),
-            ].joined(separator: "|")
+            measurementRevision = ["pending", message.text, String(describing: message.status)].joined(separator: "|")
+            revision = [measurementRevision, message.id, String(describing: message.sentAtMs), String(index)]
+                .joined(separator: "|")
             accessibilityIdentifier = "chat-user-row-\(message.id)"
         }
     }

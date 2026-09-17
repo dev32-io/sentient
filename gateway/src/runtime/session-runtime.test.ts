@@ -218,6 +218,8 @@ interface RecordedEvent {
   turnId: string;
   /** Set on `turnAborted` and `playbackStop` — the wire's cutoff kind. */
   cutoff?: CutoffKind;
+  /** Gateway-owned assistant bubble identity. */
+  replyId?: string;
   /** Set on the two committed-feed events. */
   item?: ConversationFeedItem;
   items?: ConversationFeedItem[];
@@ -243,12 +245,19 @@ function recordingEmitter(): RecordingEmitter {
     titles,
     sessionTitle: (title, provenance) => titles.push({ title, provenance }),
     turnStarted: (turnId) => events.push({ type: "turnStarted", turnId }),
-    textDelta: (turnId) => events.push({ type: "textDelta", turnId }),
+    textDelta: (turnId, _text, replyId) =>
+      events.push({ type: "textDelta", turnId, ...(replyId === undefined ? {} : { replyId }) }),
     turnCompleted: (turnId) => events.push({ type: "turnCompleted", turnId }),
     turnAborted: (turnId, cutoff) => events.push({ type: "turnAborted", turnId, cutoff }),
     playbackStop: (turnId, reason) => events.push({ type: "playbackStop", turnId, cutoff: reason }),
     conversationSnapshot: (items) => events.push({ type: "conversationSnapshot", turnId: "", items }),
-    conversationEntry: (item, turnId) => events.push({ type: "conversationEntry", turnId: turnId ?? "", item }),
+    conversationEntry: (item, turnId, replyId) =>
+      events.push({
+        type: "conversationEntry",
+        turnId: turnId ?? "",
+        item,
+        ...(replyId === undefined ? {} : { replyId }),
+      }),
     taskList: (turnId, items) => events.push({ type: "taskList", turnId: turnId ?? "", items: items as never }),
     // Not part of any assertion in this file — SessionRuntime never drives
     // these (audio is the voice pipeline's, permission/delegation the PDP's
@@ -378,6 +387,15 @@ describe("SessionRuntime — a turn that fails without a user gesture", () => {
     expect(committedIdx).toBeGreaterThan(-1);
     expect(committedIdx).toBeLessThan(kinds.indexOf("turnCompleted"));
 
+    // Delta, durable entry, and frame sidecar keep one gateway-minted reply.
+    const delta = emitter.events.find((e) => e.type === "textDelta");
+    const committed = emitter.events[committedIdx];
+    const committedReplyId = committed?.item?.kind === "assistant" ? committed.item.replyId : undefined;
+    expect(delta?.replyId).toBeDefined();
+    expect(assistant[0]?.replyId).toBe(delta?.replyId);
+    expect(committedReplyId).toBe(delta?.replyId);
+    expect(committed?.replyId).toBe(delta?.replyId);
+
     runtime.dispose();
   });
 
@@ -482,6 +500,12 @@ describe("SessionRuntime — a turn that completes with zero text (D17)", () => 
     // No partial text existed to prefix (unlike case1b), so
     // commitTurnFailure's else-branch fires: the bare notice, verbatim.
     expect(assistant[0]?.text).toBe("Sorry — something went wrong while I was answering. Please try again.");
+    expect(assistant[0]?.replyId).not.toBeNull();
+
+    const committed = emitter.events.find((e) => e.type === "conversationEntry" && e.item?.kind === "assistant");
+    const committedReplyId = committed?.item?.kind === "assistant" ? committed.item.replyId : undefined;
+    expect(committedReplyId).toBe(assistant[0]?.replyId ?? undefined);
+    expect(committed?.replyId).toBe(assistant[0]?.replyId ?? undefined);
 
     runtime.dispose();
   });

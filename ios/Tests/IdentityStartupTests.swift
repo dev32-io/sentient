@@ -130,20 +130,40 @@ final class IdentityStartupTests: XCTestCase {
         XCTAssertFalse(rive.isPlaying, "authored Reduced Motion state must settle without a display link")
     }
 
-    func testRiveIdentityModelReleasesAfterOwnershipEnds() {
-        weak var releasedModel: RiveIdentityModel?
-        weak var releasedViewModel: RiveViewModel?
-        autoreleasepool {
-            let model = RiveIdentityModel(initialState: .thinking)
-            XCTAssertNotNil(model.riveViewModel)
-            releasedModel = model
-            releasedViewModel = model.riveViewModel
-            _ = model.riveViewModel?.createRiveView()
-            model.controller.setRenderingActive(true)
-            model.controller.setRenderingActive(false)
+    func testDecodedIdentityAssetIsSharedButAnimationStateIsIndependent() throws {
+        let first = RiveIdentityModel(initialState: .thinking)
+        let second = RiveIdentityModel(initialState: .responding)
+        let firstRuntime = try XCTUnwrap(first.riveViewModel?.riveModel)
+        let secondRuntime = try XCTUnwrap(second.riveViewModel?.riveModel)
+        XCTAssertTrue(firstRuntime.riveFile === secondRuntime.riveFile)
+        XCTAssertFalse(firstRuntime === secondRuntime)
+        XCTAssertFalse(try XCTUnwrap(firstRuntime.artboard) === XCTUnwrap(secondRuntime.artboard))
+        XCTAssertFalse(try XCTUnwrap(firstRuntime.stateMachine) === XCTUnwrap(secondRuntime.stateMachine))
+        first.controller.setReducedMotion(true)
+        XCTAssertFalse(second.controller.reducedMotion)
+        XCTAssertEqual(second.controller.state, .responding)
+    }
+
+    func testRiveIdentityModelReleasesAfterOwnershipEnds() async throws {
+        for _ in 0..<16 {
+            weak var releasedModel: RiveIdentityModel?
+            weak var releasedViewModel: RiveViewModel?
+            weak var releasedView: RiveView?
+            autoreleasepool {
+                let model = RiveIdentityModel(initialState: .thinking)
+                XCTAssertNotNil(model.riveViewModel)
+                releasedModel = model
+                releasedViewModel = model.riveViewModel
+                releasedView = model.riveViewModel?.createRiveView()
+                model.controller.setRenderingActive(true)
+                model.controller.setRenderingActive(false)
+            }
+            XCTAssertNil(releasedModel)
+            XCTAssertNil(releasedViewModel)
+            // Rive.pause() drains queued playback callbacks on its next display tick.
+            try await DisplayFrameWaiter.next()
+            XCTAssertNil(releasedView, "The shared asset must not retain a recycled runtime view")
         }
-        XCTAssertNil(releasedModel)
-        XCTAssertNil(releasedViewModel)
     }
 
     func testIdleMarkNeverBuildsRiveAndActiveToIdleRemovesRuntimeView() async throws {

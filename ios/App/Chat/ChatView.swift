@@ -66,6 +66,7 @@ struct ChatView: View {
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
     @State private var messageMeasurementLoading = false
+    @State private var composerHeight: CGFloat = 0
 
     // ── Keep-screen-on (S8) ─────────────────────────────────────────────────────
 
@@ -256,64 +257,75 @@ struct ChatView: View {
         messages: [ChatMessage],
         assistantActivity: AssistantActivityState
     ) -> some View {
-        VStack(spacing: 0) {
-            titleBar
-            MessageList(
-                messages: messages,
-                assistantActivity: assistantActivity,
-                userName: userName,
-                pending: pending,
-                onRetry: { vm.retry($0) },
-                historyLoading: historyLoading,
-                initialExistingHistory: activeSessionId != nil,
-                onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay {
-                // History-loading takes precedence: an existing-session switch is
-                // fetching its snapshot, so the list is cleared and a centered
-                // spinner stands in. A brand-new chat keeps historyLoading false →
-                // no spinner. The composer is NEVER gated on this (see below).
-                if historyLoading || messageMeasurementLoading {
-                    HistoryLoadingOverlay()
-                } else if messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
-                    ChatLoadingView(state: chatLoadingState)
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                titleBar
+                MessageList(
+                    messages: messages,
+                    assistantActivity: assistantActivity,
+                    userName: userName,
+                    pending: pending,
+                    onRetry: { vm.retry($0) },
+                    historyLoading: historyLoading,
+                    bottomOcclusion: composerHeight,
+                    initialExistingHistory: activeSessionId != nil,
+                    onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    if historyLoading || messageMeasurementLoading {
+                        HistoryLoadingOverlay()
+                    } else if messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
+                        ChatLoadingView(state: chatLoadingState)
+                    }
+                }
+                if let banner = vm.state.banner {
+                    ContentErrorBanner(
+                        text: banner.text,
+                        canRetry: banner.canRetry,
+                        onRetry: banner.canRetry ? { vm.reconnect() } : nil
+                    )
+                }
+                if let notice = vm.state.reopenFailedNotice {
+                    ReopenFailedNoticeBanner(
+                        noticeText: notice,
+                        onDismiss: { vm.dismissReopenFailedNotice() }
+                    )
                 }
             }
-            // Chat-side error banner (model failure).
-            if let banner = vm.state.banner {
-                ContentErrorBanner(
-                    text: banner.text,
-                    canRetry: banner.canRetry,
-                    onRetry: banner.canRetry ? { vm.reconnect() } : nil
-                )
-            }
-            // One-shot ReopenFailed notice (spec §14). Auto-dismissed by the VM after ~4 s
-            // or earlier on tap. Independent of the repo-failure banner above.
-            if let notice = vm.state.reopenFailedNotice {
-                ReopenFailedNoticeBanner(
-                    noticeText: notice,
-                    onDismiss: { vm.dismissReopenFailedNotice() }
-                )
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            Composer(
-                tasks: tasks,
-                ttsEnabled: connection.prefs.ttsEnabled,
-                talkMode: vm.talkMode,
-                micLevels: vm.micLevels,
-                voiceDisabled: connection.status != .ready,
-                canInterrupt: canInterrupt,
-                onSend: { vm.send($0) },
-                onVoiceIntent: { vm.voiceIntent($0) },
-                onTtsToggle: { vm.toggleTts() },
-                onInterrupt: { vm.interrupt() },
-                onFocusGained: { vm.onComposerFocus() }
-            )
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+
+            composerDock
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .duskTheme()
+    }
+
+    private var composerDock: some View {
+        Composer(
+            tasks: tasks,
+            ttsEnabled: connection.prefs.ttsEnabled,
+            talkMode: vm.talkMode,
+            micLevels: vm.micLevels,
+            voiceDisabled: connection.status != .ready,
+            canInterrupt: canInterrupt,
+            onSend: { vm.send($0) },
+            onVoiceIntent: { vm.voiceIntent($0) },
+            onTtsToggle: { vm.toggleTts() },
+            onInterrupt: { vm.interrupt() },
+            onFocusGained: { vm.onComposerFocus() }
+        )
+        .background(alignment: .top) {
+            LinearGradient(
+                colors: [.clear, DuskColors.bg.opacity(0.94), DuskColors.bg],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: composerHeight + 48)
+            .offset(y: -48)
+            .allowsHitTesting(false)
+        }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
     }
 
     // ── History side panel ────────────────────────────────────────────────────────

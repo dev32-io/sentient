@@ -113,6 +113,20 @@ final class SentientIdentityStateController {
 
 @MainActor
 final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
+    // One decoded bundled asset, never a pool of views or animation instances.
+    private static var cachedFile: (bundleURL: URL, file: RiveFile)?
+
+    private static func file(in bundle: Bundle) throws -> RiveFile {
+        if let cachedFile, cachedFile.bundleURL == bundle.bundleURL {
+            return cachedFile.file
+        }
+        let file = try RiveFile(
+            name: "sentient-avatar", extension: ".riv", in: bundle, loadCdn: false
+        )
+        cachedFile = (bundle.bundleURL, file)
+        return file
+    }
+
     let riveViewModel: RiveViewModel?
     private(set) var controller: SentientIdentityStateController!
     private var reducedMotion = false
@@ -137,12 +151,8 @@ final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
         }
 
         do {
-            let file = try RiveModel(
-                fileName: "sentient-avatar",
-                extension: ".riv",
-                in: bundle,
-                loadCdn: false
-            )
+            // Models create independent artboards/state machines from the shared file.
+            let file = RiveModel(riveFile: try Self.file(in: bundle))
             riveViewModel = RiveViewModel(
                 file,
                 stateMachineName: "Avatar",

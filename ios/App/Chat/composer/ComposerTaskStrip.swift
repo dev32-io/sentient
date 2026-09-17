@@ -13,12 +13,26 @@ func taskShelfSelection(current: String?, tapped: String) -> String? {
     current == tapped ? nil : tapped
 }
 
+struct TaskShelfOverflow: Equatable {
+    let left: Bool
+    let right: Bool
+}
+
+func taskShelfOverflow(visibleRect: CGRect, contentWidth: CGFloat) -> TaskShelfOverflow {
+    let tolerance: CGFloat = 1
+    return TaskShelfOverflow(
+        left: visibleRect.minX > tolerance,
+        right: visibleRect.maxX < contentWidth - tolerance
+    )
+}
+
 /// Authoritative full-state task rows joined to the composer. Disclosure is
 /// local presentation state; task lifetime remains owned by `tasklist.state`.
 struct ComposerTaskStrip: View {
     let items: [TaskListItem]
 
     @State private var expandedTaskId: String?
+    @State private var overflow = TaskShelfOverflow(left: false, right: false)
     @ComposerReduceMotion private var reduceMotion
 
     init(items: [TaskListItem], initiallyExpandedTaskId: String? = nil) {
@@ -37,10 +51,19 @@ struct ComposerTaskStrip: View {
                     }
                 }
                 .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                .onScrollGeometryChange(for: TaskShelfOverflow.self) { geometry in
+                    taskShelfOverflow(
+                        visibleRect: geometry.visibleRect,
+                        contentWidth: geometry.contentSize.width
+                    )
+                } action: { _, overflow in
+                    self.overflow = overflow
+                }
+                .overlay { overflowFades }
 
                 if let selectedTask {
                     taskDetail(selectedTask)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .transition(.move(edge: .bottom))
                 }
             }
             .padding(.horizontal, ComposerTaskShelfGeometry.horizontalPadding)
@@ -65,6 +88,10 @@ struct ComposerTaskStrip: View {
     private var selectedTask: TaskListItem? {
         guard let expandedTaskId else { return nil }
         return items.first { $0.id == expandedTaskId }
+    }
+
+    private var overflowFades: some View {
+        TaskShelfOverflowFades(overflow: overflow)
     }
 
     private func taskButton(_ item: TaskListItem) -> some View {
@@ -121,6 +148,42 @@ struct ComposerTaskStrip: View {
     }
 }
 
+struct TaskShelfOverflowFades: View {
+    let overflow: TaskShelfOverflow
+
+    var body: some View {
+        GeometryReader { proxy in
+            edgeFade(visible: overflow.left)
+                .position(
+                    x: ComposerTaskShelfGeometry.overflowFadeWidth / 2,
+                    y: proxy.size.height / 2
+                )
+            edgeFade(visible: overflow.right)
+                .scaleEffect(x: -1)
+                .position(
+                    x: proxy.size.width - ComposerTaskShelfGeometry.overflowFadeWidth / 2,
+                    y: proxy.size.height / 2
+                )
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func edgeFade(visible: Bool) -> some View {
+        LinearGradient(
+            colors: [DuskColors.bgSunk.opacity(visible ? 0.96 : 0), .clear],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(width: ComposerTaskShelfGeometry.overflowFadeWidth)
+    }
+}
+
+func taskPillOffset(expanded: Bool, pressed: Bool, reduceMotion: Bool) -> CGFloat {
+    (expanded ? -3 : 0) + (pressed && !reduceMotion ? 1 : 0)
+}
+
 enum ComposerTaskShelfGeometry {
     static let horizontalPadding: CGFloat = 5
     static let topPadding: CGFloat = 7
@@ -135,6 +198,7 @@ enum ComposerTaskShelfGeometry {
     static let shelfRadius: CGFloat = 14
     static let joinedFaceExtension: CGFloat = 10
     static let pulseDiameter: CGFloat = 8
+    static let overflowFadeWidth: CGFloat = 18
 
     static let shelfShadow = DesignDropShadowGeometry(
         radius: 18, y: -8, sourceInset: 16
@@ -191,7 +255,11 @@ private struct TaskPillButtonStyle: ButtonStyle {
                 )
             }
             .contentShape(shape)
-            .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
+            .offset(y: taskPillOffset(
+                expanded: isExpanded,
+                pressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
             .animation(
                 reduceMotion ? nil : .easeOut(duration: DesignV2.Motion.feedback),
                 value: configuration.isPressed

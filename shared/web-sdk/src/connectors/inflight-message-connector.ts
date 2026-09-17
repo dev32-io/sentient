@@ -30,6 +30,7 @@ export interface InFlightMessageConnectorConfig {
 //                        the seed the bubble stays absent through provider TFFT
 //                        and the user stares at nothing.
 //   - turn.text.delta  — append to that turn's buffer
+//   - conversation.entry — name an untouched zero-delta seed from its stamped reply
 //   - turn.completed   — drop that turn's buffer (committed entry follows via
 //                        conversation.entry)
 //   - turn.aborted     — drop that turn's buffer (the cutoff-stamped committed
@@ -112,6 +113,21 @@ export class InFlightMessageConnector implements Connector {
           text: (prior?.text ?? "") + m.text,
           ...(m.replyId === undefined ? {} : { replyId: m.replyId }),
         });
+        this.emit();
+      }),
+    );
+
+    this.unsubs.push(
+      sdk.onMessage("conversation.entry", (msg: unknown) => {
+        const m = msg as { turnId?: string; replyId?: string; item?: { kind?: string } };
+        if (!m.turnId || !m.replyId || m.item?.kind !== "assistant") return;
+        const seeded = this.buffers.get(m.turnId);
+        // A zero-delta failure still names its reply on the committed entry.
+        // Adopt only the untouched turn seed; declared reply buffers remain
+        // separate boundaries.
+        if (!seeded || seeded.text !== "" || (m.replyId !== m.turnId && this.buffers.has(m.replyId))) return;
+        this.buffers.delete(m.turnId);
+        this.buffers.set(m.replyId, { ...seeded, replyId: m.replyId });
         this.emit();
       }),
     );

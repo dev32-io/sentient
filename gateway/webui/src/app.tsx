@@ -340,6 +340,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
           route === "chat" ? (
             <ChatView
               messages={sessionRouteState === "idle" ? messages : []}
+              localSendIds={client.localSendIds.value}
               transcript={sessionRouteState === "idle" ? client.transcript.value : ""}
               currentTurnId={currentTurnId}
               activeCycleState={activeCycleState}

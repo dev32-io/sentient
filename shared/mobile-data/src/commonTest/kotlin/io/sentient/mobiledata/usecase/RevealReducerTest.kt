@@ -45,6 +45,33 @@ class RevealReducerTest {
         assertEquals("Hello world", s.bubble?.fullContent)
     }
 
+    @Test fun first_reply_adopts_turn_seed_but_later_reply_in_same_turn_is_distinct() {
+        var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C), nowMs = 100)
+        val seedId = s.bubble?.presentationId
+        s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "first", replyId = "r1"), nowMs = 200)
+        assertEquals(100, s.bubble?.startedAtMs)
+        assertEquals(seedId, s.bubble?.presentationId)
+        assertEquals("r1", s.bubble?.replyId)
+
+        s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "second", replyId = "r2"), nowMs = 300)
+        assertEquals(300, s.bubble?.startedAtMs)
+        assertEquals("presentation:reply:r2", s.bubble?.presentationId)
+        assertEquals("r2", s.bubble?.replyId)
+        assertEquals("second", s.bubble?.fullContent)
+    }
+
+    @Test fun stamped_zero_delta_entry_adopts_empty_seed_without_resetting_presentation() {
+        var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C), nowMs = 100)
+        val seed = s.bubble!!
+
+        s = RevealReducer.reduce(s, SdkEvent.MessageStarted(C, replyId = "r1"), nowMs = 200)
+
+        assertEquals("r1", s.bubble?.replyId)
+        assertEquals(seed.startedAtMs, s.bubble?.startedAtMs)
+        assertEquals(seed.presentationId, s.bubble?.presentationId)
+        assertEquals(seed.presentationId, s.presentationIdByReplyId["r1"])
+    }
+
     // -----------------------------------------------------------------------
     // Termination. ObserveChatUseCase hides the one committed row whose replyId
     // matches the live bubble's, so a bubble that cannot reach null hides that

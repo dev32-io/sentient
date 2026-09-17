@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { act, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -84,6 +84,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
 });
 
@@ -438,7 +439,75 @@ describe("ChatComposer semantic boundary", () => {
     expect(screen.queryByText(/safe/)).toBeNull();
     expect(screen.getByText(/song/)).toBeTruthy();
     expect(document.querySelectorAll(".tool-inline-detail")).toHaveLength(1);
+    fireEvent.click(done);
+    expect(done.getAttribute("aria-expanded")).toBe("false");
+    expect(detailSlot?.getAttribute("data-open")).toBe("false");
+    expect(detailSlot?.getAttribute("aria-hidden")).toBe("true");
+    expect(document.querySelectorAll(".tool-inline-detail")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Interrupt" })).toBeTruthy();
+  });
+
+  it("shows task overflow fades at logical edges after scroll, resize, and RTL changes", () => {
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    render(<ChatComposer {...composerProps({
+      tasks: [
+        { id: "one", toolName: "first_task", kind: "foreground", status: "running", argsPreview: "one", startedAtMs: 1 },
+        { id: "two", toolName: "middle_task", kind: "foreground", status: "done", argsPreview: "two", startedAtMs: 2 },
+        { id: "three", toolName: "last_task", kind: "background", status: "done", argsPreview: "three", startedAtMs: 3 },
+      ],
+    })} />);
+
+    const viewport = document.querySelector<HTMLElement>(".dock-task-shelf__pills-viewport")!;
+    const pills = document.querySelector<HTMLElement>(".dock-task-shelf__pills")!;
+    const first = pills.firstElementChild as HTMLElement;
+    const last = pills.lastElementChild as HTMLElement;
+    let scrollWidth = 310;
+    let firstRect = { left: 0, right: 90 };
+    let lastRect = { left: 220, right: 310 };
+    Object.defineProperties(pills, {
+      clientWidth: { configurable: true, get: () => 200 },
+      scrollWidth: { configurable: true, get: () => scrollWidth },
+    });
+    vi.spyOn(pills, "getBoundingClientRect").mockImplementation(() => ({ left: 0, right: 200 }) as DOMRect);
+    vi.spyOn(first, "getBoundingClientRect").mockImplementation(() => firstRect as DOMRect);
+    vi.spyOn(last, "getBoundingClientRect").mockImplementation(() => lastRect as DOMRect);
+    const measure = () => act(() => resize([], {} as ResizeObserver));
+
+    measure();
+    expect([viewport.dataset.overflowStart, viewport.dataset.overflowEnd]).toEqual(["false", "true"]);
+    firstRect = { left: -40, right: 50 };
+    lastRect = { left: 170, right: 260 };
+    fireEvent.scroll(pills);
+    expect([viewport.dataset.overflowStart, viewport.dataset.overflowEnd]).toEqual(["true", "true"]);
+    firstRect = { left: -110, right: -20 };
+    lastRect = { left: 110, right: 200 };
+    fireEvent.scroll(pills);
+    expect([viewport.dataset.overflowStart, viewport.dataset.overflowEnd]).toEqual(["true", "false"]);
+
+    scrollWidth = 200;
+    measure();
+    expect([viewport.dataset.overflowStart, viewport.dataset.overflowEnd]).toEqual(["false", "false"]);
+
+    scrollWidth = 310;
+    pills.style.direction = "rtl";
+    firstRect = { left: 110, right: 200 };
+    lastRect = { left: -110, right: -20 };
+    measure();
+    expect([viewport.dataset.overflowStart, viewport.dataset.overflowEnd]).toEqual(["false", "true"]);
+    firstRect = { left: 220, right: 310 };
+    lastRect = { left: 0, right: 90 };
+    fireEvent.scroll(pills);
+    expect([viewport.dataset.overflowStart, viewport.dataset.overflowEnd]).toEqual(["true", "false"]);
+
+    first.focus();
+    fireEvent.click(first);
+    expect(document.activeElement).toBe(first);
+    expect(first.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("keeps disabled capture text-only and exposes permission/start errors", async () => {
@@ -709,8 +778,12 @@ describe("dock foundation boundary", () => {
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--running\s*{[^}]*background:\s*var\(--color-amber\);[^}]*animation:\s*dock-task-pulse 1\.45s ease-in-out infinite;/s);
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--done\s*{[^}]*background:\s*var\(--color-sage\);/s);
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error\s*{[^}]*background:\s*var\(--color-stop\);/s);
-    expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\s*{[^}]*grid-template-rows:\s*0fr;[^}]*transition:/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill\[aria-expanded="true"\]\s*{[^}]*transform:\s*translateY\(-3px\);/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\s*{[^}]*grid-template-rows:\s*0fr;[^}]*transition:\s*grid-template-rows var\(--motion-state\);/s);
     expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\[data-open="true"\]\s*{[^}]*grid-template-rows:\s*1fr;/s);
+    expect(DOCK_STYLES).not.toMatch(/dock-task-detail-enter/);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__pills-viewport::before,[\s\S]*?pointer-events:\s*none;/);
+    expect(DOCK_STYLES).toMatch(/data-overflow-start="true"[^}]+opacity:\s*1;/s);
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill\s*{\s*animation:\s*dock-task-pill-enter 260ms cubic-bezier\(\.16, 1, \.3, 1\) backwards;/);
     expect(DOCK_STYLES).not.toMatch(/dock-task-pill-enter[^;]*\bboth\b/);
     expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running,[\s\S]*?animation:\s*none;/);

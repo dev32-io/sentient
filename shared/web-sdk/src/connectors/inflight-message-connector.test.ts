@@ -51,6 +51,33 @@ describe("InFlightMessageConnector", () => {
     expect(connector.list()).toEqual([{ turnId: "t-1", text: "Hello world" }]);
   });
 
+  it("adopts a stamped assistant entry for an untouched zero-delta seed", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("conversation.entry", {
+      turnId: "t-1",
+      replyId: "r-1",
+      item: { kind: "assistant", content: "Something went wrong" },
+    });
+    expect(connector.list()).toEqual([{ turnId: "t-1", replyId: "r-1", text: "" }]);
+    expect(updates.at(-1)).toEqual([{ turnId: "t-1", replyId: "r-1", text: "" }]);
+  });
+
+  it("does not rekey content or overwrite an already declared reply boundary", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "legacy" });
+    mock.emit("conversation.entry", { turnId: "t-1", replyId: "r-1", item: { kind: "assistant" } });
+    expect(connector.list()).toEqual([{ turnId: "t-1", text: "legacy" }]);
+
+    mock.emit("turn.started", { turnId: "t-2", trigger: "user" });
+    mock.emit("turn.text.delta", { turnId: "t-2", replyId: "r-2", text: "declared" });
+    mock.emit("conversation.entry", { turnId: "t-2", replyId: "r-2", item: { kind: "assistant" } });
+    expect(connector.list().find((entry) => entry.replyId === "r-2")).toEqual({
+      turnId: "t-2",
+      replyId: "r-2",
+      text: "declared",
+    });
+  });
+
   it("holds TWO turns in flight concurrently — a follow-up turn never clobbers the open bubble (spec 7.2)", () => {
     mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
     mock.emit("turn.text.delta", { turnId: "t-1", text: "first" });

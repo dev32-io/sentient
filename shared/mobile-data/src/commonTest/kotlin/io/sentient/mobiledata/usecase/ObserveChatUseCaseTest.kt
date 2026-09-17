@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -142,6 +143,96 @@ class ObserveChatUseCaseTest {
         assertTrue(models.last().committed.any { it.replyId == "r1" }, "historical row stays unrelated")
         job.cancel()
     }
+
+    @Test
+    fun turn_seed_identity_and_timestamp_survive_reply_adoption_and_committed_echo() =
+        runTest(UnconfinedTestDispatcher()) {
+            val repo = FakeConversationRepository()
+            var now = 59_500L
+            val models = mutableListOf<ChatModel>()
+            val observe = ObserveChatUseCase(repo, Clock { now })
+            val job = launch { observe(MutableStateFlow(emptyList())).collect { models.add(it) } }
+
+            // Actual wire-derived event order: turn.started has no reply id; first
+            // text delta stamps it and adopts the seeded placeholder.
+            repo.events.emit(SdkEvent.MessageStarted("t1"))
+            runCurrent()
+            val seed = models.last().live!!
+            assertEquals(59_500L, seed.ts)
+            assertEquals("presentation:turn:t1", seed.entryId)
+
+            now = 60_500L
+            repo.events.emit(SdkEvent.MessageDelta("t1", "x", replyId = "r1"))
+            runCurrent()
+            assertEquals(seed.ts, models.last().live?.ts)
+            assertEquals(seed.entryId, models.last().live?.entryId)
+            assertEquals("r1", models.last().live?.replyId)
+
+            now = 61_500L
+            repo.events.emit(SdkEvent.MessageDelta("t1", "y", replyId = "r1"))
+            runCurrent()
+            assertEquals(seed.ts, models.last().live?.ts)
+            assertEquals(seed.entryId, models.last().live?.entryId)
+
+            now = 62_500L
+            val committed = ChatMessage(
+                ts = now, role = "assistant", content = "xy", turnId = "t1", replyId = "r1",
+                entryId = "gateway-entry",
+            )
+            repo.timelineState.value = listOf(committed)
+            repo.events.emit(SdkEvent.MessageCommitted(committed))
+            runCurrent()
+            advanceTimeBy(16)
+            runCurrent()
+            now = 63_500L
+            advanceTimeBy(16)
+            runCurrent()
+
+            val echo = models.last().committed.single()
+            assertNull(models.last().live)
+            assertEquals(seed.ts, echo.ts)
+            assertEquals(seed.entryId, echo.entryId)
+            job.cancel()
+        }
+
+    @Test
+    fun zero_delta_failure_keeps_seed_identity_through_stamped_entry_and_completion() =
+        runTest(UnconfinedTestDispatcher()) {
+            val repo = FakeConversationRepository()
+            var now = 100L
+            val models = mutableListOf<ChatModel>()
+            val observe = ObserveChatUseCase(repo, Clock { now })
+            val job = launch { observe(MutableStateFlow(emptyList())).collect { models.add(it) } }
+
+            repo.events.emit(SdkEvent.MessageStarted("t1"))
+            runCurrent()
+            val seed = models.last().live!!
+
+            now = 200L
+            repo.events.emit(SdkEvent.MessageStarted("t1", replyId = "r1"))
+            val committed = ChatMessage(
+                ts = now,
+                role = "assistant",
+                content = "Something went wrong",
+                turnId = "t1",
+                replyId = "r1",
+                entryId = "gateway-entry",
+            )
+            repo.timelineState.value = listOf(committed)
+            runCurrent()
+            assertEquals(seed.ts, models.last().live?.ts)
+            assertEquals(seed.entryId, models.last().live?.entryId)
+            assertTrue(models.last().committed.isEmpty(), "stamped live twin suppresses only r1")
+
+            repo.events.emit(SdkEvent.MessageCommitted(committed))
+            advanceTimeBy(16)
+            runCurrent()
+            val completed = models.last().committed.single()
+            assertNull(models.last().live)
+            assertEquals(seed.ts, completed.ts)
+            assertEquals(seed.entryId, completed.entryId)
+            job.cancel()
+        }
 
     @Test
     fun pending_reconciled_by_live_echo() = runTest(UnconfinedTestDispatcher()) {

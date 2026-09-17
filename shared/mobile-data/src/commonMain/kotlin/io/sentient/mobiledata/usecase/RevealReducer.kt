@@ -42,6 +42,10 @@ data class RevealBubble(
     val fullContent: String,
     val revealed: Int,
     val phase: LivePhase,
+    /** Stable wall-clock identity captured when this bubble first appears. */
+    val startedAtMs: Long,
+    /** Stable render identity retained when a seeded turn adopts its first reply id. */
+    val presentationId: String,
     /**
      * WHICH BUBBLE this is, when the gateway names one. A ReAct turn produces
      * text more than once and it is ONE bubble that grew — except across a
@@ -63,6 +67,9 @@ data class RevealBubble(
 
 data class RevealState(
     val bubble: RevealBubble? = null,
+    /** Reply metadata survives reveal drain so committed projection keeps presentation stable. */
+    val startedAtByReplyId: Map<String, Long> = emptyMap(),
+    val presentationIdByReplyId: Map<String, String> = emptyMap(),
     val lastTickMs: Long = 0,
     /** Sub-character progress carried between ticks, in [0, 1). Without it a
      *  tick worth less than one whole character earns nothing and the reveal
@@ -85,7 +92,7 @@ data class RevealState(
  * and a reveal whose per-tick progress truncated to zero (see [RevealRate.earned]).
  */
 object RevealReducer {
-    fun reduce(s: RevealState, e: Any): RevealState = when (e) {
+    fun reduce(s: RevealState, e: Any, nowMs: Long = 0): RevealState = when (e) {
         // A new key REPLACES the live bubble rather than extending it. Two ways
         // in: a new turn, and — mid-turn — the gateway rotating the message id
         // because the person spoke. In the second case the stretch just dropped
@@ -96,18 +103,69 @@ object RevealReducer {
             if (s.bubble != null && s.bubble.key == (e.replyId ?: e.turnId)) {
                 s
             } else {
+                // A stamped zero-delta conversation entry names the untouched
+                // turn seed before completion. Adopt it exactly like the first
+                // stamped delta; later reply boundaries still open new bubbles.
+                val seed = s.bubble?.takeIf {
+                    e.replyId != null && it.replyId == null && it.turnId == e.turnId && it.fullContent.isEmpty()
+                }
+                val replyId = e.replyId
+                val startedAtMs = seed?.startedAtMs ?: replyId?.let { s.startedAtByReplyId[it] } ?: nowMs
+                val presentationId = seed?.presentationId ?: replyId?.let { s.presentationIdByReplyId[it] }
+                    ?: "presentation:${replyId?.let { "reply:$it" } ?: "turn:${e.turnId}"}"
                 s.copy(
-                    bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId),
+                    bubble = seed?.copy(replyId = replyId) ?: RevealBubble(
+                        e.turnId, "", 0, LivePhase.STREAMING, startedAtMs, presentationId, replyId,
+                    ),
+                    startedAtByReplyId = if (replyId != null && replyId !in s.startedAtByReplyId) {
+                        s.startedAtByReplyId + (replyId to startedAtMs)
+                    } else {
+                        s.startedAtByReplyId
+                    },
+                    presentationIdByReplyId = if (replyId != null &&
+                        replyId !in s.presentationIdByReplyId
+                    ) {
+                        s.presentationIdByReplyId + (replyId to presentationId)
+                    } else {
+                        s.presentationIdByReplyId
+                    },
                     revealCarry = 0.0,
                 )
             }
         is SdkEvent.MessageDelta -> {
             val key = e.replyId ?: e.turnId
-            // A delta for a bubble other than the live one opens it (a resume
-            // replay can deliver a delta before its MessageStarted).
-            val cur =
-                s.bubble?.takeIf { it.key == key } ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId)
-            s.copy(bubble = cur.copy(fullContent = cur.fullContent + e.chunk))
+            // First stamped delta adopts the keyless turn seed in place. Later
+            // reply ids in the same turn are distinct bubbles.
+            val existing = s.bubble?.takeIf { it.key == key }
+                ?: s.bubble?.takeIf {
+                    e.replyId != null && it.replyId == null && it.turnId == e.turnId
+                }
+            val replyId = e.replyId
+            val startedAtMs = existing?.startedAtMs
+                ?: replyId?.let { s.startedAtByReplyId[it] }
+                ?: nowMs
+            val presentationId = existing?.presentationId
+                ?: replyId?.let { s.presentationIdByReplyId[it] }
+                ?: "presentation:${replyId?.let { "reply:$it" } ?: "turn:${e.turnId}"}"
+            val cur = existing?.copy(replyId = replyId ?: existing.replyId)
+                ?: RevealBubble(
+                    e.turnId, "", 0, LivePhase.STREAMING, startedAtMs, presentationId, replyId,
+                )
+            s.copy(
+                bubble = cur.copy(fullContent = cur.fullContent + e.chunk),
+                startedAtByReplyId = if (replyId != null && replyId !in s.startedAtByReplyId) {
+                    s.startedAtByReplyId + (replyId to startedAtMs)
+                } else {
+                    s.startedAtByReplyId
+                },
+                presentationIdByReplyId = if (replyId != null &&
+                    replyId !in s.presentationIdByReplyId
+                ) {
+                    s.presentationIdByReplyId + (replyId to presentationId)
+                } else {
+                    s.presentationIdByReplyId
+                },
+            )
         }
         // Key-matched: a turn owning several bubbles commits each of them, and
         // only the one whose key (reply, or turn if it has none) still

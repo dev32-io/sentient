@@ -4,10 +4,9 @@ options:
   deploymentTarget:
     iOS: "18.0"
 packages:
-  # GFM markdown rendering for chat bubbles (SwiftUI-native), themed to Dusk.
+  # Pinned 2.4.1 with streaming identity fix; see Vendor/swift-markdown-ui/README.sentient.md.
   MarkdownUI:
-    url: https://github.com/gonzalezreal/swift-markdown-ui
-    from: "2.4.1"
+    path: Vendor/swift-markdown-ui
   RiveRuntime:
     url: https://github.com/rive-app/rive-ios
     exactVersion: "6.22.0"

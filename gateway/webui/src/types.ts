@@ -21,6 +21,8 @@ export interface ChatMessage {
   readonly replyId?: string;
   /** Present for user messages only — which input channel the message came in on. */
   readonly channel?: ConversationUserChannel;
+  /** Gateway-echoed idempotency key. Identifies this tab's explicit sends exactly. */
+  readonly pendingId?: string;
   /** Present for assistant messages that ended with a cutoff (barge-in or interrupt). */
   readonly cutoff?: ConversationAssistantCutoff;
 }

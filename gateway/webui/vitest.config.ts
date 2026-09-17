@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "jsdom",
+    setupFiles: ["./src/test-setup.ts"],
     // Root-level tests cover the static server (server.ts, tls.ts);
     // src/** covers the Preact client.
     include: ["src/**/*.test.{ts,tsx}", "*.test.ts"],

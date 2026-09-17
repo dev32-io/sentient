@@ -12,6 +12,8 @@ struct MessageList: View {
     var pending: [PendingMessage] = []
     var onRetry: (String) -> Void = { _ in }
     var historyLoading = false
+    /// Height covered by floating composer/task group while collection remains full-height.
+    var bottomOcclusion: CGFloat = 0
     /// `true` for a routed existing session, `false` for a new conversation.
     /// `nil` preserves legacy direct-call inference for previews and fixtures.
     var initialExistingHistory: Bool? = nil
@@ -36,6 +38,7 @@ struct MessageList: View {
                 historyLoading: historyLoading,
                 initialExistingHistory: initialExistingHistory,
                 playbackEnabled: playbackEnabled,
+                bottomOcclusion: bottomOcclusion,
                 environmentRevision: "\(dynamicTypeSize)|\(locale.identifier)|\(layoutDirection)",
                 imageLoader: imageLoader,
                 positionScheduler: positionScheduler,

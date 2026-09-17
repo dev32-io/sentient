@@ -100,20 +100,31 @@ class ObserveChatUseCase(
             // carrying its own replyId, so there is exactly one row to hide and no
             // reason to guess.
             val bubble = rs.bubble
+            val stableCommitted = committed.map { message ->
+                val replyId = message.replyId
+                val startedAt = replyId?.let { rs.startedAtByReplyId[it] }
+                val presentationId = replyId?.let { rs.presentationIdByReplyId[it] }
+                if (startedAt != null && presentationId != null) {
+                    message.copy(ts = startedAt, entryId = presentationId)
+                } else {
+                    message
+                }
+            }
             val visibleCommitted =
                 if (bubble?.replyId == null) {
-                    committed
+                    stableCommitted
                 } else {
-                    committed.filter { it.replyId != bubble.replyId }
+                    stableCommitted.filter { it.replyId != bubble.replyId }
                 }
             val liveBubble = rs.bubble?.let {
                 ChatMessage(
-                    ts = 0,
+                    ts = it.startedAtMs,
                     role = "assistant",
                     content = rs.visibleContent(),
                     streaming = true,
                     turnId = it.turnId,
                     replyId = it.replyId,
+                    entryId = it.presentationId,
                 )
             }
             ChatModel(
@@ -166,7 +177,7 @@ class ObserveChatUseCase(
         }
         return merge(conversation.liveEvents, ticks)
             .onEach { if (it is SdkEvent.SessionSwitched) log.info("conversation switch — reveal reset") }
-            .scan(RevealState()) { state, event -> RevealReducer.reduce(state, event) }
+            .scan(RevealState()) { state, event -> RevealReducer.reduce(state, event, clock.nowMs()) }
             .distinctUntilChanged()
     }
 }
