@@ -22,6 +22,7 @@
     "@sentient/protocol": "workspace:*",
     "@sentient/web-sdk": "workspace:*",
     "@sentient/wizard": "workspace:*",
+    "image-size": "^2.0.4",
     "isomorphic-dompurify": "^3.10.0",
     "marked": "^18.0.2",
     "ogg-opus-decoder": "^1.7.3",

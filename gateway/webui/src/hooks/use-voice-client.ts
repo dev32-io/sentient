@@ -6,7 +6,6 @@ import {
   type CognitionState,
   CognitionStatusConnector,
   type CommittedFeedItem,
-  type Connector,
   ConversationHistoryConnector,
   DelegationProgressConnector,
   type DelegationProgressItem,
@@ -18,16 +17,18 @@ import {
   PreferencesConnector,
   type SDKStatus,
   SentientSDK,
-  type SentientSDKInternal,
   SessionsConnector,
   TaskListConnector,
   UserAudioInputConnector,
+  UserTextInputConnector,
   createEchoGate,
   createLogger,
   createSessionsRest,
   createSpeechGate,
   createTurnAudioQueue,
   deriveRestBaseUrl,
+  getOrCreateSurfaceId,
+  setCurrentSessionId,
 } from "@sentient/web-sdk";
 import type { VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
@@ -90,25 +91,16 @@ const COMMAND_REJECTION_COPY: Readonly<Record<string, string>> = {
 };
 const COMMAND_REJECTION_FALLBACK = "That didn't go through. Please try again.";
 
+export interface CommandRejection {
+  readonly command: string;
+  readonly reason: string;
+  readonly message: string;
+  readonly pendingId?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Hook public interface
 // ---------------------------------------------------------------------------
-
-class LocalTextInputConnector implements Connector {
-  readonly capability = "text.input";
-  readonly kind = "input" as const;
-  private sdk: SentientSDKInternal | null = null;
-
-  attach(sdk: SentientSDKInternal): void {
-    this.sdk = sdk;
-  }
-  detach(): void {
-    this.sdk = null;
-  }
-  sendText(text: string, pendingId: string): void {
-    this.sdk?.send({ type: "text.input", text, pendingId });
-  }
-}
 
 export interface UseVoiceClientOptions {
   /** Override the default gateway URL. Defaults to `wss://<same origin>/api/v1/ws`. */
@@ -183,11 +175,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const sdkStatus = useSignal<SDKStatus>("disconnected");
   const connectionLost = useSignal(false);
   const authExpired = useSignal(false);
-  // The gateway REFUSED the last command this tab sent (gateway spec §3.7) —
-  // human-readable, or null once nothing is outstanding. There is no optimistic
-  // echo in this UI: a message that is refused simply never appears, so without
-  // surfacing this the person sees their text vanish and nothing else happens.
-  const commandRejection = useSignal<string | null>(null);
+  // The gateway REFUSED the last command this tab sent (gateway spec §3.7).
+  // Keep wire identity with copy so durable pending state can settle the exact
+  // message; null once the consumer has shown it.
+  const commandRejection = useSignal<CommandRejection | null>(null);
 
   const sdkStatusRef = useRef<SDKStatus>("disconnected");
   const cognitionRef = useRef<CognitionState>("idle");
@@ -203,9 +194,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const typewriterRef = useRef(typewriter);
   typewriterRef.current = typewriter;
 
+  const gatewayUrl = resolveGatewayUrl(options.wsUrl);
+  const surfaceId = useMemo(getOrCreateSurfaceId, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: options deps are stable per wsUrl/token
   const resources = useMemo(() => {
-    const gatewayUrl = resolveGatewayUrl(options.wsUrl);
     const audioPolicy = currentBrowserAudioPolicy();
     const capture = createWebAudioCapture({ audioPolicy });
     const playback = createWebAudioPlayback({ audioPolicy });
@@ -440,7 +432,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       });
     }
 
-    const textInputConnector = new LocalTextInputConnector();
+    const textInputConnector = new UserTextInputConnector();
 
     let activeCaptureId: string | null = null;
     let captureAcceptingStarts = true;
@@ -604,9 +596,15 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     // SessionsConnector can share the same REST client instance. The REST client
     // only needs the gateway base URL + token, both available at this point.
     const restBaseUrl = deriveRestBaseUrl(gatewayUrl);
+    const accountRequests = new AbortController();
     const sessionsRest = createSessionsRest({
       baseUrl: restBaseUrl,
       token: () => options.token,
+      fetchFn: ((input, init = {}) =>
+        fetch(input, {
+          ...init,
+          signal: init.signal ? AbortSignal.any([init.signal, accountRequests.signal]) : accountRequests.signal,
+        })) as typeof globalThis.fetch,
     });
 
     // Committed conversation + live streaming bubble come from two connectors.
@@ -782,9 +780,17 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         log.warn("auth-expired (gateway rejected token on reconnect)");
         authExpired.value = true;
       },
-      onCommandRejected: ({ command, reason }) => {
-        log.warn("command-rejected", { command, reason });
-        commandRejection.value = COMMAND_REJECTION_COPY[reason] ?? COMMAND_REJECTION_FALLBACK;
+      onCommandRejected: ({ command, reason, pendingId }) => {
+        log.warn("command-rejected", { command, reason, pendingId });
+        if (pendingId !== undefined) {
+          localSendIds.value = localSendIds.peek().filter((id) => id !== pendingId);
+        }
+        commandRejection.value = {
+          command,
+          reason,
+          message: COMMAND_REJECTION_COPY[reason] ?? COMMAND_REJECTION_FALLBACK,
+          ...(pendingId === undefined ? {} : { pendingId }),
+        };
       },
     });
     const sessionsConnector = new SessionsConnector({ rest: sessionsRest });
@@ -931,6 +937,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       cancelCapture: (captureId: string) => finishCapture(captureId, "cancel"),
       cancelCaptureForTeardown,
       cleanup() {
+        accountRequests.abort();
         cancelPendingFalse();
         unsubCapture();
         unsubCaptureError();
@@ -1062,7 +1069,20 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     },
     commitCapture: (captureId: string) => resources.commitCapture(captureId),
     cancelCapture: (captureId: string) => resources.cancelCapture(captureId),
-    sendText: (text: string) => {
+    gatewayUrl,
+    surfaceId,
+    isConnectionBoundTo: (targetId: string, pendingSurfaceId?: string) =>
+      sdkStatusRef.current === "ready" &&
+      (pendingSurfaceId === undefined || resources.sdk.currentSurfaceId() === pendingSurfaceId) &&
+      (targetId.startsWith("d_")
+        ? resources.sdk.boundSessionId() === null
+        : resources.sdk.boundSessionId() === targetId),
+    recoverPendingRoute: (routeId: string, surfaceId: string) => resources.sdk.recoverPendingRoute(routeId, surfaceId),
+    routeDraft: (draftKey: string) => {
+      setCurrentSessionId(draftKey);
+      resources.sdk.forceReconnect();
+    },
+    sendText: (text: string, suppliedPendingId?: string, attachmentIds?: readonly string[]) => {
       // TTS-expecting action: the gateway will reply with audio. Unlock
       // synchronously inside this onClick frame so the AudioContext is
       // constructed during a `click` event (the only activation-eligible
@@ -1071,10 +1091,11 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       // Arm the Interrupt bridge from the moment Send is clicked.
       // The awaiting-tracker handles its own disarm transitions.
       resources.awaiting.arm();
-      const pendingId = globalThis.crypto.randomUUID();
-      localSendIds.value = [...localSendIds.peek(), pendingId];
-      resources.textInputConnector.sendText(text, pendingId);
+      const pendingId = suppliedPendingId ?? globalThis.crypto.randomUUID();
+      if (!localSendIds.peek().includes(pendingId)) localSendIds.value = [...localSendIds.peek(), pendingId];
+      resources.textInputConnector.sendText(text, pendingId, attachmentIds);
       resources.refreshStatus();
+      return pendingId;
     },
     /**
      * Hard interrupt. UI button + Escape key both call this. Idempotent —

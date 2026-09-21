@@ -14,7 +14,8 @@ class SdkConversationRepository(private val sdk: SentientSdk) : ConversationRepo
     override val timeline: StateFlow<List<ChatMessage>> get() = sdk.timeline
     override val tasks: StateFlow<List<TaskListItem>> get() = sdk.tasks
     override val liveEvents: SharedFlow<SdkEvent> get() = sdk.events
-    override fun send(text: String, pendingId: String) = sdk.sendText(text, pendingId)
+    override fun send(text: String, pendingId: String, attachmentIds: List<String>) =
+        sdk.sendText(text, pendingId, attachmentIds)
 
     /**
      * Accumulating fold of every pendingId carried on a committed entry of the SDK's

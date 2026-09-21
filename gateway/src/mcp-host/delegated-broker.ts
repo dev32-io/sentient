@@ -123,6 +123,10 @@ function unusedStore(): SessionStore {
     getSession: refuse,
     listSessionsWithMetadata: refuse,
     setTitle: refuse,
+    deleteSession: refuse,
+    listRetentionCandidates: refuse,
+    listFileCleanupIntents: refuse,
+    ackFileCleanupIntent: refuse,
     close: () => {},
   };
 }

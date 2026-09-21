@@ -32,6 +32,8 @@ export interface SessionMetadata {
   sessionId: string;
   createdAt: number;
   updatedAt: number;
+  /** Last accepted user or assistant conversation entry; title writes do not change it. */
+  lastActivityAt: number | null;
   title: string | null;
   titleProvenance: TitleProvenance | null;
   /** Bumped on every title write. The CAS token. */
@@ -51,6 +53,14 @@ export class MintKeyConflictError extends Error {
   constructor(readonly mintKey: string) {
     super(`mint key already claimed by an existing session: ${mintKey}`);
     this.name = "MintKeyConflictError";
+  }
+}
+
+/** Permanent store fence: deleted session ids and their old mint keys cannot be reused. */
+export class DeletedSessionError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`session was deleted: ${sessionId}`);
+    this.name = "DeletedSessionError";
   }
 }
 
@@ -91,6 +101,7 @@ interface SessionRow {
   session_id: string;
   created_at: number;
   updated_at: number;
+  last_activity_at: number | null;
   title: string | null;
   title_provenance: string | null;
   version: number;
@@ -109,6 +120,7 @@ function toMetadata(row: SessionRow): SessionMetadata {
     sessionId: row.session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastActivityAt: row.last_activity_at,
     title: row.title,
     titleProvenance: row.title_provenance as TitleProvenance | null,
     version: row.version,
@@ -138,9 +150,10 @@ function toMetadata(row: SessionRow): SessionMetadata {
 const SQLITE_CONSTRAINT_UNIQUE = "SQLITE_CONSTRAINT_UNIQUE";
 
 export function createSessionMetadataOps(db: Database, userId: string): SessionMetadataOps {
-  const insertSession = db.query<SessionRow, [string, string, number, number]>(`
+  const insertSession = db.query<SessionRow, [string, string, number, number, string, string]>(`
     INSERT INTO sessions (session_id, mint_key, created_at, updated_at, title, title_provenance, version)
-    VALUES (?, ?, ?, ?, NULL, NULL, 1)
+    SELECT ?, ?, ?, ?, NULL, NULL, 1
+    WHERE NOT EXISTS (SELECT 1 FROM deleted_sessions WHERE session_id = ? OR mint_key = ?)
     RETURNING *
   `);
   const selectByMintKey = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE mint_key = ?");
@@ -180,8 +193,8 @@ export function createSessionMetadataOps(db: Database, userId: string): SessionM
     createSession(sessionId, mintKey) {
       const now = Date.now();
       try {
-        const row = insertSession.get(sessionId, mintKey, now, now);
-        if (!row) throw new Error("createSession returned no row");
+        const row = insertSession.get(sessionId, mintKey, now, now, sessionId, mintKey);
+        if (!row) throw new DeletedSessionError(sessionId);
         log.info("session.metadata.created", { userId, sessionId, mintKey });
         return toMetadata(row);
       } catch (err: unknown) {

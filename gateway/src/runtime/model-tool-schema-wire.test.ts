@@ -126,7 +126,6 @@ describe("model tool schema wire", () => {
           timeZone: { zone: () => "UTC" },
           systemPrompt: "test",
           sessionId: "schema-wire",
-          config: { max_iterations: 2 },
           requestTimeoutMs: 30_000,
           onTextDelta: () => {},
           onToolUpdate: () => {},

@@ -8,6 +8,7 @@
 // live commits and replay — that single-path property is what makes the
 // convergence contract (projection-convergence.test.ts) hold.
 
+import type { AttachmentRef } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { CutoffKind, SessionEntry } from "./entry-types.js";
 import { unscopePendingId } from "./pending-id-scope.js";
@@ -29,8 +30,11 @@ export interface FeedItem {
    *  optimistic bubble — on the live entry AND on every later snapshot, which
    *  is what keeps `render(replay) == render(live)` true of it. */
   pendingId: string | null;
+  /** Authoritative owning session, preserved through live and REST projections. */
+  sessionId: string;
   /** The reply this item belongs to; null on user/trigger items. */
   replyId: string | null;
+  attachments: readonly AttachmentRef[];
 }
 
 export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
@@ -118,7 +122,9 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
       // what keeps the live entry and every later snapshot saying the same
       // thing.
       pendingId: entry.pendingId === null ? null : unscopePendingId(entry.pendingId),
+      sessionId: entry.sessionId,
       replyId: entry.replyId,
+      attachments: entry.attachments ?? [],
     });
   }
 

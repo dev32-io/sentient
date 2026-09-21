@@ -25,6 +25,16 @@ func parsedKeyboardAnimationTiming(from notification: Notification) -> KeyboardA
     )
 }
 
+func rowAttachmentPreviews(
+    ownedBy row: MessageChronologyRow,
+    from previews: [String: UIImage]
+) -> [String: UIImage] {
+    guard case let .message(message, _, _) = row else { return [:] }
+    return Dictionary(uniqueKeysWithValues: message.attachments.compactMap { attachment in
+        previews[attachment.attachmentId].map { (attachment.attachmentId, $0) }
+    })
+}
+
 struct MessageCollectionView: UIViewRepresentable {
     let rows: [MessageLayoutRow]
     let messageCount: Int
@@ -34,9 +44,16 @@ struct MessageCollectionView: UIViewRepresentable {
     let playbackEnabled: Bool
     let bottomOcclusion: CGFloat
     let environmentRevision: String
+    let attachmentPreviews: [String: UIImage]
+    let attachmentPreviewFailures: Set<String>
+    let attachmentFiles: [String: URL]
+    let attachmentDownloadFailures: Set<String>
     let imageLoader: any NetworkImageLoader
     let positionScheduler: MessagePositionScheduler
     let onRetry: (String) -> Void
+    let onPreviewAttachment: (String) -> Void
+    let onRetryAttachmentUpload: (String) -> Void
+    let onVisibleAttachmentPreviewIdsChange: (Set<String>) -> Void
     let onMeasurementLoadingChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -86,7 +103,14 @@ struct MessageCollectionView: UIViewRepresentable {
             bottomOcclusion: bottomOcclusion,
             reduceMotion: context.environment.accessibilityReduceMotion,
             environmentRevision: environmentRevision,
+            attachmentPreviews: attachmentPreviews,
+            attachmentPreviewFailures: attachmentPreviewFailures,
+            attachmentFiles: attachmentFiles,
+            attachmentDownloadFailures: attachmentDownloadFailures,
             onRetry: onRetry,
+            onPreviewAttachment: onPreviewAttachment,
+            onRetryAttachmentUpload: onRetryAttachmentUpload,
+            onVisibleAttachmentPreviewIdsChange: onVisibleAttachmentPreviewIdsChange,
             onMeasurementLoadingChange: onMeasurementLoadingChange,
             in: view
         )
@@ -107,11 +131,32 @@ struct MessageCollectionView: UIViewRepresentable {
         private var reduceMotion = false
         private var environmentRevision = ""
         private var onRetry: (String) -> Void = { _ in }
+        private var onPreviewAttachment: (String) -> Void = { _ in }
+        private var onRetryAttachmentUpload: (String) -> Void = { _ in }
+        private var onVisibleAttachmentPreviewIdsChange: (Set<String>) -> Void = { _ in }
+        private var lastVisibleAttachmentPreviewIds: Set<String> = []
+        private var attachmentPreviews: [String: UIImage] = [:]
+        private var attachmentPreviewFailures: Set<String> = []
+        private var attachmentFiles: [String: URL] = [:]
+        private var attachmentDownloadFailures: Set<String> = []
         private var onMeasurementLoadingChange: (Bool) -> Void = { _ in }
-        private var heightCache: [String: CGFloat] = [:]
-        private var pendingRenderedHeights: [String: (key: String, height: CGFloat)] = [:]
+
+        private enum HeightSource {
+            case nativeEstimate
+            case webKitExact
+        }
+
+        private struct CachedHeight {
+            let height: CGFloat
+            let source: HeightSource
+        }
+
+        private var heightCache: [String: CachedHeight] = [:]
+        private var pendingRenderedHeights: [String: (key: String, height: CGFloat, source: HeightSource, configurationToken: Int)] = [:]
         private var heightUpdateScheduled = false
         private var generation = 0
+        // Cell-local counts collide after recycling; callbacks need coordinator-wide identity.
+        private var configurationGeneration = 0
         private var measurementTask: Task<Void, Never>?
         private var signature = ""
         private var publishedSizingContext = ""
@@ -163,7 +208,14 @@ struct MessageCollectionView: UIViewRepresentable {
             bottomOcclusion: CGFloat,
             reduceMotion: Bool,
             environmentRevision: String,
+            attachmentPreviews: [String: UIImage],
+            attachmentPreviewFailures: Set<String>,
+            attachmentFiles: [String: URL],
+            attachmentDownloadFailures: Set<String>,
             onRetry: @escaping (String) -> Void,
+            onPreviewAttachment: @escaping (String) -> Void,
+            onRetryAttachmentUpload: @escaping (String) -> Void,
+            onVisibleAttachmentPreviewIdsChange: @escaping (Set<String>) -> Void,
             onMeasurementLoadingChange: @escaping (Bool) -> Void,
             in collectionView: MessageUICollectionView
         ) {
@@ -173,7 +225,14 @@ struct MessageCollectionView: UIViewRepresentable {
             self.playbackEnabled = playbackEnabled
             self.reduceMotion = reduceMotion
             self.environmentRevision = environmentRevision
+            self.attachmentPreviews = attachmentPreviews
+            self.attachmentPreviewFailures = attachmentPreviewFailures
+            self.attachmentFiles = attachmentFiles
+            self.attachmentDownloadFailures = attachmentDownloadFailures
             self.onRetry = onRetry
+            self.onPreviewAttachment = onPreviewAttachment
+            self.onRetryAttachmentUpload = onRetryAttachmentUpload
+            self.onVisibleAttachmentPreviewIdsChange = onVisibleAttachmentPreviewIdsChange
             self.onMeasurementLoadingChange = onMeasurementLoadingChange
             collectionView.setBottomOcclusion(bottomOcclusion)
             let historyFinished = previousHistoryLoading && !historyLoading
@@ -277,7 +336,7 @@ struct MessageCollectionView: UIViewRepresentable {
         /// This bootstrap is never cached as an exact measurement. Unseen rows and
         /// changed layout environments still require exact sizing before publication.
         private func displayHeight(for row: MessageLayoutRow, in view: UICollectionView) -> CGFloat? {
-            if let height = heightCache[cacheKey(for: row, in: view)] { return height }
+            if let height = heightCache[cacheKey(for: row, in: view)]?.height { return height }
             guard !previousHistoryLoading, !pendingInitialHistoryPosition,
                   publishedSizingContext == sizingContext(in: view),
                   let index = displayedRows.firstIndex(where: { $0.id == row.id }),
@@ -314,9 +373,14 @@ struct MessageCollectionView: UIViewRepresentable {
                         row: row,
                         messageCount: messageCount,
                         paneWidth: collectionView.bounds.width,
-                        userName: userName
+                        userName: userName,
+                        attachmentPreviews: rowAttachmentPreviews(ownedBy: row.row, from: attachmentPreviews),
+                        attachmentPreviewFailures: attachmentPreviewFailures
                     )
-                    heightCache[cacheKey(for: row, in: collectionView)] = height
+                    heightCache[cacheKey(for: row, in: collectionView)] = CachedHeight(
+                        height: height,
+                        source: .nativeEstimate
+                    )
                     if index.isMultiple(of: 8) { await Task.yield() }
                 }
                 guard !Task.isCancelled, currentGeneration == generation,
@@ -675,11 +739,29 @@ struct MessageCollectionView: UIViewRepresentable {
 
         func collectionView(
             _ collectionView: UICollectionView,
+            willDisplay cell: UICollectionViewCell,
+            forItemAt indexPath: IndexPath
+        ) {
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                self.publishVisibleAttachmentPreviewIds(in: collectionView)
+            }
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
             didEndDisplaying cell: UICollectionViewCell,
             forItemAt indexPath: IndexPath
         ) {
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                self.publishVisibleAttachmentPreviewIds(in: collectionView)
+            }
             guard let cell = cell as? MessageHostingCell,
-                  let key = cell.measurementKey, heightCache[key] == nil else { return }
+                  collectionView.indexPath(for: cell) == nil else { return }
+            let key = cell.measurementKey
+            cell.clearContent()
+            guard let key, heightCache[key] == nil else { return }
             // A rapid drag can recycle a revised cell before its geometry report.
             // Finish exact sizing if it is still unseen after queued reports apply.
             DispatchQueue.main.async { [weak self, weak collectionView] in
@@ -694,6 +776,8 @@ struct MessageCollectionView: UIViewRepresentable {
             let row = displayedRows[index]
             let key = cacheKey(for: row, in: collectionView)
             let playback = avatarPlaybackEnabled(for: index, in: collectionView)
+            configurationGeneration += 1
+            let configurationToken = configurationGeneration
             cell.accessibilityIdentifier = row.accessibilityIdentifier
             cell.set(rootView: AnyView(MessageRowLayout(
                 row: row.row,
@@ -704,20 +788,73 @@ struct MessageCollectionView: UIViewRepresentable {
                 avatarPlaybackEnabled: playback,
                 measurement: false,
                 imageCache: imageCache,
+                attachmentPreviews: rowAttachmentPreviews(ownedBy: row.row, from: attachmentPreviews),
+                attachmentPreviewFailures: attachmentPreviewFailures,
+                pendingAttachments: row.pendingAttachments,
+                pendingAttachmentPreviews: row.pendingAttachmentPreviews,
+                pendingAttachmentTransfers: row.pendingAttachmentTransfers,
                 onRetry: { [weak self] id in self?.onRetry(id) },
+                onPreviewAttachment: { [weak self] id in self?.onPreviewAttachment(id) },
+                onRetryAttachmentUpload: { [weak self] id in self?.onRetryAttachmentUpload(id) },
                 heightRevision: key,
                 onHeightChange: { [weak self] height in
-                    self?.renderedHeightDidChange(height, rowID: row.id, key: key)
+                    self?.nativeHeightDidChange(
+                        height, rowID: row.id, key: key, configurationToken: configurationToken
+                    )
+                },
+                onRenderedHeightChange: { [weak self] height in
+                    self?.renderedHeightDidChange(
+                        height, rowID: row.id, key: key, configurationToken: configurationToken
+                    )
                 }
             )), avatarPlaybackEnabled: playback,
-                configurationKey: configurationKey(for: row, in: collectionView), measurementKey: key)
+                configurationKey: configurationKey(for: row, in: collectionView), measurementKey: key,
+                configurationToken: configurationToken)
         }
 
-        private func renderedHeightDidChange(_ height: CGFloat, rowID: String, key: String) {
+        private func nativeHeightDidChange(
+            _ height: CGFloat,
+            rowID: String,
+            key: String,
+            configurationToken: Int
+        ) {
+            heightDidChange(
+                height, rowID: rowID, key: key, source: .nativeEstimate,
+                configurationToken: configurationToken
+            )
+        }
+
+        private func renderedHeightDidChange(
+            _ height: CGFloat,
+            rowID: String,
+            key: String,
+            configurationToken: Int
+        ) {
+            heightDidChange(
+                height, rowID: rowID, key: key, source: .webKitExact,
+                configurationToken: configurationToken
+            )
+        }
+
+        private func heightDidChange(
+            _ height: CGFloat,
+            rowID: String,
+            key: String,
+            source: HeightSource,
+            configurationToken: Int
+        ) {
             guard height.isFinite, height > 0, let collectionView,
-                  let row = displayedRows.first(where: { $0.id == rowID }),
-                  cacheKey(for: row, in: collectionView) == key else { return }
-            pendingRenderedHeights[rowID] = (key, height)
+                  let rowIndex = displayedRows.firstIndex(where: { $0.id == rowID }),
+                  collectionView.indexPathsForVisibleItems.contains(IndexPath(item: rowIndex, section: 0)),
+                  let cell = collectionView.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? MessageHostingCell,
+                  cell.configurationToken == configurationToken,
+                  cell.measurementKey == key,
+                  cacheKey(for: displayedRows[rowIndex], in: collectionView) == key else { return }
+            if let cached = heightCache[key],
+               cached.source == .webKitExact, source == .nativeEstimate { return }
+            if let existing = pendingRenderedHeights[rowID],
+               existing.source == .webKitExact, source == .nativeEstimate { return }
+            pendingRenderedHeights[rowID] = (key, height, source, configurationToken)
             guard !heightUpdateScheduled else { return }
             heightUpdateScheduled = true
             // Geometry callbacks run during SwiftUI layout. Apply their latest values
@@ -735,10 +872,17 @@ struct MessageCollectionView: UIViewRepresentable {
             var changed = false
             for (index, row) in displayedRows.enumerated() {
                 guard heights.indices.contains(index), let report = pending[row.id],
-                      report.key == cacheKey(for: row, in: collectionView) else { continue }
-                // Even an equal-height revision needs an exact cache entry before
-                // recycling; the previous revision's height was only a bootstrap.
-                heightCache[report.key] = report.height
+                      report.key == cacheKey(for: row, in: collectionView),
+                      collectionView.indexPathsForVisibleItems.contains(IndexPath(item: index, section: 0)),
+                      let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageHostingCell,
+                      cell.measurementKey == report.key,
+                      cell.configurationToken == report.configurationToken else { continue }
+                // Native geometry is an estimate for committed rich text. Only the
+                // mounted WebKit callback earns the exact-rendered cache source.
+                heightCache[report.key] = CachedHeight(
+                    height: report.height,
+                    source: report.source
+                )
                 if abs(heights[index] - report.height) > 1 / scale {
                     heights[index] = report.height
                     changed = true
@@ -769,7 +913,10 @@ struct MessageCollectionView: UIViewRepresentable {
             ownedSendPlacement = 0
         }
 
-        func scrollViewDidScroll(_ scrollView: UIScrollView) { updateAvatarPlayback() }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            updateAvatarPlayback()
+            if let collectionView { publishVisibleAttachmentPreviewIds(in: collectionView) }
+        }
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             retireTailAtRest(in: scrollView)
             updateAvatarPlayback()
@@ -797,6 +944,20 @@ struct MessageCollectionView: UIViewRepresentable {
             layout?.tailHeight = required
             layout?.invalidateLayout()
             scrollView.layoutIfNeeded()
+        }
+
+        private func publishVisibleAttachmentPreviewIds(in collectionView: UICollectionView) {
+            let ids = Set(collectionView.indexPathsForVisibleItems.flatMap { indexPath -> [String] in
+                guard displayedRows.indices.contains(indexPath.item),
+                      case let .message(message, _, _) = displayedRows[indexPath.item].row else { return [] }
+                return message.attachments.compactMap { attachment in
+                    attachment.mediaKind == "image" || attachment.mediaKind == "pdf"
+                        ? attachment.attachmentId : nil
+                }
+            })
+            guard ids != lastVisibleAttachmentPreviewIds else { return }
+            lastVisibleAttachmentPreviewIds = ids
+            onVisibleAttachmentPreviewIdsChange(ids)
         }
 
         private func updateAvatarPlayback(refreshContent: Bool = false) {
@@ -986,6 +1147,7 @@ final class MessageHostingCell: UICollectionViewCell {
     private let host = UIHostingController(rootView: AnyView(EmptyView()))
     private(set) var avatarPlaybackEnabled = false
     private(set) var configurationCount = 0
+    private(set) var configurationToken = 0
     private(set) var configurationKey: String?
     private(set) var measurementKey: String?
 
@@ -1006,18 +1168,30 @@ final class MessageHostingCell: UICollectionViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        clearContent()
+    }
+
+    func clearContent() {
         accessibilityIdentifier = nil
         alpha = 1
         transform = .identity
         avatarPlaybackEnabled = false
+        configurationToken = 0
         configurationKey = nil
         measurementKey = nil
         host.rootView = AnyView(EmptyView())
     }
 
-    func set(rootView: AnyView, avatarPlaybackEnabled: Bool, configurationKey: String, measurementKey: String) {
+    func set(
+        rootView: AnyView,
+        avatarPlaybackEnabled: Bool,
+        configurationKey: String,
+        measurementKey: String,
+        configurationToken: Int = 0
+    ) {
         self.configurationKey = configurationKey
         self.measurementKey = measurementKey
+        self.configurationToken = configurationToken
         self.avatarPlaybackEnabled = avatarPlaybackEnabled
         configurationCount += 1
         // SwiftUI otherwise centers a taller intrinsic row in the old cell bounds
@@ -1046,7 +1220,9 @@ private final class MessageRowMeasurer {
         row: MessageLayoutRow,
         messageCount: Int,
         paneWidth: CGFloat,
-        userName: String
+        userName: String,
+        attachmentPreviews: [String: UIImage],
+        attachmentPreviewFailures: Set<String>
     ) -> CGFloat {
         onMeasure()
         host.rootView = AnyView(MessageRowLayout(
@@ -1058,7 +1234,14 @@ private final class MessageRowMeasurer {
             avatarPlaybackEnabled: false,
             measurement: true,
             imageCache: imageCache,
-            onRetry: { _ in }
+            attachmentPreviews: attachmentPreviews,
+            attachmentPreviewFailures: attachmentPreviewFailures,
+            pendingAttachments: row.pendingAttachments,
+            pendingAttachmentPreviews: row.pendingAttachmentPreviews,
+            pendingAttachmentTransfers: row.pendingAttachmentTransfers,
+            onRetry: { _ in },
+            onPreviewAttachment: { _ in },
+            onRetryAttachmentUpload: { _ in }
         ))
         host.view.frame = CGRect(x: -10_000, y: 0, width: paneWidth, height: 1)
         host.view.setNeedsLayout()
@@ -1068,6 +1251,8 @@ private final class MessageRowMeasurer {
         host.view.bounds.size = CGSize(width: paneWidth, height: first.height)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
-        return host.sizeThatFits(in: proposal).height
+        let height = host.sizeThatFits(in: proposal).height
+        host.rootView = AnyView(EmptyView())
+        return height
     }
 }

@@ -24,15 +24,19 @@ function card(index: number): ScheduledSessionCard {
 function sessions(ok = true): UseSessions {
   return {
     items: signal([]),
+    drafts: signal([]),
     searchHits: signal(null),
     loading: signal(false),
     error: signal(null),
+    deleteFailureCount: signal(0),
     currentId: signal(null),
     load: vi.fn(),
     search: vi.fn(),
     switchTo: vi.fn().mockResolvedValue(ok),
+    openDraft: vi.fn().mockResolvedValue(ok),
     newChat: vi.fn(),
     delete: vi.fn(),
+    retryFailedDeletes: vi.fn(),
     rename: vi.fn(),
     dispose: vi.fn(),
   };

@@ -13,17 +13,21 @@ function sessionsFixture(): UseSessions {
   const searchHits = signal<SessionRow[] | null>(null);
   return {
     items: signal([{ sessionId: "session-1", rootId: "session-1", title: "Earlier chat", startedAt: Date.now(), lastActiveAt: Date.now(), messageCount: 2, isActive: true }]),
+    drafts: signal([]),
     searchHits,
     loading: signal(false),
     error: signal(null),
+    deleteFailureCount: signal(0),
     currentId: signal(null),
     load: vi.fn().mockResolvedValue(undefined),
     search: vi.fn(async (q: string) => {
       if (!q.trim()) searchHits.value = null;
     }),
     switchTo: vi.fn().mockResolvedValue(true),
+    openDraft: vi.fn().mockResolvedValue(true),
     newChat: vi.fn().mockResolvedValue(true),
     delete: vi.fn().mockResolvedValue(undefined),
+    retryFailedDeletes: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
   };
@@ -77,7 +81,7 @@ describe("History drawer", () => {
     expect(sessions.load).toHaveBeenCalledTimes(2);
   });
 
-  it("derives checking from the authoritative refresh signal and disables retry", async () => {
+  it("keeps populated history silent and visible during refresh", async () => {
     const sessions = sessionsFixture();
     sessions.loading.value = true;
     render(
@@ -87,10 +91,58 @@ describe("History drawer", () => {
     );
 
     await waitFor(() => expect(sessions.load).toHaveBeenCalledOnce());
-    const banner = screen.getByRole("alert");
-    expect(banner.getAttribute("data-state")).toBe("checking");
-    expect((screen.getByRole("button", { name: "Checking…" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(sessions.items.value).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Earlier chat" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("Loading past chats")).toBeNull();
+    expect(screen.queryByText("Checking…")).toBeNull();
+  });
+
+  it("keeps existing keyed rows while announcing canonical additions", async () => {
+    const sessions = sessionsFixture();
+    render(
+      <SessionsProvider value={sessions}>
+        <Drawer open onClose={() => {}} />
+      </SessionsProvider>,
+    );
+    const existing = screen.getByRole("button", { name: "Earlier chat" }).closest(".session-row");
+
+    sessions.items.value = [
+      { sessionId: "session-2", rootId: "session-2", title: "Newly synced", startedAt: Date.now(), lastActiveAt: Date.now(), messageCount: 1, isActive: false },
+      ...sessions.items.value,
+    ];
+
+    const inserted = await screen.findByRole("button", { name: "Newly synced" });
+    expect(inserted.closest(".session-row")?.classList.contains("session-row--inserted")).toBe(true);
+    expect(screen.getByRole("button", { name: "Earlier chat" }).closest(".session-row")).toBe(existing);
+    expect(screen.getByText("1 new chat loaded")).toBeTruthy();
+  });
+
+  it("does not announce or animate rows newly exposed by search", async () => {
+    const sessions = sessionsFixture();
+    render(<SessionsProvider value={sessions}><Drawer open onClose={() => {}} /></SessionsProvider>);
+
+    sessions.searchHits.value = [
+      { sessionId: "search-hit", rootId: "search-hit", title: "Search result", startedAt: Date.now(), lastActiveAt: Date.now(), messageCount: 1, isActive: false },
+    ];
+
+    const hit = await screen.findByRole("button", { name: "Search result" });
+    expect(hit.closest(".session-row")?.classList.contains("session-row--inserted")).toBe(false);
+    expect(screen.queryByText(/new chat(?:s)? loaded/)).toBeNull();
+  });
+
+  it("announces and animates the first canonical row inserted after empty history", async () => {
+    const sessions = sessionsFixture();
+    sessions.items.value = [];
+    render(<SessionsProvider value={sessions}><Drawer open onClose={() => {}} /></SessionsProvider>);
+    expect(screen.getByText("No past chats yet.")).toBeTruthy();
+
+    sessions.items.value = [
+      { sessionId: "first", rootId: "first", title: "First synced chat", startedAt: Date.now(), lastActiveAt: Date.now(), messageCount: 1, isActive: false },
+    ];
+
+    const first = await screen.findByRole("button", { name: "First synced chat" });
+    expect(first.closest(".session-row")?.classList.contains("session-row--inserted")).toBe(true);
+    expect(screen.getByText("1 new chat loaded")).toBeTruthy();
   });
 
   it("keeps every closed drawer control out of sequential keyboard navigation", async () => {
@@ -183,6 +235,26 @@ describe("History drawer", () => {
     expect(document.activeElement).toBe(search);
   });
 
+  it("merges selectable local drafts without inventing server rows", async () => {
+    const sessions = sessionsFixture();
+    sessions.items.value = [];
+    sessions.drafts.value = [{
+      id: "d_local",
+      sessionId: null,
+      text: "Synthetic offline thought",
+      attachments: [],
+      revision: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }];
+    render(<SessionsProvider value={sessions}><Drawer open onClose={() => {}} /></SessionsProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Synthetic offline thought — Draft" }));
+    await waitFor(() => expect(sessions.openDraft).toHaveBeenCalledWith("d_local"));
+    expect(sessions.items.value).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Chat options" })).toBeNull();
+  });
+
   it("restores prior sessions and starts a new chat through the existing session actions", async () => {
     const sessions = sessionsFixture();
     render(<Harness sessions={sessions} />);
@@ -198,12 +270,14 @@ describe("History drawer", () => {
     expect(sessions.newChat).toHaveBeenCalledOnce();
   });
 
-  it("marks the current row accessibly without exposing unavailable actions", () => {
+  it("marks the current row accessibly and exposes delete without unsupported rename", () => {
     const sessions = sessionsFixture();
     sessions.currentId.value = "session-1";
     render(<SessionsProvider value={sessions}><Drawer open onClose={() => {}} /></SessionsProvider>);
     expect(screen.getByRole("button", { name: "Earlier chat Current" }).getAttribute("aria-current")).toBe("true");
-    expect(screen.queryByRole("button", { name: "Chat options" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Chat options" }));
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
   });
 
   it.each(["Earlier chat", "New chat"])("guards %s before effects, blocks duplicates and navigates only after success", async (label) => {

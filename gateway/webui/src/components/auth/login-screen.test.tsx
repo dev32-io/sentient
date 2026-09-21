@@ -26,7 +26,7 @@ const status = () => screen.getByLabelText("auth state").textContent;
 const keypadState = () => screen.getByLabelText("PIN keypad").closest(".snt-pin-keypad")?.getAttribute("data-state");
 function expectStored(token: string | null) {
   for (const store of [sessionStorage, localStorage]) {
-    expect(store.getItem(AUTH_STORAGE_KEY)).toBe(token ? JSON.stringify({ token }) : null);
+    expect(store.getItem(AUTH_STORAGE_KEY)).toBe(token ? JSON.stringify({ token, user }) : null);
   }
 }
 function Harness({ api }: { api: AuthApi }) {

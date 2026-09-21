@@ -242,7 +242,10 @@ export interface NativeToolRunner {
    *  error, not an authorization question, and prompting to confirm a write
    *  that would be rejected anyway trains the user to click through. */
   validate?(args: Record<string, unknown>): ToolResult | null;
-  run(args: Record<string, unknown>, ctx: { signal: AbortSignal }): Promise<ToolResult>;
+  run(
+    args: Record<string, unknown>,
+    ctx: { signal: AbortSignal; attachmentVisionRoute?: ToolInvocation["attachmentVisionRoute"] },
+  ): Promise<ToolResult>;
 }
 
 /** The settled outcome of a background tool run, handed to whatever sink
@@ -865,7 +868,10 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   async function dispatchNative(inv: ToolInvocation, runner: NativeToolRunner): Promise<ToolResult> {
     foregroundInFlight += 1;
     try {
-      const raw = await runner.run(inv.args, { signal: inv.signal });
+      const raw = await runner.run(inv.args, {
+        signal: inv.signal,
+        ...(inv.attachmentVisionRoute ? { attachmentVisionRoute: inv.attachmentVisionRoute } : {}),
+      });
       const screened = screenResult(inv, raw);
       const result = capResult(inv, screened, "tool-broker.dispatch.native.result-capped");
       log.info("tool-broker.dispatch.native.done", {

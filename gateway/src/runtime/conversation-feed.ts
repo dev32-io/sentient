@@ -126,6 +126,8 @@ function toWireItem(item: FeedItem): ConversationFeedItem {
         // optimistic bubble to settle, so an empty-string placeholder would be
         // a value the client would then try to reconcile against.
         ...(item.pendingId === null ? {} : { pendingId: item.pendingId }),
+        sessionId: item.sessionId,
+        ...(item.attachments.length === 0 ? {} : { attachments: [...item.attachments] }),
       };
     case "trigger":
       return { ...base, kind: "trigger", source: TRIGGER_SOURCE, summary: item.text };
@@ -261,6 +263,10 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
 
   return {
     snapshot(): void {
+      // Flush settled committed tail BEFORE the directed snapshot. The cursor is
+      // shared by every window, while this snapshot is addressed to one; moving
+      // it past an admitted entry here would make that entry invisible to peers.
+      publish(false);
       const entries = store.readSession(sessionId);
       const items = snapshotFeedItems(entries);
       emitter.conversationSnapshot(items);

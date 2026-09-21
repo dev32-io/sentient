@@ -112,6 +112,38 @@ class ConversationHistoryConnectorTest {
         assertEquals(1, c.items().size)
     }
 
+    @Test
+    fun session_created_refetches_first_entry_committed_before_fanout_attachment() {
+        var requested: Pair<String, Int>? = null
+        val c = ConversationHistoryConnector(
+            onHistoryNeeded = { sessionId, generation -> requested = sessionId to generation },
+        )
+        val committed = ConversationFeedItem.User(
+            entryId = "e1",
+            ts = 1,
+            channel = "text",
+            content = "",
+            pendingId = "pending-1",
+            attachments = listOf(io.sentient.mobilesdk.attachments.AttachmentRef(
+                attachmentId = "att_0123456789abcdef0123456789abcdef",
+                displayName = "fixture.txt",
+                contentType = "text/plain",
+                mediaKind = "text",
+                size = 12,
+            )),
+        )
+
+        c.clearForNewChat()
+        c.handle(ServerMessage.SessionCreated(sessionId = "s1", ts = 1))
+        assertEquals("s1" to c.currentGeneration(), requested)
+        c.handle(ServerMessage.ConversationEntry(assistantItem("straggler")))
+        assertEquals(emptyList(), c.items())
+
+        c.replaceMirror(listOf(committed), c.currentGeneration())
+        assertEquals("pending-1", (c.items().single() as ConversationFeedItem.User).pendingId)
+        assertEquals("fixture.txt", (c.items().single() as ConversationFeedItem.User).attachments.single().displayName)
+    }
+
     // ── conversation.snapshot forward-compat ─────────────────────────────────
 
     @Test

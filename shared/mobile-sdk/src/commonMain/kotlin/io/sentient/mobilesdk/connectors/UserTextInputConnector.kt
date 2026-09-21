@@ -28,14 +28,14 @@ class UserTextInputConnector(
     private val log = createLogger("connector", "user-text-input")
 
     /** Send a text message to the gateway. Mirrors web-sdk sendText. */
-    fun sendText(text: String, pendingId: String? = null) {
+    fun sendText(text: String, pendingId: String? = null, attachmentIds: List<String> = emptyList()) {
         val meta = buildMap<String, Any> {
             put("type", "text.input")
             put("len", text.length)
             if (pendingId != null) put("pendingId", pendingId)
         }
         log.info("send", meta)
-        send(ClientMessage.TextInput(text, pendingId))
+        send(ClientMessage.TextInput(text, pendingId, attachmentIds))
     }
 
     /** Input-only connector: ignores every inbound frame. */

@@ -35,7 +35,6 @@ function runtimeConfig(): OrchestratorConfig {
       reasoning_effort: "low",
     },
     skills: { max_index_entries: 10, max_body_chars: 1000 },
-    loop: { max_iterations: 2 },
     permission: { request_timeout_ms: 1000 },
     tools: {
       foreground_timeout_ms: 1000,

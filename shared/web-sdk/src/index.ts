@@ -81,9 +81,32 @@ export type {
 
 export { createSessionsRest, deriveRestBaseUrl, SessionsRestError } from "./sessions-rest.ts";
 export type { SessionsRest, SessionsRestConfig, SessionsListResult } from "./sessions-rest.ts";
+export { AttachmentsRestError, createAttachmentsRest } from "./attachments-rest.ts";
+export type { AttachmentUploadRequest, AttachmentsRest, AttachmentsRestConfig } from "./attachments-rest.ts";
 
 export { createCrossTabSync } from "./cross-tab-sync.ts";
 export type { CrossTabSync, CrossTabSyncConfig } from "./cross-tab-sync.ts";
+
+export {
+  ConversationPendingDeleteError,
+  DraftConflictError,
+  PendingSendConflictError,
+  createDraftStore,
+  mintLocalDraftId,
+  normalizeGatewayUrl,
+} from "./drafts/draft-store.ts";
+export type {
+  DeleteIntentRecord,
+  DraftAttachment,
+  DraftRecord,
+  DraftStore,
+  DraftStoreConfig,
+  DraftStoreSnapshot,
+  DraftWrite,
+  PendingSendRecord,
+} from "./drafts/draft-store.ts";
+export { getOrCreateSurfaceId } from "./surface-id.ts";
+export { setCurrentSessionId } from "./sdk-reconnect.ts";
 
 // ---------------------------------------------------------------------------
 // Audio utilities

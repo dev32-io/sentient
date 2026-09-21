@@ -1,6 +1,11 @@
 import type { InstallState } from "../../admin/install-state.js";
+import type { AttachmentParserClient } from "../../attachments/parser-client.js";
 import { getLog } from "../../logging/logger.js";
-import type { ServiceVersionRecord, SystemOrchestratorService } from "../../system-orchestrator/index.js";
+import type {
+  ServiceVersionProbe,
+  ServiceVersionRecord,
+  SystemOrchestratorService,
+} from "../../system-orchestrator/index.js";
 import type { TokenService } from "../../user-auth/token-service.js";
 
 const log = getLog(["sentient", "gateway", "api", "services-versions"]);
@@ -18,6 +23,7 @@ export interface ServicesVersionsDeps {
   hermesVersionPath: string;
   sttHealthUrl: string;
   ttsHealthUrl: string;
+  attachmentParser?: Pick<AttachmentParserClient, "getMetadata">;
   tokens: Pick<TokenService, "validate">;
   /** Mirrors cfg.providers.fish_browse_enabled — surfaced so the webui can
    *  show/hide the "Clone from Fish Audio" tab without a separate fetch. */
@@ -48,7 +54,7 @@ export function createServicesVersionsHandler(deps: ServicesVersionsDeps): Servi
     if (!auth.ok) return auth.response;
 
     const features: ServicesVersionsFeatures = { fish_browse_enabled: deps.fishBrowseEnabled };
-    return buildVersionsResponse(deps, features, auth.userId);
+    return buildVersionsResponse(deps, features, auth.userId, req.signal);
   };
 }
 
@@ -91,6 +97,7 @@ async function buildVersionsResponse(
   deps: ServicesVersionsDeps,
   features: ServicesVersionsFeatures,
   userId: string,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   if (!deps.systemOrchestrator) {
     const fallback: ServicesVersionsResponse = {
@@ -98,6 +105,7 @@ async function buildVersionsResponse(
       hermes: "unknown",
       stt_service: "unknown",
       tts_service: "unknown",
+      attachment_parser: "unknown",
       features,
     };
     log.warn("services-versions.no-orchestrator", { userId });
@@ -106,11 +114,24 @@ async function buildVersionsResponse(
 
   let versions: ServiceVersionRecord;
   try {
+    const getMetadata = deps.attachmentParser?.getMetadata;
+    const attachmentParserVersion: ServiceVersionProbe | undefined = getMetadata
+      ? async (signal) => {
+          const result = await getMetadata(signal ?? requestSignal);
+          if (result.ok) return result.value.version;
+          log.warn("services-versions.attachment-parser-unavailable", {
+            reason: result.error.reason,
+          });
+          return "unknown";
+        }
+      : undefined;
     versions = await deps.systemOrchestrator.getRequiredServicesStatus(
       deps.gatewayVersion,
       deps.hermesVersionPath,
       deps.sttHealthUrl,
       deps.ttsHealthUrl,
+      attachmentParserVersion,
+      requestSignal,
     );
   } catch (err: unknown) {
     const reason = err instanceof Error ? err.message : String(err);

@@ -188,6 +188,28 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     expect(spy.disposed()).toBe(false);
     expect(registry.runtimeFor("s_1")).toBe(spy.runtime);
   });
+
+  it("deletion removes an active session immediately and returns every window for rebinding", () => {
+    const registry = createSessionRegistry(() => {});
+    const spy = handlesSpy("u_owner", WORK_IN_FLIGHT);
+    const a = registry.attach("s_deleted", "conn-a", SOCKET, spy.build);
+    const b = registry.attach("s_deleted", "conn-b", SOCKET, spy.build);
+
+    expect(registry.disposeDeletedSession("u_owner", "s_deleted")).toEqual([a, b]);
+    expect(spy.disposed()).toBe(true);
+    expect(registry.runtimeFor("s_deleted")).toBeNull();
+    expect(registry.subscribers("s_deleted")).toEqual([]);
+  });
+
+  it("SECURITY: deletion cannot dispose a resident session owned by another user", () => {
+    const registry = createSessionRegistry(() => {});
+    const spy = handlesSpy("u_owner", WORK_IN_FLIGHT);
+    registry.attach("s_deleted", "conn-a", SOCKET, spy.build);
+
+    expect(registry.disposeDeletedSession("u_foreign", "s_deleted")).toEqual([]);
+    expect(spy.disposed()).toBe(false);
+    expect(registry.runtimeFor("s_deleted")).toBe(spy.runtime);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -426,5 +448,20 @@ describe("SessionRegistry — orphaning a revoked account's sessions", () => {
     // that second evaluation the policy's entry for `s_1` would be claimed by
     // the next attach and nothing would ever release this one.
     expect(spy.disposed()).toBe(true);
+  });
+
+  it("deletion disposes both credential-orphaned and freshly rebound runtimes for the same session", () => {
+    const registry = createSessionRegistry(() => {});
+    const orphan = handlesSpy("u_child", WORK_IN_FLIGHT);
+    const fresh = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-old", SOCKET, orphan.build);
+    registry.orphanSessionsForUser("u_child");
+    registry.attach("s_1", "conn-new", SOCKET, fresh.build);
+
+    expect(registry.disposeDeletedSession("u_child", "s_1")).toHaveLength(1);
+    expect(orphan.disposed()).toBe(true);
+    expect(fresh.disposed()).toBe(true);
+    expect(registry.size).toBe(0);
   });
 });

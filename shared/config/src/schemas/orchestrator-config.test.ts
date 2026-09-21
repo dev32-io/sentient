@@ -3,7 +3,6 @@ import { orchestratorConfigSchema } from "./orchestrator-config";
 
 const base = {
   provider: { base_url: "https://x/api/v1", model: "m" },
-  loop: {},
   tools: {},
   delegation: {},
 };
@@ -11,7 +10,7 @@ const base = {
 describe("orchestratorConfigSchema", () => {
   it("applies defaults for optional tunables", () => {
     const c = orchestratorConfigSchema.parse(base);
-    expect(c.loop.max_iterations).toBe(10);
+    expect(c).not.toHaveProperty("loop");
     expect(c.tools.max_concurrent_background_tasks).toBe(50);
     expect(c.provider.request_timeout_ms).toBe(120000);
     expect(c.calendar.query).toEqual({ max_days: 366, max_occurrences: 250, page_size: 100 });
@@ -27,6 +26,10 @@ describe("orchestratorConfigSchema", () => {
     expect(c.calendar.recurrence).toEqual({ max_occurrences: 1000, max_days: 366 });
     expect(c.calendar.nudge.max_per_day).toBe(10);
     expect(c.calendar.default_event_tz_id).toBe("household");
+  });
+  it("drops obsolete loop settings instead of exposing runtime loop plumbing", () => {
+    const c = orchestratorConfigSchema.parse({ ...base, loop: { max_iterations: 999 } });
+    expect(c).not.toHaveProperty("loop");
   });
   it("accepts explicit lower calendar safety limits", () => {
     const c = orchestratorConfigSchema.parse({
@@ -81,9 +84,6 @@ describe("orchestratorConfigSchema", () => {
     expect(() =>
       orchestratorConfigSchema.parse({ ...base, provider: { ...base.provider, base_url: "not-a-url" } }),
     ).toThrow();
-  });
-  it("rejects an out-of-range max_iterations", () => {
-    expect(() => orchestratorConfigSchema.parse({ ...base, loop: { max_iterations: 999 } })).toThrow();
   });
   it("defaults base_url to empty string when omitted — the composition root then relies entirely on the secrets store", () => {
     const c = orchestratorConfigSchema.parse({ ...base, provider: { model: "m" } });

@@ -38,6 +38,7 @@ enum Route: Hashable {
     case settingsVoiceFishEditor(String)
     case settingsAudio
     case settingsModel
+    case settingsAuxiliary
     case settingsTools
     case settingsSystemPrompt
     case settingsAdvanced

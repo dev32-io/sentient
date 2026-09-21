@@ -25,6 +25,13 @@ export type Stimulus =
        */
       pendingId?: string;
     }
+  | {
+      /** User entry already committed by attachment-aware WS admission. Runtime
+       * re-reads it by seq; callers cannot inject refs or message content. */
+      kind: "preadmitted-conversational";
+      entrySeq: number;
+      admission: "fresh" | "retry";
+    }
   | { kind: "background-completion"; note: string };
 
 /**

@@ -214,15 +214,17 @@ struct CalendarAdjacentViewportTests {
             #expect(collection.numberOfItems(inSection: 0) == CalendarAdjacentDomain.maximumSlots)
 
             // The publication anchor is consumed: a later layout must not undo
-            // movement after the insert/remove correction has settled.
+            // movement after the insert/remove correction has settled. Native
+            // self-sizing may adjust the raw offset as preceding estimates settle;
+            // the visible row position is the user-scroll contract.
             collection.contentOffset.y += 47
             controller.scrollViewDidScroll(collection)
-            let movedOffset = collection.contentOffset.y
-            let movedY = try #require(cell.rowFrame(for: contentAnchor, in: collection)?.minY) - movedOffset
+            let movedY = try #require(cell.rowFrame(for: contentAnchor, in: collection)?.minY) -
+                collection.bounds.minY
             #expect(abs(movedY - (removedY - 47)) < 1)
             layout(controller)
-            #expect(abs(collection.contentOffset.y - movedOffset) < 1)
-            let settledY = try #require(cell.rowFrame(for: contentAnchor, in: collection)?.minY) - collection.bounds.minY
+            let settledY = try #require(cell.rowFrame(for: contentAnchor, in: collection)?.minY) -
+                collection.bounds.minY
             #expect(abs(settledY - movedY) < 1)
         }
     }

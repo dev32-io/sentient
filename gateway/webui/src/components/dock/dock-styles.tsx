@@ -132,6 +132,56 @@ export const DOCK_STYLES = `
   pointer-events: none;
   transform: translateY(3px);
 }
+.dock-attachment-list {
+  display: flex;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+}
+.dock-attachment-card {
+  max-width: 220px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--color-paper) 78%, var(--color-bg-sunk));
+}
+.dock-attachment-card__preview {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.dock-attachment-card__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dock-attachment-card button {
+  min-width: 28px;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.dock-composer__file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+.dock-composer__actions:has(.dock-composer__file-input:focus-visible) .dock-composer__attachment {
+  outline: var(--dock-focus-width) solid var(--color-accent);
+  outline-offset: 3px;
+}
 .dock-composer__actions {
   position: relative;
   z-index: 3;

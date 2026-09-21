@@ -42,6 +42,7 @@ targets:
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
+        NSCameraUsageDescription: Sentient uses the camera when you choose to take a photo attachment.
         CFBundleURLTypes:
           - CFBundleTypeRole: Viewer
             CFBundleURLName: io.dev32.sentient.session

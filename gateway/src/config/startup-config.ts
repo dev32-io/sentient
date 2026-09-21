@@ -2,11 +2,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   AccessConfig as AccessYaml,
+  AttachmentsConfig,
   AuthConfig as AuthYaml,
   CompanionsConfig as CompanionsYaml,
   DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
+  HistoryConfig,
   InboundProxyConfig as InboundProxyYaml,
   InboundScanConfig as InboundScanYaml,
   McpCatalog,
@@ -129,6 +131,8 @@ export interface StartupConfig {
   inboundProxy: InboundProxyYaml;
 
   session: SessionYaml;
+  history?: HistoryConfig;
+  attachments?: AttachmentsConfig;
 
   /** Access — capability minting + per-user physical isolation (spec §2.1,
    *  §2.5). `userDataRoot` is resolved to an absolute path here (a leading
@@ -296,6 +300,8 @@ export function loadStartupConfig(): StartupConfig {
     },
 
     session: cfg.session,
+    ...(cfg.history ? { history: cfg.history } : {}),
+    ...(cfg.attachments ? { attachments: cfg.attachments } : {}),
 
     // Both roots are YAML-sourced and may carry a leading `~` (the operator
     // comment in config.yaml uses exactly that shape). Expand each here — a raw

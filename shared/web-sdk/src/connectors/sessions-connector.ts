@@ -14,9 +14,13 @@ export type SessionsChangeEvent =
    *  this draft: the client holds it as its current pointer, re-presents it on
    *  `session.configure`, and the gateway spends it as the mint key when the
    *  first message arrives. A draft is NOT a session — it has no row and must
-   *  never appear in the session list. */
-  | { kind: "draft"; draftKey: string; ts: number }
-  | { kind: "deleted"; sessionId: string }
+   *  never appear in the session list. `deletionId` is SDK-local correlation
+   *  for a draft handshake caused by an unavailable session. */
+  | { kind: "draft"; draftKey: string; ts: number; deletionId?: string }
+  | { kind: "deleted"; sessionId: string; deletionId?: string }
+  /** A reconnect presented a session the caller's store no longer has. This
+   *  is local recovery metadata, not a server delete command. */
+  | { kind: "unavailable"; sessionId: string; deletionId: string }
   | { kind: "renamed"; sessionId: string; title: string };
 
 export interface SessionsConnectorConfig {
@@ -36,6 +40,9 @@ export class SessionsConnector implements Connector {
   private unsubs: (() => void)[] = [];
   private send: (msg: Record<string, unknown>) => void = () => {};
   private pendingSwitch: { reject(error: Error): void } | null = null;
+  private readonly deletedSessionIds = new Set<string>();
+  /** Current connection's exact old session, paired with its no-request draft handshake. */
+  private pendingUnboundSessionId: string | null = null;
 
   constructor(cfg: SessionsConnectorConfig) {
     this.rest = cfg.rest;
@@ -44,6 +51,7 @@ export class SessionsConnector implements Connector {
 
   attach(sdk: SentientSDKInternal): void {
     this.send = (msg) => sdk.send(msg);
+    this.pendingUnboundSessionId = null;
 
     const dispatchLifecycle = (kind: "created" | "switched") => (raw: unknown) => {
       const m = raw as { sessionId: string; title?: string; ts: number };
@@ -55,6 +63,37 @@ export class SessionsConnector implements Connector {
     };
     this.unsubs.push(sdk.onMessage("session.created", dispatchLifecycle("created")));
     this.unsubs.push(sdk.onMessage("session.switched", dispatchLifecycle("switched")));
+    this.unsubs.push(
+      sdk.onMessage("sessions.deleted", (raw: unknown) => {
+        const message = raw as { sessionId?: unknown };
+        if (typeof message.sessionId !== "string" || message.sessionId.length === 0) return;
+        // The server sends this immediately before the draft handshake for a
+        // connection that was attached to this exact deleted session. The SDK
+        // supplies the paired old id below; normal New Chat has requestId and
+        // never receives this correlation.
+        this.dispatchDeleted(message.sessionId, message.sessionId);
+      }),
+    );
+    this.unsubs.push(
+      sdk.onMessage("session.refused", (raw: unknown) => {
+        const message = raw as { sessionId?: unknown };
+        if (typeof message.sessionId !== "string" || message.sessionId.length === 0) return;
+        this.pendingUnboundSessionId = message.sessionId;
+        this.dispatch({ kind: "unavailable", sessionId: message.sessionId, deletionId: message.sessionId });
+      }),
+    );
+    this.unsubs.push(
+      sdk.onMessage("session.unbound", (raw: unknown) => {
+        const message = raw as { sessionId?: unknown };
+        if (typeof message.sessionId !== "string" || message.sessionId.length === 0) return;
+        this.pendingUnboundSessionId = message.sessionId;
+        // `sessions.deleted` is normally first and already carries this
+        // identity. If it was lost, this event still recovers the boundary.
+        if (!this.deletedSessionIds.has(message.sessionId)) {
+          this.dispatchDeleted(message.sessionId, message.sessionId);
+        }
+      }),
+    );
     this.unsubs.push(
       sdk.onMessage("sessions.error", (raw: unknown) => {
         const message = raw as { requestId?: unknown; code?: unknown };
@@ -74,8 +113,16 @@ export class SessionsConnector implements Connector {
     );
     this.unsubs.push(
       sdk.onMessage("session.draft", (raw: unknown) => {
-        const m = raw as { draftKey: string; ts: number };
-        this.dispatch({ kind: "draft", draftKey: m.draftKey, ts: m.ts });
+        const m = raw as { draftKey?: unknown; ts?: unknown; requestId?: unknown };
+        if (typeof m.draftKey !== "string" || typeof m.ts !== "number") return;
+        const deletionId = typeof m.requestId === "string" ? undefined : this.pendingUnboundSessionId;
+        if (deletionId !== undefined) this.pendingUnboundSessionId = null;
+        this.dispatch({
+          kind: "draft",
+          draftKey: m.draftKey,
+          ts: m.ts,
+          ...(deletionId === null || deletionId === undefined ? {} : { deletionId }),
+        });
       }),
     );
     // The gateway's own titling push. Folded into the `renamed` event rather
@@ -94,6 +141,7 @@ export class SessionsConnector implements Connector {
   detach(): void {
     for (const u of this.unsubs) u();
     this.unsubs = [];
+    this.pendingUnboundSessionId = null;
     this.pendingSwitch?.reject(new Error("session connection closed"));
     // NOTE: do NOT clear `this.listeners` — those are user-registered
     // handlers (e.g. the webui's use-sessions hook subscribes once at
@@ -106,6 +154,15 @@ export class SessionsConnector implements Connector {
 
   private dispatch(e: SessionsChangeEvent): void {
     for (const l of this.listeners) l(e);
+  }
+
+  private dispatchDeleted(sessionId: string, deletionId?: string): void {
+    // DELETE returns before its broadcast echo necessarily arrives. Treat REST
+    // and WS paths as one idempotent lifecycle event while retaining the exact
+    // session identity needed to pair its draft handshake.
+    if (this.deletedSessionIds.has(sessionId)) return;
+    this.deletedSessionIds.add(sessionId);
+    this.dispatch({ kind: "deleted", sessionId, ...(deletionId ? { deletionId } : {}) });
   }
 
   // ---------------------------------------------------------------------------
@@ -122,7 +179,7 @@ export class SessionsConnector implements Connector {
 
   async delete(sessionId: string): Promise<void> {
     await this.rest.delete(sessionId);
-    this.dispatch({ kind: "deleted", sessionId });
+    this.dispatchDeleted(sessionId);
   }
 
   async rename(sessionId: string, title: string): Promise<void> {
@@ -180,7 +237,7 @@ export class SessionsConnector implements Connector {
   newChat(): Promise<{ draftKey: string }> {
     return new Promise((resolve, reject) => {
       const onAnswer = (e: SessionsChangeEvent): void => {
-        if (e.kind !== "draft") return;
+        if (e.kind !== "draft" || e.deletionId !== undefined) return;
         cleanup();
         resolve({ draftKey: e.draftKey });
       };

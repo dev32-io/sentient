@@ -136,7 +136,7 @@ class ObserveChatUseCase(
                 historyLoading = loading,
                 reconciledPendingIds = echoedPendingIds,
             )
-        }
+        }.distinctUntilChanged() // Filter snapshots; revealFlow still folds every tick internally.
 
     /**
      * History-loading gate, derived without touching the reveal ticker's coroutine.

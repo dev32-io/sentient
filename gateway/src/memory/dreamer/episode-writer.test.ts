@@ -305,6 +305,20 @@ describe("S3a episodic-only path (no appliedOps)", () => {
 // --- idempotence -------------------------------------------------------------
 
 describe("idempotent re-run", () => {
+  it("preserves later same-session partial windows while exact retries converge", () => {
+    const store = tmpStore();
+    const { sync } = captureSync();
+
+    writeDreamOutputs(store, sync, SCOPE_ID, DATE, result(session("same-session", "Earlier partial window.", false)));
+    writeDreamOutputs(store, sync, SCOPE_ID, DATE, result(session("same-session", "Later partial window.", true)));
+    writeDreamOutputs(store, sync, SCOPE_ID, DATE, result(session("same-session", "Later partial window.", true)));
+
+    expect(parseJournalEpisodes(store.readJournal(DATE) ?? "")).toEqual([
+      { sessionId: "same-session", text: "Earlier partial window.", provenance: "user-speech" },
+      { sessionId: "same-session", text: "Later partial window.", provenance: "tool-derived" },
+    ]);
+  });
+
   it("produces byte-identical journal text and the same enqueued entries", () => {
     const res = result(session("s1", "Body one.", true), session("s2", "Body two.", false));
     const ops: AppliedOpLog[] = [

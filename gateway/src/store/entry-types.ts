@@ -4,6 +4,7 @@
 // That is what makes projection convergence provable: there is no second
 // record that can drift. Entries are append-only; nothing here is ever updated.
 
+import { type AttachmentRef, attachmentRefSchema } from "@sentient/protocol";
 import { z } from "zod";
 
 export type EntryKind = "user" | "assistant" | "tool_call" | "tool_result" | "trigger" | "system" | "compaction";
@@ -58,9 +59,11 @@ export interface SessionEntry {
    * the committed feed so the client can drop its optimistic bubble.
    */
   pendingId: string | null;
+  /** Immutable server-derived attachment metadata. Empty on legacy and non-user entries. */
+  attachments?: readonly AttachmentRef[];
 }
 
-export type NewSessionEntry = Omit<SessionEntry, "seq">;
+export type NewSessionEntry = Omit<SessionEntry, "seq" | "attachments">;
 
 export const sessionEntrySchema = z.object({
   seq: z.number().int().nonnegative(),
@@ -76,4 +79,5 @@ export const sessionEntrySchema = z.object({
   cutoff: z.enum(["interrupt", "barge-in"]).nullable(),
   compactedThroughSeq: z.number().int().nonnegative().nullable(),
   pendingId: z.string().nullable(),
+  attachments: z.array(attachmentRefSchema).readonly().default([]),
 });

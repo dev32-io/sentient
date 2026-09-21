@@ -159,6 +159,53 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
     name: "scheduling-and-notification-cards",
     statements: SCHEDULING_SCHEMA_STATEMENTS,
   },
+  {
+    version: 10,
+    name: "session-deletion-and-activity",
+    statements: [
+      "ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER",
+      `UPDATE sessions SET last_activity_at = (
+        SELECT MAX(created_at) FROM entries
+        WHERE entries.session_id = sessions.session_id AND kind IN ('user', 'assistant')
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions (last_activity_at)",
+      `CREATE TABLE IF NOT EXISTS deleted_sessions (
+        session_id TEXT PRIMARY KEY,
+        mint_key TEXT UNIQUE,
+        deleted_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS session_file_cleanup_intents (
+        session_id TEXT PRIMARY KEY,
+        requested_at INTEGER NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 11,
+    name: "message-attachments",
+    statements: [
+      `CREATE TABLE attachments (
+        attachment_id TEXT PRIMARY KEY,
+        send_attempt_id TEXT NOT NULL,
+        file_identity TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        media_kind TEXT NOT NULL CHECK (media_kind IN ('image','pdf','text')),
+        byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        staged_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('staged','committed','ready')),
+        session_id TEXT,
+        entry_seq INTEGER REFERENCES entries(seq) ON DELETE CASCADE,
+        entry_ordinal INTEGER,
+        UNIQUE (send_attempt_id, file_identity)
+      )`,
+      "CREATE INDEX idx_attachments_session ON attachments(session_id)",
+      "CREATE INDEX idx_attachments_expiry ON attachments(status, expires_at)",
+      "CREATE INDEX idx_attachments_entry ON attachments(entry_seq, entry_ordinal)",
+    ],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */

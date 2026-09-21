@@ -1,7 +1,8 @@
 import { Fragment } from "preact";
 import type { JSX } from "preact";
-import type { ChatMessage } from "../../types.ts";
+import type { ChatAttachment, ChatMessage } from "../../types.ts";
 import type { SentientIdentityState } from "../common/sentient-identity.tsx";
+import type { AttachmentAsset } from "./attachment-cards.tsx";
 import { DayDivider } from "./day-divider.tsx";
 import { MessageChronologyState } from "./message-chronology-state.tsx";
 import { MessageGroup } from "./message-group.tsx";
@@ -16,6 +17,8 @@ export interface MessageChronologyProps {
   activeCycleState: SentientIdentityState;
   currentUser: CurrentUser;
   status?: MessageChronologyStatus;
+  attachmentAssets?: Readonly<Record<string, AttachmentAsset>> | undefined;
+  onAttachmentPreview?: ((attachment: ChatAttachment) => void) | undefined;
 }
 
 const DIVIDER_GAP_MS = 30 * 60 * 1000;
@@ -72,7 +75,7 @@ function isAssistantContinuation(previous: ChatMessage | undefined, current: Cha
   return divider === null && previous?.role === "assistant" && current.role === "assistant";
 }
 
-export function MessageChronology({ messages, currentTurnId, activeCycleState, currentUser, status = "ready" }: MessageChronologyProps): JSX.Element {
+export function MessageChronology({ messages, currentTurnId, activeCycleState, currentUser, status = "ready", attachmentAssets, onAttachmentPreview }: MessageChronologyProps): JSX.Element {
   if (messages.length === 0) return <MessageChronologyState status={status} />;
 
   return (
@@ -91,6 +94,8 @@ export function MessageChronology({ messages, currentTurnId, activeCycleState, c
               continuation={isAssistantContinuation(previous, message, divider)}
               position={index + 1}
               total={messages.length}
+              attachmentAssets={attachmentAssets}
+              onAttachmentPreview={onAttachmentPreview}
             />
           </Fragment>
         );

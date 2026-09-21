@@ -1,4 +1,5 @@
 import type { TaskListItem } from "@sentient/protocol";
+import type { DraftAttachment } from "@sentient/web-sdk";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
 
 /** The two user-visible ways a new capture can begin. */
@@ -32,7 +33,10 @@ export interface ChatComposerProps {
   /** Full-state tasklist.state; the shelf never infers row lifetime. */
   tasks: readonly TaskListItem[];
   value: string;
+  attachments?: readonly DraftAttachment[];
   onValueChange(value: string): void;
+  onAttachmentsSelected?(files: readonly File[]): void;
+  onAttachmentRemove?(fileIdentity: string): void;
   onTextSubmit(text: string): void;
   onCaptureIntent: CaptureIntentHandler;
   onTtsToggle(): void;

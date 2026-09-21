@@ -22,7 +22,15 @@ import io.sentient.mobiledata.cache.db.openCalendarDatabase
 import io.sentient.mobiledata.calendar.CalendarExperience
 import io.sentient.mobiledata.calendar.CalendarExperienceFactory
 import io.sentient.mobiledata.calendar.createCalendarExperience
+import io.sentient.mobiledata.draft.IosAttachmentDownloader
+import io.sentient.mobiledata.draft.IosAttachmentUploadBody
+import io.sentient.mobiledata.draft.IosNativeDraftDatabaseDriverFactory
+import io.sentient.mobiledata.draft.IosNativeDraftFileStore
+import io.sentient.mobiledata.draft.NativeDraftCoordinator
+import io.sentient.mobiledata.draft.NativeDraftScope
+import io.sentient.mobiledata.draft.createNativeDraftStore
 import io.sentient.mobiledata.result.SentientResult
+import io.sentient.mobilesdk.attachments.createAttachmentsHttpClient
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.result.SentientError
@@ -164,6 +172,34 @@ class IosUserSession(
         onAuthenticationRequired = { if (!closed) sdk.signalAuthExpired() },
     )
 
+    private val attachmentsHttpClient = createAttachmentsHttpClient(
+        gatewayWsUrl = safeGatewayWsUrl,
+        allowSelfSignedDevHost = allowSelfSignedDevHost,
+        token = { bundle.tokenStore.load() ?: "" },
+        isOwnerActive = { !closed },
+        onAuthenticationRequired = { if (!closed) sdk.signalAuthExpired() },
+    )
+    private val attachmentDownloader = IosAttachmentDownloader(attachmentsHttpClient)
+
+    private val draftCoordinator: NativeDraftCoordinator? = run {
+        var driver: app.cash.sqldelight.db.SqlDriver? = null
+        try {
+            driver = IosNativeDraftDatabaseDriverFactory().create()
+            NativeDraftCoordinator(
+                store = createNativeDraftStore(
+                    driver = driver,
+                    files = IosNativeDraftFileStore(),
+                    scope = NativeDraftScope(userId, normalizeIosBackendIdentity(gatewayWsUrl)),
+                ),
+                driver = driver,
+            )
+        } catch (_: Throwable) {
+            runCatching { driver?.close() }
+            log.warn("draft.store-unavailable", mapOf("code" to "protected-storage"))
+            null
+        }
+    }
+
     private val sdk: SentientSdk = SentientSdk(
         config = SdkConfig(
             gatewayWsUrl = safeGatewayWsUrl,
@@ -184,6 +220,12 @@ class IosUserSession(
                 AudioPreferences(ttsEnabled = it.ttsEnabled, channel = it.channel)
             }
         },
+        drafts = draftCoordinator,
+        attachments = attachmentsHttpClient,
+        attachmentBody = ::IosAttachmentUploadBody,
+        attachmentDownload = attachmentDownloader::download,
+        removeAttachmentDownload = attachmentDownloader::remove,
+        closeAttachmentDownloads = attachmentDownloader::close,
     )
 
     private val settingsHttpClient = createSettingsHttpClient(
@@ -296,6 +338,11 @@ class IosUserSession(
         settings.close()
         calendarDisposalJob = IosCalendarLifecycleQueue.enqueue {
             disposeRuntime(runtimeAtClose)
+            try {
+                draftCoordinator?.close()
+            } catch (_: Throwable) {
+                log.warn("draft.close-failed", mapOf("code" to "bounded-teardown"))
+            }
             calendarScope.cancel()
             // Keep the authenticated transport and serialized SDK scope alive until capture
             // cancellation has stopped/joined its producer and emitted the terminal control.

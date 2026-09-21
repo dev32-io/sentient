@@ -21,7 +21,7 @@
 // list route must never let a mint key surface as a sessionId — the only
 // column a draft key is ever written to.
 
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import type { UserRole } from "@sentient/protocol";
 import { type AccessManager, createAccessManager } from "../../access/access-manager.js";
@@ -53,6 +53,7 @@ interface Harness {
   /** Every capability the HANDLER minted, in order. Seeding uses the raw
    *  manager, so nothing a test set up itself lands here. */
   grants: Capability[];
+  deleted: string[];
   /** Re-role a user in the record store the handler reads. */
   setRole: (user: TestUser, role: UserRole) => void;
   /** Delete a user's record while their token stays valid — the shape a
@@ -80,6 +81,7 @@ function freshHarness(): Harness {
   const tokenToUserId = new Map<string, string>();
   const records = new Map<string, UserRecord | null>();
   const grants: Capability[] = [];
+  const deleted: string[] = [];
   const deps: SessionsHandlerDeps = {
     // Wrapped so the ROLE the handler bakes into a capability is observable.
     // `AccessManager.grant` is where a principal becomes authority (L1), so
@@ -108,11 +110,13 @@ function freshHarness(): Harness {
       },
     },
     dbFileName: "sessions.db",
+    onSessionDeleted: (_principal, sessionId) => deleted.push(sessionId),
   };
   return {
     handleSessions: createSessionsHandler(deps),
     accessManager,
     grants,
+    deleted,
     makeUser(label) {
       userSeq += 1;
       const userId = `u_${userSeq.toString(16).padStart(8, "0")}` as `u_${string}`;
@@ -240,11 +244,16 @@ describe("GET /api/v1/sessions", () => {
   it("lists sessions newest-updated first, the order the store already produces", async () => {
     const { handleSessions, accessManager, makeUser } = freshHarness();
     const user = makeUser("order");
-    const first = seedSession(accessManager, user, "first");
-    const second = seedSession(accessManager, user, "second");
-
-    const body = await (await handleSessions(requestAs(user, "/api/v1/sessions"))).json();
-    expect(body.sessions.map((s: { sessionId: string }) => s.sessionId)).toEqual([second, first]);
+    const clock = spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      const first = seedSession(accessManager, user, "first");
+      clock.mockReturnValue(2000);
+      const second = seedSession(accessManager, user, "second");
+      const body = await (await handleSessions(requestAs(user, "/api/v1/sessions"))).json();
+      expect(body.sessions.map((s: { sessionId: string }) => s.sessionId)).toEqual([second, first]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("SECURITY: a draft key is never a row in the list — only the session it mints is", async () => {
@@ -298,6 +307,79 @@ describe("GET /api/v1/sessions/:id/messages", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items).toHaveLength(1);
-    expect(body.items[0]).toMatchObject({ kind: "user", content: "hello from the seed" });
+    expect(body.items[0]).toMatchObject({ kind: "user", content: "hello from the seed", sessionId });
+  });
+});
+
+describe("DELETE session", () => {
+  it("rejects malformed ids before opening the session store", async () => {
+    const h = freshHarness();
+    const user = h.makeUser("malformed-delete");
+    const response = await h.handleSessions(
+      new Request("https://x/api/v1/sessions/arbitrary-user-text", {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${user.token}` },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(h.grants).toHaveLength(0);
+    expect(h.deleted).toEqual([]);
+  });
+
+  it("returns 404 for an unknown well-formed id without fencing future creation", async () => {
+    const h = freshHarness();
+    const user = h.makeUser("unknown-delete");
+    const id = mintSessionId();
+    const response = await h.handleSessions(
+      new Request(`https://x/api/v1/sessions/${id}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${user.token}` },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(h.deleted).toEqual([]);
+    const store = openSessionStore(
+      h.accessManager.grant(createUserPrincipal(user.userId, "adult", "home"), "session-store"),
+    );
+    expect(store.listFileCleanupIntents(10)).toEqual([]);
+    expect(() => store.createSession(id, `mint-${id}`)).not.toThrow();
+    store.close();
+  });
+
+  it("deletes owned history idempotently and invokes runtime teardown on retry", async () => {
+    const h = freshHarness();
+    const user = h.makeUser("delete");
+    const id = seedSession(h.accessManager, user, "synthetic delete fixture");
+    const remove = () =>
+      h.handleSessions(
+        new Request(`https://x/api/v1/sessions/${id}`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${user.token}` },
+        }),
+      );
+    expect((await remove()).status).toBe(204);
+    expect((await remove()).status).toBe(204);
+    expect(h.deleted).toEqual([id, id]);
+    expect((await h.handleSessions(requestAs(user, `/api/v1/sessions/${id}/messages`))).status).toBe(404);
+    const list = await h.handleSessions(requestAs(user, "/api/v1/sessions"));
+    expect(await list.json()).toEqual({ sessions: [] });
+  });
+
+  it("does not expose or delete another user's session", async () => {
+    const h = freshHarness();
+    const owner = h.makeUser("owner");
+    const stranger = h.makeUser("stranger");
+    const id = seedSession(h.accessManager, owner, "synthetic private fixture");
+    const response = await h.handleSessions(
+      new Request(`https://x/api/v1/sessions/${id}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${stranger.token}` },
+      }),
+    );
+    expect(response.status).toBe(404);
+    expect(h.deleted).toEqual([]);
+    expect((await h.handleSessions(requestAs(owner, `/api/v1/sessions/${id}/messages`))).status).toBe(200);
   });
 });

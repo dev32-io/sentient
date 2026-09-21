@@ -93,9 +93,10 @@ describe("SessionStore", () => {
     expect(existsSync(`${cap.rootPath}/sessions.db`)).toBe(true);
   });
 
-  it("INVARIANT: exposes no mutating API — history is append-only", () => {
+  it("INVARIANT: exposes explicit lifecycle deletion but no generic history mutation", () => {
     const store = openSessionStore(cap);
     const opaque = store as unknown as Record<string, unknown>;
+    expect(opaque.deleteSession).toBeFunction();
     expect(opaque.update).toBeUndefined();
     expect(opaque.delete).toBeUndefined();
     expect(opaque.replace).toBeUndefined();

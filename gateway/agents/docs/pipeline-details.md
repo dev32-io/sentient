@@ -42,10 +42,10 @@ For every iteration, `runTurn`:
    appends its `tool_result` before the next provider iteration.
 5. Commits the terminal assistant entry when no further tool call is requested.
 
-`orchestrator.loop.max_iterations` bounds the loop. The final allowed iteration
-receives no tools, forcing a content-only answer rather than ending silently on
-a tool request. Provider calls and stream gaps are deadline-bounded and receive
-the turn's `AbortSignal`.
+The loop continues until the provider returns no tool calls, or cancellation
+or a provider/stall failure ends the turn. Every tool-capable iteration receives
+the same mediated tool set; provider calls and stream gaps remain
+deadline-bounded and receive the turn's `AbortSignal`.
 
 ## Foreground and background tools
 

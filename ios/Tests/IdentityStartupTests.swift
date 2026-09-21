@@ -229,6 +229,7 @@ final class IdentityStartupTests: XCTestCase {
 
         let result = await fixture.config.validateStartupAuthentication(beforeAccountChange: {
             callbackObservedOldIdentity = fixture.config.startupAuthentication == .validating &&
+                !fixture.config.startupAuthentication.permitsDraftShell &&
                 fixture.identity.load() == "stored-user"
             pending.clear()
         })
@@ -247,18 +248,54 @@ final class IdentityStartupTests: XCTestCase {
 
         let result = await fixture.config.validateStartupAuthentication(beforeInvalidation: { fence = $0 })
         XCTAssertEqual(result, .login)
+        XCTAssertFalse(result.permitsDraftShell)
         XCTAssertEqual(fence, "wss://gateway.test/api/v1/ws|stored-user")
         XCTAssertNil(fixture.tokens.load())
     }
 
-    func testColdNetworkFailureKeepsCredentialsAndShowsRetry() async {
+    func testColdNetworkFailureKeepsCredentialsAndPermitsLocalDraftShell() async {
+        let fixture = StartupAuthFixture()
+        fixture.auth.result = authFailure(AuthError.Network(cause: "transport-failure"))
+
+        let result = await fixture.config.validateStartupAuthentication()
+        XCTAssertEqual(result, .localOffline)
+        XCTAssertTrue(result.permitsDraftShell)
+        XCTAssertEqual(fixture.tokens.load(), "stored-token")
+        XCTAssertEqual(fixture.identity.load(), "stored-user")
+        XCTAssertTrue(fixture.config.hasToken)
+    }
+
+    func testColdUnexpectedExceptionDoesNotBypassValidation() async {
         let fixture = StartupAuthFixture()
         fixture.auth.error = NSError(domain: "test", code: 1)
 
         let result = await fixture.config.validateStartupAuthentication()
         XCTAssertEqual(result, .retry)
-        XCTAssertEqual(fixture.tokens.load(), "stored-token")
-        XCTAssertTrue(fixture.config.hasToken)
+        XCTAssertFalse(result.permitsDraftShell)
+    }
+
+    func testMissingStoredIdentityFailsClosed() {
+        let fixture = StartupAuthFixture(storedIdentity: nil)
+
+        XCTAssertEqual(fixture.config.startupAuthentication, .login)
+        XCTAssertFalse(fixture.config.startupAuthentication.permitsDraftShell)
+        XCTAssertFalse(fixture.config.hasToken)
+        XCTAssertNil(fixture.tokens.load())
+    }
+
+    func testBackendChangeClosesLocalOfflineShellAndClearsAccountFence() async {
+        let fixture = StartupAuthFixture()
+        fixture.auth.result = authFailure(AuthError.Network(cause: "transport-failure"))
+        let result = await fixture.config.validateStartupAuthentication()
+        XCTAssertEqual(result, .localOffline)
+
+        fixture.config.reconfigure(BackendConfig(host: "other.test", port: 443, security: .tlsValid))
+
+        XCTAssertEqual(fixture.config.startupAuthentication, .login)
+        XCTAssertFalse(fixture.config.startupAuthentication.permitsDraftShell)
+        XCTAssertFalse(fixture.config.hasToken)
+        XCTAssertNil(fixture.tokens.load())
+        XCTAssertNil(fixture.identity.load())
     }
 
     func testLateValidationCannotOverwriteLogout() async {
@@ -300,7 +337,7 @@ private final class StartupAuthFixture {
     let auth: StartupControlledAuth
     let config: AppConfig
 
-    init(suspended: Bool = false) {
+    init(suspended: Bool = false, storedIdentity: String? = "stored-user") {
         let defaults = UserDefaults(suiteName: "StartupAuthFixture.\(UUID().uuidString)")!
         names = DisplayNameStore(defaults: defaults)
         identity = AuthenticatedIdentityStore(defaults: defaults)
@@ -308,11 +345,12 @@ private final class StartupAuthFixture {
         auth = client
         tokens.save(token: "stored-token")
         names.save("Stored User")
-        identity.save("stored-user")
+        if let storedIdentity { identity.save(storedIdentity) }
         config = AppConfig(
             tokenStore: tokens,
             displayNameStore: names,
             identityStore: identity,
+            configStore: BackendConfigStore(defaults: defaults),
             resolvedBackend: .configured(gatewayWsURL: "wss://gateway.test/api/v1/ws", allowSelfSignedDevHost: false),
             authClientFactory: { _, _ in client }
         )

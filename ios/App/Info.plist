@@ -50,6 +50,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Sentient uses the camera when you choose to take a photo attachment.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Sentient connects to your home gateway on the local network.</string>
 	<key>NSMicrophoneUsageDescription</key>

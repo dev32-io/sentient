@@ -13,6 +13,7 @@ import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.fakes.InMemoryDeviceIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.NoOpResumeCursorStore
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
@@ -40,6 +41,7 @@ internal fun TestScope.buildSdk(
     engine: WebSocketEngine,
     tokenStore: InMemoryTokenStore = InMemoryTokenStore().apply { save("tok-abc") },
     resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
+    sessionsHttpClient: SessionsHttpClient? = null,
 ): SentientSdk {
     val bundle = PlatformBundle(
         engine = engine,
@@ -60,6 +62,7 @@ internal fun TestScope.buildSdk(
             { "req-${n++}" }
         },
         resumeCursorStore = resumeCursorStore,
+        sessionsHttpClient = sessionsHttpClient,
     )
 }
 

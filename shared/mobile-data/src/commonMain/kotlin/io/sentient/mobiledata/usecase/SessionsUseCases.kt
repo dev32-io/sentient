@@ -3,6 +3,7 @@ package io.sentient.mobiledata.usecase
 import io.sentient.mobiledata.data.SessionSummary
 import io.sentient.mobiledata.data.SessionsRepository
 import io.sentient.mobilesdk.connectors.SessionsRequestException
+import io.sentient.mobilesdk.connectors.SessionsTransportException
 import kotlinx.coroutines.CancellationException
 
 class ObserveSessionsUseCase(private val sessions: SessionsRepository) {
@@ -35,5 +36,6 @@ class RenameSessionUseCase(private val sessions: SessionsRepository) {
 }
 
 class DeleteSessionUseCase(private val sessions: SessionsRepository) {
+    @Throws(SessionsRequestException::class, SessionsTransportException::class, CancellationException::class)
     suspend operator fun invoke(sessionId: String) = sessions.delete(sessionId)
 }

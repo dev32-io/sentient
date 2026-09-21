@@ -1,8 +1,8 @@
 import { createContext } from "preact";
 import type { ComponentChildren } from "preact";
-import { useComputed } from "@preact/signals";
+import { useComputed, useSignal } from "@preact/signals";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { createLogger } from "@sentient/web-sdk";
+import { createAttachmentsRest, createDraftStore, createLogger, deriveRestBaseUrl, type DraftRecord, type DraftStore } from "@sentient/web-sdk";
 import { AuthProvider, useAuth } from "./hooks/use-auth.tsx";
 import { ToastProvider, useToast } from "./hooks/use-toast.tsx";
 import type { AuthApi } from "./services/auth-api.js";
@@ -29,9 +29,11 @@ import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
 import { SessionsProvider } from "./context/sessions.tsx";
 import { createUseSessions, type UseSessions } from "./hooks/use-sessions.ts";
 import { useVoiceClient } from "./hooks/use-voice-client.ts";
+import { useLocalDrafts } from "./hooks/use-local-drafts.ts";
 import { useInstallState } from "./hooks/use-install-state.ts";
 import { WizardShell } from "./components/wizard/wizard-shell.tsx";
 import { MessageInbox } from "./components/inbox/message-inbox.tsx";
+import type { ChatMessage } from "./types.ts";
 
 const log = createLogger(["sentient", "webui", "app"]);
 
@@ -177,6 +179,36 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const draftPersistence = useMemo<{ store: DraftStore; available: boolean }>(() => {
+    try {
+      return {
+        store: createDraftStore({ accountId: user.userId, gatewayUrl: client.gatewayUrl }),
+        available: true,
+      };
+    } catch (cause) {
+      const unavailable = async (): Promise<never> => { throw cause; };
+      return {
+        store: {
+          list: unavailable,
+          save: unavailable,
+          remove: unavailable,
+          beginSend: unavailable,
+          saveUploadedRef: unavailable,
+          bindPendingSession: unavailable,
+          reconcileSend: unavailable,
+          detachSession: unavailable,
+          saveDeleteIntent: unavailable,
+          removeDeleteIntent: unavailable,
+          close: async () => {},
+        },
+        available: false,
+      };
+    }
+  }, [user.userId, client.gatewayUrl]);
+  const draftStore = draftPersistence.store;
+  const draftRows = useSignal<readonly DraftRecord[]>([]);
+  const draftRefreshRef = useRef<(() => void | Promise<void>) | null>(null);
+  const draftFlushRef = useRef<(() => Promise<void>) | null>(null);
   // Build the sessions hook ONCE per SessionsConnector identity. The
   // connector is stable per useVoiceClient resources memo (rebuilt only
   // when wsUrl/token change), so this also rebuilds across token changes.
@@ -185,7 +217,13 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
     sessionsRef.current?.hook.dispose();
     sessionsRef.current = {
       connector: client.sessionsConnector,
-      hook: createUseSessions(client.sessionsConnector),
+      hook: createUseSessions(client.sessionsConnector, {
+        ...(draftPersistence.available ? { draftStore } : {}),
+        drafts: draftRows,
+        onOpenNewDraft: client.routeDraft,
+        onBeforeNewDraft: () => draftFlushRef.current?.(),
+        onDraftsChanged: () => draftRefreshRef.current?.(),
+      }),
     };
   }
   useLayoutEffect(() => () => {
@@ -193,6 +231,31 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
     sessionsRef.current = null;
   }, []);
   const sessions = sessionsRef.current.hook;
+  const attachmentsRest = useMemo(() => createAttachmentsRest({
+    baseUrl: deriveRestBaseUrl(client.gatewayUrl ?? `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/v1/ws`),
+    token: () => token,
+  }), [client.gatewayUrl, token]);
+  const localDrafts = useLocalDrafts({
+    store: draftStore,
+    attachments: attachmentsRest,
+    drafts: draftRows,
+    currentId: sessions.currentId.value,
+    getCurrentId: () => {
+      const current = sessions.currentId.peek();
+      if (current) return current;
+      try {
+        return sessionStorage.getItem("sentient.currentSessionId");
+      } catch {
+        return null;
+      }
+    },
+    connectionReady: client.sdkStatus.value === "ready",
+    isConnectionBoundTo: client.isConnectionBoundTo,
+    recoverPendingRoute: client.recoverPendingRoute,
+    sendText: client.sendText,
+  });
+  draftRefreshRef.current = async () => { await localDrafts.refresh(); };
+  draftFlushRef.current = localDrafts.flush;
   const pendingSessionRef = useRef<string | null>(loadPendingSession());
   const [sessionRouteState, setSessionRouteState] = useState<"idle" | "loading" | "unavailable">(
     pendingSessionRef.current === null ? "idle" : "loading",
@@ -209,6 +272,54 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   const runningTasks = tasks.filter((t) => t.status === "running").length;
   const canInterrupt = cycleStatus !== "idle" || runningTasks > 0;
   const messages = client.messages.value;
+  const acknowledgedPendingSessions = useMemo(
+    () => new Map(messages.flatMap((message) =>
+      message.role === "user" && message.pendingId && message.sessionId
+        ? [[message.pendingId, message.sessionId] as const]
+        : []
+    )),
+    [messages],
+  );
+  useEffect(() => {
+    void localDrafts.reconcile(acknowledgedPendingSessions);
+  }, [acknowledgedPendingSessions, localDrafts.reconcile]);
+  const draftError = localDrafts.error.value;
+  useEffect(() => {
+    if (draftError) toast.show(draftError, "error");
+  }, [draftError, toast]);
+  const pendingMessages = useMemo<readonly ChatMessage[]>(() => localDrafts.pendingSends.value
+    .filter((pending) => {
+      const acceptedSessionId = acknowledgedPendingSessions.get(pending.pendingId);
+      return (!acceptedSessionId || (pending.sessionId !== null && pending.sessionId !== acceptedSessionId)) &&
+        (pending.sessionId === sessions.currentId.value ||
+          (pending.sessionId === null && pending.draftId === sessions.currentId.value));
+    })
+    .map((pending) => ({
+      id: `pending-${pending.pendingId}`,
+      role: "user",
+      text: pending.text,
+      timestamp: pending.createdAt,
+      isStreaming: false,
+      pendingId: pending.pendingId,
+      attachments: pending.attachments.map((attachment) => {
+        const state = localDrafts.uploadStates.value[`${pending.pendingId}:${attachment.id}`];
+        return {
+          kind: "local" as const,
+          ...attachment,
+          status: state?.status ?? (pending.uploadedRefs[attachment.id] ? "uploaded" : "pending"),
+          ...(state?.status === "uploading" ? { progress: state.progress } : {}),
+          ...(state && "message" in state ? { statusMessage: state.message } : {}),
+          onCancel: () => localDrafts.cancelUpload(pending.pendingId, attachment.id),
+          onRetry: () => { void localDrafts.retryPending(pending); },
+          onEdit: () => { void localDrafts.revisePending(pending.pendingId); },
+          onRemove: () => { void localDrafts.revisePending(pending.pendingId, attachment.id); },
+        };
+      }),
+    })), [acknowledgedPendingSessions, localDrafts.pendingSends.value, localDrafts.uploadStates.value]);
+  const visibleMessages = useMemo(
+    () => [...messages, ...pendingMessages].sort((a, b) => a.timestamp - b.timestamp),
+    [messages, pendingMessages],
+  );
   const currentTurnId = client.currentTurnId.value;
   const latestActiveAssistant = [...messages].reverse().find((message) =>
     message.role === "assistant" && message.turnId === currentTurnId
@@ -265,14 +376,17 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   }, [token]);
   // A REFUSED COMMAND, surfaced. There is no optimistic echo in this UI — a
   // message the gateway refuses simply never appears — so without this the
-  // person watches their text vanish with no explanation. Consumed on show, so
-  // an identical second refusal still raises a second toast.
+  // person watches their text vanish with no explanation. The pendingId also
+  // lets durable draft state restore only this refused message.
   const commandRejection = client.commandRejection.value;
   useEffect(() => {
     if (commandRejection === null) return;
-    toast.show(commandRejection, "error");
+    toast.show(commandRejection.message, "error");
+    if (commandRejection.command === "text.input" && commandRejection.pendingId !== undefined) {
+      void localDrafts.reconcileRejected(commandRejection.pendingId);
+    }
     client.commandRejection.value = null;
-  }, [commandRejection, toast, client.commandRejection]);
+  }, [commandRejection, toast, client.commandRejection, localDrafts.reconcileRejected]);
   useEffect(() => {
     if (prefsSeededRef.current) return;
     let cancelled = false;
@@ -339,13 +453,15 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
         main={
           route === "chat" ? (
             <ChatView
-              messages={sessionRouteState === "idle" ? messages : []}
+              messages={sessionRouteState === "idle" ? visibleMessages : []}
               localSendIds={client.localSendIds.value}
               transcript={sessionRouteState === "idle" ? client.transcript.value : ""}
               currentTurnId={currentTurnId}
               activeCycleState={activeCycleState}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
               status={sessionRouteState === "unavailable" ? "unavailable" : sessionRouteState === "loading" ? "loading" : connectionLost ? "error" : connectionReady ? "ready" : "loading"}
+              attachmentsRest={attachmentsRest}
+              sessionBoundaryKey={`${sessions.currentId.value ?? "none"}:${sessionRouteState}:${sessionRouteAttemptRef.current}`}
             />
           ) : route === "calendar" ? (
             <CalendarView token={token} />
@@ -369,7 +485,16 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
               tasks={client.tasks.value}
-              onSendText={client.sendText}
+              value={localDrafts.value.value}
+              attachments={localDrafts.activeAttachments.value}
+              onValueChange={localDrafts.save}
+              onAttachmentsSelected={localDrafts.addFiles}
+              onAttachmentRemove={localDrafts.removeFile}
+              onSendText={(text) => {
+                void localDrafts.save(text).then((saved) => {
+                  if (saved) void localDrafts.submit();
+                });
+              }}
               onCaptureStart={async (mode) => {
                 try {
                   return await client.startCapture(mode);
@@ -412,7 +537,11 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
                   });
               }}
               onInterrupt={client.interrupt}
-              onSuggestionClick={client.sendText}
+              onSuggestionClick={(text) => {
+                void localDrafts.save(text).then((saved) => {
+                  if (saved) void localDrafts.submit();
+                });
+              }}
             />
           ) : undefined
         }
@@ -490,11 +619,11 @@ function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
 // ---------------------------------------------------------------------------
 
 function InstallGate({ children }: { children: ComponentChildren }) {
-  const { state, loading, error, refresh } = useInstallState();
+  const { state, loading, error, offlineComplete, refresh } = useInstallState();
   if (loading) {
     return <GateState state="loading" title="Starting setup" message="Checking this installation…" />;
   }
-  if (error) {
+  if (error && !offlineComplete) {
     return <GateState state="error" title="Could not check setup" message="Check your connection and try again." actionLabel="Try again" onAction={() => void refresh()} />;
   }
   if (state && !state.bootstrap_complete) {

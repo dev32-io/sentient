@@ -898,11 +898,12 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
                 schedule_id: string;
                 intended_at: string;
                 owner_user_id: string;
+                one_time: number;
               },
               [string]
             >(
               `
-          SELECT o.session_id,o.claim_token,o.generation,o.schedule_id,o.intended_at,s.owner_user_id,
+          SELECT o.session_id,o.claim_token,o.generation,o.schedule_id,o.intended_at,o.one_time,s.owner_user_id,
             s.generation current_generation,s.enabled,s.deleted
           FROM occurrences o JOIN schedules s ON s.schedule_id=o.schedule_id WHERE o.occurrence_id=?`,
             )
@@ -920,6 +921,41 @@ export function createScheduleService(options: ScheduleServiceOptions = {}): Sch
           // after session was first associated during crash reconciliation.
           if (current.generation !== current.current_generation || current.enabled !== 1 || current.deleted === 1)
             return fail("claim_lost");
+          if (
+            database
+              .query<{ deleted_at: number }, [string]>("SELECT deleted_at FROM deleted_sessions WHERE session_id=?")
+              .get(sessionId)
+          ) {
+            const completedAt = iso(clock());
+            const terminalized = database
+              .query(
+                `UPDATE occurrences SET session_id=NULL,claim_token=NULL,claimed_until=NULL,outcome='expired',completed_at=?,entry_id=NULL
+                WHERE occurrence_id=? AND claim_token=? AND outcome IS NULL`,
+              )
+              .run(completedAt, claim.occurrenceId, claim.claimToken);
+            if (terminalized.changes !== 1) return fail("claim_lost");
+            if (current.one_time === 1)
+              database
+                .query(
+                  "UPDATE schedules SET deleted=1,enabled=0,next_run_at=NULL,generation=generation+1,deleted_revision=revision WHERE schedule_id=? AND generation=?",
+                )
+                .run(claim.scheduleId, current.generation);
+            else {
+              const schedule = database
+                .query<Row, [string]>("SELECT * FROM schedules WHERE schedule_id=?")
+                .get(claim.scheduleId);
+              const timing = schedule && project(schedule)?.timing;
+              if (timing?.kind === "recurring") {
+                const from = new Date(Math.max(Date.parse(claim.intendedAt), Date.parse(completedAt)));
+                database
+                  .query(
+                    "UPDATE schedules SET next_run_at=? WHERE schedule_id=? AND generation=? AND deleted=0 AND enabled=1",
+                  )
+                  .run(iso(nextScheduleOccurrence(timing, from)), claim.scheduleId, current.generation);
+              }
+            }
+            return fail("claim_lost");
+          }
           if (current.session_id)
             return current.session_id === sessionId
               ? {

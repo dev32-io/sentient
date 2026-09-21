@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { accessConfigSchema } from "./schemas/access-config";
+import { attachmentsConfigSchema } from "./schemas/attachments-config";
 import { hermesBuiltinToolsSchema } from "./schemas/hermes-builtin-tools";
 import { hermesConfigSchema } from "./schemas/hermes-config";
+import { historyConfigSchema } from "./schemas/history-config";
 import { mcpCatalogSchema } from "./schemas/mcp-catalog";
 import { orchestratorConfigSchema } from "./schemas/orchestrator-config";
 import { pushConfigSchema } from "./schemas/push-config";
@@ -457,6 +459,9 @@ export const gatewayConfigSchema = z.object({
   // Store — durable per-user session history (spec §3). Optional; the
   // filename default matches the standard single-DB-per-user layout.
   store: storeConfigSchema.default({}),
+  // Old operator files use the history policy defaults at the composition root.
+  history: historyConfigSchema.optional(),
+  attachments: attachmentsConfigSchema.optional(),
   // Orchestrator — the native LLM agent loop (spec §4/§5). Optional during
   // the mid-transition state: the runtime isn't wired to a consumer yet
   // (Plan 2). The composition root that constructs the orchestrator runtime

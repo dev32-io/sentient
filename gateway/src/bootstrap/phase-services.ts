@@ -1,6 +1,11 @@
 import { join } from "node:path";
-import { catalogTools, riskConfigSchema } from "@sentient/config";
-import type { InboundScanConfig, McpCatalog, OrchestratorConfig } from "@sentient/config";
+import {
+  DEFAULT_ATTACHMENT_VISION_MODEL,
+  attachmentsConfigSchema,
+  catalogTools,
+  riskConfigSchema,
+} from "@sentient/config";
+import type { AttachmentsConfig, InboundScanConfig, McpCatalog, OrchestratorConfig } from "@sentient/config";
 import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { createFileScope } from "../access/file-scope.js";
@@ -18,9 +23,17 @@ import {
   randomAvatarTint,
 } from "../admin/user-provisioner.js";
 import { migrateWebToolsEnabled } from "../admin/web-tools-migrator.js";
+import type { ProvidersDeps } from "../api/providers-deps.js";
 import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
+import {
+  type AttachmentParserClient,
+  createAttachmentParserClient,
+  createDockerCliAttachmentParserTransport,
+} from "../attachments/parser-client.js";
+import { type AttachmentCapability, createAttachmentStorage } from "../attachments/storage.js";
+import { type VisionOptions, createVisionAdapter } from "../attachments/vision.js";
 import { createCalendarQueryService } from "../calendar/calendar-query.js";
 import {
   type CalendarReminderScheduler,
@@ -80,7 +93,8 @@ import { renderSkillIndex } from "../skills/skill-index.js";
 import { createSkillStore } from "../skills/skill-store.js";
 import type { SkillMeta } from "../skills/skill-store.js";
 import type { SessionEntry } from "../store/entry-types.js";
-import { type SessionStore, openSessionStore } from "../store/session-store.js";
+import { type AttachmentSessionStore, type SessionStore, openSessionStore } from "../store/session-store.js";
+import { ATTACHMENT_TOOL_NAME, createAttachmentTools } from "../tools/attachment-tools.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
 import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/delegation-guard.js";
@@ -104,6 +118,7 @@ import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import type { AuthService } from "../user-auth/auth-service.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
 import { hashPin } from "../user-auth/pin-service.js";
+import { createAuxiliaryModelResolver } from "./auxiliary-model-resolver.ts";
 import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
 import { composeProductToolProviders } from "./product-tool-providers.ts";
 import { resolveProviderConnection } from "./resolve-provider-connection.ts";
@@ -114,6 +129,53 @@ import { asStrictFactory, createTtsService } from "./tts-factory.ts";
 import { type UserModelProvider, createUserModelProvider } from "./user-model-provider.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-services"]);
+const ATTACHMENT_PARSER_SERVICE_NAME = "attachment-parser";
+const ATTACHMENT_PARSER_CONTAINER_NAME = "sentient-attachment-parser";
+const ATTACHMENT_PARSER_TEMPLATE = "attachment-parser.yaml";
+
+export function createAttachmentVisionResolver(
+  enabled: boolean,
+  provider: Pick<UserModelProvider, "resolveAttachmentVision">,
+  userId: string,
+  options: VisionOptions,
+) {
+  return async () => {
+    if (!enabled) return { ok: false as const, error: "auxiliary-disabled" as const };
+    const resolved = await provider.resolveAttachmentVision(userId);
+    return resolved.ok ? { ok: true as const, value: createVisionAdapter(resolved.value, options) } : resolved;
+  };
+}
+
+function createConfiguredAttachmentParser(cfg: StartupConfig, config: AttachmentsConfig): AttachmentParserClient {
+  const managed = cfg.managedServices?.[ATTACHMENT_PARSER_SERVICE_NAME];
+  if (
+    !managed ||
+    typeof managed !== "object" ||
+    Array.isArray(managed) ||
+    (managed as Record<string, unknown>).template !== ATTACHMENT_PARSER_TEMPLATE
+  ) {
+    log.error("attachment-parser.identity-missing", {
+      service: ATTACHMENT_PARSER_SERVICE_NAME,
+      template: ATTACHMENT_PARSER_TEMPLATE,
+      reason: "attachment processing remains unavailable until managed service identity is configured",
+    });
+    return {
+      parse: async (request) => ({
+        ok: false,
+        error: { code: "unavailable", operation: request.operation.operation },
+      }),
+    };
+  }
+  return createAttachmentParserClient(createDockerCliAttachmentParserTransport(), {
+    containerName: ATTACHMENT_PARSER_CONTAINER_NAME,
+    maxInputBytes: config.max_file_bytes,
+    maxOutputBytes: config.parser_max_output_bytes,
+    maxHeaderBytes: config.parser_max_header_bytes,
+    deadlineMs: config.parser_deadline_ms,
+    cleanupTimeoutMs: config.parser_cleanup_timeout_ms,
+    maxEdge: config.inspection_max_edge,
+  });
+}
 
 // The harness's own system prompt: `system_prompts/system_prompt.md` for role,
 // scope and rules, plus `persona.md` (operator override; baked-in
@@ -639,6 +701,7 @@ export interface PhaseServicesInput {
   readonly auth: AuthService;
   readonly secretsStore: SecretsStore | null;
   readonly schedules: ScheduleService | undefined;
+  readonly providersDeps: ProvidersDeps;
 }
 
 export interface PhaseServicesOutput {
@@ -655,6 +718,7 @@ export interface PhaseServicesOutput {
   readonly userProvisioner: UserProvisioner | null;
   readonly userLifecycle: UserLifecycle;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
+  readonly attachmentParser: AttachmentParserClient;
 
   // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
   // App-lifetime singletons + a per-session factory. See the header comment
@@ -701,7 +765,7 @@ export interface PhaseServicesOutput {
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
-  const { cfg, auth, secretsStore, schedules } = input;
+  const { cfg, auth, secretsStore, schedules, providersDeps } = input;
   // Resolve this once at the app composition root. Sessions and REST receive
   // the same concrete value rather than independently resolving the sentinel.
   const calendarHouseholdTimeZone = resolveTimeZone().zone();
@@ -728,6 +792,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   // selected model out of their profile, so it needs this store.
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
+  const attachmentConfig = attachmentsConfigSchema.parse(cfg.attachments ?? {});
+  const attachmentParser = createConfiguredAttachmentParser(cfg, attachmentConfig);
 
   const {
     accessManager,
@@ -746,6 +812,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     calendarConfig,
     calendarHouseholdTimeZone,
     schedules,
+    attachmentParser,
+    providersDeps,
   );
 
   const applyDeps: ApplyDeps = createApplyDeps({
@@ -855,6 +923,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     userProvisioner,
     userLifecycle,
     buildPersonalityStore,
+    attachmentParser,
     accessManager,
     mcpClient,
     provider,
@@ -950,6 +1019,8 @@ export async function buildOrchestratorServices(
   calendarConfig?: CalendarConfig,
   calendarHouseholdTimeZone?: string,
   schedules?: ScheduleService,
+  attachmentParser?: AttachmentParserClient,
+  providersDeps?: ProvidersDeps,
 ): Promise<OrchestratorServices> {
   // `sharedDataRoot` is optional (T24 activates the household scope); when the
   // operator leaves `access.shared_data_root` unset the AccessManager derives it
@@ -1008,7 +1079,9 @@ export async function buildOrchestratorServices(
   }
 
   const orchestratorCfg = cfg.orchestrator;
-  const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore, profileStore);
+  const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore, profileStore, providersDeps);
+  const attachmentConfig = attachmentsConfigSchema.parse(cfg.attachments ?? {});
+  const parser = attachmentParser ?? createConfiguredAttachmentParser(cfg, attachmentConfig);
   let homeAdapter: HomeAdapter | null = null;
   try {
     const home = secretsStore?.loadSync().home_assistant;
@@ -1144,6 +1217,8 @@ export async function buildOrchestratorServices(
     dbFileName: cfg.store.db_filename,
     homeAdapter,
     musicAdapter,
+    attachmentConfig,
+    attachmentParser: parser,
     ...(schedules ? { schedules } : {}),
   });
 
@@ -1271,7 +1346,7 @@ function buildDreamScheduler(deps: DreamSchedulerDepsInput): {
       store,
     });
     const runner = createDreamRunner({
-      provider: provider.forUser(userId),
+      provider: provider.forUser(userId, "dreamer"),
       loadTemplate: (name) => loadDreamerTemplate(name),
       turnStateFor: (uid) => ({
         hasActiveTurn: () => registryView?.hasActiveTurnForUser(uid) ?? false,
@@ -1426,6 +1501,7 @@ async function buildOrchestratorProvider(
   orchestratorCfg: OrchestratorConfig,
   secretsStore: SecretsStore | null,
   profileStore: ProfileStore,
+  providersDeps?: ProvidersDeps,
 ): Promise<UserModelProvider | null> {
   if (!secretsStore) {
     log.warn("orchestrator.provider.no-secrets-store", {
@@ -1463,10 +1539,26 @@ async function buildOrchestratorProvider(
     hasKey: true, // presence only — NEVER log conn.apiKey
     fallbackModel: orchestratorCfg.provider.model,
   });
+  const auxiliaryResolver = createAuxiliaryModelResolver({
+    activeProvider: conn.provider,
+    chatModel: orchestratorCfg.provider.model,
+    dreamerModel: resolveDreamerModel(orchestratorCfg.memory, orchestratorCfg.provider),
+    attachmentVisionModel: orchestratorCfg.auxiliary.attachment_vision_model ?? DEFAULT_ATTACHMENT_VISION_MODEL,
+    profileStore,
+  });
   return createUserModelProvider({
     providerCfg: orchestratorCfg.provider,
     connection: conn,
+    resolveConnection: async () => {
+      const live = await secretsStore.getActiveLlm();
+      if (!live.ok) throw new Error(`Active LLM secrets unavailable: ${live.error.kind}`);
+      const resolved = resolveProviderConnection(live.value, orchestratorCfg.provider);
+      if (!resolved) throw new Error(`Active LLM provider unavailable: ${live.value.provider}`);
+      return resolved;
+    },
     profileStore,
+    auxiliaryResolver,
+    ...(providersDeps ? { resolveProviderModel: providersDeps.resolveProviderModel } : {}),
   });
 }
 
@@ -1519,6 +1611,8 @@ interface CreateSessionRuntimeFactoryDeps {
   homeAdapter: HomeAdapter | null;
   /** App-lifetime native Music Assistant connection owner. */
   musicAdapter: MusicAdapter;
+  attachmentConfig: ReturnType<typeof attachmentsConfigSchema.parse>;
+  attachmentParser: AttachmentParserClient;
   /** Process-owned schedule commands shared with REST and the due runner. */
   schedules?: ScheduleService;
 }
@@ -1654,6 +1748,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // may name — only when memory is on, so a skill can't reference a tool
       // this session will never build (memory-tools.ts's MEMORY_TOOL_NAMES doc).
       ...(memoryEnabled ? MEMORY_TOOL_NAMES : []),
+      ATTACHMENT_TOOL_NAME,
       delegateTaskDefinition.name,
     ]);
     const maxBodyChars = orchestratorCfg.skills.max_body_chars;
@@ -1734,6 +1829,51 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     const nativeTools = new Map(skillTools);
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
     for (const runner of sessionCalendar?.tools ?? []) nativeTools.set(runner.definition.name, runner);
+    const attachmentStore: AttachmentSessionStore = openSessionStore(
+      accessManager.grant(principal, "session-store"),
+      dbFileName,
+    );
+    const grantedAttachmentCapability = accessManager.grant(principal, "attachment-store");
+    if (grantedAttachmentCapability.resource !== "attachment-store") throw new Error("invalid attachment capability");
+    const attachmentCapability = grantedAttachmentCapability as AttachmentCapability;
+    const attachmentStorage = createAttachmentStorage(attachmentCapability, {
+      maxFileBytes: deps.attachmentConfig.max_file_bytes,
+      maxFilesPerAttempt: deps.attachmentConfig.max_files_per_message,
+      maxRequestBytes: deps.attachmentConfig.max_request_bytes,
+      maxUserBytes: deps.attachmentConfig.max_user_bytes,
+      stagingTtlMs: deps.attachmentConfig.staging_ttl_ms,
+    });
+    const resolveAttachmentVision = createAttachmentVisionResolver(
+      orchestratorCfg.auxiliary.enabled,
+      provider,
+      principal.userId,
+      {
+        deadlineMs: deps.attachmentConfig.vision_deadline_ms,
+        maxOutputTokens: deps.attachmentConfig.vision_max_output_tokens,
+        maxOutputChars: deps.attachmentConfig.vision_max_output_chars,
+        maxInputBytes: deps.attachmentConfig.vision_max_input_bytes,
+        maxImages: deps.attachmentConfig.inspection_max_pages,
+        maxQuestionChars: deps.attachmentConfig.inspection_max_question_chars,
+        reasoningEffort: orchestratorCfg.auxiliary.reasoning_effort,
+      },
+    );
+    for (const runner of createAttachmentTools({
+      capability: attachmentCapability,
+      sessionId: conversationId,
+      store: attachmentStore,
+      storage: attachmentStorage,
+      parser: deps.attachmentParser,
+      resolveVision: resolveAttachmentVision,
+      gate: inboundGate,
+      limits: {
+        maxPages: deps.attachmentConfig.inspection_max_pages,
+        maxTextBytes: deps.attachmentConfig.inspection_max_text_bytes,
+        maxTextChars: deps.attachmentConfig.inspection_max_text_chars,
+        maxQuestionChars: deps.attachmentConfig.inspection_max_question_chars,
+        maxEdge: deps.attachmentConfig.inspection_max_edge,
+      },
+    }))
+      nativeTools.set(runner.definition.name, runner);
     // Product providers are composed once per authenticated session. Web
     // receives a dedicated user capability and operator-owned limits; Home
     // and Music receive only their app-owned credential-bearing adapters.
@@ -1871,6 +2011,18 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       listSessionsWithMetadata: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
+      deleteSession: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      listRetentionCandidates: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      listFileCleanupIntents: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      ackFileCleanupIntent: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
       setTitle: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
@@ -1994,6 +2146,24 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // selected in Settings rather than one config.yaml value for the whole
       // household. See user-model-provider.ts.
       provider: provider.forUser(principal.userId),
+      resolveMainModel: () => provider.resolveMain(principal.userId),
+      directVision: {
+        capability: attachmentCapability,
+        sessionId: conversationId,
+        store: attachmentStore,
+        storage: attachmentStorage,
+        parser: deps.attachmentParser,
+        limits: {
+          maxPages: deps.attachmentConfig.inspection_max_pages,
+          maxTextBytes: deps.attachmentConfig.inspection_max_text_bytes,
+          maxTextChars: deps.attachmentConfig.inspection_max_text_chars,
+          maxQuestionChars: deps.attachmentConfig.inspection_max_question_chars,
+          maxEdge: deps.attachmentConfig.inspection_max_edge,
+        },
+        config: deps.attachmentConfig,
+        auxiliary: { resolveVision: resolveAttachmentVision, gate: inboundGate },
+      },
+      titleProvider: provider.forUser(principal.userId, "title"),
       broker,
       emitter,
       // Already wrapping `emitter` above — handed in so the runtime does not
@@ -2057,7 +2227,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // closure above. Null when the deep-memory app is not wired.
       spark,
       onWorkSettled,
-      onDispose: () => sessionCalendar?.close(),
+      onDispose: () => {
+        sessionCalendar?.close();
+        attachmentStore.close();
+      },
     });
     // Fills the slot `onDelegationProgress` above closed over — see that
     // comment for why this is safe despite running after the broker (and its

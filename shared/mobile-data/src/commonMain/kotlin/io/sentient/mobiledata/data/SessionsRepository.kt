@@ -1,5 +1,9 @@
 package io.sentient.mobiledata.data
 
+import io.sentient.mobilesdk.connectors.SessionsRequestException
+import io.sentient.mobilesdk.connectors.SessionsTransportException
+import kotlinx.coroutines.CancellationException
+
 /** A row in the session list, mapped from the SDK's SessionRow (UI-agnostic). */
 data class SessionSummary(
     val id: String,
@@ -23,5 +27,7 @@ interface SessionsRepository {
     suspend fun switchTo(sessionId: String)
     suspend fun newChat(): String
     suspend fun rename(sessionId: String, title: String)
+
+    @Throws(SessionsRequestException::class, SessionsTransportException::class, CancellationException::class)
     suspend fun delete(sessionId: String)
 }

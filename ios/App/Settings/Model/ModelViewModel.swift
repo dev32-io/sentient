@@ -4,12 +4,45 @@
 // PUT-then-apply path that blocks through a Hermes worker restart.
 //
 // Loads the profile (for the current selection) + the models catalog. Browse
-// state (provider filter + search query) is ephemeral and independent of the
-// draft selection, so the user can browse without losing their pick. Dirty is a
-// plain id/provider diff — KMP data classes aren't Swift-Equatable.
+// state (provider filter + search query) is ephemeral and independent of draft
+// selections, so the user can browse without losing picks. Swift-native refs
+// keep dirty checks independent of non-Equatable KMP data classes.
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
+
+struct AuxiliaryModelSelection: Equatable {
+    let provider: String
+    let id: String
+
+    init(provider: String, id: String) {
+        self.provider = provider
+        self.id = id
+    }
+
+    init(_ ref: ProfileModelRef) {
+        self.init(provider: ref.provider, id: ref.id)
+    }
+
+    var profileRef: ProfileModelRef { ProfileModelRef(provider: provider, id: id) }
+}
+
+func auxiliaryModelSelection(_ ref: ProfileModelRef?) -> AuxiliaryModelSelection? {
+    ref.map { AuxiliaryModelSelection($0) }
+}
+
+func profileAuxiliaryModels(
+    title: AuxiliaryModelSelection?,
+    dreamer: AuxiliaryModelSelection?,
+    attachmentVision: AuxiliaryModelSelection?
+) -> ProfileAuxiliaryModels? {
+    guard title != nil || dreamer != nil || attachmentVision != nil else { return nil }
+    return ProfileAuxiliaryModels(
+        title: title?.profileRef,
+        dreamer: dreamer?.profileRef,
+        attachmentVision: attachmentVision?.profileRef
+    )
+}
 
 @MainActor
 @Observable
@@ -33,9 +66,41 @@ final class ModelViewModel {
     private(set) var save: Save = .idle
     private(set) var models: [ModelEntry] = []
 
-    /// Draft selection.
+    enum AuxiliaryRunner: CaseIterable, Hashable {
+        case title
+        case dreamer
+        case attachmentVision
+
+        var title: String {
+            switch self {
+            case .title: "Titles"
+            case .dreamer: "Dreamer"
+            case .attachmentVision: "Attachment understanding"
+            }
+        }
+
+        var defaultLabel: String {
+            switch self {
+            case .title: "Inherit chat model"
+            case .dreamer, .attachmentVision: "System default"
+            }
+        }
+
+        var accessibilityKey: String {
+            switch self {
+            case .title: "title"
+            case .dreamer: "dreamer"
+            case .attachmentVision: "attachment-vision"
+            }
+        }
+    }
+
+    /// Draft selections.
     private(set) var draftModelId = ""
     private(set) var draftProvider = ""
+    private(set) var titleModel: AuxiliaryModelSelection?
+    private(set) var dreamerModel: AuxiliaryModelSelection?
+    private(set) var attachmentVisionModel: AuxiliaryModelSelection?
 
     /// Ephemeral browse state.
     var browseProvider = ""
@@ -49,9 +114,17 @@ final class ModelViewModel {
         self.settings = settings
     }
 
-    var isDirty: Bool {
+    var isMainModelDirty: Bool {
         guard let o = original else { return false }
         return draftModelId != o.model.id || draftProvider != o.model.provider
+    }
+
+    var isDirty: Bool {
+        guard let o = original else { return false }
+        return isMainModelDirty
+            || titleModel != auxiliaryModelSelection(o.auxiliaryModels?.title)
+            || dreamerModel != auxiliaryModelSelection(o.auxiliaryModels?.dreamer)
+            || attachmentVisionModel != auxiliaryModelSelection(o.auxiliaryModels?.attachmentVision)
     }
 
     var isApplying: Bool { save == .saving || save == .restarting }
@@ -79,6 +152,9 @@ final class ModelViewModel {
                 original = s.data
                 draftModelId = s.data.model.id
                 draftProvider = s.data.model.provider
+                titleModel = auxiliaryModelSelection(s.data.auxiliaryModels?.title)
+                dreamerModel = auxiliaryModelSelection(s.data.auxiliaryModels?.dreamer)
+                attachmentVisionModel = auxiliaryModelSelection(s.data.auxiliaryModels?.attachmentVision)
                 if browseProvider.isEmpty { browseProvider = s.data.model.provider }
             case .failure(let f):
                 phase = .failed(f.error.userMessage)
@@ -127,6 +203,29 @@ final class ModelViewModel {
         draftProvider = entry.provider
     }
 
+    func auxiliarySelection(for runner: AuxiliaryRunner) -> AuxiliaryModelSelection? {
+        switch runner {
+        case .title: titleModel
+        case .dreamer: dreamerModel
+        case .attachmentVision: attachmentVisionModel
+        }
+    }
+
+    func auxiliaryOptions(for runner: AuxiliaryRunner) -> [ModelEntry] {
+        models.filter {
+            $0.provider == draftProvider && (runner != .attachmentVision || $0.supportsVision)
+        }
+    }
+
+    func selectAuxiliary(_ entry: ModelEntry?, for runner: AuxiliaryRunner) {
+        let selection = entry.map { AuxiliaryModelSelection(provider: $0.provider, id: $0.id) }
+        switch runner {
+        case .title: titleModel = selection
+        case .dreamer: dreamerModel = selection
+        case .attachmentVision: attachmentVisionModel = selection
+        }
+    }
+
     func save() async {
         guard let o = original, isDirty else { return }
         log.info("save.start model=\(draftModelId)")
@@ -160,7 +259,12 @@ final class ModelViewModel {
             persona: o.persona,
             tools: o.tools,
             compression: o.compression,
-            advanced: o.advanced
+            advanced: o.advanced,
+            auxiliaryModels: profileAuxiliaryModels(
+                title: titleModel,
+                dreamer: dreamerModel,
+                attachmentVision: attachmentVisionModel
+            )
         )
     }
 }

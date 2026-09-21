@@ -15,6 +15,7 @@ import "./components/chat/chat-messages.css";
 import "./components/sessions/drawer.css";
 import "./components/permission/permission-dialog.css";
 import { App } from "./app.tsx";
+import { registerAppShellServiceWorker } from "./app-shell/register-service-worker.ts";
 
 function init(): void {
   const appRoot = document.getElementById("app");
@@ -23,3 +24,4 @@ function init(): void {
 }
 
 init();
+registerAppShellServiceWorker();

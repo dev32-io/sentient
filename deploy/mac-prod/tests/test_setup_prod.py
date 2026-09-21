@@ -9,6 +9,8 @@ exercised through the FSM against a real temp filesystem rather than mocked.
 from __future__ import annotations
 
 import hashlib
+import io
+import json
 import ssl
 import os
 import stat
@@ -20,8 +22,13 @@ import pytest
 import setup_prod
 from setup_prod import (
     CERT_RELATIVE,
+    DockerCommandTimeout,
+    DockerCli,
+    DockerImageIdentity,
     INSTALL_VENV_SCRIPT,
     OPERATOR_PLACEHOLDER,
+    PARSER_RETAINED_IMAGE_PREFIX,
+    PARSER_RUNTIME_IMAGE,
     PLIST_SOURCE,
     RELEASE_ROOT_PLACEHOLDER,
     RELEASES_SUBDIR,
@@ -35,10 +42,19 @@ from setup_prod import (
     HealthProbe,
     InstallError,
     Installer,
+    InstallerLock,
     RealFs,
     RealLaunchd,
     build_tls_context,
     ensure_state_dirs,
+    prepare_attachment_parser,
+    prepare_legacy_attachment_parser,
+    prepare_legacy_candidate_attachment_parser,
+    preflight_attachment_parser_install,
+    read_attachment_parser_artifact,
+    read_optional_attachment_parser_artifact,
+    read_legacy_parser_receipt,
+    write_legacy_parser_receipt,
     read_inbound_proxy_cert_dir,
     read_release_version,
     resolve_operator,
@@ -85,6 +101,565 @@ class FakeLaunchd:
 
     def kickstart(self):
         self.kicks += 1
+
+
+def _parser_release(tmp_path, version="0.2.0", revision="rev"):
+    release = tmp_path / "release"
+    root = release / "addons/attachment-parser"
+    root.mkdir(parents=True)
+    image_id = "sha256:" + "1" * 64
+    image_ref = f"sentient/attachment-parser:release-{version.replace('+', '_')}-{revision}"
+    archive_path = root / "image.tar"
+    manifest = json.dumps([{"Config": "config.json", "RepoTags": [image_ref], "Layers": []}]).encode()
+    with tarfile.open(archive_path, "w") as archive:
+        member = tarfile.TarInfo("manifest.json")
+        member.size = len(manifest)
+        archive.addfile(member, io.BytesIO(manifest))
+    metadata = {
+        "name": "attachment-parser",
+        "version": version,
+        "protocolVersion": 2,
+        "description": "fixture parser",
+        "state": "ephemeral",
+    }
+    (root / "addon.json").write_text(json.dumps(metadata))
+    (root / "identity.json").write_text(
+        json.dumps(
+            {
+                "addon": {
+                    "name": metadata["name"],
+                    "version": metadata["version"],
+                    "protocolVersion": metadata["protocolVersion"],
+                },
+                "image": {
+                    "ref": image_ref,
+                    "imageId": image_id,
+                    "revision": revision,
+                    "runtimeImage": PARSER_RUNTIME_IMAGE,
+                    "archive": "image.tar",
+                    "archiveSha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+                },
+            }
+        )
+    )
+    return release, image_ref, image_id
+
+
+class FakeParserDocker:
+    def __init__(self, image_ref, image_id, include_previous=True, version="0.2.0", revision="rev"):
+        self.images = {
+            image_ref: DockerImageIdentity(
+                image_id, version, revision, "attachment-parser", 2
+            ),
+        }
+        if include_previous:
+            self.images[PARSER_RUNTIME_IMAGE] = DockerImageIdentity(
+                "sha256:" + "2" * 64, "legacy", "legacy-rev"
+            )
+        self.loaded = []
+        self.tags = []
+        self.removed = []
+
+    def inspect(self, image, missing_ok=False):
+        value = self.images.get(image)
+        if value is None and not missing_ok:
+            raise AssertionError(f"unexpected missing image {image}")
+        return value
+
+    def load(self, archive):
+        self.loaded.append(archive)
+
+    def tag(self, image_id, image):
+        if not any(identity.image_id == image_id for identity in self.images.values()):
+            raise AssertionError(f"image {image_id} is no longer available")
+        self.tags.append((image_id, image))
+        self.images[image] = DockerImageIdentity(image_id, "tagged", "tagged")
+
+    def remove(self, image):
+        self.removed.append(image)
+        self.images.pop(image, None)
+
+
+def test_legacy_parser_directory_absence_skips_payload_but_partial_payload_fails_closed(tmp_path):
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    assert read_optional_attachment_parser_artifact(legacy) is None
+
+    partial = tmp_path / "partial"
+    (partial / "addons/attachment-parser").mkdir(parents=True)
+    (partial / "addons/attachment-parser/addon.json").write_text("{}")
+    with pytest.raises(InstallError, match="missing attachment-parser identity"):
+        read_optional_attachment_parser_artifact(partial)
+
+
+def test_parser_artifact_checksum_is_checked_before_docker_load(tmp_path):
+    release, _image_ref, _image_id = _parser_release(tmp_path)
+
+    artifact = read_attachment_parser_artifact(release)
+    assert artifact.version == "0.2.0"
+    assert artifact.protocol_version == 2
+
+    artifact.archive.write_bytes(b"damaged")
+    with pytest.raises(InstallError, match="archive checksum mismatch"):
+        read_attachment_parser_artifact(release)
+
+
+def test_parser_archive_cannot_carry_the_active_alias(tmp_path):
+    release, image_ref, _image_id = _parser_release(tmp_path)
+    archive_path = release / "addons/attachment-parser/image.tar"
+    manifest = json.dumps(
+        [{"Config": "config.json", "RepoTags": [image_ref, PARSER_RUNTIME_IMAGE], "Layers": []}]
+    ).encode()
+    with tarfile.open(archive_path, "w") as archive:
+        member = tarfile.TarInfo("manifest.json")
+        member.size = len(manifest)
+        archive.addfile(member, io.BytesIO(manifest))
+    identity_path = release / "addons/attachment-parser/identity.json"
+    identity = json.loads(identity_path.read_text())
+    identity["image"]["archiveSha256"] = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    identity_path.write_text(json.dumps(identity))
+
+    with pytest.raises(InstallError, match="active runtime tag"):
+        read_attachment_parser_artifact(release)
+
+
+def test_parser_prepare_checks_image_identity_and_does_not_replace_active_alias(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+    docker = FakeParserDocker(image_ref, image_id)
+    previous_id = docker.images[PARSER_RUNTIME_IMAGE].image_id
+    retained_ref = f"{PARSER_RETAINED_IMAGE_PREFIX}{previous_id[len('sha256:'):]}"
+
+    pairing = prepare_attachment_parser(release, "1.12.0", docker)
+
+    assert docker.loaded == [release / "addons/attachment-parser/image.tar"]
+    assert docker.images[retained_ref].image_id == previous_id
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == previous_id
+    pairing.activate()
+    assert docker.tags[-1] == (image_id, PARSER_RUNTIME_IMAGE)
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == image_id
+    docker.images[image_ref] = DockerImageIdentity("sha256:" + "3" * 64, "replaced", "replaced")
+    pairing.restore()
+    assert docker.tags[-1] == (previous_id, PARSER_RUNTIME_IMAGE)
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == previous_id
+
+
+def test_parser_prepare_rejects_loaded_image_id_mismatch(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+    docker = FakeParserDocker(image_ref, image_id)
+    docker.images[image_ref] = DockerImageIdentity(
+        "sha256:" + "3" * 64, "0.2.0", "rev"
+    )
+
+    with pytest.raises(InstallError, match="image ID mismatch"):
+        prepare_attachment_parser(release, "1.12.0", docker)
+
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == "sha256:" + "2" * 64
+
+
+def test_parser_prepare_refuses_legacy_rollback_without_previous_image(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+    docker = FakeParserDocker(image_ref, image_id, include_previous=False)
+
+    with pytest.raises(InstallError, match="rollback cannot restore"):
+        prepare_attachment_parser(release, "1.12.0", docker)
+
+    assert docker.loaded == [], "must refuse before loading a release with no rollback pairing"
+
+
+def test_installer_parser_manifest_uses_same_exact_contract(tmp_path):
+    release, _image_ref, _image_id = _parser_release(tmp_path)
+    metadata_path = release / "addons/attachment-parser/addon.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["extra"] = True
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(InstallError, match="exactly"):
+        read_attachment_parser_artifact(release)
+
+
+def test_parser_manifest_accepts_build_metadata_but_docker_tag_uses_underscore(tmp_path):
+    release, image_ref, _image_id = _parser_release(tmp_path, version="1.2.3-rc.1+build.7")
+
+    artifact = read_attachment_parser_artifact(release)
+
+    assert artifact.version == "1.2.3-rc.1+build.7"
+    assert image_ref == "sentient/attachment-parser:release-1.2.3-rc.1_build.7-rev"
+    assert artifact.image_ref == image_ref
+
+
+def test_same_version_first_repair_can_recover_missing_alias_explicitly(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+    docker = FakeParserDocker(image_ref, image_id, include_previous=False)
+
+    pairing = prepare_attachment_parser(release, "1.13.0", docker, allow_missing_previous=True)
+    assert pairing.previous_image_id is None
+    pairing.activate()
+    assert docker.tags[-1] == (image_id, PARSER_RUNTIME_IMAGE)
+    pairing.restore()
+    assert docker.removed == [PARSER_RUNTIME_IMAGE]
+
+
+def test_timed_out_staging_reconciles_immutable_image_before_failing(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+
+    class TimeoutLoadDocker(FakeParserDocker):
+        def load(self, archive):
+            self.loaded.append(archive)
+            raise DockerCommandTimeout("load state unknown")
+
+    docker = TimeoutLoadDocker(image_ref, image_id)
+    pairing = prepare_attachment_parser(release, "1.12.0", docker)
+
+    assert pairing.artifact.image_id == image_id
+    assert docker.loaded == [release / "addons/attachment-parser/image.tar"]
+
+
+def test_timed_out_activation_reconciles_alias_before_rollback(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+
+    class TimeoutAfterTag(FakeParserDocker):
+        def __init__(self):
+            super().__init__(image_ref, image_id)
+            self.timed_out = True
+
+        def tag(self, image_id, image):
+            super().tag(image_id, image)
+            if self.timed_out:
+                self.timed_out = False
+                raise DockerCommandTimeout("tag state unknown")
+
+    docker = TimeoutAfterTag()
+    pairing = prepare_attachment_parser(release, "1.12.0", docker)
+
+    pairing.activate()
+
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == image_id
+
+
+def test_docker_health_requires_running_expected_image_and_live_manifest(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+    artifact = read_attachment_parser_artifact(release)
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if argv[1:3] == ["image", "inspect"]:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"Id": image_id, "Config": {"Labels": {}}}]), "")
+        if argv[1:3] == ["container", "inspect"]:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"Image": image_id, "State": {"Running": True}}]), "")
+        if argv[1] == "exec":
+            return subprocess.CompletedProcess(argv, 0, json.dumps(artifact.metadata), "")
+        raise AssertionError(argv)
+
+    DockerCli(runner).parser_health("sentient-attachment-parser", artifact)
+
+    assert calls[-1][0] == [
+        "docker", "exec", "sentient-attachment-parser", "python3", "/app/exec_client.py", "--health"
+    ]
+    assert all(call[1]["timeout"] == setup_prod.DOCKER_CLI_TIMEOUT_SECONDS for call in calls)
+
+
+def test_docker_health_rejects_nonzero_health_command(tmp_path):
+    release, _image_ref, image_id = _parser_release(tmp_path)
+    artifact = read_attachment_parser_artifact(release)
+
+    def runner(argv, **kwargs):
+        if argv[1:3] == ["image", "inspect"]:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"Id": image_id, "Config": {"Labels": {}}}]), "")
+        if argv[1:3] == ["container", "inspect"]:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"Image": image_id, "State": {"Running": True}}]), "")
+        raise subprocess.CalledProcessError(1, argv)
+
+    with pytest.raises(InstallError, match="exec attachment-parser health"):
+        DockerCli(runner).parser_health("sentient-attachment-parser", artifact)
+
+
+def test_docker_cli_bounds_and_classifies_all_calls_on_timeout():
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append((argv, kwargs))
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    docker = DockerCli(runner)
+    operations = (
+        lambda: docker.inspect(PARSER_RUNTIME_IMAGE, missing_ok=True),
+        lambda: docker.load(Path("image.tar")),
+        lambda: docker.tag("sha256:" + "1" * 64, PARSER_RUNTIME_IMAGE),
+        lambda: docker.remove(PARSER_RUNTIME_IMAGE),
+    )
+    for operation in operations:
+        with pytest.raises(DockerCommandTimeout):
+            operation()
+
+    assert len(calls) == 4
+    assert calls[0][1]["timeout"] == setup_prod.DOCKER_CLI_TIMEOUT_SECONDS
+    assert calls[1][1]["timeout"] == setup_prod.DOCKER_LOAD_TIMEOUT_SECONDS
+    assert calls[2][1]["timeout"] == setup_prod.DOCKER_CLI_TIMEOUT_SECONDS
+    assert calls[3][1]["timeout"] == setup_prod.DOCKER_CLI_TIMEOUT_SECONDS
+
+
+def test_previous_paired_alias_mismatch_refuses_before_load_or_tag(tmp_path):
+    release, image_ref, image_id = _parser_release(tmp_path)
+    docker = FakeParserDocker(image_ref, image_id)
+    expected_previous = "sha256:" + "4" * 64
+
+    with pytest.raises(InstallError, match="paired with"):
+        prepare_attachment_parser(
+            release,
+            "1.12.0",
+            docker,
+            expected_previous_image_id=expected_previous,
+        )
+
+    assert docker.loaded == []
+    assert docker.tags == []
+
+
+def test_legacy_candidate_does_not_lookup_candidate_receipt_and_restores_previous_pair(tmp_path):
+    paired_release, _image_ref, _image_id = _parser_release(tmp_path)
+    previous_artifact = read_attachment_parser_artifact(paired_release)
+    docker = FakeParserDocker("sentient/attachment-parser:release-new-rev", "sha256:" + "3" * 64)
+    docker.images[PARSER_RUNTIME_IMAGE] = DockerImageIdentity(
+        previous_artifact.image_id,
+        previous_artifact.version,
+        previous_artifact.revision,
+        previous_artifact.metadata["name"],
+        previous_artifact.protocol_version,
+    )
+    previous_id = docker.images[PARSER_RUNTIME_IMAGE].image_id
+
+    pairing = prepare_legacy_candidate_attachment_parser(
+        "1.12.0", previous_artifact, docker
+    )
+    pairing.activate()
+    docker.images[PARSER_RUNTIME_IMAGE] = DockerImageIdentity(
+        "sha256:" + "3" * 64, "candidate", "candidate"
+    )
+    pairing.restore()
+
+    assert docker.loaded == []
+    assert docker.tags[-1] == (previous_id, PARSER_RUNTIME_IMAGE)
+
+
+def test_preflight_missing_parser_config_fails_before_install_side_effects(tmp_path):
+    release, _image_ref, _image_id = _parser_release(tmp_path)
+    archive_path = tmp_path / "1.13.0.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        archive.add(release, arcname="1.13.0")
+
+    config = tmp_path / "operator-config.yaml"
+    config.write_text("managed_services:\n  egress-proxy:\n    template: egress-proxy.yaml\n")
+    template = tmp_path / "template.yaml"
+    template.write_text("managed_services:\n  attachment-parser:\n    template: attachment-parser.yaml\n")
+
+    with pytest.raises(InstallError, match="managed_services\\.attachment-parser"):
+        preflight_attachment_parser_install(archive_path, "1.13.0", config, template)
+
+    fs, ld = FakeFs(), FakeLaunchd()
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: True,
+        verify_checksum=lambda _path: True,
+        preflight=lambda version, tarball: preflight_attachment_parser_install(
+            tarball, version, config, template
+        ),
+        prepare=lambda _version: pytest.fail("prepare must not run after preflight refusal"),
+    )
+    with pytest.raises(InstallError, match="managed_services\\.attachment-parser"):
+        inst.install("1.13.0", archive_path)
+
+    assert fs.installed == []
+    assert ld.kicks == 0
+
+
+def test_legacy_receipt_restores_recorded_image_not_current_image(tmp_path):
+    old_image = "sha256:" + "4" * 64
+    write_legacy_parser_receipt(tmp_path, "1.12.0", old_image)
+    assert read_legacy_parser_receipt(tmp_path, "1.12.0") == old_image
+    docker = FakeParserDocker("sentient/attachment-parser:release-new-rev", "sha256:" + "3" * 64)
+    docker.images[old_image] = DockerImageIdentity(old_image, "legacy", "legacy-rev")
+    previous_id = docker.images[PARSER_RUNTIME_IMAGE].image_id
+    retained_ref = f"{PARSER_RETAINED_IMAGE_PREFIX}{previous_id[len('sha256:'):]}"
+
+    pairing = prepare_legacy_attachment_parser(tmp_path, "1.12.0", "1.13.0", docker)
+
+    assert docker.images[retained_ref].image_id == previous_id
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == previous_id
+    pairing.activate()
+
+    assert docker.tags[-1] == (old_image, PARSER_RUNTIME_IMAGE)
+    assert docker.tags[-1][0] != "sha256:" + "3" * 64
+    pairing.restore()
+    assert docker.tags[-1][0] == previous_id
+    assert docker.images[PARSER_RUNTIME_IMAGE].image_id == previous_id
+
+
+def test_legacy_receipt_refuses_pruned_image_without_guessing(tmp_path):
+    old_image = "sha256:" + "4" * 64
+    write_legacy_parser_receipt(tmp_path, "1.12.0", old_image)
+    docker = FakeParserDocker("sentient/attachment-parser:release-new-rev", "sha256:" + "3" * 64)
+
+    with pytest.raises(InstallError, match="prune.*current image"):
+        prepare_legacy_attachment_parser(tmp_path, "1.12.0", "1.13.0", docker)
+
+
+def test_installer_lock_refuses_concurrent_transition(tmp_path):
+    path = tmp_path / ".setup-prod.lock"
+    first = InstallerLock(path)
+    second = InstallerLock(path)
+    first.acquire()
+    try:
+        with pytest.raises(InstallError, match="concurrent transition"):
+            second.acquire()
+    finally:
+        first.release()
+    second.acquire()
+    second.release()
+
+
+def test_failed_parser_readiness_rolls_back_pairing_before_restart():
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.12.0")
+    fs.installed.append("1.12.0")
+    events = []
+    health = iter([(False, "attachment-parser not ready: container exited"), (True, None)])
+
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: next(health),
+        verify_checksum=lambda _path: True,
+        prepare=lambda _version: events.append("prepare") or object(),
+        activate=lambda _prepared: events.append("activate"),
+        restore=lambda _prepared: events.append("restore"),
+    )
+
+    with pytest.raises(InstallError, match="attachment-parser not ready"):
+        inst.install("1.13.0", "release.tar.gz")
+
+    assert events == ["prepare", "activate", "restore"]
+    assert fs.current == "1.12.0"
+    assert ld.kicks == 2
+
+
+def test_failed_health_restores_parser_pairing_before_restart(tmp_path):
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.12.0")
+    fs.installed.append("1.12.0")
+    events = []
+    health = iter([False, True])
+
+    def prepare(_version):
+        events.append("prepare")
+        return object()
+
+    def activate(_prepared):
+        events.append("activate")
+
+    def restore(_prepared):
+        events.append("restore")
+
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: next(health),
+        verify_checksum=lambda _path: True,
+        prepare=prepare,
+        activate=activate,
+        restore=restore,
+    )
+
+    with pytest.raises(InstallError, match="rolled back to 1.12.0"):
+        inst.install("1.13.0", "release.tar.gz")
+
+    assert events == ["prepare", "activate", "restore"]
+    assert fs.current == "1.12.0"
+    assert ld.kicks == 2
+
+
+def test_idempotent_healthy_reinstall_does_not_prepare_or_activate():
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.13.0")
+    events = []
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: True,
+        verify_checksum=lambda _path: True,
+        prepare=lambda _version: events.append("prepare"),
+        activate=lambda _prepared: events.append("activate"),
+    )
+
+    inst.install("1.13.0", "release.tar.gz")
+
+    assert events == []
+    assert ld.kicks == 0
+
+
+def test_healthy_same_version_legacy_reinstall_is_noop(tmp_path):
+    legacy = tmp_path / "releases/1.13.0"
+    legacy.mkdir(parents=True)
+    assert read_optional_attachment_parser_artifact(legacy) is None
+
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.13.0")
+    fs.installed.append("1.13.0")
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: True,
+        verify_checksum=lambda _path: True,
+        repair=lambda _version: pytest.fail("healthy legacy reinstall must not repair"),
+        prepare=lambda _version: pytest.fail("healthy legacy reinstall must not unpack"),
+    )
+
+    inst.install("1.13.0", "release.tar.gz")
+
+    assert ld.kicks == 0
+
+
+def test_same_version_pairing_repair_does_not_unpack_supplied_tarball():
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.13.0")
+    fs.installed.append("1.13.0")
+    health = iter([False, True])
+    events = []
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: next(health),
+        verify_checksum=lambda _path: True,
+        repair=lambda version: events.append(f"repair:{version}") or object(),
+        activate=lambda _prepared: events.append("activate"),
+    )
+
+    inst.install("1.13.0", "different-code-same-version.tar.gz")
+
+    assert fs.installed == ["1.13.0"]
+    assert events == ["repair:1.13.0", "activate"]
+    assert ld.kicks == 1
+
+
+def test_same_version_repair_failure_has_explicit_no_rollback_state():
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.13.0")
+    fs.installed.append("1.13.0")
+    inst = Installer(
+        fs=fs,
+        launchd=ld,
+        health=lambda: False,
+        verify_checksum=lambda _path: True,
+        repair=lambda _version: object(),
+        activate=lambda _prepared: None,
+    )
+
+    with pytest.raises(InstallError, match="no distinct rollback target"):
+        inst.install("1.13.0", "repair.tar.gz")
+
+    assert fs.current == "1.13.0"
+    assert ld.kicks == 1
 
 
 def test_health_failure_rolls_back_to_previous_version():

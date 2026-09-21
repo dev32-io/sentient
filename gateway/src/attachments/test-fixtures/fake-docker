@@ -1,0 +1,89 @@
+#!/bin/sh
+interactive=false
+if [ "$2" = "-i" ]; then
+  interactive=true
+  container="$3"
+  python="$4"
+  client="$5"
+  command="$6"
+  request_id="$7"
+else
+  container="$2"
+  python="$3"
+  client="$4"
+  command="$5"
+  request_id="$6"
+fi
+if [ "$1" != "exec" ] || [ "$python" != "python3" ] || [ "$client" != "/app/exec_client.py" ]; then
+  exit 64
+fi
+printf 'exec%s %s python3 /app/exec_client.py %s %s\n' "$(if $interactive; then printf ' -i'; fi)" "$container" "$command" "$request_id" >> "/tmp/${container}.calls"
+
+metadata_frame() {
+  python3 - "$request_id" <<'PY'
+import json
+import struct
+import sys
+
+request_id = sys.argv[1]
+body = json.dumps({
+    "name": "attachment-parser",
+    "version": "0.2.0",
+    "protocolVersion": 2,
+    "description": "Bounded attachment decoding over Docker exec and an internal Unix socket.",
+    "state": "ephemeral",
+}, separators=(",", ":")).encode()
+header = json.dumps({
+    "version": 1,
+    "requestId": request_id,
+    "status": 200,
+    "contentType": "application/json",
+    "contentLength": len(body),
+    "headers": {},
+    "error": None,
+}, separators=(",", ":")).encode()
+sys.stdout.buffer.write(struct.pack(">I", len(header)) + header + body)
+PY
+}
+
+frame() {
+  header="{\"version\":1,\"requestId\":\"$request_id\",\"status\":200,\"contentType\":\"$1\",\"contentLength\":0,\"headers\":{},\"error\":null}"
+  if [ "$1" = "application/json" ]; then
+    printf '\000\000\000\232'
+  else
+    printf '\000\000\000\242'
+  fi
+  printf '%s' "$header"
+}
+
+case "$container" in
+  missing-*|stopped-*)
+    [ "$command" = "metadata" ] && exit 1
+    ;;
+  legacy-*)
+    [ "$command" = "metadata" ] && exit 2
+    ;;
+esac
+
+if [ "$command" = "metadata" ]; then
+  metadata_frame
+  exit 0
+fi
+
+case "$container" in
+  success-*)
+    cat >/dev/null
+    frame application/json
+    ;;
+  excess-*)
+    dd if=/dev/zero bs=9000 count=1 2>/dev/null
+    ;;
+  hang-*)
+    if [ "$command" = "cancel" ]; then
+      frame application/octet-stream
+    else
+      while :; do :; done
+    fi
+    ;;
+  *) exit 64 ;;
+esac

@@ -10,6 +10,8 @@
 //                           generation → DROP).
 //   session.switched      → increment generation; set awaitingHistory gate;
 //                           fire onHistoryNeeded(sessionId, generation) + onEvent.
+//   session.created       → refetch the newly minted history. Its first user entry
+//                           can commit before this window is attached to fan-out.
 //   replaceMirror(items)  → REPLACE the mirror with REST history, release the
 //                           gate, fire onSnapshot + onUpdate.
 //
@@ -60,6 +62,7 @@ class ConversationHistoryConnector(
 
     // True between session.switched and the REST history arriving via replaceMirror.
     private var awaitingHistory: Boolean = false
+    private var awaitingMintHistory: Boolean = false
 
     /** Current ordered mirror of the feed. Safe to read synchronously. */
     fun items(): List<ConversationFeedItem> = mirror
@@ -99,6 +102,7 @@ class ConversationHistoryConnector(
     fun clearForNewChat() {
         generation++
         awaitingHistory = false
+        awaitingMintHistory = true
         mirror = emptyList()
         log.info("clear-new-chat", mapOf("generation" to generation))
         onSnapshot?.invoke(mirror)
@@ -121,6 +125,7 @@ class ConversationHistoryConnector(
      */
     fun clearForSwitch() {
         awaitingHistory = true
+        awaitingMintHistory = false
         mirror = emptyList()
         log.info("clear-for-switch")
         onSnapshot?.invoke(mirror)
@@ -134,6 +139,7 @@ class ConversationHistoryConnector(
             is ServerMessage.ConversationSnapshot -> onSnapshotFrame(msg)
             is ServerMessage.ConversationEntry -> onEntryFrame(msg)
             is ServerMessage.SessionSwitched -> onSessionSwitched(msg)
+            is ServerMessage.SessionCreated -> onSessionCreated(msg)
             else -> Unit // not owned by this connector
         }
     }
@@ -215,17 +221,28 @@ class ConversationHistoryConnector(
     }
 
     private fun onSessionSwitched(msg: ServerMessage.SessionSwitched) {
+        awaitingMintHistory = false
+        requestHistory(msg.sessionId, "session.switched")
+        onEvent?.invoke(SdkEvent.SessionSwitched(sessionId = msg.sessionId))
+    }
+
+    private fun onSessionCreated(msg: ServerMessage.SessionCreated) {
+        if (!awaitingMintHistory) return
+        awaitingMintHistory = false
+        // Draft admission commits before fan-out attaches this window. Refetching
+        // here recovers that first user entry and its pendingId/attachments.
+        requestHistory(msg.sessionId, "session.created")
+    }
+
+    private fun requestHistory(sessionId: String, trigger: String) {
         generation++
         log.info(
             "gate-set",
-            mapOf("trigger" to "session.switched", "sessionId" to msg.sessionId, "generation" to generation),
+            mapOf("trigger" to trigger, "sessionId" to sessionId, "generation" to generation),
         )
         awaitingHistory = true
         // Fire AFTER the bump so the callee receives the post-bump generation.
-        // This ensures the REST fetch launched in the callback uses the same
-        // generation token that replaceMirror will later validate against.
-        onHistoryNeeded?.invoke(msg.sessionId, generation)
-        onEvent?.invoke(SdkEvent.SessionSwitched(sessionId = msg.sessionId))
+        onHistoryNeeded?.invoke(sessionId, generation)
     }
 
     companion object {

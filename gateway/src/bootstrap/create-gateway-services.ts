@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import type {
+  AttachmentsConfig,
   AuthConfig,
   HermesBuiltinTools,
   HermesConfig,
+  HistoryConfig,
   McpCatalog,
   ProvidersConfig,
   SessionConfig,
@@ -16,8 +18,10 @@ import type { LlmProvider } from "../admin/secrets-store.js";
 import type { UnlockCode } from "../admin/unlock-code.js";
 import type { UserLifecycle } from "../admin/user-lifecycle.js";
 import type { UserProvisioner } from "../admin/user-provisioner.js";
+import { type ProvidersDeps, createProvidersDeps } from "../api/providers-deps.ts";
 import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
+import type { AttachmentParserClient } from "../attachments/parser-client.js";
 import type { SessionManager } from "../auth/session-manager.ts";
 import type { CalendarConfig } from "../calendar/types.js";
 import type { StartupConfig } from "../config/startup-config.ts";
@@ -110,6 +114,9 @@ export interface GatewayServices {
   readonly downloads: { artifactsDir: string; publicBaseUrl: string };
   readonly hermes: HermesConfig | null;
   readonly session: SessionConfig;
+  readonly history?: HistoryConfig;
+  readonly attachments?: AttachmentsConfig;
+  readonly attachmentParser: AttachmentParserClient;
   /** Per-surface outbound frame journals, keyed `${userId}::${surfaceId}`
    *  (Plan 3 Task 10, spec §11 slice 6). Deliberately NOT per-connection:
    *  the journal must survive the socket that filled it so a reconnecting
@@ -136,6 +143,7 @@ export interface GatewayServices {
   readonly templateLoader: TemplateLoader;
   readonly applyDeps: ApplyDeps;
   readonly providersConfig: ProvidersConfig;
+  readonly providersDeps: ProvidersDeps;
   /** Fish Audio API key for the voice-browse proxy. Plain env var (not
    *  secretsStore) — never hardcode; resolves to null when unset, which the
    *  Fish fetcher treats as "send no Authorization header" (public browsing). */
@@ -250,7 +258,12 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     internalSecretsStore,
   } = state;
 
-  const services = await runPhaseServices({ cfg, auth, secretsStore, schedules });
+  const providersDeps = createProvidersDeps({
+    config: cfg.providers,
+    env: (name) => process.env[name],
+    secretsStore: secretsStore ?? undefined,
+  });
+  const services = await runPhaseServices({ cfg, auth, secretsStore, schedules, providersDeps });
 
   const { systemOrchestrator, bootReconcile } = await runPhaseOrchestrator({
     cfg,
@@ -325,6 +338,9 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     },
     hermes: cfg.hermes ?? null,
     session: cfg.session,
+    ...(cfg.history ? { history: cfg.history } : {}),
+    ...(cfg.attachments ? { attachments: cfg.attachments } : {}),
+    attachmentParser: services.attachmentParser,
     replayRegistry: createReplayRegistry({
       maxBytesPerSession: cfg.session.replay_journal_max_bytes,
       retentionMs: cfg.session.retention_ms,
@@ -344,6 +360,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     templateLoader: services.templateLoader,
     applyDeps: services.applyDeps,
     providersConfig: cfg.providers,
+    providersDeps,
     fishApiKey: process.env.FISH_AUDIO_API_KEY ?? null,
     mcpCatalog: cfg.mcpCatalog,
     hermesBuiltinTools: cfg.hermesBuiltinTools,

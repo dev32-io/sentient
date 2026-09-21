@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // RootView — startup gate: setup, cold bearer validation/retry, login, or
-// authenticated shell. Stored credentials never mount shell before validation.
+// draft shell. Coherent stored credentials may mount only in explicit local-offline
+// mode after a typed network failure; this does not claim server validation.
 //
 // Config is checked FIRST so auth state is never evaluated while unconfigured.
 // showSetupOverride lets the gear button on LoginView re-open setup at any time
@@ -59,7 +60,7 @@ struct RootView: View {
                     ),
                     onSaved: { showSetupOverride = false }
                 )
-            } else if appConfig.startupAuthentication == .authenticated {
+            } else if appConfig.startupAuthentication.permitsDraftShell {
                 UpdateGate(appConfig: appConfig)
                     .transition(.opacity)
                     .zIndex(1)

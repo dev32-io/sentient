@@ -1,52 +1,87 @@
-// ---------------------------------------------------------------------------
-// HistoryViewModel — drives the history side panel's session list + search.
-//
-// Swift mirror of Android's HistoryViewModel over the User/Connection-scoped
-// ChatComponent: reads the session list via observeSessions (suspend list fetch)
-// and routes rename/delete through the same component. It NO LONGER switches
-// conversation or starts a new chat — those are NAVIGATIONS owned by the host
-// (the drawer's onSelect/onNewChat callbacks flip the host's activeSessionId).
-// So this VM is read + mutate (rename/delete) only.
-//
-// Search is client-side substring over the loaded title list (the SDK does not
-// expose a session search). The published surface (visible/loading/hasLoaded/
-// error/query/refresh) is unchanged so HistorySidePanel renders identically.
-// ---------------------------------------------------------------------------
 import Foundation
 import MobileData
 
-/// Page size for the session-list fetch — the drawer shows the most-recent chats.
 private let sessionsPageLimit: Int32 = 100
+
+enum HistoryEntryKind: Equatable {
+    case session(id: String, draftId: String?)
+    case draft(id: String)
+}
+
+enum HistoryDestructiveAction: Equatable {
+    case deleteConversation(sessionId: String)
+    case discardDraft(draftId: String)
+}
+
+struct HistoryEntry: Identifiable, Equatable {
+    let kind: HistoryEntryKind
+    let title: String
+    let lastActiveAt: Int64
+    let hasDraft: Bool
+
+    var id: String {
+        switch kind {
+        case .session(let id, _): id
+        case .draft(let id): "draft-\(id)"
+        }
+    }
+    var sessionId: String? {
+        if case .session(let id, _) = kind { id } else { nil }
+    }
+    var draftId: String? {
+        switch kind {
+        case .session(_, let draftId): draftId
+        case .draft(let id): id
+        }
+    }
+    var isLocalDraft: Bool {
+        if case .draft = kind { true } else { false }
+    }
+    var destructiveActions: [HistoryDestructiveAction] {
+        var actions: [HistoryDestructiveAction] = sessionId.map { [.deleteConversation(sessionId: $0)] } ?? []
+        if let draftId { actions.append(.discardDraft(draftId: draftId)) }
+        return actions
+    }
+}
 
 @MainActor
 final class HistoryViewModel: ObservableObject {
     @Published private(set) var sessions: [SessionRow] = []
+    @Published private(set) var drafts: [NativeDraft] = []
+    @Published private(set) var deleteIntents: [NativeDeleteIntent] = []
     @Published var query: String = ""
     @Published private(set) var loading = false
     @Published private(set) var error: String?
-    /// False until the first terminal load result. Drives the panel's open-slide
-    /// spinner so an empty list never paints mid-animation. Latches once true.
     @Published private(set) var hasLoaded = false
 
     private let component: ChatComponent
     private let log = AppLog("history", "model")
-
-    /// In-flight load task; cancelled and replaced on each refresh().
     private var loadTask: Task<Void, Never>?
+    private var draftsTask: Task<Void, Never>?
+    private var sessionChangesTask: Task<Void, Never>?
 
     init(component: ChatComponent) {
         self.component = component
+        if let coordinator = component.drafts {
+            draftsTask = Task { [weak self] in
+                for await snapshot in coordinator.snapshot {
+                    self?.apply(snapshot)
+                }
+            }
+        }
+        sessionChangesTask = Task { [weak self] in
+            for await event in component.sessionChanges {
+                if case .deleted(let deleted) = onEnum(of: event) {
+                    self?.sessions.removeAll { $0.sessionId == deleted.sessionId }
+                }
+            }
+        }
     }
 
-    // ── Rows after client-side search filter ─────────────────────────────────
-
-    var visible: [SessionRow] { historySessions(sessions, matching: query) }
-
+    var visible: [HistoryEntry] { historyEntries(sessions: sessions, drafts: drafts, deleting: deleteIntents, matching: query) }
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+    var hasPermanentDeleteFailure: Bool { deleteIntents.contains { $0.failureCode == "permanent" } }
 
-    // ── Refresh ──────────────────────────────────────────────────────────────
-
-    /// Re-query the session list. Call on drawer-open + after any mutation.
     func refresh() async {
         log.info("refresh")
         loadTask?.cancel()
@@ -62,15 +97,14 @@ final class HistoryViewModel: ObservableObject {
         loading = true
         error = nil
         do {
+            if let snapshot = try await component.drafts?.restore() { apply(snapshot) }
             let summaries = try await component.observeSessions.invoke(limit: sessionsPageLimit, offset: 0)
             guard !Task.isCancelled else { return }
             sessions = summaries.map { $0.toSessionRow() }
             loading = false
             hasLoaded = true
-            error = nil
             log.info("loaded count=\(sessions.count)")
         } catch is CancellationError {
-            // Drawer dismissed / replaced — not a real failure.
         } catch {
             guard !Task.isCancelled else { return }
             loading = false
@@ -80,22 +114,108 @@ final class HistoryViewModel: ObservableObject {
         }
     }
 
-    // ── Mutations ─────────────────────────────────────────────────────────────
-
     func renameSession(_ sessionId: String, title: String) async {
-        log.info("renameSession sessionId=\(sessionId)")
         do { try await component.renameSession.invoke(sessionId: sessionId, title: title) } catch {
             log.warn("renameSession failed code=transport")
         }
         await refresh()
     }
 
-    func deleteSession(_ sessionId: String) async {
-        log.info("deleteSession sessionId=\(sessionId)")
-        do { try await component.deleteSession.invoke(sessionId: sessionId) } catch {
-            log.warn("deleteSession failed code=transport")
+    /// Returns once durable intent exists; network deletion continues without blocking navigation.
+    func deleteSession(_ sessionId: String) async -> Bool {
+        guard let coordinator = component.drafts else {
+            error = "Conversation couldn't be hidden because local storage is unavailable."
+            return false
         }
-        await refresh()
+        do {
+            _ = try await coordinator.persistDelete(sessionId: sessionId)
+            apply(try await coordinator.restore())
+            sessions.removeAll { $0.sessionId == sessionId }
+            Task { [component] in try? await component.processDeleteIntent(sessionId: sessionId) }
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            self.error = "Conversation deletion couldn't be saved."
+            return false
+        }
+    }
+
+    func retryDeletes(includePermanent: Bool = true) async {
+        for intent in deleteIntents where includePermanent || intent.failureCode != "permanent" {
+            await attemptDelete(intent.sessionId)
+        }
+    }
+
+    private func attemptDelete(_ sessionId: String) async {
+        do { try await component.processDeleteIntent(sessionId: sessionId) } catch is CancellationError {}
+        catch { log.warn("delete.retry-failed code=transport") }
+    }
+
+    func discardDraft(_ draftId: String) async -> Bool {
+        guard let coordinator = component.drafts else {
+            error = "Draft couldn't be discarded because local storage is unavailable."
+            return false
+        }
+        do {
+            let discarded = (try await coordinator.discard(draftId: draftId)).boolValue
+            if !discarded { error = "Draft couldn't be discarded." }
+            return discarded
+        } catch is CancellationError {
+            return false
+        } catch {
+            self.error = "Draft couldn't be discarded."
+            return false
+        }
+    }
+
+    private func apply(_ snapshot: NativeDraftSnapshot) {
+        drafts = snapshot.drafts
+        deleteIntents = snapshot.deleteIntents
+    }
+
+    deinit {
+        loadTask?.cancel()
+        draftsTask?.cancel()
+        sessionChangesTask?.cancel()
+    }
+}
+
+func historyEntries(
+    sessions: [SessionRow],
+    drafts: [NativeDraft],
+    deleting: [NativeDeleteIntent],
+    matching query: String
+) -> [HistoryEntry] {
+    let hidden = Set(deleting.map(\.sessionId))
+    let draftsBySession = Dictionary(uniqueKeysWithValues: drafts.compactMap { draft in
+        draft.sessionId.map { ($0, draft) }
+    })
+    var entries = sessions.filter { !hidden.contains($0.sessionId) }.map { row in
+        HistoryEntry(
+            kind: .session(id: row.sessionId, draftId: draftsBySession[row.sessionId]?.id),
+            title: row.title,
+            lastActiveAt: row.lastActiveAt,
+            hasDraft: draftsBySession[row.sessionId] != nil
+        )
+    }
+    let listedSessions = Set(sessions.map(\.sessionId))
+    entries += drafts.filter { draft in
+        draft.sessionId == nil || (!listedSessions.contains(draft.sessionId!) && !hidden.contains(draft.sessionId!))
+    }.map { draft in
+        let label = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "\n", maxSplits: 1).first.map { String($0.prefix(60)) }
+        return HistoryEntry(
+            kind: draft.sessionId.map { .session(id: $0, draftId: draft.id) } ?? .draft(id: draft.id),
+            title: label ?? "New draft",
+            lastActiveAt: draft.updatedAt,
+            hasDraft: true
+        )
+    }
+    entries.sort { $0.lastActiveAt > $1.lastActiveAt }
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? entries : entries.filter {
+        $0.title.range(of: trimmed, options: .caseInsensitive) != nil
     }
 }
 
@@ -105,41 +225,18 @@ func historySessions(_ sessions: [SessionRow], matching query: String) -> [Sessi
     return sessions.filter { $0.title.range(of: trimmed, options: .caseInsensitive) != nil }
 }
 
-// ── SessionSummary → SessionRow mapping ──────────────────────────────────────
-
 private extension SessionSummary {
-    /// Mirrors Android HistoryViewModel.toSessionRow():
-    ///   startedAt=0, lastActiveAt=updatedAtMs, messageCount=0, isActive=false.
     func toSessionRow() -> SessionRow {
-        SessionRow(
-            sessionId: id,
-            rootId: nil,
-            title: title,
-            startedAt: 0,
-            lastActiveAt: updatedAtMs,
-            messageCount: 0,
-            isActive: false
-        )
+        SessionRow(sessionId: id, rootId: nil, title: title, startedAt: 0,
+                   lastActiveAt: updatedAtMs, messageCount: 0, isActive: false)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Preview support — seed sessions without real I/O.
-// ---------------------------------------------------------------------------
 #if DEBUG
 extension HistoryViewModel {
-    /// Overwrite the session list for SwiftUI previews (never call in production).
-    func seedForPreview(_ rows: [SessionRow]) {
-        sessions = rows
-        hasLoaded = true
-    }
-
-    /// Seed an error state for SwiftUI previews.
+    func seedForPreview(_ rows: [SessionRow]) { sessions = rows; hasLoaded = true }
     func seedErrorForPreview(_ message: String, rows: [SessionRow] = []) {
-        sessions = rows
-        error = message
-        loading = false
-        hasLoaded = true
+        sessions = rows; error = message; loading = false; hasLoaded = true
     }
 }
 #endif

@@ -14,7 +14,7 @@ conversation projections.
 For each user or background-completion stimulus, `SessionRuntime` starts at
 most one turn. `runtime/react-loop.ts` re-reads the store on every iteration,
 streams provider text, dispatches mediated tools, appends tool calls/results,
-and forces the last allowed iteration to be content-only. Input arriving while
+and continues until a final answer, cancellation, or failure. Input arriving while
 a turn is active is appended first and can steer the next iteration; input not
 consumed by that turn starts a back-to-back turn.
 

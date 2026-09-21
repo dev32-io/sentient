@@ -14,14 +14,20 @@ export type ModelProvider = "openrouter" | "ollama-cloud" | "custom";
 export type VoiceProvider = "local-tts";
 /** Mirrors gateway reasoningEffortSchema (Hermes `agent.reasoning_effort`). */
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export interface ModelRef {
+  provider: ModelProvider;
+  id: string;
+}
 
 /** Local mirror of gateway ProfileV1. Keep in sync with profileV1Schema. */
 export interface ProfileV1 {
   schemaVersion: 1;
   userId: string;
-  model: {
-    provider: ModelProvider;
-    id: string;
+  model: ModelRef;
+  auxiliaryModels?: {
+    title?: ModelRef;
+    dreamer?: ModelRef;
+    attachmentVision?: ModelRef;
   };
   voice: {
     provider: VoiceProvider;

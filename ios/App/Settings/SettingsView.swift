@@ -53,6 +53,7 @@ private let personalItems: [CategoryItem] = [
 private let responseItems: [CategoryItem] = [
     .init(icon: .audio, title: "Audio", route: .settingsAudio, key: "audio"),
     .init(icon: .model, title: "Model", route: .settingsModel, key: "model"),
+    .init(icon: .model, title: "Auxiliary runners", route: .settingsAuxiliary, key: "auxiliary"),
 ]
 
 private let capabilityItems: [CategoryItem] = [

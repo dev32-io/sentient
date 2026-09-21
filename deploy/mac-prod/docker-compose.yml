@@ -10,6 +10,7 @@
 # What compose is still for: baking the `:local` image tags the orchestrator
 # creates containers from.
 #
+#   eval "$(scripts/stack.sh parser-env)"
 #   docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
 #
 # Addon networks are NOT declared here. The gateway creates them, and
@@ -48,6 +49,20 @@ services:
   # compose services. `profiles: build-only` keeps them out of `up` while
   # `docker compose --profile build-only build` produces them.
   # ---------------------------------------------------------------------------
+  attachment-parser:
+    build:
+      context: ../../gateway/addons/attachment-parser
+      args:
+        # Bootstrap with `eval "$(scripts/stack.sh parser-env)"`; values come
+        # from addon.json and the source revision, never fixed metadata defaults.
+        ADDON_NAME: "${ATTACHMENT_PARSER_NAME:?run scripts/stack.sh parser-env}"
+        ADDON_VERSION: "${ATTACHMENT_PARSER_VERSION:?run scripts/stack.sh parser-env}"
+        ADDON_PROTOCOL_VERSION: "${ATTACHMENT_PARSER_PROTOCOL_VERSION:?run scripts/stack.sh parser-env}"
+        ADDON_REVISION: "${ATTACHMENT_PARSER_REVISION:?run scripts/stack.sh parser-env}"
+    image: sentient/attachment-parser:local
+    pull_policy: never
+    profiles: ["build-only"]
+
   outbound-worker:
     build:
       context: ../../gateway/addons/outbound-worker

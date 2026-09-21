@@ -27,17 +27,17 @@ import { getLog } from "../logging/logger.js";
 
 const log = getLog(["sentient", "ws", "input-arbiter"]);
 
+export interface InputFloorReservation {
+  /** Keep the floor through its normal arbitration window. */
+  commit(): void;
+  /** Release only this reservation; stale failures cannot release a newer claim. */
+  release(): void;
+}
+
 export interface InputArbiter {
-  /**
-   * Claim the input floor for [attachmentId] at [nowMs].
-   *
-   * True when the command may proceed: the floor was free, or this attachment
-   * already holds it. False when a DIFFERENT window took it less than the
-   * arbitration window ago — the caller refuses with `session_busy`.
-   *
-   * A refused claim does not extend the floor: the loser must not push the
-   * winner's expiry out.
-   */
+  /** Reserve before durable admission. Null means another attachment owns the floor. */
+  reserve(attachmentId: string, nowMs: number): InputFloorReservation | null;
+  /** Compatibility helper for callers that need an immediately committed claim. */
   claim(attachmentId: string, nowMs: number): boolean;
 }
 
@@ -48,12 +48,11 @@ export interface InputArbiter {
  * window is never "still open").
  */
 export function createInputArbiter(sessionId: string, windowMs: number): InputArbiter {
-  let floor: { attachmentId: string; atMs: number } | null = null;
+  let floor: { attachmentId: string; atMs: number; reservations: Set<object>; committed: boolean } | null = null;
 
-  return {
-    claim(attachmentId, nowMs) {
-      if (floor !== null && nowMs - floor.atMs < windowMs) {
-        if (floor.attachmentId === attachmentId) return true;
+  function reserve(attachmentId: string, nowMs: number): InputFloorReservation | null {
+    if (floor !== null && nowMs - floor.atMs < windowMs) {
+      if (floor.attachmentId !== attachmentId) {
         log.info("input-arbiter.busy", {
           sessionId,
           attachmentId,
@@ -62,13 +61,34 @@ export function createInputArbiter(sessionId: string, windowMs: number): InputAr
           windowMs,
           reason: "another window claimed this session's input floor at this dispatch — first window to talk wins",
         });
-        return false;
+        return null;
       }
-      // Re-stamped, not extended: the span always runs from the moment the
-      // floor was genuinely free.
-      floor = { attachmentId, atMs: nowMs };
+    } else {
+      floor = { attachmentId, atMs: nowMs, reservations: new Set(), committed: false };
       log.debug("input-arbiter.claimed", { sessionId, attachmentId, windowMs });
-      return true;
+    }
+
+    const claimedFloor = floor;
+    const token = {};
+    claimedFloor.reservations.add(token);
+    return {
+      commit() {
+        claimedFloor.committed = true;
+        claimedFloor.reservations.delete(token);
+      },
+      release() {
+        claimedFloor.reservations.delete(token);
+        if (floor === claimedFloor && !claimedFloor.committed && claimedFloor.reservations.size === 0) floor = null;
+      },
+    };
+  }
+
+  return {
+    reserve,
+    claim(attachmentId, nowMs) {
+      const reservation = reserve(attachmentId, nowMs);
+      reservation?.commit();
+      return reservation !== null;
     },
   };
 }

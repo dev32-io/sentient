@@ -16,7 +16,13 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
+import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.CursorSnapshot
 import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
@@ -29,6 +35,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SdkResumeCursorPersistenceTest {
@@ -77,6 +84,52 @@ class SdkResumeCursorPersistenceTest {
 
     private fun resumeFrames(sent: List<String>) =
         sent.filter { it.contains("\"type\":\"session.configure\"") && it.contains("\"resume\":") }
+
+    private fun deleteClient(status: HttpStatusCode) = SessionsHttpClient(
+        httpClient = HttpClient(MockEngine { respond("{\"code\":\"not_found\"}", status) }),
+        gatewayWsUrl = "wss://test/api/v1/ws",
+        token = { "token" },
+    )
+
+    @Test
+    fun reopening_selected_pending_reestablishes_its_identity_on_a_fresh_generation() = runTest {
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+        connectToReady(sdk, fake)
+        val first = "d_0123456789abcdef0123456789abcdef"
+        val second = "d_fedcba9876543210fedcba9876543210"
+
+        val firstGeneration = sdk.restorePendingMintAnchor(first, sdk.surfaceId)!!
+        sdk.connection.first { fake.openedUrls.size >= 2 }
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        runCurrent()
+        assertTrue(fake.sentText.last { it.contains("\"type\":\"session.configure\"") }.contains("\"conversationId\":\"$first\""))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.connection.first { it.status == SdkStatus.READY }
+
+        val secondGeneration = sdk.restorePendingMintAnchor(second, sdk.surfaceId)!!
+        assertTrue(secondGeneration > firstGeneration)
+        sdk.connection.first { fake.openedUrls.size >= 3 }
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        runCurrent()
+        val configure = fake.sentText.last { it.contains("\"type\":\"session.configure\"") }
+        assertTrue(configure.contains("\"conversationId\":\"$second\""), configure)
+        assertTrue(configure.contains("\"surfaceId\":\"${sdk.surfaceId}\""), configure)
+    }
+
+    @Test
+    fun restored_draft_anchor_is_replayed_in_first_configure_with_same_surface() = runTest {
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+        val draftKey = "d_0123456789abcdef0123456789abcdef" // gitleaks:allow — synthetic draft/session handle, not an authentication secret
+
+        assertTrue(sdk.restorePendingMintAnchor(draftKey, sdk.surfaceId) != null)
+        connectToReady(sdk, fake)
+
+        val configure = fake.sentText.first { it.contains("\"type\":\"session.configure\"") }
+        assertTrue(configure.contains("\"conversationId\":\"$draftKey\""), configure)
+        assertTrue(configure.contains("\"surfaceId\":\"${sdk.surfaceId}\""), configure)
+    }
 
     // ── SEED ────────────────────────────────────────────────────────────────────
 
@@ -199,20 +252,29 @@ class SdkResumeCursorPersistenceTest {
     // ── clearFor — delete path ───────────────────────────────────────────────
 
     @Test
-    fun deleteSession_clears_persisted_cursor_for_deleted_conversation() = runTest {
+    fun deleteSession_clears_persisted_cursor_after_server_success() = runTest {
         val store = RecordingResumeCursorStore()
         store.seed(anchoredUuid, CursorSnapshot(epoch = 3, lastSeq = 5))
         val fake = FakeWebSocketEngine()
-        val sdk = buildSdk(fake, resumeCursorStore = store)
+        val sdk = buildSdk(fake, resumeCursorStore = store, sessionsHttpClient = deleteClient(HttpStatusCode.NoContent))
         connectToReady(sdk, fake)
 
-        // Delete the conversation — clearFor must call store.clear with its id so a
-        // relaunch never seeds a resume for a session the server no longer has.
         sdk.deleteSession(anchoredUuid)
 
-        assertTrue(
-            store.clears.contains(anchoredUuid),
-            "deleteSession must clear the persisted cursor, clears=${store.clears}",
-        )
+        assertEquals(listOf(anchoredUuid), store.clears)
+    }
+
+    @Test
+    fun deleteSession_preserves_persisted_cursor_on_server_failure() = runTest {
+        val store = RecordingResumeCursorStore()
+        store.seed(anchoredUuid, CursorSnapshot(epoch = 3, lastSeq = 5))
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake, resumeCursorStore = store, sessionsHttpClient = deleteClient(HttpStatusCode.NotFound))
+        connectToReady(sdk, fake)
+
+        val failure = runCatching { sdk.deleteSession(anchoredUuid) }.exceptionOrNull()
+
+        assertIs<SessionsRequestException>(failure)
+        assertTrue(store.clears.isEmpty(), "failed delete must preserve resume continuity")
     }
 }

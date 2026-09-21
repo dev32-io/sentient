@@ -1,5 +1,6 @@
 import MobileData
 import SwiftUI
+import UIKit
 
 private struct ComposerReduceMotionOverrideKey: EnvironmentKey {
     static let defaultValue: Bool? = nil
@@ -20,6 +21,32 @@ struct ComposerReduceMotion: DynamicProperty {
     var wrappedValue: Bool { override ?? systemValue }
 }
 
+struct ComposerAttachment: Identifiable, Equatable {
+    let id: String
+    let displayName: String
+    let mediaType: String
+    let sizeBytes: Int64
+
+    init(_ attachment: NativeDraftAttachment) {
+        id = attachment.id
+        displayName = attachment.displayName
+        mediaType = attachment.mediaType
+        sizeBytes = attachment.sizeBytes
+    }
+
+    var isImage: Bool {
+        mediaType.hasPrefix("image/") || mediaType == "application/vnd.sentient.live-photo+zip"
+    }
+}
+
+enum ComposerAttachmentDismissAction: Equatable {
+    case cancel, remove
+}
+
+func composerAttachmentDismissAction(for transfer: AttachmentTransferState?) -> ComposerAttachmentDismissAction {
+    transfer?.phase == .uploading ? .cancel : .remove
+}
+
 /// Encapsulated native composer. Draft ownership stays here so permission,
 /// capture failures, reconnects, and Hold/Auto transitions never erase text.
 struct Composer: View {
@@ -29,6 +56,22 @@ struct Composer: View {
     let micLevels: [Float]
     let voiceDisabled: Bool
     let canInterrupt: Bool
+    let draftText: String?
+    let attachments: [ComposerAttachment]
+    let pendingAttachmentImportCount: Int
+    let attachmentTransfers: [String: AttachmentTransferState]
+    let attachmentPreviews: [String: UIImage]
+    let attachmentPreviewFailures: Set<String>
+    let onDraftChange: (String) -> Void
+    let onPickAttachments: ([AttachmentImportItem]) -> Void
+    let onPrepareAttachments: (AttachmentImportRequest) -> Void
+    let onAttachmentImportFailure: (AttachmentImportSource, Error?) -> Void
+    /// False is delivered only after native sheet dismissal completes.
+    let onAttachmentPickerPresentationChange: (Bool) -> Void
+    let onRemoveAttachment: (String) -> Void
+    let onCancelAttachment: (String) -> Void
+    let onRetryAttachment: (String) -> Void
+    let onEditAttachment: (String) -> Void
     let onSend: (String) -> Void
     let onVoiceIntent: (VoiceCaptureIntent) -> Void
     let onTtsToggle: () -> Void
@@ -38,7 +81,17 @@ struct Composer: View {
 
     @State private var draft: String
     @State private var localHoldPresentationActive = false
-    @FocusState private var inputFocused: Bool
+    @State private var showingSourcePicker = false
+    @State private var showingFilePicker = false
+    @State private var showingPhotosPicker = false
+    @State private var showingCameraPicker = false
+    @State private var requestingCameraAccess = false
+    @State private var queuedSource: AttachmentNativeSource?
+    @State private var sourceIssue: AttachmentSourceSheet.CameraIssue?
+    @State private var queuedSourceIssue: AttachmentSourceSheet.CameraIssue?
+    @State private var queuedImportFailure: QueuedImportFailure?
+    @State private var previewedAttachment: ComposerAttachment?
+    @State private var inputFocused = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     init(
@@ -49,7 +102,22 @@ struct Composer: View {
         voiceDisabled: Bool,
         canInterrupt: Bool,
         initialDraft: String = "",
+        draftText: String? = nil,
+        attachments: [ComposerAttachment] = [],
+        pendingAttachmentImportCount: Int = 0,
+        attachmentTransfers: [String: AttachmentTransferState] = [:],
+        attachmentPreviews: [String: UIImage] = [:],
+        attachmentPreviewFailures: Set<String> = [],
         initiallyExpandedTaskId: String? = nil,
+        onDraftChange: @escaping (String) -> Void = { _ in },
+        onPickAttachments: @escaping ([AttachmentImportItem]) -> Void = { _ in },
+        onPrepareAttachments: @escaping (AttachmentImportRequest) -> Void = { _ in },
+        onAttachmentImportFailure: @escaping (AttachmentImportSource, Error?) -> Void = { _, _ in },
+        onAttachmentPickerPresentationChange: @escaping (Bool) -> Void = { _ in },
+        onRemoveAttachment: @escaping (String) -> Void = { _ in },
+        onCancelAttachment: @escaping (String) -> Void = { _ in },
+        onRetryAttachment: @escaping (String) -> Void = { _ in },
+        onEditAttachment: @escaping (String) -> Void = { _ in },
         onSend: @escaping (String) -> Void,
         onVoiceIntent: @escaping (VoiceCaptureIntent) -> Void,
         onTtsToggle: @escaping () -> Void,
@@ -62,13 +130,28 @@ struct Composer: View {
         self.micLevels = micLevels
         self.voiceDisabled = voiceDisabled
         self.canInterrupt = canInterrupt
+        self.draftText = draftText
+        self.attachments = attachments
+        self.pendingAttachmentImportCount = pendingAttachmentImportCount
+        self.attachmentTransfers = attachmentTransfers
+        self.attachmentPreviews = attachmentPreviews
+        self.attachmentPreviewFailures = attachmentPreviewFailures
+        self.onDraftChange = onDraftChange
+        self.onPickAttachments = onPickAttachments
+        self.onPrepareAttachments = onPrepareAttachments
+        self.onAttachmentImportFailure = onAttachmentImportFailure
+        self.onAttachmentPickerPresentationChange = onAttachmentPickerPresentationChange
+        self.onRemoveAttachment = onRemoveAttachment
+        self.onCancelAttachment = onCancelAttachment
+        self.onRetryAttachment = onRetryAttachment
+        self.onEditAttachment = onEditAttachment
         self.onSend = onSend
         self.onVoiceIntent = onVoiceIntent
         self.onTtsToggle = onTtsToggle
         self.onInterrupt = onInterrupt
         self.onFocusGained = onFocusGained
         self.initiallyExpandedTaskId = initiallyExpandedTaskId
-        _draft = State(initialValue: initialDraft)
+        _draft = State(initialValue: draftText ?? initialDraft)
     }
 
     private var voicePresentation: ComposerVoicePresentationState {
@@ -79,7 +162,14 @@ struct Composer: View {
     }
     private var isHolding: Bool { voicePresentation.isHolding }
     private var draftPresent: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !attachments.isEmpty || pendingAttachmentImportCount > 0
+    }
+    private var remainingAttachmentSlots: Int {
+        AttachmentImportPolicy.remaining(
+            existing: attachments.count,
+            pending: pendingAttachmentImportCount
+        )
     }
 
     var body: some View {
@@ -106,12 +196,107 @@ struct Composer: View {
         .onChange(of: inputFocused) { _, focused in
             if focused { onFocusGained() }
         }
+        .onChange(of: draft) { _, text in onDraftChange(text) }
+        .onChange(of: draftText) { _, text in
+            if let text, text != draft { draft = text }
+        }
+        .onChange(of: showingSourcePicker) { _, presented in
+            if presented { onAttachmentPickerPresentationChange(true) }
+        }
+        .onChange(of: showingPhotosPicker) { _, presented in
+            if presented { onAttachmentPickerPresentationChange(true) }
+        }
+        .onChange(of: showingCameraPicker) { _, presented in
+            if presented { onAttachmentPickerPresentationChange(true) }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat-composer")
+        .sheet(isPresented: $showingSourcePicker, onDismiss: finishAttachmentPickerDismissal) {
+            AttachmentSourceSheet(
+                cameraIssue: sourceIssue,
+                onCamera: { queue(.camera) },
+                onPhotos: { queue(.photos) },
+                onFiles: { queue(.files) },
+                onOpenSettings: openSettings
+            )
+        }
+        .sheet(isPresented: $showingFilePicker, onDismiss: finishAttachmentPickerDismissal) {
+            AttachmentDocumentPicker(
+                onSelection: { urls in
+                    submitImports(urls.map(AttachmentImportItem.file))
+                    showingFilePicker = false
+                },
+                onCancel: { showingFilePicker = false }
+            )
+        }
+        .onChange(of: showingFilePicker) { _, presented in
+            if presented { onAttachmentPickerPresentationChange(true) }
+        }
+        .sheet(isPresented: $showingPhotosPicker, onDismiss: finishAttachmentPickerDismissal) {
+            AttachmentPhotoPicker(
+                selectionLimit: max(1, remainingAttachmentSlots),
+                onSelection: { selection in
+                    showingPhotosPicker = false
+                    onPrepareAttachments(AttachmentImportRequest(
+                        count: selection.count,
+                        source: .photos
+                    ) {
+                        try await AttachmentPhotoImport.prepare(selection)
+                    })
+                },
+                onCancel: { showingPhotosPicker = false }
+            )
+            .ignoresSafeArea()
+        }
+        .sheet(item: $previewedAttachment) { attachment in
+            ComposerAttachmentPreview(
+                attachment: attachment,
+                image: attachmentPreviews[attachment.id]
+            )
+        }
+        .fullScreenCover(isPresented: $showingCameraPicker, onDismiss: finishAttachmentPickerDismissal) {
+            AttachmentCameraPicker(
+                onCapture: { item in
+                    submitImports([item])
+                    showingCameraPicker = false
+                },
+                onCancel: { showingCameraPicker = false },
+                onFailure: {
+                    queueSourceIssue(.captureFailed)
+                    queueImportFailure(source: .camera, error: AttachmentImportPickerIssue.captureFailed)
+                    showingCameraPicker = false
+                }
+            )
+            .ignoresSafeArea()
+        }
     }
 
     private var composerFace: some View {
         VStack(spacing: ComposerGeometry.contentGap(horizontalSizeClass: horizontalSizeClass)) {
+            if !attachments.isEmpty || pendingAttachmentImportCount > 0 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: Space.sm) {
+                        ForEach(attachments) { attachment in
+                            ComposerAttachmentCard(
+                                attachment: attachment,
+                                transfer: attachmentTransfers[attachment.id],
+                                preview: attachmentPreviews[attachment.id],
+                                previewFailed: attachmentPreviewFailures.contains(attachment.id),
+                                onPreview: { previewedAttachment = attachment },
+                                onRemove: { onRemoveAttachment(attachment.id) },
+                                onCancel: { onCancelAttachment(attachment.id) },
+                                onRetry: { onRetryAttachment(attachment.id) },
+                                onEdit: { onEditAttachment(attachment.id) }
+                            )
+                        }
+                        ForEach(0..<pendingAttachmentImportCount, id: \.self) { index in
+                            ComposerAttachmentPreparationCard(index: index)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("composer-attachments")
+            }
+
             DraftEditor(
                 text: $draft,
                 isFocused: $inputFocused,
@@ -122,7 +307,8 @@ struct Composer: View {
                 horizontalInset: ComposerGeometry.editorHorizontalInset(
                     horizontalSizeClass: horizontalSizeClass
                 ),
-                onSubmit: sendDraft
+                onSubmit: sendDraft,
+                onPasteProviders: receivePastedProviders
             )
 
             ComposerActions(
@@ -133,6 +319,7 @@ struct Composer: View {
                 micLevels: micLevels,
                 voiceDisabled: voiceDisabled,
                 canInterrupt: canInterrupt,
+                onAttach: { showingSourcePicker = true },
                 onSend: sendDraft,
                 onHoldPresentationChanged: { localHoldPresentationActive = $0 },
                 onVoiceIntent: onVoiceIntent,
@@ -171,24 +358,649 @@ struct Composer: View {
         }
     }
 
+    private func queue(_ source: AttachmentNativeSource) {
+        let importSource: AttachmentImportSource = switch source {
+        case .camera: .camera
+        case .photos: .photos
+        case .files: .files
+        }
+        guard remainingAttachmentSlots > 0 else {
+            queueSourceIssue(.attachmentLimit)
+            queueImportFailure(
+                source: importSource,
+                error: AttachmentImportPickerIssue.attachmentLimit
+            )
+            return
+        }
+        sourceIssue = nil
+        queuedSource = source
+        showingSourcePicker = false
+    }
+
+    private func presentQueuedSource() {
+        guard let source = queuedSource else { return }
+        queuedSource = nil
+        switch source {
+        case .files:
+            showingFilePicker = true
+        case .photos:
+            showingPhotosPicker = true
+        case .camera:
+            requestingCameraAccess = true
+            Task {
+                defer {
+                    requestingCameraAccess = false
+                    flushQueuedImportFailure()
+                    onAttachmentPickerPresentationChange(attachmentPresentationActive)
+                }
+                switch await cameraAccessDecision(using: SystemCameraAccess()) {
+                case .present: showingCameraPicker = true
+                case .denied:
+                    queueSourceIssue(.denied)
+                    queueImportFailure(source: .camera, error: AttachmentImportPickerIssue.cameraDenied)
+                case .restricted:
+                    queueSourceIssue(.restricted)
+                    queueImportFailure(source: .camera, error: AttachmentImportPickerIssue.cameraRestricted)
+                case .unavailable:
+                    queueSourceIssue(.unavailable)
+                    queueImportFailure(source: .camera, error: AttachmentImportPickerIssue.cameraUnavailable)
+                }
+            }
+        }
+    }
+
+    private func receivePastedProviders(_ providers: [NSItemProvider]) {
+        let supported = attachmentPasteProviders(from: providers)
+        guard !supported.isEmpty else { return }
+        guard supported.count <= remainingAttachmentSlots else {
+            onAttachmentImportFailure(.mixed, AttachmentImportPickerIssue.attachmentLimit)
+            return
+        }
+        onPrepareAttachments(AttachmentImportRequest(
+            count: supported.count,
+            source: .mixed
+        ) {
+            try await AttachmentPasteImport.prepare(supported)
+        })
+    }
+
+    private func submitImports(_ items: [AttachmentImportItem]) {
+        guard items.count <= remainingAttachmentSlots else {
+            for url in Set(items.flatMap(\.ownedTemporaryURLs)) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            queueSourceIssue(.attachmentLimit)
+            queueImportFailure(
+                source: AttachmentImportSource.combined(items),
+                error: AttachmentImportPickerIssue.attachmentLimit
+            )
+            return
+        }
+        onPickAttachments(items)
+    }
+
+    private func queueImportFailure(source: AttachmentImportSource, error: Error) {
+        queuedImportFailure = QueuedImportFailure(source: source, error: error)
+        flushQueuedImportFailure()
+    }
+
+    /// Native sheet boundary; never call from picker binding changes.
+    private func finishAttachmentPickerDismissal() {
+        showingSourcePicker = false
+        showingFilePicker = false
+        showingPhotosPicker = false
+        showingCameraPicker = false
+        presentQueuedSource()
+        presentQueuedSourceIssue()
+        flushQueuedImportFailure()
+        onAttachmentPickerPresentationChange(attachmentPresentationActive)
+    }
+
+    private var attachmentPresentationActive: Bool {
+        showingSourcePicker || showingFilePicker || showingPhotosPicker || showingCameraPicker || requestingCameraAccess
+    }
+
+    private func flushQueuedImportFailure() {
+        guard !attachmentPresentationActive, let failure = queuedImportFailure else { return }
+        queuedImportFailure = nil
+        onAttachmentImportFailure(failure.source, failure.error)
+    }
+
+    private func queueSourceIssue(_ issue: AttachmentSourceSheet.CameraIssue) {
+        guard !showingFilePicker, !showingPhotosPicker, !showingCameraPicker else {
+            queuedSourceIssue = issue
+            return
+        }
+        sourceIssue = issue
+        showingSourcePicker = true
+    }
+
+    private func presentQueuedSourceIssue() {
+        guard !showingSourcePicker,
+              !showingFilePicker,
+              !showingPhotosPicker,
+              !showingCameraPicker,
+              let issue = queuedSourceIssue else { return }
+        queuedSourceIssue = nil
+        sourceIssue = issue
+        showingSourcePicker = true
+    }
+
+    private func openSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
     private func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !attachments.isEmpty || pendingAttachmentImportCount > 0 else { return }
         onSend(text)
-        draft = ""
+        if draftText == nil { draft = "" }
         inputFocused = false
+    }
+}
+
+private enum AttachmentNativeSource {
+    case camera, photos, files
+}
+
+private struct QueuedImportFailure {
+    let source: AttachmentImportSource
+    let error: Error
+}
+
+private struct ComposerAttachmentCard: View {
+    let attachment: ComposerAttachment
+    let transfer: AttachmentTransferState?
+    let preview: UIImage?
+    let previewFailed: Bool
+    let onPreview: () -> Void
+    let onRemove: () -> Void
+    let onCancel: () -> Void
+    let onRetry: () -> Void
+    let onEdit: () -> Void
+
+    @ScaledMetric(relativeTo: .body) private var scaledWidth: CGFloat = 168
+
+    private var width: CGFloat { min(max(scaledWidth, 168), 220) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            ZStack(alignment: .topTrailing) {
+                previewControl
+                DesignCompactIconButton(
+                    systemName: "xmark",
+                    label: dismissLabel,
+                    accessibilityId: "composer-attachment-dismiss-\(attachment.id)",
+                    action: dismiss
+                )
+                .padding(Space.xs)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(attachment.displayName)
+                    .font(Typo.ui(TypeScale.sm, .semibold))
+                    .foregroundStyle(DuskColors.ink)
+                    .lineLimit(2)
+                Text("\(attachment.mediaType.split(separator: "/").last?.uppercased() ?? "FILE") · \(ByteCountFormatter.string(fromByteCount: attachment.sizeBytes, countStyle: .file))")
+                    .font(Typo.ui(TypeScale.xs))
+                    .foregroundStyle(DuskColors.ink3)
+                    .lineLimit(1)
+            }
+
+            transferStatus
+        }
+        .padding(Space.sm)
+        .frame(width: width, alignment: .leading)
+        .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DuskColors.line, lineWidth: DesignMetrics.hairline)
+        }
+    }
+
+    @ViewBuilder
+    private var previewControl: some View {
+        if attachment.isImage {
+            Button(action: onPreview) { previewFace }
+                .buttonStyle(.plain)
+                .disabled(preview == nil)
+                .accessibilityLabel("Preview \(attachment.displayName)")
+                .accessibilityIdentifier("composer-attachment-preview-\(attachment.id)")
+        } else {
+            previewFace
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var previewFace: some View {
+        Group {
+            if let preview {
+                Image(uiImage: preview)
+                    .resizable()
+                    .scaledToFill()
+            } else if attachment.isImage && !previewFailed {
+                ProgressView()
+                    .tint(DuskColors.accent)
+            } else {
+                Image(systemName: attachment.isImage ? "photo" : "doc.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(DuskColors.accent)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 104, maxHeight: 104)
+        .background(DuskColors.bgSunk)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var transferStatus: some View {
+        switch transfer?.phase {
+        case .uploading:
+            ProgressView(value: transfer?.progress ?? 0) {
+                Text("Uploading")
+            }
+            .font(Typo.ui(TypeScale.xs))
+            .tint(DuskColors.accent)
+        case .failed:
+            failedActions(label: "Upload failed", color: DuskColors.warn)
+        case .cancelled:
+            failedActions(label: "Cancelled", color: DuskColors.ink3)
+        case .ready:
+            Text("Uploaded")
+                .font(Typo.ui(TypeScale.xs))
+                .foregroundStyle(DuskColors.ink3)
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private func failedActions(label: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(label)
+                .font(Typo.ui(TypeScale.xs, .semibold))
+                .foregroundStyle(color)
+            HStack(spacing: Space.xs) {
+                DesignCompactButton(accessibilityLabel: "Edit \(attachment.displayName)", action: onEdit) {
+                    Text("Edit").font(Typo.ui(TypeScale.xs, .semibold))
+                }
+                DesignCompactButton(accessibilityLabel: "Retry \(attachment.displayName)", action: onRetry) {
+                    Text("Retry").font(Typo.ui(TypeScale.xs, .semibold))
+                }
+            }
+            .foregroundStyle(DuskColors.accent)
+        }
+    }
+
+    private var dismissLabel: String {
+        composerAttachmentDismissAction(for: transfer) == .cancel
+            ? "Cancel upload \(attachment.displayName)"
+            : "Remove \(attachment.displayName)"
+    }
+
+    private func dismiss() {
+        switch composerAttachmentDismissAction(for: transfer) {
+        case .cancel: onCancel()
+        case .remove: onRemove()
+        }
+    }
+}
+
+private struct ComposerAttachmentPreparationCard: View {
+    let index: Int
+    @ScaledMetric(relativeTo: .body) private var scaledWidth: CGFloat = 168
+
+    var body: some View {
+        VStack(spacing: Space.sm) {
+            ProgressView()
+                .tint(DuskColors.accent)
+            Text("Preparing attachment")
+                .font(Typo.ui(TypeScale.sm, .semibold))
+                .foregroundStyle(DuskColors.ink2)
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: min(max(scaledWidth, 168), 220), height: 160)
+        .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DuskColors.line, lineWidth: DesignMetrics.hairline)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Preparing attachment \(index + 1)")
+    }
+}
+
+private struct ComposerAttachmentPreview: View {
+    let attachment: ComposerAttachment
+    let image: UIImage?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(Space.lg)
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DuskColors.bg)
+            .navigationTitle(attachment.displayName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(DuskColors.paper)
+        .duskTheme()
     }
 }
 
 // MARK: - Draft editor
 
+final class ComposerTextView: UITextView, UITextPasteDelegate {
+    var onPasteProviders: ([NSItemProvider]) -> Void = { _ in }
+
+    // Default mixed paste turns file URLs into text; keep only native clipboard text.
+    func textPasteConfigurationSupporting(
+        _ textPasteConfigurationSupporting: UITextPasteConfigurationSupporting,
+        transform item: UITextPasteItem
+    ) {
+        if attachmentPasteContainsNativeText(in: [item.itemProvider]) {
+            item.setDefaultResult()
+        } else {
+            item.setNoResult()
+        }
+    }
+
+    func textPasteConfigurationSupporting(
+        _ textPasteConfigurationSupporting: UITextPasteConfigurationSupporting,
+        combineItemAttributedStrings itemStrings: [NSAttributedString],
+        for textRange: UITextRange
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for itemString in itemStrings where itemString.length > 0 {
+            result.append(itemString)
+        }
+        return result
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        let inherited = super.canPerformAction(action, withSender: sender)
+        guard action == #selector(UIResponderStandardEditActions.paste(_:)) else {
+            return inherited
+        }
+        let providers = UIPasteboard.general.itemProviders
+        return isEditable && (
+            attachmentPasteContainsNativeText(in: providers) ||
+                !attachmentPasteProviders(from: providers).isEmpty
+        )
+    }
+
+    override func paste(_ sender: Any?) {
+        let clipboardProviders = UIPasteboard.general.itemProviders
+        let providers = attachmentPasteProviders(from: clipboardProviders)
+        guard !providers.isEmpty else {
+            super.paste(sender)
+            return
+        }
+        // Paste native text from original providers, not filtered attachments.
+        // Named text files remain attachments and never become text implicitly.
+        if attachmentPasteContainsNativeText(in: clipboardProviders) {
+            super.paste(sender)
+        }
+        onPasteProviders(providers)
+    }
+}
+
+private func applyComposerParagraphStyle(_ view: ComposerTextView) {
+    guard view.textStorage.length > 0 else { return }
+    let paragraphStyle: NSParagraphStyle
+    if let configured = view.typingAttributes[.paragraphStyle] as? NSParagraphStyle {
+        paragraphStyle = configured
+    } else {
+        let fallback = NSMutableParagraphStyle()
+        fallback.lineSpacing = 2
+        fallback.lineBreakMode = .byWordWrapping
+        paragraphStyle = fallback
+    }
+    view.textStorage.addAttribute(
+        .paragraphStyle,
+        value: paragraphStyle,
+        range: NSRange(location: 0, length: view.textStorage.length)
+    )
+}
+
+/// Applies UIKit settings for bounded native editing and attachment-aware paste.
+/// Keep UITextView scrollable; ComposerEditorLayout supplies six-line host height.
+func configureComposerTextView(
+    _ view: ComposerTextView,
+    text: String = "",
+    onPasteProviders: @escaping ([NSItemProvider]) -> Void = { _ in }
+) {
+    view.backgroundColor = .clear
+    view.textColor = UIColor(DuskColors.ink)
+    view.tintColor = UIColor(DuskColors.accent)
+    let baseFont = UIFont(name: DesignTypographyAdapter.uiFamily, size: TypeScale.base)
+        ?? UIFont.preferredFont(forTextStyle: .body)
+    let font = UIFontMetrics(forTextStyle: .body).scaledFont(for: baseFont)
+    view.font = font
+    view.adjustsFontForContentSizeCategory = true
+    view.textContainerInset = .zero
+    view.textContainer.lineFragmentPadding = 0
+    view.textContainer.maximumNumberOfLines = 0
+    view.textContainer.lineBreakMode = .byWordWrapping
+    view.returnKeyType = .send
+    view.isEditable = true
+    view.isSelectable = true
+    view.isScrollEnabled = true
+    view.clipsToBounds = true
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 2
+    paragraphStyle.lineBreakMode = .byWordWrapping
+    view.typingAttributes = [
+        .font: font,
+        .foregroundColor: UIColor(DuskColors.ink),
+        .paragraphStyle: paragraphStyle,
+    ]
+    view.accessibilityLabel = "Message Sentient"
+    view.accessibilityIdentifier = "composer-input"
+    view.pasteDelegate = view
+    view.text = text
+    applyComposerParagraphStyle(view)
+    view.onPasteProviders = onPasteProviders
+}
+
+private struct ComposerTextInput: UIViewRepresentable {
+    @Binding var text: String
+    var isFocused: Binding<Bool>
+    let minimumHeight: CGFloat
+    let onSubmit: () -> Void
+    let onPasteProviders: ([NSItemProvider]) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> ComposerTextView {
+        let view = ComposerTextView()
+        view.delegate = context.coordinator
+        configureComposerTextView(
+            view,
+            text: text,
+            onPasteProviders: onPasteProviders
+        )
+        return view
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: ComposerTextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
+        let content = uiView.sizeThatFits(
+            CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let lineHeight = uiView.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+        let lineSpacing = (uiView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.lineSpacing ?? 0
+        let maximumHeight = ceil(
+            lineHeight * 6 + lineSpacing * 5 +
+                uiView.textContainerInset.top + uiView.textContainerInset.bottom
+        )
+        let desiredHeight = max(minimumHeight, min(content.height, maximumHeight))
+        if let proposedHeight = proposal.height, proposedHeight.isFinite {
+            return CGSize(width: width, height: min(desiredHeight, proposedHeight))
+        }
+        return CGSize(width: width, height: desiredHeight)
+    }
+
+    func updateUIView(_ view: ComposerTextView, context: Context) {
+        context.coordinator.parent = self
+        view.onPasteProviders = onPasteProviders
+        // Do not replace marked text: doing so breaks IME composition. Preserve
+        // selection for external draft updates while the editor remains focused.
+        if view.text != text, view.markedTextRange == nil {
+            let selectedRange = view.selectedRange
+            view.text = text
+            applyComposerParagraphStyle(view)
+            let textLength = (text as NSString).length
+            let location = min(selectedRange.location, textLength)
+            let length = min(selectedRange.length, textLength - location)
+            view.selectedRange = NSRange(location: location, length: length)
+        }
+        if isFocused.wrappedValue, !view.isFirstResponder {
+            context.coordinator.withResponderFence { view.becomeFirstResponder() }
+        } else if !isFocused.wrappedValue, view.isFirstResponder {
+            context.coordinator.withResponderFence { view.resignFirstResponder() }
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ComposerTextInput
+        private var applyingResponderState = false
+
+        init(_ parent: ComposerTextInput) { self.parent = parent }
+
+        func withResponderFence(_ action: () -> Void) {
+            applyingResponderState = true
+            defer { applyingResponderState = false }
+            action()
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, textView.isFirstResponder else { return }
+                textView.layoutIfNeeded()
+                self.scrollCaretIntoView(textView)
+            }
+        }
+
+        private func scrollCaretIntoView(_ textView: UITextView) {
+            guard let position = textView.position(
+                from: textView.beginningOfDocument,
+                offset: textView.selectedRange.location
+            ) else { return }
+            let caret = textView.caretRect(for: position)
+            let visible = textView.bounds.insetBy(dx: 0, dy: -1)
+            var offsetY = textView.contentOffset.y
+            if caret.maxY > visible.maxY {
+                offsetY += caret.maxY - visible.maxY
+            } else if caret.minY < visible.minY {
+                offsetY -= visible.minY - caret.minY
+            }
+            let minimumOffset = -textView.adjustedContentInset.top
+            let maximumOffset = max(
+                minimumOffset,
+                textView.contentSize.height - textView.bounds.height +
+                    textView.adjustedContentInset.bottom
+            )
+            textView.setContentOffset(
+                CGPoint(
+                    x: textView.contentOffset.x,
+                    y: min(max(offsetY, minimumOffset), maximumOffset)
+                ),
+                animated: false
+            )
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            guard !applyingResponderState else { return }
+            parent.isFocused.wrappedValue = true
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            guard !applyingResponderState else { return }
+            parent.isFocused.wrappedValue = false
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText text: String
+        ) -> Bool {
+            guard text == "\n", textView.markedTextRange == nil else { return true }
+            parent.onSubmit()
+            return false
+        }
+    }
+}
+
+private struct ComposerEditorLayout: Layout {
+    let minimumHeight: CGFloat
+    let text: String
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard let input = subviews.first else { return .zero }
+        let width = proposal.width ?? input.sizeThatFits(.unspecified).width
+        let inputSize = input.sizeThatFits(
+            ProposedViewSize(width: width, height: nil)
+        )
+        let promptSize = text.isEmpty && subviews.count > 1
+            ? subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil))
+            : .zero
+        return CGSize(
+            width: proposal.width ?? max(inputSize.width, promptSize.width),
+            height: max(minimumHeight, inputSize.height, promptSize.height)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let childProposal = ProposedViewSize(width: bounds.width, height: bounds.height)
+        for subview in subviews {
+            subview.place(
+                at: bounds.origin,
+                anchor: .topLeading,
+                proposal: childProposal
+            )
+        }
+    }
+}
+
 private struct DraftEditor: View {
     @Binding var text: String
-    var isFocused: FocusState<Bool>.Binding
+    var isFocused: Binding<Bool>
     let isReceded: Bool
     let minimumHeight: CGFloat
     let horizontalInset: CGFloat
     let onSubmit: () -> Void
+    let onPasteProviders: ([NSItemProvider]) -> Void
 
     @ComposerReduceMotion private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -200,37 +1012,26 @@ private struct DraftEditor: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Text(text.isEmpty ? " " : text)
-                .font(Typo.ui(TypeScale.base))
-                .lineSpacing(2)
-                .lineLimit(6)
-                .foregroundStyle(Color.clear)
-                .padding(.bottom, ComposerGeometry.editorGrowthReserve)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityHidden(true)
-
-            TextField(
-                "Message Sentient",
+        ComposerEditorLayout(minimumHeight: minimumHeight, text: text) {
+            ComposerTextInput(
                 text: $text,
-                prompt: Text(promptText)
-                    .foregroundStyle(DuskColors.ink3),
-                axis: .vertical
+                isFocused: isFocused,
+                minimumHeight: minimumHeight,
+                onSubmit: onSubmit,
+                onPasteProviders: onPasteProviders
             )
-            .textFieldStyle(.plain)
-            .font(Typo.ui(TypeScale.base))
-            .foregroundStyle(DuskColors.ink)
-            .tint(DuskColors.accent)
-            .lineSpacing(2)
-            .lineLimit(1...6)
-            .submitLabel(.send)
-            .onSubmit(onSubmit)
-            .focused(isFocused)
-            .accessibilityLabel("Message Sentient")
-            .accessibilityIdentifier("composer-input")
+
+            if text.isEmpty {
+                Text(promptText)
+                    .font(Typo.ui(TypeScale.base))
+                    .foregroundStyle(DuskColors.ink3)
+                    .allowsHitTesting(false)
+            }
         }
-        .frame(minHeight: minimumHeight, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
+#if DEBUG
+        .background(ComposerFrameProbe(identifier: "composer-editor-viewport"))
+#endif
         .padding(.horizontal, horizontalInset)
         .opacity(isReceded ? ComposerGeometry.recededOpacity : 1)
         .offset(y: isReceded ? ComposerGeometry.recededOffset : 0)
@@ -271,6 +1072,7 @@ private struct ComposerActions: View {
     let micLevels: [Float]
     let voiceDisabled: Bool
     let canInterrupt: Bool
+    let onAttach: () -> Void
     let onSend: () -> Void
     let onHoldPresentationChanged: (Bool) -> Void
     let onVoiceIntent: (VoiceCaptureIntent) -> Void
@@ -290,13 +1092,12 @@ private struct ComposerActions: View {
         ) {
             HStack(spacing: ComposerGeometry.actionGap) {
                 if !held {
-                    Button(action: {}) {
+                    Button(action: onAttach) {
                         ComposerGlyphView(.attachment)
                             .frame(width: 19, height: 19)
                     }
                     .buttonStyle(ComposerControlButtonStyle(tone: .quiet, size: ComposerGeometry.smallControlSize))
-                    .disabled(true)
-                    .accessibilityLabel("Attachments are not available")
+                    .accessibilityLabel("Attach files")
                     .accessibilityIdentifier("chat-attach")
 
                     Button(action: onTtsToggle) {
@@ -372,8 +1173,35 @@ private struct ComposerActions: View {
             reduceMotion ? nil : .spring(duration: DesignV2.Motion.state, bounce: 0),
             value: canInterrupt
         )
+#if DEBUG
+        .background(ComposerFrameProbe(identifier: "composer-actions-viewport"))
+#endif
     }
 }
+
+#if DEBUG
+private struct ComposerFrameProbe: UIViewRepresentable {
+    let identifier: String
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.accessibilityIdentifier = identifier
+        view.accessibilityElementsHidden = true
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UIView,
+        context: Context
+    ) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+}
+#endif
 
 /// Wraps trailing controls into logical trailing-aligned rows without
 /// shrinking any target. This covers the widest supported combination: Stop,
@@ -623,7 +1451,6 @@ enum ComposerGeometry {
     static let regularEditorMinimumHeight: CGFloat = 52
     static let compactEditorHorizontalInset: CGFloat = 4
     static let regularEditorHorizontalInset: CGFloat = 5
-    static let editorGrowthReserve: CGFloat = 12
     static let actionGap: CGFloat = 5
     static let trailingActionGap: CGFloat = 6
     static let smallControlSize: CGFloat = 44

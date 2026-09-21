@@ -79,6 +79,7 @@ struct UserSessionHost: View {
     private let accountFence: String
 
     @State private var chatRoute = ChatRouteSelection()
+    @State private var draftsRestored = false
     @State private var path: [Route] = []
     /// Identity/data passed to the child editor; the Fish results route remains
     /// the owner of catalog/filter/paging state underneath it.
@@ -120,36 +121,52 @@ struct UserSessionHost: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            // VM factories (NOT prebuilt VMs): ChatView wraps them in @StateObject so
-            // each instance owns its VM for its lifetime. `.id(chatRoute)` makes
-            // SwiftUI build a FRESH ChatView (hence a fresh @StateObject ChatViewModel)
-            // whenever the identity changes — a selected id, or a new-chat nonce bump.
-            ChatView(
-                makeVM: {
-                    userSession.makeChatVM(
-                        sessionId: chatRoute.sessionId,
-                        activateOnInit: !chatRoute.acknowledged
+            Group {
+                if draftsRestored {
+                    ChatView(
+                        makeVM: {
+                            ChatViewModel(
+                                component: userSession.component,
+                                sessionId: chatRoute.sessionId,
+                                draftId: chatRoute.draftId,
+                                activateOnInit: !chatRoute.acknowledged,
+                                onDraftRouteChanged: { originalId, restoredId, sessionId in
+                                    chatRoute.reconcileDraft(
+                                        from: originalId,
+                                        to: restoredId,
+                                        sessionId: sessionId
+                                    )
+                                }
+                            )
+                        },
+                        makeHistoryVM: { userSession.makeHistoryVM() },
+                        userName: userName,
+                        activeSessionId: chatRoute.sessionId,
+                        activeDraftId: chatRoute.draftId,
+                        onSelectSession: { id in
+                            chatRoute.select(id)
+                            path.removeAll()
+                        },
+                        onSelectDraft: { draftId, sessionId in
+                            chatRoute.selectDraft(draftId, sessionId: sessionId)
+                            path.removeAll()
+                        },
+                        onNewChat: {
+                            chatRoute.selectNewDraft()
+                            path.removeAll()
+                        },
+                        onOpenSettings: { path = [.settings] },
+                        onOpenInbox: openInbox,
+                        onLogout: logout
                     )
-                },
-                makeHistoryVM: { userSession.makeHistoryVM() },
-                userName: userName,
-                activeSessionId: chatRoute.sessionId,
-                onSelectSession: { id in
-                    chatRoute.select(id)
-                    path.removeAll()
-                },
-                onNewChat: {
-                    chatRoute.select(nil)
-                    path.removeAll()
-                },
-                onOpenSettings: { path = [.settings] },
-                onOpenInbox: openInbox,
-                onLogout: logout
-            )
-            .id(chatRoute)
-            .navigationDestination(for: Route.self) { route in
-                destination(for: route)
+                    .id(chatRoute.viewIdentity)
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(DuskColors.bg)
+                }
             }
+            .navigationDestination(for: Route.self) { route in destination(for: route) }
         }
         .allowsHitTesting(!authenticationEnding)
         .accessibilityHidden(authenticationEnding)
@@ -182,6 +199,9 @@ struct UserSessionHost: View {
             if let destination = notificationNavigation.take(accountFence: accountFence) {
                 resumeNotificationDestination(destination)
             }
+        }
+        .task {
+            await restoreLastDraft()
         }
         .task {
             for await state in userSession.component.connection.state {
@@ -219,6 +239,17 @@ struct UserSessionHost: View {
                 }
             default: break
             }
+        }
+    }
+
+    private func restoreLastDraft() async {
+        defer { draftsRestored = true }
+        guard let drafts = userSession.component.drafts,
+              let snapshot = try? await drafts.restore() else { return }
+        if let pending = snapshot.pendingSends.max(by: { $0.createdAt < $1.createdAt }) {
+            chatRoute.selectDraft(pending.draftId, sessionId: pending.sessionId)
+        } else if let latest = snapshot.drafts.max(by: { $0.updatedAt < $1.updatedAt }) {
+            chatRoute.selectDraft(latest.id, sessionId: latest.sessionId)
         }
     }
 
@@ -368,6 +399,8 @@ struct UserSessionHost: View {
             AudioScreen(settings: settings, onBack: popRoute)
         case .settingsModel:
             ModelScreen(settings: settings, onBack: popRoute)
+        case .settingsAuxiliary:
+            ModelScreen(settings: settings, auxiliaryOnly: true, onBack: popRoute)
         case .settingsTools:
             ToolsScreen(settings: settings, onBack: popRoute)
         case .settingsSystemPrompt:
@@ -404,12 +437,36 @@ struct UserSessionHost: View {
 /// commitment recreates its VM, including an acknowledged B → B reopen.
 struct ChatRouteSelection: Hashable {
     private(set) var sessionId: String?
+    private(set) var draftId: String?
     private(set) var acknowledged = false
     private var epoch = 0
+    var viewIdentity: Int { epoch }
 
     mutating func select(_ sessionId: String?, acknowledged: Bool = false) {
         self.sessionId = sessionId
+        draftId = nil
         self.acknowledged = acknowledged
         epoch += 1
+    }
+
+    mutating func selectDraft(_ draftId: String, sessionId: String?, acknowledged: Bool = false) {
+        self.sessionId = sessionId
+        self.draftId = draftId
+        self.acknowledged = acknowledged
+        epoch += 1
+    }
+
+    mutating func selectNewDraft(_ draftId: String = UUID().uuidString) {
+        selectDraft(draftId, sessionId: nil)
+    }
+
+    mutating func reconcileDraft(from originalId: String, to restoredId: String, sessionId: String?) {
+        guard draftId == originalId,
+              draftId != restoredId || self.sessionId != sessionId else { return }
+        if originalId == restoredId {
+            self.sessionId = sessionId
+        } else {
+            selectDraft(restoredId, sessionId: sessionId, acknowledged: acknowledged)
+        }
     }
 }

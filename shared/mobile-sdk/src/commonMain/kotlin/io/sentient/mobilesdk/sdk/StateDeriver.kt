@@ -213,13 +213,15 @@ internal fun deriveMessages(
 
 private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (item) {
     is ConversationFeedItem.User ->
-        if (item.content.isEmpty()) null
+        if (item.content.isEmpty() && item.attachments.isEmpty()) null
         else ChatMessage(
             ts = item.ts,
             role = ROLE_USER,
             content = item.content,
             pendingId = item.pendingId,
+            sessionId = item.sessionId,
             entryId = item.entryId,
+            attachments = item.attachments,
         )
 
     is ConversationFeedItem.Assistant ->

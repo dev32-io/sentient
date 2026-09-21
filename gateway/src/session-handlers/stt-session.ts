@@ -30,6 +30,7 @@ import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTAdapterFactory, STTEvent } from "../adapters/stt/stt-adapter-types.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { Stimulus } from "../runtime/stimulus.js";
 import { captureDiagnosticRef } from "./capture-diagnostics.js";
 
 const log = getLog(["sentient", "session-handlers", "stt-session"]);
@@ -93,7 +94,10 @@ export interface SttSessionDeps {
    *  turns a principal into a capability (session-binding.ts). `dispatch`
    *  awaits it in the event loop, so transcripts still submit strictly in
    *  order. */
-  readonly getRuntimeForInput: (text: string) => Promise<SessionRuntime | null>;
+  readonly getRuntimeForInput: (
+    text: string,
+    captureIsCurrent: () => boolean,
+  ) => Promise<SessionRuntime | { runtime: SessionRuntime; stimulus: Stimulus; authoritative?: boolean } | null>;
 }
 
 export function createSttSession(deps: SttSessionDeps): SttSession {
@@ -186,7 +190,12 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       if (eventCapture.status !== "committing" || eventCapture.submitted) return;
     }
     const submittedText = text;
-    const runtime = await getRuntimeForInput(submittedText);
+    const captureIsCurrent = (): boolean =>
+      adapter === active &&
+      capture === eventCapture &&
+      eventCapture.epoch === uplinkEpoch &&
+      !(eventCapture.mode === "manual" && eventCapture.submitted);
+    const resolved = await getRuntimeForInput(submittedText, captureIsCurrent);
     // RE-CHECKED AFTER THE AWAIT, and this is the second half of the guard the
     // loop below performs before dispatching — not a duplicate of it.
     //
@@ -201,14 +210,10 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     // hazard `discard()` exists to prevent, arriving through the back door the
     // await opened.
     //
-    // `close()` nulls `adapter` too, so this covers a socket that went away
-    // mid-mint by the same predicate.
-    if (
-      adapter !== active ||
-      capture !== eventCapture ||
-      eventCapture.epoch !== uplinkEpoch ||
-      (eventCapture.mode === "manual" && eventCapture.submitted)
-    ) {
+    // `close()` nulls `adapter` too. Once admission crossed its synchronous
+    // commit point, `authoritative` makes that accepted work finish even if
+    // discard wins later; before commit, the same predicate drops everything.
+    if (!captureIsCurrent() && !(resolved && "runtime" in resolved && resolved.authoritative)) {
       log.info("stt.transcript.after-discard", {
         sessionId,
         captureRef: eventCapture.diagnosticRef,
@@ -217,7 +222,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       });
       return;
     }
-    if (!runtime) {
+    if (!resolved) {
       log.warn("stt.event.no-runtime", {
         sessionId,
         eventType: event.type,
@@ -233,7 +238,8 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       turnIdx: event.turnIdx,
       length: submittedText.length,
     });
-    runtime.submit({ kind: "conversational", text: submittedText });
+    if ("runtime" in resolved) resolved.runtime.submit(resolved.stimulus);
+    else resolved.submit({ kind: "conversational", text: submittedText });
     if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
   }
 

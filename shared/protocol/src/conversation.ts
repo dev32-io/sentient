@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attachmentRefSchema } from "./attachments.ts";
 
 // ---------------------------------------------------------------------------
 // Wire DTO for the ConversationHistory sync channel.
@@ -59,6 +60,10 @@ export const conversationFeedUserItemSchema = z.object({
   channel: conversationUserChannelSchema,
   content: z.string(),
   pendingId: z.string().optional(),
+  /** Authoritative owner of this committed item. Optional for compatibility
+   *  with older gateways; clients may bind mint-pending state only when set. */
+  sessionId: z.string().min(1).optional(),
+  attachments: z.array(attachmentRefSchema).max(64).optional(),
 });
 
 export const conversationFeedTriggerItemSchema = z.object({

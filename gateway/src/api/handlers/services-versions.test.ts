@@ -50,15 +50,20 @@ function makeOrchestrator(versions: ServiceVersionRecord): SystemOrchestratorSer
     reconcile: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     reconcileInfraOnly: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     stopHealthWatch: () => {},
-    getRequiredServicesStatus: async () => versions,
+    getRequiredServicesStatus: async (_gateway, _hermes, _stt, _tts, attachmentParserVersion, requestSignal) => ({
+      ...versions,
+      attachment_parser: attachmentParserVersion
+        ? await attachmentParserVersion(requestSignal)
+        : versions.attachment_parser,
+    }),
   };
 }
 
-function makeRequest(opts: { method?: string; token?: string | null } = {}): Request {
-  const { method = "GET", token } = opts;
+function makeRequest(opts: { method?: string; token?: string | null; signal?: AbortSignal } = {}): Request {
+  const { method = "GET", token, signal } = opts;
   const headers = new Headers();
   if (token != null) headers.set("authorization", `Bearer ${token}`);
-  return new Request("http://localhost/api/v1/services/versions", { method, headers });
+  return new Request("http://localhost/api/v1/services/versions", { method, headers, ...(signal ? { signal } : {}) });
 }
 
 const DEFAULT_VERSIONS: ServiceVersionRecord = {
@@ -66,6 +71,7 @@ const DEFAULT_VERSIONS: ServiceVersionRecord = {
   hermes: "v2026.4.23",
   stt_service: "0.9.0",
   tts_service: "1.0.0",
+  attachment_parser: "0.2.0",
 };
 const GATEWAY_VERSION = "1.2.3";
 const HERMES_VERSION_PATH = "/data/supervisor/.versions/hermes";
@@ -124,7 +130,7 @@ describe("services-versions handler", () => {
     expect(body.error).toBe("bootstrap-incomplete");
   });
 
-  it("returns versions from orchestrator when authorized and bootstrap complete", async () => {
+  it("returns versions from orchestrator and fresh parser metadata when authorized", async () => {
     const handler = createServicesVersionsHandler({
       installState: makeInstallState(makeState()),
       systemOrchestrator: makeOrchestrator(DEFAULT_VERSIONS),
@@ -132,6 +138,18 @@ describe("services-versions handler", () => {
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
       ttsHealthUrl: TTS_HEALTH_URL,
+      attachmentParser: {
+        getMetadata: async () => ({
+          ok: true,
+          value: {
+            name: "attachment-parser",
+            version: "0.2.0",
+            protocolVersion: 2,
+            description: "test",
+            state: "ephemeral",
+          },
+        }),
+      },
       tokens: makeTokens(),
       fishBrowseEnabled: true,
     });
@@ -143,8 +161,61 @@ describe("services-versions handler", () => {
       hermes: "v2026.4.23",
       stt_service: "0.9.0",
       tts_service: "1.0.0",
+      attachment_parser: "0.2.0",
       features: { fish_browse_enabled: true },
     });
+  });
+
+  it("passes request disconnect through version probe to parser metadata", async () => {
+    const controller = new AbortController();
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let disconnected = false;
+    const request = makeRequest({ token: VALID_TOKEN, signal: controller.signal });
+    const requestSignal = request.signal;
+    const handler = createServicesVersionsHandler({
+      installState: makeInstallState(makeState()),
+      systemOrchestrator: makeOrchestrator(DEFAULT_VERSIONS),
+      gatewayVersion: GATEWAY_VERSION,
+      hermesVersionPath: HERMES_VERSION_PATH,
+      sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
+      attachmentParser: {
+        getMetadata: async (signal) => {
+          if (signal !== requestSignal) throw new Error("request signal not forwarded");
+          resolveStarted();
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              disconnected = true;
+              resolve();
+              return;
+            }
+            signal.addEventListener(
+              "abort",
+              () => {
+                disconnected = true;
+                resolve();
+              },
+              { once: true },
+            );
+          });
+          return { ok: false, error: { code: "cancelled", reason: "metadata_cancelled" } };
+        },
+      },
+      tokens: makeTokens(),
+      fishBrowseEnabled: true,
+    });
+
+    const pending = handler(request);
+    await started;
+    controller.abort();
+    const response = await pending;
+
+    expect(disconnected).toBe(true);
+    expect(response.status).toBe(200);
+    expect((await response.json()).attachment_parser).toBe("unknown");
   });
 
   it("returns features.fish_browse_enabled false when the flag is disabled", async () => {
@@ -183,6 +254,7 @@ describe("services-versions handler", () => {
       hermes: "unknown",
       stt_service: "unknown",
       tts_service: "unknown",
+      attachment_parser: "unknown",
       features: { fish_browse_enabled: true },
     });
   });

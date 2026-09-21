@@ -173,7 +173,7 @@ describe("schedule persistence", () => {
     );
     expect(
       migrated.query<{ version: number }, []>("SELECT user_version version FROM pragma_user_version").get()?.version,
-    ).toBe(9);
+    ).toBe(STORE_MIGRATIONS.at(-1)?.version);
     migrated.close();
   });
 
@@ -210,7 +210,7 @@ describe("schedule persistence", () => {
     const db = new Database(join(root, "u_aaaaaaaa", "sessions.db"), { readonly: true });
     expect(
       db.query<{ version: number }, []>("SELECT user_version version FROM pragma_user_version").get()?.version,
-    ).toBe(9);
+    ).toBe(STORE_MIGRATIONS.at(-1)?.version);
     expect(
       db
         .query<{ name: string }, []>(
@@ -482,6 +482,52 @@ describe("schedule persistence", () => {
     expect(blocked).toEqual({ ok: true, value: [] });
     expect(reclaimed.value[0]?.occurrenceId).toBe(first.value[0]?.occurrenceId);
     expect(reclaimed.value[0]?.claimToken).not.toBe(first.value[0]?.claimToken);
+  });
+
+  test("terminalizes a claim when its session was deleted before association", async () => {
+    const now = new Date("2026-08-01T15:01:02.000Z");
+    const { service, resource, root } = setup("u_aaaaaaaa", { clock: () => now });
+    const target = await service.create(
+      resource,
+      once("deleted-session", "2026-08-01T15:00:00Z"),
+      new Date("2026-08-01T14:00:00Z"),
+    );
+    const unrelated = await service.create(
+      resource,
+      once("unrelated", "2026-08-01T15:00:30Z"),
+      new Date("2026-08-01T14:00:00Z"),
+    );
+    if (!target.ok || !unrelated.ok) throw new Error("create failed");
+    const due = await service.claimDue(new Date("2026-08-01T15:01:00Z"), 1, 60_000);
+    if (!due.ok || !due.value[0]) throw new Error("claim failed");
+    const claim = due.value[0];
+    const sessionId = "s_dddddddddddddddddddddddddddddddd";
+    const store = openUserStore(root);
+    store.createSession(sessionId, `scheduled:${claim.occurrenceId}`);
+    expect(store.deleteSession(sessionId).status).toBe("deleted");
+    store.close();
+
+    expect(await service.associateSession(claim, sessionId)).toEqual({
+      ok: false,
+      error: { code: "claim_lost", retryable: false },
+    });
+    const db = new Database(join(root, "u_aaaaaaaa", "sessions.db"), { readonly: true });
+    expect(
+      db
+        .query<
+          { session_id: string | null; claim_token: string | null; outcome: string; completed_at: string },
+          [string]
+        >("SELECT session_id,claim_token,outcome,completed_at FROM occurrences WHERE occurrence_id=?")
+        .get(claim.occurrenceId),
+    ).toEqual({ session_id: null, claim_token: null, outcome: "expired", completed_at: now.toISOString() });
+    db.close();
+
+    const listed = await service.list(resource, undefined, 10);
+    expect(listed.ok && listed.value.schedules.map((schedule) => schedule.scheduleId)).toEqual([
+      unrelated.value.scheduleId,
+    ]);
+    const next = await service.claimDue(new Date("2026-08-01T15:01:03Z"), 10, 60_000);
+    expect(next.ok && next.value.map((candidate) => candidate.scheduleId)).toEqual([unrelated.value.scheduleId]);
   });
 
   test("finalizes response handoff atomically and keeps it after one-time cleanup", async () => {

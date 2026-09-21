@@ -83,7 +83,7 @@ describe("AuthProvider attempt ownership", () => {
       old.resolve(oldResult);
       expect(await oldLogin).toEqual({ ok: false, error: { status: 0, code: "login-cancelled" } });
       await waitFor(() => expect(auth.status).toBe("authenticated"));
-      expect(sessionStorage.getItem(AUTH_STORAGE_KEY)).toBe(JSON.stringify({ token: "new-token" }));
+      expect(sessionStorage.getItem(AUTH_STORAGE_KEY)).toBe(JSON.stringify({ token: "new-token", user }));
     });
   }
 
@@ -100,11 +100,59 @@ describe("AuthProvider attempt ownership", () => {
     feedback.resolve();
     expect((await oldLogin).ok).toBe(false);
     await waitFor(() => expect(auth.status).toBe("authenticated"));
-    for (const store of [sessionStorage, localStorage]) expect(store.getItem(AUTH_STORAGE_KEY)).toBe(JSON.stringify({ token: "new-token" }));
+    for (const store of [sessionStorage, localStorage])
+      expect(store.getItem(AUTH_STORAGE_KEY)).toBe(JSON.stringify({ token: "new-token", user }));
+  });
+
+  it("restores the cached account shell when token validation is offline", async () => {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: "remembered", user }));
+    const api = {
+      me: vi.fn().mockResolvedValue({ ok: false, error: { status: 0, code: "network-error" } }),
+    } as unknown as AuthApi;
+    let auth!: ReturnType<typeof useAuth>;
+    render(<AuthProvider api={api}><CaptureAuth capture={(value) => { auth = value; }} /></AuthProvider>);
+
+    await waitFor(() => expect(auth.status).toBe("authenticated"));
+    expect(auth.status === "authenticated" && auth.user.userId).toBe("u-1");
+  });
+
+  it("fails closed instead of combining a legacy tab token with another account identity", async () => {
+    sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: "account-a-token" }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: "account-b-token", user: { ...user, userId: "u-2" } }));
+    const api = {
+      me: vi.fn().mockResolvedValue({ ok: false, error: { status: 0, code: "network-error" } }),
+    } as unknown as AuthApi;
+    let auth!: ReturnType<typeof useAuth>;
+    render(<AuthProvider api={api}><CaptureAuth capture={(value) => { auth = value; }} /></AuthProvider>);
+
+    await waitFor(() => expect(auth.status).toBe("anonymous"));
+    expect(api.me).toHaveBeenCalledWith("account-a-token");
+  });
+
+  it("invalidates local auth before bounded best-effort server logout", async () => {
+    sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: "remembered", user }));
+    let logoutSignal: AbortSignal | undefined;
+    const api = {
+      me: vi.fn().mockResolvedValue({ ok: true, value: { token: "remembered", user } }),
+      logout: vi.fn((_token: string, signal?: AbortSignal) => {
+        logoutSignal = signal;
+        return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+      }),
+    } as unknown as AuthApi;
+    let auth!: ReturnType<typeof useAuth>;
+    render(<AuthProvider api={api}><CaptureAuth capture={(value) => { auth = value; }} /></AuthProvider>);
+    await waitFor(() => expect(auth.status).toBe("authenticated"));
+
+    const pending = auth.logout();
+    await waitFor(() => expect(auth.status).toBe("anonymous"));
+    expect(sessionStorage.getItem(AUTH_STORAGE_KEY)).toBeNull();
+    expect(logoutSignal?.aborted).toBe(false);
+    logoutSignal?.dispatchEvent(new Event("abort"));
+    await pending;
   });
 
   it("restores remembered auth without running a login presentation", async () => {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: "remembered" }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: "remembered", user }));
     const api = { me: vi.fn().mockResolvedValue(success), login: vi.fn() } as unknown as AuthApi;
     let auth!: ReturnType<typeof useAuth>;
     render(<AuthProvider api={api}><CaptureAuth capture={(value) => { auth = value; }} /></AuthProvider>);

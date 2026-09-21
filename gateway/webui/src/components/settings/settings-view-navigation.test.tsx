@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProfileV1 } from "../../services/profile-api.ts";
 
-const mocks = vi.hoisted(() => ({ getMe: vi.fn(), updateMe: vi.fn(), getSoul: vi.fn(), voiceSave: vi.fn(), logout: vi.fn(), createUser: vi.fn(), listUsers: vi.fn(), saveIdentity: vi.fn(), authUser: { userId: "user", displayName: "Ada", isAdmin: true } }));
+const mocks = vi.hoisted(() => ({ getMe: vi.fn(), updateMe: vi.fn(), apply: vi.fn(), getSoul: vi.fn(), voiceSave: vi.fn(), logout: vi.fn(), createUser: vi.fn(), listUsers: vi.fn(), saveIdentity: vi.fn(), authUser: { userId: "user", displayName: "Ada", isAdmin: true } }));
 vi.mock("../../hooks/use-auth.tsx", () => ({ useAuth: () => ({ status: "authenticated", token: "test", user: mocks.authUser, updateUser: (user: typeof mocks.authUser) => { mocks.authUser = user; }, logout: mocks.logout }) }));
 vi.mock("../../services/auth-api.ts", () => ({ createAuthApi: () => ({ updateMe: mocks.saveIdentity }) }));
 vi.mock("../../services/profile-api.js", () => ({ createProfileApi: () => ({ ...mocks }) }));
@@ -47,6 +47,7 @@ beforeEach(() => {
   mocks.listUsers.mockResolvedValue({ ok: true, value: { users: [] } });
   mocks.getMe.mockResolvedValue({ ok: true, value: profile() });
   mocks.updateMe.mockResolvedValue({ ok: true, value: profile() });
+  mocks.apply.mockResolvedValue({ ok: true, value: { status: "ready", elapsedMs: 0 } });
   mocks.getSoul.mockResolvedValue({ ok: true, value: { content: "", lastModified: null } });
 });
 afterEach(cleanup);
@@ -82,6 +83,20 @@ describe("Settings navigation contract", () => {
     await waitFor(() => expect(report).toHaveBeenLastCalledWith({ dirty: false, busy: false }));
     view.unmount();
     expect(report).toHaveBeenLastCalledWith({ dirty: false, busy: false });
+  });
+
+  it("saves an auxiliary reset through the full profile without dropping unrelated fields", async () => {
+    const original = { ...profile(), auxiliaryModels: { dreamer: { provider: "openrouter" as const, id: "dream-model" } } };
+    mocks.getMe.mockResolvedValue({ ok: true, value: original });
+    mocks.updateMe.mockResolvedValue({ ok: true, value: { ...original, auxiliaryModels: {} } });
+    render(<SettingsView initialTab="auxiliaryRunners" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use system default for Dreamer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    await waitFor(() => expect(mocks.updateMe).toHaveBeenCalledTimes(1));
+
+    expect(mocks.updateMe.mock.calls[0]![1]).toEqual({ ...original, auxiliaryModels: {} });
+    expect(mocks.apply).toHaveBeenCalledTimes(1);
   });
 
   it("retains ownership of immediate saves after internal pane changes and prevents a competing profile Apply", async () => {

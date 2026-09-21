@@ -33,6 +33,24 @@ class SpyConnector implements Connector {
   }
 }
 
+class RefusalConnector implements Connector {
+  readonly capability = "refusal.spy";
+  readonly kind = "status" as const;
+  readonly refusedSessionIds: string[] = [];
+  private off = (): void => {};
+
+  attach(sdk: Parameters<Connector["attach"]>[0]): void {
+    this.off = sdk.onMessage("session.refused", (raw) => {
+      const sessionId = (raw as { sessionId?: unknown }).sessionId;
+      if (typeof sessionId === "string") this.refusedSessionIds.push(sessionId);
+    });
+  }
+  detach(): void {
+    this.off();
+    this.off = (): void => {};
+  }
+}
+
 /** Socket stub that never opens — enough for the lifecycle paths under test. */
 function createInertWebSocket(): WebSocket {
   return { binaryType: "blob", readyState: 0, close(): void {}, send(): void {} } as unknown as WebSocket;
@@ -246,6 +264,25 @@ describe("SentientSDK — the per-tab session pointer", () => {
     // The refused id is gone; the draft key the tab now re-presents took its place.
     expect(stored()).not.toBe(SESSION_ID);
     expect(stored()).toBe(DRAFT_KEY);
+  });
+
+  it("surfaces refused presented session identity after reconnect handshake attaches connectors", () => {
+    sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, SESSION_ID);
+    wire = createDrivableSocket();
+    sdk = new SentientSDK({
+      gatewayUrl: "wss://gateway.test/api/v1/ws",
+      token: "test-token",
+      createWebSocket: () => wire.socket,
+    });
+    const connector = new RefusalConnector();
+    sdk.register(connector);
+    void sdk.connect();
+    wire.open();
+    wire.deliver({ ...AUTH_OK_FRAME });
+    wire.deliver({ ...SESSION_READY_FRAME });
+    wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY, ts: 1 });
+
+    expect(connector.refusedSessionIds).toEqual([SESSION_ID]);
   });
 
   it("keeps an unspent draft across a reload — the gateway hands the same key back", () => {

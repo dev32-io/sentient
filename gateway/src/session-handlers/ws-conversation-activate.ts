@@ -96,6 +96,11 @@ export async function handleConversationActivate(
   // The socket is already closed and told why — say nothing more, and do not
   // record a session on a connection that is going away.
   if (bind.kind === "refused") return;
+  if (bind.kind === "missing-session") {
+    sendConnectionFrame(ws, { type: "sessions.deleted", sessionId: targetSessionId });
+    sendConnectionFrame(ws, { type: "sessions.error", code: "not_found", message: "session was deleted" });
+    return;
+  }
   const runtime = bind.kind === "bound" ? bind.runtime : null;
   // The id is kept even on a bind failure — deliberately, mirroring
   // handleSessionConfigure: it is the only record of which session the client

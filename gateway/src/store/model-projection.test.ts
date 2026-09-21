@@ -71,6 +71,22 @@ describe("projectForModel", () => {
     ]);
   });
 
+  it("adds bounded opaque attachment inventory without exposing display names", () => {
+    const attachments = Array.from({ length: 17 }, (_, index) => ({
+      attachmentId: `att_${index.toString(16).padStart(32, "0")}`,
+      displayName: `private-name-${index}.png`,
+      contentType: "image/png",
+      mediaKind: "image" as const,
+      size: 123 + index,
+    }));
+    const out = projectForModel([e({ kind: "user", text: "inspect this", attachments })]);
+    expect(out[0]?.content).toContain(`<attachment ref="${attachments[0]?.attachmentId}" kind="image" bytes="123"/>`);
+    expect(out[0]?.content).toContain("Gateway may provide visual overviews automatically");
+    expect(out[0]?.content).not.toContain("available through inspect_attachment");
+    expect(out[0]?.content).not.toContain("private-name-0.png");
+    expect(out[0]?.content).not.toContain(attachments[16]?.attachmentId ?? "missing");
+  });
+
   // D16. A `trigger` entry is a stimulus nobody typed — a background task
   // completing today, a sensor reading or a scheduled wake later. Projected as
   // role:"user" the model reads it as the person pasting a result into the

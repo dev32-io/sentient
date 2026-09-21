@@ -8,6 +8,31 @@ import { type CaptureIntent, ChatComposer, type ChatComposerProps } from "./inde
 import { VoiceCaptureControl } from "./voice-capture-control.tsx";
 import { VOICE_CAPTURE_STATES, isVoiceCaptureLive, mapVoiceCapturePresentation } from "./voice-capture-state.ts";
 
+const PNG_FIXTURE = Uint8Array.from(
+  atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+  (char) => char.charCodeAt(0),
+);
+const GIF_FIXTURE = Uint8Array.from(
+  atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"),
+  (char) => char.charCodeAt(0),
+);
+const TIFF_FIXTURE = Uint8Array.from([
+  73, 73, 42, 0, 8, 0, 0, 0, 2, 0,
+  0, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+  1, 1, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+]);
+
+function previewFixture(bytes: Uint8Array, name: string, type: string): File {
+  const file = new File([Uint8Array.from(bytes)], name, { type });
+  // jsdom lacks Blob.arrayBuffer; model the browser's bounded prefix read.
+  Object.defineProperty(file, "slice", {
+    value: (start = 0, end = bytes.length) => ({
+      arrayBuffer: async () => bytes.slice(start, end).buffer,
+    }),
+  });
+  return file;
+}
+
 function composerProps(overrides: Partial<ChatComposerProps> = {}): ChatComposerProps {
   return {
     cycleStatus: "idle",
@@ -89,6 +114,136 @@ afterEach(() => {
 });
 
 describe("ChatComposer semantic boundary", () => {
+  it("selects safe files and supports attachment-only send", () => {
+    const onAttachmentsSelected = vi.fn();
+    const onTextSubmit = vi.fn();
+    const file = new File(["fixture"], "fixture.txt", { type: "text/plain" });
+    const props = composerProps({
+      attachments: [{ id: "file-1", name: file.name, type: file.type, blob: file }],
+      onAttachmentsSelected,
+      onTextSubmit,
+    });
+    render(<ChatComposer {...props} />);
+
+    const picker = screen.getByLabelText("Choose attachment files");
+    expect(picker.getAttribute("accept")).toContain("image/jxl");
+    expect(picker.getAttribute("accept")).toContain(".livephoto.zip");
+    expect(picker.getAttribute("accept")).not.toContain(".dng");
+    fireEvent.change(picker, { target: { files: [file] } });
+    expect(onAttachmentsSelected).toHaveBeenCalledWith([file]);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(onTextSubmit).toHaveBeenCalledWith("");
+    expect(screen.getByText("fixture.txt")).toBeTruthy();
+  });
+
+  it("forwards mixed clipboard files without suppressing native text paste", () => {
+    const onAttachmentsSelected = vi.fn();
+    const file = new File(["fixture"], "pasted.txt", { type: "text/plain" });
+    render(<ChatComposer {...composerProps({ onAttachmentsSelected })} />);
+    const editor = screen.getByRole("textbox", { name: "Message Sentient" });
+    const paste = createEvent.paste(editor, { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { files: [file], getData: vi.fn(() => "pasted text") },
+    });
+
+    fireEvent(editor, paste);
+
+    expect(onAttachmentsSelected).toHaveBeenCalledWith([file]);
+    expect(paste.defaultPrevented).toBe(false);
+  });
+
+  it("displays only a bounded poster URL and revokes it on cleanup", async () => {
+    const source = previewFixture(PNG_FIXTURE, "fixture.png", "image/png");
+    const poster = new Blob(["poster"], { type: "image/webp" });
+    const close = vi.fn();
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1280, height: 640, close })));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => callback(poster));
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:poster") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    const view = render(<ChatComposer {...composerProps({
+      attachments: [{ id: "image-1", name: source.name, type: source.type, blob: source }],
+    })} />);
+    const image = await screen.findByRole("img", { hidden: true });
+
+    expect(image.getAttribute("src")).toBe("blob:poster");
+    expect(URL.createObjectURL).toHaveBeenCalledWith(poster);
+    expect(URL.createObjectURL).not.toHaveBeenCalledWith(source);
+    expect(close).toHaveBeenCalledOnce();
+    view.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:poster");
+  });
+
+  it("does not re-decode an unchanged attachment when draft persistence returns a new Blob", async () => {
+    const close = vi.fn();
+    const create = vi.fn(async () => ({ width: 1, height: 1, close }));
+    vi.stubGlobal("createImageBitmap", create);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => callback(new Blob(["poster"], { type: "image/webp" })));
+    const first = previewFixture(PNG_FIXTURE, "fixture.png", "image/png");
+    const replacement = previewFixture(PNG_FIXTURE, "fixture.png", "image/png");
+    const props = composerProps({
+      attachments: [{ id: "stable-file", name: first.name, type: first.type, blob: first }],
+    });
+    const view = render(<ChatComposer {...props} />);
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+
+    view.rerender(<ChatComposer {...props} attachments={[{ id: "stable-file", name: replacement.name, type: replacement.type, blob: replacement }]} />);
+    await act(async () => {});
+
+    expect(create).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
+  it("keeps large or failed image drafts as placeholders without exposing original URLs", async () => {
+    const create = vi.fn(async () => { throw new Error("unsupported codec"); });
+    vi.stubGlobal("createImageBitmap", create);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:original") });
+    const onAttachmentRemove = vi.fn();
+    const large = previewFixture(GIF_FIXTURE, "large.gif", "image/gif");
+    Object.defineProperty(large, "size", { value: 16 * 1024 * 1024 + 1 });
+    const failedCodec = previewFixture(PNG_FIXTURE, "failed.png", "image/png");
+
+    render(<ChatComposer {...composerProps({
+      attachments: [
+        { id: "large", name: large.name, type: large.type, blob: large },
+        { id: "failed", name: failedCodec.name, type: failedCodec.type, blob: failedCodec },
+      ],
+      onAttachmentRemove,
+    })} />);
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+
+    expect(screen.queryByRole("img", { hidden: true })).toBeNull();
+    expect(screen.getByText("large.gif")).toBeTruthy();
+    expect(screen.getByText("failed.png")).toBeTruthy();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(onAttachmentRemove).not.toHaveBeenCalled();
+  });
+
+  it("keeps detected compound image drafts as importable placeholders without decoding", async () => {
+    const create = vi.fn();
+    vi.stubGlobal("createImageBitmap", create);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn() });
+    const onAttachmentRemove = vi.fn();
+    const gif = previewFixture(GIF_FIXTURE, "animated.gif", "image/png");
+    const tiff = previewFixture(TIFF_FIXTURE, "multipage.tiff", "image/png");
+
+    render(<ChatComposer {...composerProps({
+      attachments: [
+        { id: "gif", name: gif.name, type: gif.type, blob: gif },
+        { id: "tiff", name: tiff.name, type: tiff.type, blob: tiff },
+      ],
+      onAttachmentRemove,
+    })} />);
+    await waitFor(() => expect(screen.getByText("animated.gif")).toBeTruthy());
+
+    expect(screen.getByText("multipage.tiff")).toBeTruthy();
+    expect(create).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(onAttachmentRemove).not.toHaveBeenCalled();
+  });
+
   it("reports draft changes and submits trimmed text while preserving Shift+Enter", () => {
     const props = composerProps();
     render(<ControlledComposer props={props} />);
@@ -630,7 +785,7 @@ describe("ChatComposer semantic boundary", () => {
   it("uses approved local glyphs across composer and voice states", async () => {
     const props = composerProps({ cycleStatus: "streaming" });
     const view = render(<ChatComposer {...props} />);
-    expect(screen.getByRole("button", { name: "Attachments are not available" }).querySelector("path")?.getAttribute("d")).toBe(
+    expect(screen.getByRole("button", { name: "Attach files" }).querySelector("path")?.getAttribute("d")).toBe(
       "m9 12 6-6a4 4 0 0 1 6 6l-8 8a6 6 0 0 1-8-8l8-8",
     );
     expect(screen.getByRole("button", { name: "Mute assistant voice" }).querySelector("path")?.getAttribute("d")).toBe(
@@ -704,6 +859,11 @@ describe("pure VoiceCapture presentation mapping", () => {
 });
 
 describe("dock foundation boundary", () => {
+  it("connects hidden file-input focus to the visible attach control", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-composer__actions:has\(\.dock-composer__file-input:focus-visible\) \.dock-composer__attachment\s*{/);
+    expect(DOCK_STYLES).not.toContain(".dock-composer__attachment:has(input:focus-visible)");
+  });
+
   it("keeps pointer voice focus neutral while preserving intentional non-box focus emphasis", () => {
     expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within:has\(:focus-visible\):not\(\[data-focus-origin="pointer-voice"\]\)\s*{/);
     expect(DOCK_STYLES).not.toMatch(/focus-within:has\(:focus-visible\):not\(\[data-voice-state=/);

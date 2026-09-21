@@ -7,20 +7,23 @@ export interface SessionRowProps {
   row: Row;
   isCurrent: boolean;
   disabled?: boolean;
+  inserted?: boolean;
+  draft?: boolean;
+  localDraft?: boolean;
   onSwitch(event: MouseEvent): void;
   onAskRename(): void;
   onAskDelete(): void;
 }
 
-export function SessionRow({ row, isCurrent, disabled = false, onSwitch, onAskRename, onAskDelete }: SessionRowProps): JSX.Element {
+export function SessionRow({ row, isCurrent, disabled = false, inserted = false, draft = false, localDraft = false, onSwitch, onAskRename, onAskDelete }: SessionRowProps): JSX.Element {
   return (
     <OverflowActionRow
-      className={isCurrent ? "session-row session-row--current" : "session-row"}
-      title={row.title}
+      className={["session-row", isCurrent && "session-row--current", inserted && "session-row--inserted", draft && "session-row--draft"].filter(Boolean).join(" ")}
+      title={draft ? `${row.title} — Draft` : row.title}
       current={isCurrent}
       disabled={disabled}
       onActivate={onSwitch}
-      overflow={<RowMenu onRename={onAskRename} onDelete={onAskDelete} />}
+      overflow={localDraft ? undefined : <RowMenu onRename={onAskRename} onDelete={onAskDelete} />}
     />
   );
 }

@@ -4,7 +4,9 @@ import type { HealthCheck } from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "health"]);
 
-export type HealthError = { kind: "timeout"; lastError: string | null };
+export type HealthError =
+  | { kind: "timeout"; lastError: string | null }
+  | { kind: "exited"; lastError: "service-exited" };
 
 export interface HealthIO {
   fetch(url: string, timeoutMs: number): Promise<{ ok: boolean }>;
@@ -18,10 +20,12 @@ export interface PollHealthyInput {
   healthcheck: HealthCheck;
   pollIntervalMs: number;
   io: HealthIO;
+  /** True only when backend inspection confirms started unit has exited. */
+  hasExited?: (signal: AbortSignal) => Promise<boolean>;
 }
 
 export async function pollHealthy(input: PollHealthyInput): Promise<Result<undefined, HealthError>> {
-  const { healthcheck, pollIntervalMs, io } = input;
+  const { healthcheck, pollIntervalMs, io, hasExited } = input;
   // Noop probe — recreate-success implies ready; no liveness check.
   if ("noop" in healthcheck) return { ok: true, value: undefined };
   const deadline = io.now() + healthcheck.timeout_ms;
@@ -35,7 +39,23 @@ export async function pollHealthy(input: PollHealthyInput): Promise<Result<undef
       lastError = err instanceof Error ? err.message : String(err);
       log.debug("health.probe-error", { lastError });
     }
-    await io.sleep(pollIntervalMs);
+    const remainingMs = deadline - io.now();
+    if (hasExited && remainingMs > 0) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), remainingMs);
+      try {
+        if (await hasExited(controller.signal)) {
+          return { ok: false, error: { kind: "exited", lastError: "service-exited" } };
+        }
+      } catch {
+        log.debug("health.exit-inspection-error", { reason: "inspection-failed" });
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    const sleepMs = Math.min(pollIntervalMs, deadline - io.now());
+    if (sleepMs <= 0) break;
+    await io.sleep(sleepMs);
   }
   return { ok: false, error: { kind: "timeout", lastError } };
 }

@@ -12,7 +12,7 @@ STT/TTS streaming. Production is a compiled host binary supervised by
   owns cancellation, publishes committed projections, and manages retention.
 - `src/runtime/react-loop.ts` — calls the OpenAI-compatible provider directly,
   re-reads the store each iteration, dispatches tools through `ToolBroker`, and
-  forces a content-only final iteration at the configured bound.
+  continues until a final answer, cancellation, or failure without an iteration cap.
 - `src/store/` — append-only source of truth for model and client projections.
 - `src/session-handlers/` — authentication, attachment binding, session-scoped
   replay journals, command mediation, STT input, and `turn.*` wire emission.

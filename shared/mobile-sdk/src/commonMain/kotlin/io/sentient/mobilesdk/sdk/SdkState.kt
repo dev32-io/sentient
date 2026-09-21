@@ -10,6 +10,8 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.attachments.AttachmentRef
+
 /** Voice-mode latch. OFF = text path; ACTIVE = mic streaming (full pipeline E3). */
 enum class VoiceMode { OFF, ACTIVE }
 
@@ -44,5 +46,23 @@ data class ChatMessage(
     val turnId: String? = null,
     val replyId: String? = null,
     val pendingId: String? = null,
+    /** Authoritative owning session on committed user receipts. */
+    val sessionId: String? = null,
     val entryId: String = "",
-)
+    val attachments: List<AttachmentRef> = emptyList(),
+) {
+    constructor(
+        ts: Long,
+        role: String,
+        content: String,
+        streaming: Boolean,
+        cutoffKind: String?,
+        turnId: String?,
+        replyId: String?,
+        pendingId: String?,
+        entryId: String,
+    ) : this(
+        ts, role, content, streaming, cutoffKind, turnId, replyId, pendingId,
+        sessionId = null, entryId = entryId, attachments = emptyList(),
+    )
+}

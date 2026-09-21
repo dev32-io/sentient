@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.attachments.AttachmentRef
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.InFlightMessage
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
@@ -18,14 +19,39 @@ import kotlin.test.assertEquals
 
 class StateDeriverTest {
     @Test
+    fun attachment_only_user_entry_is_rendered() {
+        val messages = deriveMessages(
+            listOf(
+                ConversationFeedItem.User(
+                    entryId = "e1",
+                    ts = 1,
+                    channel = "text",
+                    content = "",
+                    attachments = listOf(AttachmentRef("att_0123456789abcdef0123456789abcdef", "fixture.pdf", "application/pdf", "pdf", 12)),
+                ),
+            ),
+            null,
+            2,
+        )
+        assertEquals("fixture.pdf", messages.single().attachments.single().displayName)
+    }
+
+    @Test
     fun deriveMessages_propagates_pendingId_on_user_entries() {
         val d = StateDeriver(io.sentient.mobilesdk.fakes.FixedClock(1000L))
         d.applyFeed(listOf(
-            ConversationFeedItem.User(ts = 1L, channel = "text", content = "hi", pendingId = "p1"),
+            ConversationFeedItem.User(
+                ts = 1L,
+                channel = "text",
+                content = "hi",
+                pendingId = "p1",
+                sessionId = "s1",
+            ),
         ))
         val msgs = d.deriveTimeline()
         val user = msgs.first { it.role == "user" }
         assertEquals("p1", user.pendingId)
+        assertEquals("s1", user.sessionId)
     }
 
     @Test

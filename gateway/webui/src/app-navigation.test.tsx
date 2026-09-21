@@ -7,9 +7,10 @@ import { ROUTE_STORAGE_KEY } from "./components/shell/route-state.ts";
 import type { AuthApi } from "./services/auth-api.ts";
 import { App } from "./app.tsx";
 
-const observed = vi.hoisted(() => ({ startClient: vi.fn(), createDraft: vi.fn(), dispose: vi.fn(), client: null as unknown, sessions: null as unknown }));
+const observed = vi.hoisted(() => ({ startClient: vi.fn(), createDraft: vi.fn(), dispose: vi.fn(), client: null as unknown, sessions: null as unknown, localDrafts: null as unknown }));
 vi.mock("./hooks/use-install-state.ts", () => ({ useInstallState: () => ({ state: { bootstrap_complete: true }, loading: false, error: null }) }));
 vi.mock("./hooks/use-voice-client.ts", () => ({ useVoiceClient: () => { observed.startClient(); return observed.client; } }));
+vi.mock("./hooks/use-local-drafts.ts", () => ({ useLocalDrafts: () => observed.localDrafts }));
 vi.mock("./hooks/use-sessions.ts", () => ({ createUseSessions: () => observed.sessions }));
 vi.mock("./components/common/sentient-mark.tsx", () => ({ SentientMark: () => <span aria-hidden="true">Mark</span> }));
 vi.mock("./components/chat/chat-view.tsx", () => ({ ChatView: ({ messages, status }: { messages: unknown[]; status: string }) => <section><h1>Chat fixture</h1><p>Conversation state: {status}</p><p>Message count: {messages.length}</p></section> }));
@@ -56,6 +57,10 @@ beforeEach(() => {
     switchTo: vi.fn(async () => true),
     newChat: vi.fn(async () => true),
     error: signal(null), currentId: signal(null), items: signal([]), searchHits: signal(null), loading: signal(false),
+  };
+  observed.localDrafts = {
+    drafts: signal([]), pendingSends: signal([]), value: signal(""), activeAttachments: signal([]), uploadStates: signal({}), error: signal(null),
+    save: vi.fn(), addFiles: vi.fn(), removeFile: vi.fn(), submit: vi.fn(), retryPending: vi.fn(), cancelUpload: vi.fn(), reconcile: vi.fn(), refresh: vi.fn(),
   };
   observed.client = {
     sessionsConnector: {}, cycleStatus: signal("idle"), tasks: signal([]), messages: signal([]), localSendIds: signal([]), currentTurnId: signal(null),
@@ -137,6 +142,18 @@ describe("shell navigation protects settings and conversation identity", () => {
     finishSwitch?.();
     await screen.findByText("Conversation state: ready");
     expect(location.search).toBe("");
+  });
+
+  it("renders pending sends only for active conversation", async () => {
+    (observed.sessions as { currentId: { value: string | null } }).currentId.value = "session-a";
+    (observed.localDrafts as { pendingSends: { value: unknown[] } }).pendingSends.value = [
+      { pendingId: "a", draftId: "draft-a", draftRevision: 1, sessionId: "session-a", text: "right", attachments: [], uploadedRefs: {}, createdAt: 1 },
+      { pendingId: "b", draftId: "draft-b", draftRevision: 1, sessionId: "session-b", text: "wrong", attachments: [], uploadedRefs: {}, createdAt: 2 },
+    ];
+    mountStored("chat");
+
+    await screen.findByText("Chat fixture");
+    expect(screen.getByText("Message count: 1")).toBeTruthy();
   });
 
   it("hides prior conversation when a linked session is unavailable and recovers through explicit selection", async () => {

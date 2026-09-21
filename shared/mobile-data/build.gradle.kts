@@ -83,6 +83,10 @@ sqldelight {
             packageName.set("io.sentient.mobiledata.cache.db")
             schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
         }
+        create("DraftDatabase") {
+            packageName.set("io.sentient.mobiledata.draft.db")
+            srcDirs.setFrom("src/commonMain/draftSqldelight")
+        }
     }
 }
 

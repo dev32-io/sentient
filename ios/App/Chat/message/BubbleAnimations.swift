@@ -48,6 +48,7 @@ struct StreamingText: View {
     var body: some View {
         Markdown(content)
             .markdownTheme(.dusk)
+            .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

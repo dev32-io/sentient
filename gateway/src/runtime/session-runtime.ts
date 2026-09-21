@@ -95,6 +95,8 @@
 import type { OrchestratorConfig } from "@sentient/config";
 import type { TurnTrigger } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
+import type { DirectVisionDeps } from "../attachments/direct-vision.js";
+import type { MainModelSnapshot } from "../bootstrap/user-model-provider.js";
 import type { TimeZoneProvider } from "../context/message-time.js";
 import type { SessionBlockRenderer } from "../context/session-block.js";
 import type { SituationBlockRenderer } from "../context/situation-block.js";
@@ -102,6 +104,7 @@ import { loadAuxiliaryTemplate, loadCompactionSummarizerPrompt } from "../contex
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionSpark } from "../memory/deep-memory-wiring.js";
+import { ProviderFailure } from "../provider/openai-provider.js";
 import type { ProviderClient } from "../provider/provider-client.js";
 import type { CutoffKind, NewSessionEntry, SessionEntry } from "../store/entry-types.js";
 import { openSessionStore } from "../store/session-store.js";
@@ -323,6 +326,10 @@ export interface SessionRuntimeDeps {
    *  default; the composition root threads the operator's configured value. */
   dbFileName?: string;
   provider: ProviderClient;
+  resolveMainModel?: () => Promise<MainModelSnapshot>;
+  directVision?: DirectVisionDeps;
+  /** Per-request auxiliary model wrapper. Defaults to `provider` for focused harnesses. */
+  titleProvider?: ProviderClient;
   broker: ToolBroker;
   emitter: TurnEmitter;
   /**
@@ -420,15 +427,15 @@ function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "k
   };
 }
 
-function stimulusEntryKind(stimulus: Stimulus): "user" | "trigger" {
+function stimulusEntryKind(stimulus: Exclude<Stimulus, { kind: "preadmitted-conversational" }>): "user" | "trigger" {
   return stimulus.kind === "conversational" ? "user" : "trigger";
 }
 
 function stimulusTrigger(stimulus: Stimulus): TurnTrigger {
-  return stimulus.kind === "conversational" ? "user" : "background-completion";
+  return stimulus.kind === "background-completion" ? "background-completion" : "user";
 }
 
-function stimulusText(stimulus: Stimulus): string {
+function stimulusText(stimulus: Exclude<Stimulus, { kind: "preadmitted-conversational" }>): string {
   return stimulus.kind === "conversational" ? stimulus.text : stimulus.note;
 }
 
@@ -513,7 +520,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   // always appends narration BEFORE the first `onToolUpdate` call of an
   // iteration (see react-loop.ts's `dispatchToolCalls`); `onTurnCommitting`
   // fires the instant the loop appends the terminal assistant entry on
-  // natural completion (no-toolcalls / forced-final) — the fix for the
+  // natural completion (no-toolcalls) — the fix for the
   // terminal-completion race (Task 8 follow-up): without this second hook,
   // a bargeIn()/interrupt() landing after the terminal commit but before
   // `inFlight` is asynchronously cleared would still see the already-
@@ -522,6 +529,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   // never resurrected once a turn ends, `startTurn` resets it fresh for
   // every new turn.
   let turnText = "";
+  const acceptedPreadmittedSeqs = new Set<number>();
 
   /**
    * Cut this session's outbound speech and command the client to flush its
@@ -613,7 +621,10 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     return pending.some((e) => e.kind === "user") ? "user" : "background-completion";
   }
 
-  function appendStimulus(stimulus: Stimulus, turnId: string): SessionEntry {
+  function appendStimulus(
+    stimulus: Exclude<Stimulus, { kind: "preadmitted-conversational" }>,
+    turnId: string,
+  ): SessionEntry {
     return store.append({
       ...blankEntry(sessionId, turnId),
       kind: stimulusEntryKind(stimulus),
@@ -707,7 +718,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     log.info("session-runtime.titling.start", { userId, sessionId, turnId });
     runTitler({
       store,
-      provider,
+      provider: deps.titleProvider ?? provider,
       sessionId,
       userId,
       config: config.auxiliary,
@@ -1068,15 +1079,20 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     controller: AbortController,
     speech: TurnVoiceStream | null,
   ): void {
-    // Synchronous snapshot, no await between this and the `runTurn` call
-    // below — guarantees the turn's first iteration sees everything ≤ this.
-    // Taken HERE (after any spark prime) rather than in `startTurn` so a
-    // stimulus that steered in during the prime is inside this turn's mark.
+    // Bound automatic media to this admitted trigger window. New input normally
+    // carries this turnId; later preadmitted steering may carry another, so only
+    // window start uses identity and all subsequent inclusion uses sequence.
+    const triggerEntry = store
+      .readSession(sessionId)
+      .findLast((entry) => entry.turnId === turnId && TURN_TRIGGER_KINDS.has(entry.kind));
+    const inputAfterSeq = triggerEntry ? triggerEntry.seq - 1 : lastProcessedSeq;
     lastProcessedSeq = currentMaxSeq();
     log.info("session-runtime.turn.start", { userId, sessionId, turnId, trigger, lastProcessedSeq });
 
     const loopDeps: ReactLoopDeps = {
       provider,
+      ...(deps.resolveMainModel ? { resolveMainModel: deps.resolveMainModel } : {}),
+      ...(deps.directVision ? { directVision: deps.directVision } : {}),
       broker,
       store,
       systemPrompt,
@@ -1110,9 +1126,12 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
           return null;
         }),
       sessionId,
-      config: config.loop,
       requestTimeoutMs: config.provider.request_timeout_ms,
       onTextDelta: (id, text) => {
+        // Provider adapters are asked to honor abort, but disposal is the
+        // terminal authority boundary even when one delivers a buffered chunk
+        // late. Never emit or feed speech after the session was deleted.
+        if (disposed) return;
         turnText += text;
         // The reply id rides every delta, so the client never has to
         // reverse-engineer which reply a chunk belongs to.
@@ -1120,6 +1139,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         speech?.pushText(text);
       },
       onToolUpdate: (id, u) => {
+        if (disposed) return;
         // Any onToolUpdate call is preceded by the loop committing this
         // iteration's narration (if it had any) to the store directly — see
         // react-loop.ts's `dispatchToolCalls`. That text is durable now, so
@@ -1140,6 +1160,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         speech?.flush(u.toolCallId);
       },
       onTurnCommitting: (id) => {
+        if (disposed) return;
         // Fires synchronously right after react-loop.ts appends the terminal
         // assistant entry for a natural completion — BEFORE `runTurn`'s
         // promise resolves and long before the async `onTurnSettled`
@@ -1154,7 +1175,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       },
     };
 
-    runTurn(loopDeps, { turnId, signal: controller.signal }).then(
+    runTurn(loopDeps, { turnId, signal: controller.signal, inputAfterSeq }).then(
       (result) => settle(turnId, result, controller.signal),
       (err: unknown) => {
         // react-loop.ts's contract is "never throw" — this is a defensive
@@ -1164,7 +1185,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
           userId,
           sessionId,
           turnId,
-          reason: err instanceof Error ? err.message : String(err),
+          reason: controller.signal.aborted
+            ? "cancelled"
+            : err instanceof ProviderFailure
+              ? "provider_failure"
+              : "run_turn_rejected",
+          ...(err instanceof ProviderFailure
+            ? { providerFailureKind: err.kind, ...(err.status === undefined ? {} : { status: err.status }) }
+            : {}),
         });
         settle(turnId, { completed: false, iterations: 0, consumedThroughSeq: lastProcessedSeq }, controller.signal);
       },
@@ -1174,6 +1202,60 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   function submitInternal(stimulus: Stimulus, observe?: (record: TurnTerminalRecord) => void): void {
     if (disposed) {
       log.warn("session-runtime.submit.disposed", { userId, sessionId, kind: stimulus.kind });
+      return;
+    }
+
+    if (stimulus.kind === "preadmitted-conversational") {
+      const entry = store
+        .readSince(sessionId, stimulus.entrySeq - 1)
+        .find((candidate) => candidate.seq === stimulus.entrySeq);
+      if (!entry || entry.kind !== "user") {
+        log.warn("session-runtime.submit.preadmitted-missing", {
+          userId,
+          sessionId,
+          entrySeq: stimulus.entrySeq,
+          reason: "preadmitted user entry is absent or belongs to a deleted session",
+        });
+        return;
+      }
+      if (acceptedPreadmittedSeqs.has(entry.seq)) {
+        feed.republish(entry);
+        return;
+      }
+
+      // Retry after a lost ack republishes only. If admission committed but no
+      // runtime ever accepted it (bind/publish crash), an idle tail entry is
+      // resumed once instead of becoming a durable message with no turn.
+      if (stimulus.admission === "retry" && (inFlight !== null || store.readSince(sessionId, entry.seq).length > 0)) {
+        acceptedPreadmittedSeqs.add(entry.seq);
+        feed.republish(entry);
+        return;
+      }
+      acceptedPreadmittedSeqs.add(entry.seq);
+      feed.publishSettled();
+
+      if (inFlight) {
+        const previous = inFlight.replyId;
+        inFlight.replyId = crypto.randomUUID();
+        log.info("session-runtime.reply.rotated", {
+          userId,
+          sessionId,
+          turnId: inFlight.turnId,
+          previousReplyId: previous,
+          replyId: inFlight.replyId,
+          reason: "the person spoke mid-turn — their row breaks the bubble, the reply resumes in a new one",
+        });
+        return;
+      }
+      if (revokedReason !== null) return;
+      log.info("session-runtime.submit.start-turn", {
+        userId,
+        sessionId,
+        kind: stimulus.kind,
+        seq: entry.seq,
+        turnId: entry.turnId,
+      });
+      startTurn(entry.turnId, "user");
       return;
     }
 

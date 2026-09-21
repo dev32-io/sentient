@@ -31,6 +31,7 @@ async function apply(deps: WizardDeps, body: Body): Promise<Result<void, StepErr
     return { ok: false, error: { kind: "secrets-write-failed" } };
   }
 
+  deps.invalidateCatalogCache?.(provider);
   return { ok: true, value: undefined };
 }
 

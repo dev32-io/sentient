@@ -28,7 +28,13 @@
 // looked up.
 
 import { getLog } from "../logging/logger.js";
-import { MintKeyConflictError, type SessionStore } from "../store/session-store.js";
+import type { NewSessionEntry } from "../store/entry-types.js";
+import {
+  type AttachmentSessionStore,
+  MintKeyConflictError,
+  type SessionStore,
+  type UserMessageAdmission,
+} from "../store/session-store.js";
 
 const log = getLog(["sentient", "session", "session-id"]);
 
@@ -82,6 +88,45 @@ export interface MintOutcome {
    * an empty feed is the truth there.
    */
   replayed: boolean;
+}
+
+export interface FirstMessageAdmission {
+  sessionId: string;
+  replayed: boolean;
+  fresh: boolean;
+  admission: UserMessageAdmission;
+}
+
+/** Atomically creates a draft's metadata and first user entry, or admits its idempotent retry. */
+export function admitFirstUserMessage(
+  store: AttachmentSessionStore,
+  mintKey: string,
+  entry: Omit<NewSessionEntry, "sessionId">,
+  attachmentIds: readonly string[],
+  maxAttachments: number,
+): FirstMessageAdmission {
+  const existing = store.findSessionByMintKey(mintKey);
+  if (existing) return admit(existing.sessionId, true);
+
+  const sessionId = mintSessionId();
+  try {
+    return admit(sessionId, false, mintKey);
+  } catch (error) {
+    if (!(error instanceof MintKeyConflictError)) throw error;
+    const raced = store.findSessionByMintKey(mintKey);
+    if (!raced) throw error;
+    return admit(raced.sessionId, true);
+  }
+
+  function admit(sessionId: string, replayed: boolean, createMintKey?: string): FirstMessageAdmission {
+    const pendingId = entry.pendingId;
+    const fresh = pendingId === null || store.findByPendingId(sessionId, pendingId) === null;
+    const admission = store.admitUserMessage({ ...entry, sessionId }, attachmentIds, {
+      maxAttachments,
+      ...(createMintKey ? { createSession: { mintKey: createMintKey } } : {}),
+    });
+    return { sessionId, replayed, fresh, admission };
+  }
 }
 
 function randomHex(): string {

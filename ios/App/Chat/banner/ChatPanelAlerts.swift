@@ -18,6 +18,18 @@ struct PanelTarget: Identifiable {
     let title: String
 }
 
+struct PanelDestructiveTarget: Identifiable {
+    let action: HistoryDestructiveAction
+    let title: String
+
+    var id: String {
+        switch action {
+        case .deleteConversation(let sessionId): "delete-\(sessionId)"
+        case .discardDraft(let draftId): "discard-\(draftId)"
+        }
+    }
+}
+
 extension View {
     /// Shows a rename alert with an inline text field.
     func panelRenamePrompt(
@@ -44,20 +56,43 @@ extension View {
 
     /// Shows a destructive delete-confirm alert.
     func panelDeletePrompt(
-        _ target: Binding<PanelTarget?>,
-        onConfirm: @escaping (String) -> Void
+        _ target: Binding<PanelDestructiveTarget?>,
+        onConfirm: @escaping (HistoryDestructiveAction) -> Void
     ) -> some View {
-        alert("Delete chat?", isPresented: Binding(
+        alert(target.wrappedValue?.action.alertTitle ?? "Delete?", isPresented: Binding(
             get: { target.wrappedValue != nil },
             set: { if !$0 { target.wrappedValue = nil } }
         ), presenting: target.wrappedValue) { t in
-            Button("Delete", role: .destructive) {
-                onConfirm(t.id)
+            Button(t.action.confirmTitle, role: .destructive) {
+                onConfirm(t.action)
                 target.wrappedValue = nil
             }
             Button("Cancel", role: .cancel) { target.wrappedValue = nil }
         } message: { t in
-            Text("\"\(t.title)\" will be permanently deleted.")
+            Text(t.action.message(title: t.title))
+        }
+    }
+}
+
+private extension HistoryDestructiveAction {
+    var alertTitle: String {
+        switch self {
+        case .deleteConversation: "Delete conversation?"
+        case .discardDraft: "Discard draft?"
+        }
+    }
+
+    var confirmTitle: String {
+        switch self {
+        case .deleteConversation: "Delete conversation"
+        case .discardDraft: "Discard draft"
+        }
+    }
+
+    func message(title: String) -> String {
+        switch self {
+        case .deleteConversation: "\"\(title)\" will be permanently deleted."
+        case .discardDraft: "Unsaved changes in \"\(title)\" will be permanently discarded."
         }
     }
 }

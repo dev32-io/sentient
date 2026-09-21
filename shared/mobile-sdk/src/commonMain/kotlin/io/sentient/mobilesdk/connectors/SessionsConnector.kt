@@ -28,6 +28,8 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
+import io.sentient.mobilesdk.auth.AuthError
+import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
@@ -71,6 +73,13 @@ class SessionsRequestException(
     val code: String,
     @Suppress("UNUSED_PARAMETER") message: String,
 ) : Exception("session-request-failed")
+
+private fun AuthError.toSessionsException(): Exception = when (this) {
+    AuthError.InvalidCredentials -> SessionsRequestException("unauthorized", "")
+    is AuthError.Network -> SessionsTransportException()
+    is AuthError.Server -> SessionsRequestException(code.name.lowercase(), "")
+    is AuthError.Unknown -> SessionsRequestException("invalid_response", "")
+}
 
 private const val DEFAULT_TIMEOUT_MS = 5_000L
 private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
@@ -180,18 +189,12 @@ class SessionsConnector(
         return httpClient?.search(q, limit) ?: emptyList()
     }
 
-    /**
-     * Delete a session via REST DELETE /api/v1/sessions/:id.
-     * Fans out [SessionsChangeEvent.Deleted] only when the REST call returns true (2xx).
-     * On failure, logs a warn and does not fan out — the next list refresh shows reality.
-     */
+    /** Delete via REST and fan out only after confirmed server success. */
     suspend fun delete(sessionId: String) {
         log.debug("delete", mapOf("sessionId" to sessionId))
-        val ok = httpClient?.delete(sessionId) ?: true
-        if (ok) {
-            dispatch(SessionsChangeEvent.Deleted(sessionId))
-        } else {
-            log.warn("delete.no-fanout", mapOf("sessionId" to sessionId, "reason" to "REST call failed"))
+        when (val result = httpClient?.delete(sessionId) ?: AuthResult.Success(Unit)) {
+            is AuthResult.Success -> dispatch(SessionsChangeEvent.Deleted(sessionId))
+            is AuthResult.Failure -> throw result.error.toSessionsException()
         }
     }
 

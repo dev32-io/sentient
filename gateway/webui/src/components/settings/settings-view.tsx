@@ -23,6 +23,7 @@ import { PersonalitiesPane } from "./panes/personalities-pane.tsx";
 import { VoicesPanel } from "../voices/VoicesPanel.tsx";
 import { AudioPane } from "./panes/audio-pane.tsx";
 import { ModelPane } from "./panes/model-pane.tsx";
+import { AuxiliaryRunnersPane } from "./panes/auxiliary-runners-pane.tsx";
 import { ToolsPane } from "./panes/tools-pane.tsx";
 import { AdvancedPane } from "./panes/advanced-pane.tsx";
 import { AccountPane } from "./panes/account-pane.tsx";
@@ -113,9 +114,13 @@ export function SettingsView({
   const isAdmin = isAuthed && auth.user.isAdmin;
 
   useEffect(() => {
-    if (!isAuthed || profileOriginal) return;
+    let cancelled = false;
+    setProfileOriginal(null);
+    setProfileDraft(null);
+    if (!isAuthed) return;
     void (async () => {
       const r = await profileApi.getMe(token);
+      if (cancelled) return;
       if (r.ok) {
         setProfileOriginal(r.value);
         setProfileDraft(r.value);
@@ -123,16 +128,18 @@ export function SettingsView({
         log.warn("getMe.failed", { code: r.error.code });
       }
     })();
-  }, [profileApi, isAuthed, token, profileOriginal]);
+    return () => { cancelled = true; };
+  }, [profileApi, isAuthed, token, isAuthed ? auth.user.userId : null]);
 
   const profileDiff = useMemo(() => {
     if (!profileDraft || !profileOriginal) {
-      return { audio: false, memory: false, model: false, tools: false, advanced: false };
+      return { audio: false, memory: false, model: false, auxiliaryModels: false, tools: false, advanced: false };
     }
     return {
       audio: !eq(profileDraft.audio, profileOriginal.audio),
       memory: !eq(profileDraft.memory, profileOriginal.memory),
       model: !eq(profileDraft.model, profileOriginal.model),
+      auxiliaryModels: !eq(profileDraft.auxiliaryModels, profileOriginal.auxiliaryModels),
       tools: !eq(profileDraft.tools, profileOriginal.tools),
       advanced:
         !eq(profileDraft.compression, profileOriginal.compression) ||
@@ -162,12 +169,12 @@ export function SettingsView({
     const ops: PendingOpWithPayload[] = [];
     if (
       profileDraft &&
-      (profileDiff.audio || profileDiff.memory || profileDiff.model || profileDiff.tools || profileDiff.advanced)
+      (profileDiff.audio || profileDiff.memory || profileDiff.model || profileDiff.auxiliaryModels || profileDiff.tools || profileDiff.advanced)
     ) {
       // Audio and memory toggles are gateway-side — neither touches the
       // Hermes profile render/write, so both stay "fast". Voice is no longer
       // part of this draft/apply flow at all (see VoicesPanel — immediate ops).
-      const needsProfileRewrite = profileDiff.model || profileDiff.tools || profileDiff.advanced;
+      const needsProfileRewrite = profileDiff.model || profileDiff.auxiliaryModels || profileDiff.tools || profileDiff.advanced;
       ops.push({ key: "profile", kind: needsProfileRewrite ? "slow" : "fast", payload: profileDraft });
     }
     if (soulDirty && soulDraft !== null) {
@@ -192,6 +199,7 @@ export function SettingsView({
     if (displayNameDirty) s.add("account");
     if (profileDiff.audio) s.add("audio");
     if (profileDiff.model) s.add("model");
+    if (profileDiff.auxiliaryModels) s.add("auxiliaryRunners");
     if (profileDiff.tools) s.add("tools");
     if (profileDiff.advanced) s.add("advanced");
     if (soulDirty) s.add("systemPrompt");
@@ -345,6 +353,14 @@ export function SettingsView({
               draft={profileDraft}
               savedModel={profileOriginal?.model ?? null}
               onDraftModel={(model) => setProfileDraft({ ...profileDraft, model })}
+            />
+          )}
+          {tab === "auxiliaryRunners" && profileDraft && (
+            <AuxiliaryRunnersPane
+              api={providersApi}
+              token={token}
+              draft={profileDraft}
+              onDraftAuxiliaryModels={(auxiliaryModels) => setProfileDraft({ ...profileDraft, auxiliaryModels })}
             />
           )}
           {tab === "tools" && profileDraft && (

@@ -1,5 +1,6 @@
 package io.sentient.mobilesdk.protocol
 
+import io.sentient.mobilesdk.attachments.AttachmentRef
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
@@ -50,6 +51,9 @@ sealed class ConversationFeedItem {
         val channel: String,
         val content: String,
         val pendingId: String? = null,
+        /** Authoritative owning session for committed receipt reconciliation. */
+        val sessionId: String? = null,
+        val attachments: List<AttachmentRef> = emptyList(),
     ) : ConversationFeedItem()
 
     /** kind="trigger" — ambient trigger (sensor, timer, etc.). */

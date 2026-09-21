@@ -6,6 +6,8 @@ const NETWORKS: ManagedNetworks = {
   "sentient-internal": { internal: true },
   "sentient-external": { internal: false },
 };
+const IMAGE_ID = `sha256:${"1".repeat(64)}`;
+const REBUILT_IMAGE_ID = `sha256:${"2".repeat(64)}`;
 
 const ms: DockerManagedService = {
   name: "ha-mcp",
@@ -42,6 +44,7 @@ function makeStub(): {
     createNetwork: unknown[];
     netConnect: Array<{ network: string; container: string }>;
   };
+  setTaggedImageId: (id: string) => void;
 } {
   const calls = {
     create: [] as unknown[],
@@ -53,12 +56,16 @@ function makeStub(): {
     netConnect: [] as Array<{ network: string; container: string }>,
   };
   // Tracks the one container `createContainer`/`remove` last acted on, keyed by
-  // name — enough for `inspect()` to answer "running, with these Labels" for
-  // the skip-recreate tests, and to 404 before anything has been created (or
+  // name — enough for `inspect()` to answer "running, with these Labels and an
+  // image ID" for the skip-recreate tests, and to 404 before anything has been created (or
   // after it has since been removed).
-  let running: { name: string; spec: Record<string, unknown> } | undefined;
+  let taggedImageId = IMAGE_ID;
+  let running: { name: string; spec: Record<string, unknown>; imageId: string } | undefined;
   return {
     calls,
+    setTaggedImageId: (id) => {
+      taggedImageId = id;
+    },
     stub: {
       listNetworks: async () => [
         { Name: "sentient-internal", Internal: true },
@@ -71,7 +78,7 @@ function makeStub(): {
       getContainer: (name: string) => ({
         inspect: async () => {
           if (running?.name === name) {
-            return { State: { Running: true }, Config: { Labels: running.spec.Labels } };
+            return { Image: running.imageId, State: { Running: true }, Config: { Labels: running.spec.Labels } };
           }
           throw Object.assign(new Error("not found"), { statusCode: 404 });
         },
@@ -86,7 +93,11 @@ function makeStub(): {
       }),
       createContainer: async (spec: unknown) => {
         calls.create.push(spec);
-        running = { name: (spec as { name: string }).name, spec: spec as Record<string, unknown> };
+        running = {
+          name: (spec as { name: string }).name,
+          spec: spec as Record<string, unknown>,
+          imageId: taggedImageId,
+        };
         return {
           id: "abc",
           start: async () => {
@@ -94,7 +105,7 @@ function makeStub(): {
           },
         };
       },
-      getImage: () => ({ inspect: async () => ({}) }),
+      getImage: () => ({ inspect: async () => ({ Id: taggedImageId }) }),
       pull: (async () => {
         const { Readable } = await import("node:stream");
         return Readable.from([]);
@@ -142,6 +153,82 @@ test("SECURITY: recreate publishes a loopback port as an explicit 127.0.0.1 Port
   };
   expect(spec.ExposedPorts).toEqual({ "8086/tcp": {} });
   expect(spec.HostConfig?.PortBindings).toEqual({ "8086/tcp": [{ HostIp: "127.0.0.1", HostPort: "8086" }] });
+});
+
+test("SECURITY: attachment parser create spec enforces no-network and decoder confinement", async () => {
+  const parser: DockerManagedService = {
+    name: "attachment-parser",
+    config: {
+      ...ms.config,
+      allowed_images: ["sentient/attachment-parser:local"],
+      networks: [],
+      healthcheck: { exec: ["python3", "-c", "pass"], timeout_ms: 1000 },
+    },
+    template: {
+      ...ms.template,
+      image: "sentient/attachment-parser:local",
+      container_name: "sentient-attachment-parser",
+      networks: [],
+      network_mode: "none",
+      read_only: true,
+      tmpfs: { "/tmp": "rw,noexec,nosuid,nodev,size=32m" },
+      mem_limit_bytes: 268435456,
+      memswap_limit_bytes: 268435456,
+      cpus: 0.5,
+      pids_limit: 32,
+      cap_drop: ["ALL"],
+      security_opt: ["no-new-privileges"],
+      user: "65534:65534",
+    },
+  };
+  const { stub, calls } = makeStub();
+  const result = await createDockerDriver({ docker: stub, networks: NETWORKS }).recreate(parser);
+  expect(result.ok).toBe(true);
+  const spec = calls.create[0] as {
+    User?: string;
+    HostConfig?: Record<string, unknown>;
+  };
+  expect(spec.User).toBe("65534:65534");
+  expect(spec.HostConfig).toMatchObject({
+    NetworkMode: "none",
+    ReadonlyRootfs: true,
+    Tmpfs: { "/tmp": "rw,noexec,nosuid,nodev,size=32m" },
+    Memory: 268435456,
+    MemorySwap: 268435456,
+    NanoCpus: 500000000,
+    PidsLimit: 32,
+    CapDrop: ["ALL"],
+    SecurityOpt: ["no-new-privileges"],
+    PortBindings: {},
+  });
+  expect(calls.createNetwork).toEqual([]);
+  expect(calls.netConnect).toEqual([]);
+
+  const refused = makeStub();
+  const withHostMount = await createDockerDriver({ docker: refused.stub, networks: NETWORKS }).recreate({
+    ...parser,
+    template: { ...parser.template, volumes: ["/synthetic-private:/host:ro"] },
+  });
+  expect(withHostMount).toEqual({
+    ok: false,
+    error: { kind: "policy-violation", reason: "attachment-parser confinement incomplete" },
+  });
+  expect(refused.calls.create).toEqual([]);
+});
+
+test("SECURITY: attachment parser refuses an incomplete confinement profile", async () => {
+  const parser: DockerManagedService = {
+    ...ms,
+    name: "attachment-parser",
+    config: { ...ms.config, networks: [] },
+    template: { ...ms.template, networks: [], network_mode: "none" },
+  };
+  const { stub, calls } = makeStub();
+  const result = await createDockerDriver({ docker: stub, networks: NETWORKS }).recreate(parser);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toEqual({ kind: "policy-violation", reason: "attachment-parser confinement incomplete" });
+  expect(calls.create).toEqual([]);
 });
 
 test("SECURITY: recreate publishes nothing when the template declares no ports", async () => {
@@ -352,6 +439,29 @@ test("listManaged returns only containers with sentient.managed=true label", asy
   expect(r[0]?.service).toBe("x");
 });
 
+test("listManaged aborts its in-flight Docker request", async () => {
+  const { stub } = makeStub();
+  let requestAborted = false;
+  stub.listContainers = ({ abortSignal } = {}) =>
+    new Promise((_resolve, reject) => {
+      abortSignal?.addEventListener(
+        "abort",
+        () => {
+          requestAborted = true;
+          reject(abortSignal.reason);
+        },
+        { once: true },
+      );
+    });
+  const controller = new AbortController();
+  const listed = createDockerDriver({ docker: stub, networks: NETWORKS }).listManaged(controller.signal);
+
+  controller.abort();
+
+  expect(await listed).toEqual([]);
+  expect(requestAborted).toBe(true);
+});
+
 test("CONTRACT: an unreachable docker daemon yields an empty list, never a rejection", async () => {
   // launchd starts the gateway before auto-login has started Docker Desktop, so
   // `listContainers` rejecting with ECONNREFUSED is a routine boot state. It
@@ -459,10 +569,10 @@ test("recreate tolerates 404 from remove (idempotent recreate)", async () => {
 // with the exact spec we would create is left alone. A foreign process holding
 // the port is still caught — by this skip's own precondition, not by
 // verifyIdentity (which for the docker backend is an unconditional pass): the
-// skip requires OUR container to be Running with a matching spec hash, and
-// dockerd would not be running it if the published port belonged to someone
-// else.
-test("INFRA: recreate skips an already-running infra container with a matching spec hash", async () => {
+// skip requires OUR container to be Running with a matching spec hash and
+// current image ID, and dockerd would not be running it if the published port
+// belonged to someone else.
+test("INFRA: recreate skips unchanged infra with matching spec hash and image ID", async () => {
   const { stub, calls } = makeStub();
   const infra: DockerManagedService = {
     ...ms,
@@ -481,6 +591,45 @@ test("INFRA: recreate skips an already-running infra container with a matching s
   expect(second.ok).toBe(true);
   expect(calls.create.length).toBe(createdOnce); // no second create
   expect(calls.remove.length).toBe(removedOnce); // and nothing torn down
+});
+
+test("INFRA: recreate replaces a running container when same-tag image ID changes", async () => {
+  const { stub, calls, setTaggedImageId } = makeStub();
+  const infra: DockerManagedService = {
+    ...ms,
+    config: { ...ms.config, infra: true, public_ports: true, networks: ["sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-external"], ports: ["0.0.0.0:443:8443"] },
+  };
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+
+  await drv.recreate(infra);
+  const createdOnce = calls.create.length;
+  setTaggedImageId(REBUILT_IMAGE_ID);
+
+  const result = await drv.recreate(infra);
+
+  expect(result.ok).toBe(true);
+  expect(calls.create.length).toBe(createdOnce + 1);
+  expect(calls.remove.length).toBe(2);
+});
+
+test("INFRA: recreate replaces when current image ID metadata is missing", async () => {
+  const { stub, calls } = makeStub();
+  const infra: DockerManagedService = {
+    ...ms,
+    config: { ...ms.config, infra: true, public_ports: true, networks: ["sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-external"], ports: ["0.0.0.0:443:8443"] },
+  };
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+
+  await drv.recreate(infra);
+  const createdOnce = calls.create.length;
+  stub.getImage = () => ({ inspect: async () => ({}) });
+
+  const result = await drv.recreate(infra);
+
+  expect(result.ok).toBe(true);
+  expect(calls.create.length).toBe(createdOnce + 1);
 });
 
 // The skip is gated on a hash match, not merely on "infra and running" — a

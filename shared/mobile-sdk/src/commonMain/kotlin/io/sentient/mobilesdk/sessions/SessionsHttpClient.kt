@@ -13,8 +13,8 @@
 // hierarchy has @JsonClassDiscriminator("kind") — different from the default
 // "type" discriminator.  SessionRow uses the injected ContentNegotiation Json.
 //
-// list/search/getMessages return empty on 4xx/5xx; delete/rename return Boolean
-// (true = 2xx success, false = failure) — never throw from business logic.
+// list/search/getMessages return empty on 4xx/5xx; rename retains its legacy
+// Boolean result while delete uses the module's typed AuthResult convention.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sessions
 
@@ -30,11 +30,14 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLQueryComponent
 import io.ktor.http.isSuccess
+import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.auth.deriveBaseUrl
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.SessionRow
 import io.sentient.mobilesdk.protocol.WireJson
+import io.sentient.mobilesdk.settings.mapSettingsResponse
+import io.sentient.mobilesdk.settings.safeSettingsCall
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -51,9 +54,8 @@ private const val PATH_MESSAGES_SUFFIX = "/messages"
 // api/handlers/sessions.ts) — a DIFFERENT top-level key from every other
 // list-shaped response here, which still answers {items: [...]}. Not yet
 // implemented server-side: search/rename/delete stay on the {items:[...]}
-// shape they were speculatively written against; those calls 404 today and
-// safeGet/safeBoolean degrade them to an empty list / false, same as before
-// this route existed.
+// shape they were speculatively written against. Search/rename retain legacy
+// fallback behavior; delete surfaces its typed failure.
 private const val FIELD_ITEMS = "items"
 private const val FIELD_SESSIONS = "sessions"
 
@@ -246,24 +248,14 @@ open class SessionsHttpClient(
 
     // ── delete ────────────────────────────────────────────────────────────────
 
-    /**
-     * DELETE /api/v1/sessions/:id
-     *
-     * Returns true on 2xx success, false on any non-2xx or network error.
-     */
-    open suspend fun delete(sessionId: String): Boolean {
+    /** DELETE /api/v1/sessions/:id. Every 2xx is success; failures stay typed. */
+    open suspend fun delete(sessionId: String): AuthResult<Unit> {
         log.debug("delete", mapOf("sessionId" to sessionId))
-        return safeBoolean {
-            val resp = httpClient.delete("$baseUrl$PATH_SESSIONS/$sessionId") {
+        return safeSettingsCall(log) {
+            val response = httpClient.delete("$baseUrl$PATH_SESSIONS/$sessionId") {
                 header(HttpHeaders.Authorization, "Bearer ${token()}")
             }
-            if (!resp.status.isSuccess()) {
-                log.warn("delete.error", mapOf("sessionId" to sessionId, "status" to resp.status.value))
-                false
-            } else {
-                log.debug("delete.ok", mapOf("sessionId" to sessionId))
-                true
-            }
+            mapSettingsResponse(log, response) { Unit }
         }
     }
 

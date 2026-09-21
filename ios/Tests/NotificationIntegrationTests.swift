@@ -18,6 +18,13 @@ final class NotificationIntegrationTests: XCTestCase {
         route.select(nil)
         XCTAssertNotEqual(firstDraft, route)
         XCTAssertFalse(route.acknowledged)
+
+        route.selectNewDraft("draft-one")
+        let localDraft = route
+        route.selectNewDraft("draft-two")
+        XCTAssertNotEqual(localDraft, route)
+        XCTAssertEqual(route.draftId, "draft-two")
+        XCTAssertNil(route.sessionId)
     }
 
     func testDestinationParserAcceptsOnlySupportedSessionTargets() {

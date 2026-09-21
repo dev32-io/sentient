@@ -38,7 +38,7 @@ private class FakeConversationRepository : ConversationRepository {
     override val liveEvents: SharedFlow<SdkEvent> = events
     override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> = echoed
     val sent = mutableListOf<Pair<String, String>>()
-    override fun send(text: String, pendingId: String) { sent.add(text to pendingId) }
+    override fun send(text: String, pendingId: String, attachmentIds: List<String>) { sent.add(text to pendingId) }
 }
 
 class ObserveChatUseCaseTest {
@@ -344,6 +344,68 @@ class ObserveChatUseCaseTest {
         assertTrue(models.none { it.historyLoading }, "empty-id switch never raises the spinner")
         job.cancel()
     }
+
+    @Test
+    fun equivalent_reveal_ticks_are_suppressed_but_presentation_changes_emit() =
+        runTest(UnconfinedTestDispatcher()) {
+            val repo = FakeConversationRepository()
+            var now = 1_000L
+            val activity = MutableStateFlow(AssistantActivityState())
+            val models = mutableListOf<ChatModel>()
+            val observe = ObserveChatUseCase(repo, Clock { now }, activity)
+            val job = launch { observe(MutableStateFlow(emptyList())).collect { models.add(it) } }
+
+            repo.events.emit(SdkEvent.MessageStarted("thinking"))
+            runCurrent()
+            val afterStart = models.size
+
+            // RevealReducer still advances its hidden ticker state, but no visible field changed.
+            now += 16
+            advanceTimeBy(16)
+            runCurrent()
+            assertEquals(afterStart, models.size)
+
+            activity.value = AssistantActivityState(AssistantActivityPhase.THINKING, "thinking", null)
+            runCurrent()
+            assertEquals(afterStart + 1, models.size)
+            assertEquals("", models.last().live?.content)
+
+            repo.tasksState.value = listOf(TaskListItem(id = "task", toolName = "search", status = "running"))
+            runCurrent()
+            assertEquals(afterStart + 2, models.size)
+
+            repo.timelineState.value = listOf(ChatMessage(ts = 1, role = "user", content = "committed"))
+            runCurrent()
+            assertEquals(afterStart + 3, models.size)
+            job.cancel()
+        }
+
+    @Test
+    fun token_delta_is_retained_until_ticker_makes_content_visible() =
+        runTest(UnconfinedTestDispatcher()) {
+            val repo = FakeConversationRepository()
+            var now = 1_000L
+            val models = mutableListOf<ChatModel>()
+            val observe = ObserveChatUseCase(repo, Clock { now })
+            val job = launch { observe(MutableStateFlow(emptyList())).collect { models.add(it) } }
+
+            repo.events.emit(SdkEvent.MessageStarted("turn"))
+            repo.events.emit(SdkEvent.MessageDelta("turn", "abcdefghij"))
+            runCurrent()
+            val beforeTicks = models.size
+
+            now = 1_000L
+            advanceTimeBy(16)
+            runCurrent()
+            assertEquals(beforeTicks, models.size, "first zero-progress tick is presentation-equivalent")
+
+            now = 1_100L
+            advanceTimeBy(16)
+            runCurrent()
+            assertTrue(models.size > beforeTicks)
+            assertTrue(models.last().live?.content?.isNotEmpty() == true)
+            job.cancel()
+        }
 
     @Test
     fun prior_turn_is_not_suppressed_when_live_turn_differs() = runTest(UnconfinedTestDispatcher()) {

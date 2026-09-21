@@ -14,9 +14,10 @@
 // trigger). The User session that was running is torn down when the authed
 // branch exits (hasToken=false → UserSessionHost leaves the tree).
 //
-// hasToken records complete local credentials. RootView additionally requires
-// cold-start server validation before mounting authenticated scope; the display
-// name is presentation-only and never supplies the calendar identity. A WS drop
+// hasToken records complete local credentials. RootView normally requires
+// cold-start server validation, but a typed transport failure may mount the local
+// draft shell under an explicit offline state; the display name is presentation-only
+// and never supplies the calendar identity. A WS drop
 // does NOT clear it, so a drop keeps the user on chat WITH the connection-lost banner.
 //
 // logout() clears the token, display name, and authenticated identity. The UserSession teardown is
@@ -33,7 +34,13 @@ enum StartupAuthenticationState: Equatable {
     case login
     case validating
     case authenticated
+    /// Previously authenticated local identity. Server authority remains unverified.
+    case localOffline
     case retry
+
+    var permitsDraftShell: Bool {
+        self == .authenticated || self == .localOffline
+    }
 }
 
 @MainActor
@@ -54,11 +61,11 @@ final class AppConfig: ObservableObject {
     @Published private(set) var configGeneration: Int = 0
 
     /// True when token, display name, and authenticated userId are persisted.
-    /// Cold startup still requires `startupAuthentication == .authenticated`.
+    /// Cold startup requires server validation or explicit typed-network offline state.
     @Published private(set) var hasToken: Bool
     @Published private(set) var startupAuthentication: StartupAuthenticationState = .login
 
-    private let configStore = BackendConfigStore()
+    private let configStore: BackendConfigStore
     let tokenStore: SecureTokenStore
     let displayNameStore: DisplayNameStore
     /// Explicit server-authenticated identity used to build the calendar namespace.
@@ -77,6 +84,7 @@ final class AppConfig: ObservableObject {
         tokenStore: SecureTokenStore = createTokenStore(),
         displayNameStore: DisplayNameStore = DisplayNameStore(),
         identityStore: AuthenticatedIdentityStore = AuthenticatedIdentityStore(),
+        configStore: BackendConfigStore = BackendConfigStore(),
         resolvedBackend: ResolvedBackend? = nil,
         authClientFactory: @escaping @MainActor (String, Bool) -> any StartupAuthenticating = {
             createAuthClient(gatewayWsUrl: $0, allowSelfSignedDevHost: $1)
@@ -85,6 +93,7 @@ final class AppConfig: ObservableObject {
         self.tokenStore = tokenStore
         self.displayNameStore = displayNameStore
         self.identityStore = identityStore
+        self.configStore = configStore
         self.authClientFactory = authClientFactory
 
         // Resolve backend from persisted override → build-time default.
@@ -211,7 +220,9 @@ final class AppConfig: ObservableObject {
             case .invalidCredentials:
                 beforeInvalidation("\(backend)|\(userId)")
                 logout()
-            case .network, .server, .unknown:
+            case .network:
+                startupAuthentication = .localOffline
+            case .server, .unknown:
                 startupAuthentication = .retry
             }
         }

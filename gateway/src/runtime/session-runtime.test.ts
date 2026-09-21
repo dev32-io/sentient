@@ -18,6 +18,7 @@ import { createGatewayLogger } from "../logging/logger.js";
 import type { DeepMemoryClient, Hit, IndexEntry } from "../memory/deep-memory-client.js";
 import { createDeepMemoryApp } from "../memory/deep-memory-wiring.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
+import { ProviderFailure } from "../provider/openai-provider.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import { createInboundGate } from "../security/inbound-gate.js";
 import { createRiskAccumulator } from "../security/risk-accumulator.js";
@@ -49,7 +50,7 @@ mkdirSync(ROOT, { recursive: true });
 
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
-function testConfig(maxIterations = 10): OrchestratorConfig {
+function testConfig(): OrchestratorConfig {
   return {
     calendar: {
       enabled: true,
@@ -76,7 +77,6 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       reasoning_effort: "low",
     },
     skills: { max_index_entries: 50, max_body_chars: 20000 },
-    loop: { max_iterations: maxIterations },
     permission: { request_timeout_ms: 120000 },
     tools: {
       foreground_timeout_ms: 30000,
@@ -332,6 +332,73 @@ describe("SessionRuntime — idle submit", () => {
 
     runtime.dispose();
   });
+  it("starts one turn when a committed admission is retried after its ack was lost", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case1-admitted` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    const store = openSessionStore(am.grant(alice, "session-store"));
+    store.createSession("sess-admitted", "mint-admitted");
+    const admitted = store.admitUserMessage(
+      {
+        sessionId: "sess-admitted",
+        turnId: "turn-admitted",
+        replyId: null,
+        kind: "user",
+        createdAt: Date.now(),
+        text: "file only",
+        toolCallId: null,
+        toolName: null,
+        toolArgs: null,
+        cutoff: null,
+        compactedThroughSeq: null,
+        pendingId: "surface:pending-admitted",
+      },
+      [],
+      { maxAttachments: 0 },
+    );
+    store.close();
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "received" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const config = testConfig();
+    config.auxiliary.enabled = false;
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-admitted",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "test",
+      config,
+    });
+
+    expect(() =>
+      runtime.submit({ kind: "preadmitted-conversational", entrySeq: admitted.entry.seq + 1, admission: "fresh" }),
+    ).not.toThrow();
+    runtime.submit({ kind: "preadmitted-conversational", entrySeq: admitted.entry.seq, admission: "retry" });
+    runtime.submit({ kind: "preadmitted-conversational", entrySeq: admitted.entry.seq, admission: "retry" });
+    await waitUntilIdle(runtime);
+
+    expect(provider.calls).toHaveLength(1);
+    const userFrames = emitter.events.flatMap((event) =>
+      event.type === "conversationEntry" && event.item?.kind === "user" ? [event.item] : [],
+    );
+    expect(userFrames).toHaveLength(1);
+    expect(userFrames[0]).toMatchObject({
+      entryId: String(admitted.entry.seq),
+      pendingId: "surface:pending-admitted",
+      sessionId: "sess-admitted",
+    });
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    expect(readback.readSession("sess-admitted").filter((entry) => entry.kind === "user")).toHaveLength(1);
+    readback.close();
+    runtime.dispose();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -515,6 +582,61 @@ describe("SessionRuntime — a turn that completes with zero text (D17)", () => 
 // Case 2: a second submit while a turn is running steers it — no parallel
 // loop, and the steered text reaches the running loop's next iteration.
 // ---------------------------------------------------------------------------
+
+describe("SessionRuntime — rejection logging", () => {
+  it("commits failure notice and logs only static or typed-safe rejection metadata", async () => {
+    const logs: string[] = [];
+    await createGatewayLogger({ testSink: (line) => logs.push(line), logLevel: "debug" });
+    const secret = ["PROVIDER", "SENTINEL", "6wN"].join("_");
+    const cases: Array<[string, unknown]> = [
+      [
+        "arbitrary",
+        Object.assign(new Error(`data:image/png;base64,${secret}`), { status: 400, apiKey: `sk-${secret}` }),
+      ],
+      ["typed", new ProviderFailure("http", 429)],
+    ];
+
+    for (const [name, rejection] of cases) {
+      const am = createAccessManager({ userDataRoot: `${ROOT}/safe-rejection-${name}` });
+      const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+      mkdirSync(am.userHomeDir(alice), { recursive: true });
+      const provider = fakeProvider(async function* () {
+        await Promise.reject(rejection);
+        yield { type: "done", finishReason: "unreachable" };
+      });
+      const runtime = createSessionRuntime({
+        principal: alice,
+        sessionId: `safe-rejection-${name}`,
+        accessManager: am,
+        provider,
+        broker: noopBroker(),
+        emitter: recordingEmitter(),
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "test",
+        config: testConfig(),
+      });
+
+      runtime.submit({ kind: "conversational", text: "safe" });
+      await waitUntilIdle(runtime);
+      const readback = openSessionStore(am.grant(alice, "session-store"));
+      expect(readback.readSession(`safe-rejection-${name}`).filter((entry) => entry.kind === "assistant")).toHaveLength(
+        1,
+      );
+      readback.close();
+      runtime.dispose();
+    }
+
+    const output = logs.join("\n");
+    expect(output).toContain('reason="run_turn_rejected"');
+    expect(output).toContain('reason="provider_failure"');
+    expect(output).toContain('providerFailureKind="http"');
+    expect(output).toContain("status=429");
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain("data:image");
+    expect(output).not.toContain("base64");
+    expect(output).not.toContain("apiKey");
+  });
+});
 
 describe("SessionRuntime — steer while running", () => {
   it("does not start a second concurrent turn; steered text reaches the next iteration", async () => {
@@ -735,6 +857,10 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         getSession: () => null,
         listSessionsWithMetadata: () => [],
         setTitle: () => false,
+        deleteSession: () => ({ status: "absent" }),
+        listRetentionCandidates: () => [],
+        listFileCleanupIntents: () => [],
+        ackFileCleanupIntent: () => false,
         close: () => {},
       },
       capability: am.grant(alice, "tool-broker"),
@@ -2352,6 +2478,9 @@ describe("SessionRuntime — dispose while a turn is in flight", () => {
       yield { type: "text", content: "half a reply" };
       signalStreamStarted?.();
       await streamGate;
+      // Deliberately ignore abort and deliver one buffered provider chunk.
+      // Runtime disposal, not adapter cooperation, is terminal authority.
+      yield { type: "text", content: " late completion" };
       yield { type: "done", finishReason: "stop" };
     });
 
@@ -2378,6 +2507,7 @@ describe("SessionRuntime — dispose while a turn is in flight", () => {
     await waitUntilIdle(runtime);
 
     expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(0);
+    expect(emitter.events.filter((e) => e.type === "textDelta")).toHaveLength(1);
     expect(emitter.events.filter((e) => e.type === "conversationEntry" && e.turnId !== "")).toHaveLength(1);
   });
 

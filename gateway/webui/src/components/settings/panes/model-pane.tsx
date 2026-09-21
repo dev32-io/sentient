@@ -3,12 +3,12 @@ import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { ModelEntry, ProvidersApi } from "../../../services/providers-api.ts";
-import type { ProfileV1 } from "../../../services/profile-api.js";
+import type { ModelRef, ProfileV1 } from "../../../services/profile-api.js";
 import { ActionButton, AsyncState, Field, PaneChrome, SegmentedControl, SettingsCard } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "model-pane"]);
-type Provider = "openrouter" | "ollama-cloud";
+type Provider = ModelRef["provider"];
 
 export interface ModelPaneProps {
   api: ProvidersApi;
@@ -20,6 +20,13 @@ export interface ModelPaneProps {
    */
   savedModel: ProfileV1["model"] | null;
   onDraftModel: (model: ProfileV1["model"]) => void;
+  /** Optional alternate field using the same catalog picker. Main-model and
+   * wizard callers omit this and retain their existing behavior. */
+  field?: {
+    value: ModelRef | undefined;
+    onChange: (model: ModelRef) => void;
+  };
+  modelFilter?: (model: ModelEntry) => boolean;
   /**
    * When set, hides the provider segment picker and filters models to this
    * provider only. Used in the wizard where only one provider is configured.
@@ -50,6 +57,8 @@ export function ModelPane({
   lockedProvider,
   hideHead,
   hideSavedTile,
+  field,
+  modelFilter,
 }: ModelPaneProps): JSX.Element {
   const [models, setModels] = useState<ModelEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -63,9 +72,12 @@ export function ModelPane({
   const [q, setQ] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+    setModels(null);
     setLoadError(null);
     void (async () => {
       const r = await api.listModels(token);
+      if (cancelled) return;
       if (!r.ok) {
         log.warn("listModels.failed", { code: r.error.code });
         setLoadError("Couldn't load models.");
@@ -73,14 +85,18 @@ export function ModelPane({
       }
       setModels(r.value.models);
     })();
+    return () => { cancelled = true; };
   }, [api, token, loadAttempt]);
 
   const list = useMemo(() => {
     if (!models) return [];
     return models.filter(
-      (m) => m.provider === provider && (!q || m.id.toLowerCase().includes(q.toLowerCase())),
+      (m) =>
+        m.provider === provider &&
+        (!modelFilter || modelFilter(m)) &&
+        (!q || m.id.toLowerCase().includes(q.toLowerCase())),
     );
-  }, [models, provider, q]);
+  }, [models, provider, q, modelFilter]);
 
   if (loadError) {
     return (
@@ -98,9 +114,10 @@ export function ModelPane({
     );
   }
 
+  const selected = field ? field.value : draft.model;
   const handleSelect = (m: ModelEntry) => {
-    if (draft.model?.id === m.id) return;
-    onDraftModel({ id: m.id, provider: m.provider });
+    if (selected?.id === m.id && selected.provider === m.provider) return;
+    (field?.onChange ?? onDraftModel)({ id: m.id, provider: m.provider });
   };
 
   const savedModelTile = renderSavedModelTile(savedModel, models);
@@ -128,7 +145,7 @@ export function ModelPane({
           </div>
           <div class="model-grid">
             {list.map((m) => {
-              const sel = draft.model?.id === m.id;
+              const sel = selected?.id === m.id && selected.provider === m.provider;
               return (
                 <ActionButton
                   key={m.id}

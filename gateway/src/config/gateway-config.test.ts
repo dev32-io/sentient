@@ -16,7 +16,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-  loop: {}
   tools: {}
   delegation: {}
 stt:
@@ -56,7 +55,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-  loop: {}
   tools: {}
   delegation: {}
 stt:
@@ -84,7 +82,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-  loop: {}
   tools: {}
   delegation: {}
 stt:
@@ -120,7 +117,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-  loop: {}
   tools: {}
   delegation: {}
 stt:

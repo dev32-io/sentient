@@ -28,6 +28,7 @@ import { type CommittedFeedSource, attachWithSnapshot, createFanOutTurnEmitter }
 import { createInputArbiter } from "./input-arbiter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
+import { mintDraftKey, resolveSession } from "./session-id.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
 import { refuseStaleAuthority } from "./stale-authority.js";
 import { createUserAudioPolicy } from "./user-audio-policy.js";
@@ -70,6 +71,20 @@ export function withSessionStore<T>(
   }
 }
 
+/** Async counterpart for post-commit attachment publication. */
+export async function withSessionStoreAsync<T>(
+  services: Pick<GatewayServices, "accessManager" | "dbFileName">,
+  principal: UserPrincipal,
+  use: (store: ReturnType<typeof openSessionStore>) => Promise<T>,
+): Promise<T> {
+  const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
+  try {
+    return await use(store);
+  } finally {
+    store.close();
+  }
+}
+
 /**
  * What a bind attempt did. THREE outcomes, not two, because "no runtime" and
  * "this socket may not have one" are opposite instructions to the caller: the
@@ -82,6 +97,9 @@ export type BindOutcome =
   /** No runtime could be constructed, and the socket is FINE — the orchestrator
    *  is absent from config, or this user's per-session construction failed. */
   | { readonly kind: "no-runtime" }
+  /** Durable membership disappeared while this asynchronous bind was in
+   *  flight. No runtime or attachment was minted. */
+  | { readonly kind: "missing-session" }
   /** This connection's authority no longer matches the record. The socket has
    *  been told `auth.error` and closed; the caller must STOP, not degrade. */
   | { readonly kind: "refused" };
@@ -139,6 +157,7 @@ export async function bindSessionRuntime(
   ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
   sessionId: string,
+  bindingIsCurrent: () => boolean = () => true,
 ): Promise<BindOutcome> {
   const connectionId = ws.data.sessionId;
   const principal = ws.data.principal;
@@ -161,6 +180,38 @@ export async function bindSessionRuntime(
       detail: "the record no longer grants this socket's authority — no capability was minted",
     });
     return { kind: "refused" };
+  }
+  if (!bindingIsCurrent()) {
+    log.info("session-binding.superseded", {
+      connectionId,
+      userId,
+      sessionId,
+      reason: "connection route changed while authority was resolving — refusing to attach the old route",
+    });
+    return { kind: "no-runtime" };
+  }
+
+  // Membership was usually resolved before this function, but the authority
+  // check above awaits persisted user state. Deletion can win during that gap.
+  // Re-read the durable store at the last asynchronous boundary before attach;
+  // a tombstoned id has neither metadata nor entries and cannot become resident
+  // again through an in-flight configure, activate, or late re-bind.
+  // Some narrow unit harnesses predate store-backed binding and intentionally
+  // supply only registry/runtime slices despite casting them as GatewayServices.
+  // Production GatewayServices always has accessManager.
+  if (services.accessManager !== undefined) {
+    const resolution = withSessionStore(services, principal, (store) =>
+      resolveSession({ store, presented: sessionId }),
+    );
+    if ("rejected" in resolution) {
+      log.info("session-binding.session-disappeared", {
+        connectionId,
+        userId,
+        sessionId,
+        reason: "durable membership disappeared before runtime attachment",
+      });
+      return { kind: "missing-session" };
+    }
   }
 
   if (!services.createSessionRuntime) {
@@ -566,11 +617,8 @@ export function completeAttachWithSnapshot(
  * Finish an attach with a plain drain — no committed feed, no turn-state
  * reconstruction.
  *
- * Two callers, and neither can be mid-turn from this window's point of view: a
- * FRESH mint (the session was created by this very message, so there is no
- * prior turn and the user's own entry follows immediately) and a RECOVERED
- * resume (the client's cursor genuinely reached `deliveredThrough`, so it
- * already saw whatever prerequisites the turn emitted).
+ * Used by a RECOVERED resume: the client's cursor genuinely reached
+ * `deliveredThrough`, so it already saw whatever prerequisites the turn emitted.
  *
  * `conversation.activate` deliberately does NOT come here: it takes no
  * committed snapshot — the client refetches — but it can land mid-turn, so it
@@ -600,6 +648,27 @@ export function completeAttach(
 export function unbindSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   detachSession(ws, services);
   ws.data.conversationId = null;
+}
+
+/**
+ * Clear a window returned by `SessionRegistry.disposeDeletedSession` without
+ * consulting registry membership that was intentionally removed first. Exact
+ * session matching prevents a delayed coordinator callback from unbinding a
+ * window that has already moved elsewhere. Returns fresh draft key for caller's
+ * deletion event/handshake, or null when binding was already superseded.
+ */
+export function unbindDeletedSession(ws: ServerWebSocket<SessionData>, sessionId: string): string | null {
+  if (ws.data.attachment?.sessionId !== sessionId && ws.data.conversationId !== sessionId) return null;
+  ws.data.audioCapture = null;
+  ws.data.stt?.discard();
+  ws.data.attachment = null;
+  ws.data.runtime = null;
+  ws.data.journal = null;
+  ws.data.epoch = 0;
+  ws.data.conversationId = null;
+  const draftKey = mintDraftKey();
+  ws.data.draftKey = draftKey;
+  return draftKey;
 }
 
 /**

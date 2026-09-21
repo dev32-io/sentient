@@ -1,22 +1,30 @@
 import type { AudioPrefsPatch } from "@sentient/audio-prefs";
 import { clientMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
+import { type AttachmentCapability, createAttachmentStorage } from "../attachments/storage.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { NewSessionEntry } from "../store/entry-types.js";
 import { scopePendingId } from "../store/pending-id-scope.js";
+import { AttachmentAdmissionError, DeletedSessionError, publishAdmittedAttachments } from "../store/session-store.js";
 import { captureDiagnosticRef } from "./capture-diagnostics.js";
-import { type CommandKind, claimInputFloor, mediateCommand } from "./command-mediator.js";
+import { type CommandKind, mediateCommand, reserveInputFloor } from "./command-mediator.js";
 import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import {
   type BindOutcome,
   bindSessionRuntime,
-  completeAttach,
+  buildSessionHandles,
   completeAttachWithSnapshot,
   detachSession,
   withSessionStore,
+  withSessionStoreAsync,
 } from "./session-binding.js";
-import { mintOnFirstMessage } from "./session-id.js";
+import { admitFirstUserMessage } from "./session-id.js";
+import type { Attachment, DraftInputFloorReservation } from "./session-registry.js";
+import { refuseStaleAuthority } from "./stale-authority.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
@@ -218,42 +226,78 @@ export async function handleWebSocketMessage(
 
     case "text.input": {
       if (!mediate(ws, services, msg, "text.input", msg.pendingId)) return;
-      // MINT ON FIRST MESSAGE (spec §4.2). A draft connection has no session
-      // and no runtime; this is the moment the id is allocated and the row
-      // written. Idempotent by mint key, so a retry after a lost
-      // `session.created` reaches the session it already created rather than
-      // forking a second one.
-      const bound = await ensureBoundRuntime(ws, services, msg.text);
-      // A refused bind already told this socket `auth.error` and closed it.
-      // Answering `orchestrator_unavailable` on top would be a second, false
-      // explanation for the same event.
-      if (bound.kind === "refused") return;
-      if (bound.kind !== "bound") {
-        sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
+      let binding = captureCommandBinding(ws);
+      if (!binding) {
+        sendError(ws, "orchestrator_unavailable", "Session is not configured");
         return;
       }
-      const runtime = bound.runtime;
-      // `pendingId` is threaded, NOT acted on here: the idempotency decision
-      // belongs where the store append happens (SessionRuntime), so a resend
-      // is recorded and re-echoed rather than silently swallowed by the router.
-      // It is NAMESPACED by the issuing surface first (spec §3.8) — the dedup
-      // record is session-scoped and durable, so with N windows on one session
-      // two that reuse a value would silently suppress the second message.
-      //
-      // THE FLOOR IS CLAIMED HERE, not up at the gate: a claim is made on
-      // behalf of an input that is actually going to be submitted, and the two
-      // lines above can still fail. Claiming before them burns the floor for a
-      // message that ended in `orchestrator_unavailable` and refuses a peer for
-      // a dispatch that did nothing (command-mediator.ts).
-      // `pendingId` rides along so a `session_busy` refusal names the message it
-      // refused. It is the one refusal the protocol calls retryable immediately,
-      // so it is the one a client most needs to settle against a specific bubble
-      // — and a pendingId-keyed outbox cannot fail the right entry without it.
-      if (!claimInputFloor({ type: "text.input", pendingId: msg.pendingId }, ws, services.sessionRegistry)) return;
-      runtime.submit({
-        kind: "conversational",
-        text: msg.text,
-        ...(msg.pendingId === undefined ? {} : { pendingId: scopedPendingId(ws, msg.pendingId) }),
+      const authoritativeSessionId = findAuthoritativePendingSession(binding, services, msg.pendingId);
+      binding = await bindExistingDraftForInput(ws, services, binding);
+      if (!binding) return;
+      if (authoritativeSessionId !== null) {
+        // Lost-ack retry: re-run admission for its attachment identity check and
+        // publication recovery, but do not contend for a floor already earned
+        // by this durable entry.
+        const admitted = await admitTextInput(binding, ws, services, msg.text, msg.pendingId, msg.attachmentIds ?? []);
+        if (!admitted || admitted.sessionId !== authoritativeSessionId) return;
+        const boundRuntime = await runtimeForAdmittedInput(ws, services, binding, admitted);
+        const runtime =
+          boundRuntime ??
+          (commandBindingIsCurrent(ws, binding) ? null : ensureCommittedRuntime(services, binding, admitted.sessionId));
+        runtime?.submit({
+          kind: "preadmitted-conversational",
+          entrySeq: admitted.entrySeq,
+          admission: "retry",
+        });
+        return;
+      }
+      // Reserve before durable admission. A loser therefore leaves no entry,
+      // feed item, or model input behind.
+      const floor = reserveInputFloor(
+        { type: "text.input", pendingId: msg.pendingId },
+        ws,
+        services.sessionRegistry,
+        Date.now(),
+        services.session.input_arbitration_window_ms,
+      );
+      if (!floor) return;
+      let committed = false;
+      const admitted = await admitTextInput(
+        binding,
+        ws,
+        services,
+        msg.text,
+        msg.pendingId,
+        msg.attachmentIds ?? [],
+        () => commandBindingIsCurrent(ws, binding),
+        () => {
+          committed = true;
+        },
+      );
+      if (admitted === null) {
+        if (committed) floor.commit();
+        else floor.release();
+        return;
+      }
+      // Route may have changed during attachment publication. Resolve delivery
+      // by captured session authority, never by current ws.data routing.
+      const boundRuntime = await runtimeForAdmittedInput(ws, services, binding, admitted);
+      if (boundRuntime === null && commandBindingIsCurrent(ws, binding)) {
+        // Durable admission stands, but current authority refused or could not
+        // bind runtime. Do not turn that refusal into model input.
+        floor.commit();
+        return;
+      }
+      const runtime = boundRuntime ?? ensureCommittedRuntime(services, binding, admitted.sessionId);
+      commitInputFloor(
+        floor,
+        admitted.sessionId,
+        binding.attachment?.sessionId === admitted.sessionId ? binding.attachment.attachmentId : binding.connectionId,
+      );
+      runtime?.submit({
+        kind: "preadmitted-conversational",
+        entrySeq: admitted.entrySeq,
+        admission: admitted.fresh ? "fresh" : "retry",
       });
       return;
     }
@@ -461,8 +505,8 @@ function mediate(
  * `session.configure` has run, where there is no surface to name and no peer
  * window to collide with.
  */
-function scopedPendingId(ws: ServerWebSocket<SessionData>, pendingId: string): string {
-  return scopePendingId(ws.data.surfaceId ?? ws.data.sessionId ?? "", pendingId);
+function scopedPendingId(binding: CommandBinding, pendingId: string): string {
+  return scopePendingId(binding.surfaceId ?? binding.connectionId, pendingId);
 }
 
 /**
@@ -544,55 +588,283 @@ function answerPermissionPrompt(
   }
 }
 
+interface CommandBinding {
+  readonly principal: UserPrincipal;
+  readonly connectionId: string;
+  readonly draftKey: string;
+  readonly conversationId: string | null;
+  readonly attachment: Attachment | null;
+  readonly runtime: SessionRuntime | null;
+  readonly surfaceId: string | null;
+}
+
+interface AdmittedTextInput {
+  sessionId: string;
+  replayed: boolean;
+  fresh: boolean;
+  entrySeq: number;
+}
+
+function commitInputFloor(
+  floor: { commit(): void } | DraftInputFloorReservation,
+  sessionId: string,
+  holderId: string,
+): void {
+  if ("commitToSession" in floor) {
+    if (floor.commitToSession(sessionId, holderId)) return;
+    // Fresh-draft reservation makes this unreachable: no session floor exists
+    // before its atomic first admission. If that invariant changes, committed
+    // content remains authoritative rather than becoming a silent ghost.
+    log.error("input-floor.transfer-failed-after-commit", {
+      sessionId,
+      reason: "draft admission committed before its supposedly uncontended session floor could be transferred",
+    });
+  }
+  floor.commit();
+}
+
+function ensureCommittedRuntime(
+  services: GatewayServices,
+  binding: CommandBinding,
+  sessionId: string,
+): SessionRuntime | null {
+  try {
+    return (
+      services.sessionRegistry.handlesFor(sessionId) ??
+      services.sessionRegistry.ensure(sessionId, () =>
+        buildSessionHandles(services, binding.principal, sessionId, binding.connectionId),
+      )
+    ).runtime;
+  } catch {
+    // Admission is durable even if runtime construction is unavailable. Let the
+    // caller settle its floor; do not close a socket now serving another route
+    // or report this committed message as a rejected, retryable new send.
+    log.warn("text.input.runtime-unavailable-after-commit", {
+      sessionId,
+      connectionId: binding.connectionId,
+      reason: "runtime-construction-failed",
+    });
+    return null;
+  }
+}
+
+function captureCommandBinding(ws: ServerWebSocket<SessionData>): CommandBinding | null {
+  const { principal, sessionId, draftKey, conversationId, attachment, runtime, surfaceId } = ws.data;
+  if (!principal || !sessionId || !draftKey) return null;
+  return { principal, connectionId: sessionId, draftKey, conversationId, attachment, runtime, surfaceId };
+}
+
+function commandBindingIsCurrent(ws: ServerWebSocket<SessionData>, binding: CommandBinding): boolean {
+  return (
+    ws.data.principal === binding.principal &&
+    ws.data.sessionId === binding.connectionId &&
+    ws.data.draftKey === binding.draftKey &&
+    ws.data.conversationId === binding.conversationId &&
+    ws.data.attachment === binding.attachment &&
+    ws.data.runtime === binding.runtime
+  );
+}
+
+/** Find only an already-accepted retry; distinct pending input must still arbitrate. */
+function findAuthoritativePendingSession(
+  binding: CommandBinding,
+  services: GatewayServices,
+  pendingId: string | undefined,
+): string | null {
+  if (pendingId === undefined) return null;
+  return withSessionStore(services, binding.principal, (store) => {
+    const sessionId = binding.conversationId ?? store.findSessionByMintKey(binding.draftKey)?.sessionId ?? null;
+    if (sessionId === null) return null;
+    return store.findByPendingId(sessionId, scopedPendingId(binding, pendingId)) === null ? null : sessionId;
+  });
+}
+
+/** Resolve a stale/lost-ack draft onto its existing session before floor reservation. */
+async function bindExistingDraftForInput(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  binding: CommandBinding,
+  remainsCurrent: () => boolean = () => commandBindingIsCurrent(ws, binding),
+): Promise<CommandBinding | null> {
+  if (binding.conversationId !== null) return binding;
+  const existingSessionId = withSessionStore(
+    services,
+    binding.principal,
+    (store) => store.findSessionByMintKey(binding.draftKey)?.sessionId ?? null,
+  );
+  if (existingSessionId === null) return binding;
+  const bound = await ensureBoundRuntime(ws, services, existingSessionId, true, () => remainsCurrent());
+  if (bound.kind === "refused") return null;
+  if (bound.kind === "missing-session") {
+    sendError(ws, "session_not_found", "Session was deleted; choose a new chat before sending");
+    return null;
+  }
+  if (bound.kind !== "bound") {
+    if (remainsCurrent())
+      sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
+    return null;
+  }
+  const rebound = captureCommandBinding(ws);
+  if (rebound?.conversationId !== existingSessionId || rebound.runtime !== bound.runtime) return null;
+  return rebound;
+}
+
+/** Commit user text and attachment refs before either feed or model can observe it. */
+async function admitTextInput(
+  binding: CommandBinding,
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  text: string,
+  pendingId: string | undefined,
+  attachmentIds: readonly string[],
+  canCommit: () => boolean = () => true,
+  onCommitted: (admitted: AdmittedTextInput) => void = () => {},
+): Promise<AdmittedTextInput | null> {
+  const { principal, draftKey } = binding;
+  if (attachmentIds.length > 0 && !services.attachments) {
+    sendError(ws, "attachment_unavailable", "Attachments are not configured");
+    return null;
+  }
+
+  const entry: Omit<NewSessionEntry, "sessionId"> = {
+    turnId: crypto.randomUUID(),
+    replyId: null,
+    kind: "user",
+    createdAt: Date.now(),
+    text,
+    toolCallId: null,
+    toolName: null,
+    toolArgs: null,
+    cutoff: null,
+    compactedThroughSeq: null,
+    pendingId: pendingId === undefined ? null : scopedPendingId(binding, pendingId),
+  };
+
+  let committedAdmission: AdmittedTextInput | null = null;
+  try {
+    return await withSessionStoreAsync(services, principal, async (store) => {
+      if (!canCommit()) return null;
+      const maxAttachments = services.attachments?.max_files_per_message ?? 0;
+      const result =
+        binding.conversationId === null
+          ? admitFirstUserMessage(store, draftKey, entry, attachmentIds, maxAttachments)
+          : (() => {
+              const sessionId = binding.conversationId;
+              const fresh = entry.pendingId === null || store.findByPendingId(sessionId, entry.pendingId) === null;
+              return {
+                sessionId,
+                replayed: false,
+                fresh,
+                admission: store.admitUserMessage({ ...entry, sessionId }, attachmentIds, { maxAttachments }),
+              };
+            })();
+
+      const admitted = {
+        sessionId: result.sessionId,
+        replayed: result.replayed,
+        fresh: result.fresh,
+        entrySeq: result.admission.entry.seq,
+      };
+      committedAdmission = admitted;
+      onCommitted(admitted);
+      if (result.admission.attachments.length > 0) {
+        const config = services.attachments;
+        if (!config) throw new AttachmentAdmissionError("attachment_count");
+        const storage = createAttachmentStorage(
+          services.accessManager.grant(principal, "attachment-store") as AttachmentCapability,
+          {
+            maxFileBytes: config.max_file_bytes,
+            maxFilesPerAttempt: config.max_files_per_message,
+            maxRequestBytes: config.max_request_bytes,
+            maxUserBytes: config.max_user_bytes,
+            stagingTtlMs: config.staging_ttl_ms,
+          },
+        );
+        await publishAdmittedAttachments(store, storage, result.admission);
+      }
+      return admitted;
+    });
+  } catch (error) {
+    if (error instanceof DeletedSessionError) {
+      sendError(ws, "session_not_found", "Session was deleted; choose a new chat before sending");
+    } else if (error instanceof AttachmentAdmissionError) {
+      sendError(ws, error.code, "Attachment could not be admitted");
+    } else {
+      const postCommit = committedAdmission as AdmittedTextInput | null;
+      log.error("text.input.admission-failed", {
+        connectionId: binding.connectionId,
+        sessionId: postCommit?.sessionId ?? binding.conversationId,
+        entrySeq: postCommit?.entrySeq ?? null,
+        phase: postCommit === null ? "pre-commit" : "post-commit-publication",
+        errorName: error instanceof Error ? error.name : typeof error,
+        reason: "admission-failed",
+      });
+      sendError(ws, "attachment_unavailable", "Message could not be admitted");
+    }
+    // The transaction may already have committed before attachment publication
+    // failed. Return that admission so caller delivers it; never turn durable
+    // work into a retryable-looking non-commit.
+    return committedAdmission;
+  }
+}
+
+async function runtimeForAdmittedInput(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  binding: CommandBinding,
+  admitted: AdmittedTextInput,
+): Promise<SessionRuntime | null> {
+  // Existing attached commands stay tied to runtime accepted at command entry.
+  // Publication may await while this socket switches or closes; ambient state
+  // must never retarget committed entry to another session.
+  if (binding.runtime && binding.attachment?.sessionId === admitted.sessionId) return binding.runtime;
+
+  // No captured runtime means binding itself must still be current before a
+  // bind can act for connection. Draft mint and late-bind both pass here.
+  if (!commandBindingIsCurrent(ws, binding)) return null;
+  const bound = await ensureBoundRuntime(ws, services, admitted.sessionId, admitted.replayed, () =>
+    commandBindingIsCurrent(ws, binding),
+  );
+  if (bound.kind === "refused") return null;
+  if (bound.kind === "missing-session") {
+    sendError(ws, "session_not_found", "Session was deleted; choose a new chat before sending");
+    return null;
+  }
+  if (bound.kind !== "bound") {
+    sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
+    return null;
+  }
+
+  // Revalidate authority and exact resulting attachment after bind's awaits.
+  if (
+    ws.data.principal !== binding.principal ||
+    ws.data.sessionId !== binding.connectionId ||
+    ws.data.draftKey !== binding.draftKey ||
+    ws.data.conversationId !== admitted.sessionId ||
+    ws.data.attachment?.sessionId !== admitted.sessionId ||
+    ws.data.runtime !== bound.runtime
+  ) {
+    return null;
+  }
+  return bound.runtime;
+}
+
 /**
- * The runtime this connection's message goes to — minting the session first if
- * the connection is still a draft, or re-binding one whose handshake could not.
- *
- * NO PATH THROUGH HERE IS PERMANENT. Both ways a connection can arrive without
- * a runtime are retried on the NEXT message, each by the route that lands on
- * the right session:
- *
- *  - **it resolved a session but the bind failed** (no active LLM key at
- *    handshake time) → re-bind that same session;
- *  - **it is a draft** → mint, which is idempotent under the connection's
- *    unchanged draft key, so a failed attempt re-resolves the same row.
- *
- * That symmetry is the point. One transient misconfiguration used to wedge the
- * socket for its whole life at both call sites.
- *
- * WHY THE MINT LIVES HERE. A session is allocated by the first MESSAGE, not by
- * the handshake (spec §4.2): connecting yields an empty draft, so ten opened
- * tabs leave no row behind. This is the only place that sees a message arrive
- * on a draft, so it is the only place that can do it.
- *
- * ORDER on the mint path, and it is deliberate:
- *
- *  1. mint (or re-resolve, on a retry) the session under the connection's
- *     draft key — the `UNIQUE` constraint on `mint_key` is what makes the
- *     retry idempotent, not a read-then-write check;
- *  2. bind the runtime to it;
- *  3. BROADCAST the mint as `session.created` BEFORE the message is submitted,
- *     so the id reaches the client ahead of the turn frames that reference it,
- *     and so a second window already attached to this connection's session
- *     learns the id without re-attaching. Task 6 turns this single send into a
- *     session-lane fan-out; the frame and its position are already correct.
- *
- * Returns the bind's OWN outcome, not a nullable runtime, and the third case is
- * why: `no-runtime` means the orchestrator is absent from config or its
- * per-session construction failed (no active LLM key), and the caller answers
- * `orchestrator_unavailable` — the only signal that a `text.input` went
- * nowhere. `refused` means the mint found this socket's authority no longer
- * matches the record and CLOSED it. Collapsing the two would send
- * `orchestrator_unavailable` to a socket that has already been told
- * `auth.error`, and log a construction failure that never happened — the very
- * line an operator greps during a revocation.
+ * Bind the session selected by durable admission, or retry an existing
+ * session's failed handshake bind. Admission already committed metadata and
+ * the user entry atomically; this function only attaches runtime delivery and
+ * sends `session.created` before runtime sees that entry.
  */
 async function ensureBoundRuntime(
   ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
-  text: string,
+  admittedSessionId: string,
+  replayed: boolean,
+  bindingIsCurrent: () => boolean = () => true,
 ): Promise<BindOutcome> {
-  if (ws.data.runtime) return { kind: "bound", runtime: ws.data.runtime };
+  if (ws.data.runtime && ws.data.attachment?.sessionId === admittedSessionId) {
+    return { kind: "bound", runtime: ws.data.runtime };
+  }
 
   const principal = ws.data.principal;
   const draftKey = ws.data.draftKey;
@@ -624,7 +896,7 @@ async function ensureBoundRuntime(
     // takes nothing from anyone: if a second tab opened the same session while
     // this one was wedged, this connection joins that session's runtime and
     // both windows are live in it.
-    const rebound = await bindSessionRuntime(ws, services, ws.data.conversationId);
+    const rebound = await bindSessionRuntime(ws, services, ws.data.conversationId, bindingIsCurrent);
     // A REFUSED bind is propagated verbatim: it has already told the client
     // `auth.error` and closed the socket, and it is NOT a construction failure.
     if (rebound.kind === "refused") return rebound;
@@ -656,9 +928,7 @@ async function ensureBoundRuntime(
     return rebound;
   }
 
-  const { sessionId, replayed } = withSessionStore(services, principal, (store) =>
-    mintOnFirstMessage({ store, mintKey: draftKey, text }),
-  );
+  const sessionId = admittedSessionId;
 
   // A REPLAYED mint means two connections presented ONE draft key, and it is
   // not only the lost-ack retry:
@@ -683,7 +953,7 @@ async function ensureBoundRuntime(
   // `orchestrator_unavailable` for the rest of the socket's life without ever
   // retrying the bind. Leaving it null costs nothing: the mint is idempotent,
   // so the next message re-resolves the SAME row under the same draft key.
-  const bind = await bindSessionRuntime(ws, services, sessionId);
+  const bind = await bindSessionRuntime(ws, services, sessionId, bindingIsCurrent);
   if (bind.kind === "refused") return bind;
   if (bind.kind !== "bound") {
     log.error("text.input.mint-without-runtime", {
@@ -697,29 +967,13 @@ async function ensureBoundRuntime(
   ws.data.conversationId = sessionId;
 
   sendConnectionFrame(ws, { type: "session.created", sessionId, ts: Date.now() });
-  // A REPLAYED mint lands on a connection whose handshake already told it it
-  // was a draft and handed it an EMPTY committed feed (session-binding.ts's
-  // `sendDraftHandshake`). Without re-projecting the real feed here, the
-  // client renders only the retried message and its reply while the earlier
-  // exchange stays invisible until a reload — on the exact path this whole
-  // design exists to serve. A fresh mint needs no snapshot: an empty feed is
-  // the truth there, and the user entry follows immediately. Directed at THIS
-  // socket for the same reason as the late bind above — and here a peer is not
-  // hypothetical: a replayed mint means a second connection is on this draft.
-  // Either way the attach must be COMPLETED — `bindSessionRuntime` left this
-  // window held, so without one of these two lines it receives nothing at all.
-  if (replayed) {
-    completeAttachWithSnapshot(ws, services);
-    // Same seam as every other snapshot attach — see ws-session-configure.ts's
-    // `sendConversationSnapshot`. Only on this branch: a FRESH mint has no
-    // prior turn to have a strip for, which is the same reason it takes
-    // `completeAttach` rather than the snapshot variant. Called on the local
-    // the bind above returned, for the same narrowing reason as the late-bind
-    // path.
-    bind.runtime.emitTaskList();
-  } else {
-    completeAttach(ws, services);
-  }
+  // Admission committed the first user entry before runtime construction, so
+  // the new feed cursor starts at that entry. Snapshot this held window for
+  // BOTH fresh and replayed mints: it is the authoritative publication of the
+  // already-committed row, while the later runtime publish sees no tail and
+  // cannot duplicate it. Directed at this socket; peers keep their mirrors.
+  completeAttachWithSnapshot(ws, services);
+  if (replayed) bind.runtime.emitTaskList();
   return bind;
 }
 
@@ -752,15 +1006,60 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
     // words captured in the session this connection has LEFT from landing here
     // is `detachSession` discarding the uplink on every leave
     // (session-binding.ts); it is not this call, and it cannot be.
-    getRuntimeForInput: async (text) => {
+    getRuntimeForInput: async (text, captureIsCurrent) => {
       if (!mediate(ws, services, {}, "transcript")) return null;
-      const bound = await ensureBoundRuntime(ws, services, text);
-      if (bound.kind !== "bound") return null;
-      const runtime = bound.runtime;
-      // Same ordering as `text.input`: the floor is claimed only once there is
-      // a runtime to submit to.
-      if (!claimInputFloor({ type: "transcript" }, ws, services.sessionRegistry)) return null;
-      return runtime;
+      let binding = captureCommandBinding(ws);
+      if (!binding) return null;
+      binding = await bindExistingDraftForInput(ws, services, binding, captureIsCurrent);
+      if (!binding || !captureIsCurrent()) return null;
+      const floor = reserveInputFloor(
+        { type: "transcript" },
+        ws,
+        services.sessionRegistry,
+        Date.now(),
+        services.session.input_arbitration_window_ms,
+      );
+      if (!floor) return null;
+
+      if (binding.runtime === null) {
+        const stale = await refuseStaleAuthority(ws, services.auth.users);
+        if (stale !== null || !captureIsCurrent()) {
+          floor.release();
+          return null;
+        }
+      }
+
+      let authoritativeRuntime = binding.runtime;
+      let committed = false;
+      const admitted = await admitTextInput(binding, ws, services, text, undefined, [], captureIsCurrent, (result) => {
+        committed = true;
+        authoritativeRuntime ??= services.sessionRegistry.ensure(result.sessionId, () =>
+          buildSessionHandles(services, binding.principal, result.sessionId, binding.connectionId),
+        ).runtime;
+      });
+      if (!admitted) {
+        if (committed) floor.commit();
+        else floor.release();
+        return null;
+      }
+      if (!authoritativeRuntime) {
+        floor.commit();
+        return null;
+      }
+
+      const boundRuntime = await runtimeForAdmittedInput(ws, services, binding, admitted);
+      const holderId =
+        ws.data.attachment?.sessionId === admitted.sessionId ? ws.data.attachment.attachmentId : binding.connectionId;
+      commitInputFloor(floor, admitted.sessionId, holderId);
+      return {
+        runtime: boundRuntime ?? authoritativeRuntime,
+        authoritative: true,
+        stimulus: {
+          kind: "preadmitted-conversational",
+          entrySeq: admitted.entrySeq,
+          admission: admitted.fresh ? "fresh" : "retry",
+        },
+      };
     },
   });
   ws.data.stt = session;
