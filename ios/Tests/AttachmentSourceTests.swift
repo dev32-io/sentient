@@ -526,16 +526,21 @@ struct AttachmentSourceTests {
         await importStarted.wait()
         let didDiscard = (try await drafts.discard(draftId: existing.id)).boolValue
         #expect(didDiscard)
+        // The separate flow subscriber below does not acknowledge delivery to
+        // this ViewModel. Establish its discard fence before releasing the import.
+        viewModel.applyDiscardedDraft(existing.id)
         await releaseImport.open()
         _ = await discarded.value
-        for _ in 0..<100 where viewModel.pendingAttachmentImportCount != 0 {
-            await Task.yield()
-        }
+        // Saving during an import failure intentionally reports that failure.
+        // This case tests a fresh edit after that import has actually completed.
+        _ = await viewModel.$pendingAttachmentImportCount.values.first { $0 == 0 }
+        #expect(viewModel.pendingAttachmentImportCount == 0)
 
         let afterDiscard = try await drafts.restore()
         #expect(!afterDiscard.drafts.contains { $0.id == existing.id })
         viewModel.updateDraft("new edit")
         #expect(await viewModel.saveDraftBeforeNavigation())
+        #expect(viewModel.pendingAttachmentImportCount == 0)
         let replacement = try #require((try await drafts.restore()).drafts.first)
         #expect(replacement.id != existing.id)
         #expect(replacement.text == "new edit")

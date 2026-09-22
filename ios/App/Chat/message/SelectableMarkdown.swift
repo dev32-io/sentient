@@ -67,6 +67,20 @@ struct SelectableMarkdownSurface<Fallback: View>: View {
     let onLoadStateChange: ((Bool) -> Void)?
     @ViewBuilder let fallback: () -> Fallback
 
+    private struct RenderRequest: Equatable {
+        let markdown: String
+        let width: CGFloat
+        let retryToken: Int
+        let dynamicTypeSize: DynamicTypeSize
+    }
+
+    private final class RenderAttempt {
+        let request: RenderRequest
+        init(_ request: RenderRequest) { self.request = request }
+    }
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var activeRequest: RenderAttempt?
     @State private var retryToken = 0
     @State private var loadFailure: SelectableMarkdownLoadFailure?
     @State private var isReady = false
@@ -88,9 +102,17 @@ struct SelectableMarkdownSurface<Fallback: View>: View {
     }
 
     var body: some View {
+        let request = RenderRequest(
+            markdown: markdown, width: width,
+            retryToken: retryToken, dynamicTypeSize: dynamicTypeSize
+        )
+        // Repeated inputs after a different request are a new attempt, not an
+        // invitation for callbacks from the earlier occurrence to become valid.
+        let attempt = activeRequest.flatMap { $0.request == request ? $0 : nil }
+            ?? RenderAttempt(request)
         VStack(alignment: .leading, spacing: Space.xs) {
             ZStack(alignment: .topLeading) {
-                if !isReady { fallback() }
+                if activeRequest !== attempt || !isReady { fallback() }
                 SelectableMarkdown(
                     markdown: markdown,
                     width: width,
@@ -99,6 +121,7 @@ struct SelectableMarkdownSurface<Fallback: View>: View {
                     onHeightChange: onHeightChange,
                     onLoadStarted: {
                         DispatchQueue.main.async {
+                            guard activeRequest === attempt else { return }
                             isReady = false
                             onLoadStateChange?(false)
                             loadFailure = nil
@@ -106,12 +129,14 @@ struct SelectableMarkdownSurface<Fallback: View>: View {
                     },
                     onLoadReady: { ready in
                         DispatchQueue.main.async {
+                            guard activeRequest === attempt else { return }
                             isReady = ready
                             onLoadStateChange?(ready)
                         }
                     },
                     onLoadFailure: { failure in
                         DispatchQueue.main.async {
+                            guard activeRequest === attempt else { return }
                             isReady = false
                             onLoadStateChange?(false)
                             loadFailure = failure
@@ -120,13 +145,21 @@ struct SelectableMarkdownSurface<Fallback: View>: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if loadFailure != nil {
+            if activeRequest === attempt, loadFailure != nil {
                 Button("Retry rendering") { retryToken += 1 }
                     .font(Typo.ui(TypeScale.xs, .semibold))
                     .foregroundStyle(DuskColors.accent)
                     .buttonStyle(.plain)
                     .accessibilityLabel("Retry rich text rendering")
             }
+        }
+        .onChange(of: request, initial: true) { _, request in
+            // Queued callbacks belong to a rendering request, not just this
+            // reusable SwiftUI surface. Old completion/failure cannot hide new content.
+            activeRequest = attempt
+            isReady = false
+            loadFailure = nil
+            onLoadStateChange?(false)
         }
     }
 }

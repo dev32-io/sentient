@@ -3,6 +3,20 @@ import MobileData
 import SwiftUI
 import UIKit
 
+/// Geometry emitted by mounted row content. Revision and width fence reports to
+/// the collection coordinator; rendering implementation stays below this boundary.
+struct MessageRowGeometry: Equatable {
+    enum Quality: Equatable {
+        case estimated
+        case rendered
+    }
+
+    let revision: String
+    let width: CGFloat
+    let height: CGFloat
+    let quality: Quality
+}
+
 /// Single row renderer used by both collection cells and exact-height measurement.
 struct MessageRowLayout: View {
     let row: MessageChronologyRow
@@ -26,9 +40,8 @@ struct MessageRowLayout: View {
     var onPreviewAttachment: (String) -> Void = { _ in }
     var onRetryAttachmentUpload: (String) -> Void = { _ in }
     var heightRevision = ""
-    var onHeightChange: ((CGFloat) -> Void)?
-    var onRenderedHeightChange: ((CGFloat) -> Void)? = nil
-    // WebKit readiness is scoped to current content revision; queued old reports stay native.
+    var onGeometryChange: ((MessageRowGeometry) -> Void)?
+    // Render readiness is scoped to current content revision; queued old reports stay estimated.
     @State private var renderedHeightRevision: String?
 
     private var bubbleMaxWidth: CGFloat {
@@ -49,29 +62,49 @@ struct MessageRowLayout: View {
             .frame(width: paneWidth, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .background {
-                if let onHeightChange {
+                if let onGeometryChange {
                     GeometryReader { proxy in
                         Color.clear
                             .onChange(of: heightRevision, initial: true) { _, _ in
                                 renderedHeightRevision = nil
-                                onHeightChange(proxy.size.height)
+                                onGeometryChange(MessageRowGeometry(
+                                    revision: heightRevision,
+                                    width: proxy.size.width,
+                                    height: proxy.size.height,
+                                    quality: .estimated
+                                ))
                             }
                             .onChange(of: proxy.size.height) { _, height in
                                 guard renderedHeightRevision == heightRevision else {
-                                    onHeightChange(height)
+                                    onGeometryChange(MessageRowGeometry(
+                                        revision: heightRevision,
+                                        width: proxy.size.width,
+                                        height: height,
+                                        quality: .estimated
+                                    ))
                                     return
                                 }
                                 let revision = heightRevision
                                 DispatchQueue.main.async {
                                     guard renderedHeightRevision == revision else { return }
-                                    onRenderedHeightChange?(height)
+                                    onGeometryChange(MessageRowGeometry(
+                                        revision: revision,
+                                        width: proxy.size.width,
+                                        height: height,
+                                        quality: .rendered
+                                    ))
                                 }
                             }
                             .onChange(of: renderedHeightRevision) { _, revision in
                                 guard let revision, revision == heightRevision else { return }
                                 DispatchQueue.main.async {
                                     guard renderedHeightRevision == revision else { return }
-                                    onRenderedHeightChange?(proxy.size.height)
+                                    onGeometryChange(MessageRowGeometry(
+                                        revision: revision,
+                                        width: proxy.size.width,
+                                        height: proxy.size.height,
+                                        quality: .rendered
+                                    ))
                                 }
                             }
                     }

@@ -379,6 +379,108 @@ final class SelectableMarkdownTests: XCTestCase {
         XCTAssertNil(view.loadFailure)
     }
 
+    func testObsoleteSurfaceCallbacksCannotResetNewContentReadiness() async throws {
+        let model = SurfaceReadinessModel()
+        let initialMarkdown = model.markdown
+        let firstReady = expectation(description: "first surface ready")
+        var firstReported = false
+        model.onStateChange = { ready in
+            guard ready, !firstReported else { return }
+            firstReported = true
+            firstReady.fulfill()
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first)
+        let controller = UIHostingController(rootView: SurfaceReadinessView(model: model))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 800)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { close(window) }
+        await fulfillment(of: [firstReady], timeout: 5)
+        let firstRenderer = try XCTUnwrap(findSubview(
+            of: controller.view, type: SelectableMarkdownHostView.self
+        ))
+        let obsoleteStarted = try XCTUnwrap(firstRenderer.onLoadStarted)
+        let obsoleteReady = try XCTUnwrap(firstRenderer.onLoadReady)
+        let obsoleteFailure = try XCTUnwrap(firstRenderer.onLoadFailure)
+
+        let secondReady = expectation(description: "replacement surface ready")
+        var secondReported = false
+        model.onStateChange = { ready in
+            guard ready, !secondReported else { return }
+            secondReported = true
+            secondReady.fulfill()
+        }
+        model.markdown = "Replacement paragraph with **different content**."
+        await fulfillment(of: [secondReady], timeout: 5)
+
+        var changes: [Bool] = []
+        model.onStateChange = { changes.append($0) }
+        obsoleteStarted()
+        obsoleteReady(false)
+        obsoleteFailure(.navigation)
+        // Drain exactly the main-queue callbacks enqueued above, not an elapsed-time wait.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        XCTAssertFalse(changes.contains(false), "Obsolete content must not hide the current renderer")
+
+        let repeatedReady = expectation(description: "repeated input is a new ready attempt")
+        var repeatedReported = false
+        model.onStateChange = { ready in
+            guard ready, !repeatedReported else { return }
+            repeatedReported = true
+            repeatedReady.fulfill()
+        }
+        model.markdown = initialMarkdown
+        await fulfillment(of: [repeatedReady], timeout: 5)
+        changes.removeAll()
+        model.onStateChange = { changes.append($0) }
+        obsoleteStarted()
+        obsoleteReady(false)
+        obsoleteFailure(.navigation)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        XCTAssertFalse(changes.contains(false), "Returning to earlier input must not revive its obsolete callbacks")
+
+        let currentFailure = expectation(description: "current failure remains actionable")
+        var failureReported = false
+        model.onStateChange = { ready in
+            guard !ready, !failureReported else { return }
+            failureReported = true
+            currentFailure.fulfill()
+        }
+        let currentRenderer = try XCTUnwrap(findSubview(
+            of: controller.view, type: SelectableMarkdownHostView.self
+        ))
+        currentRenderer.recordFailure(.navigation)
+        await fulfillment(of: [currentFailure], timeout: 1)
+    }
+
+    @MainActor
+    private final class SurfaceReadinessModel: ObservableObject {
+        @Published var markdown = "Initial paragraph."
+        var onStateChange: ((Bool) -> Void)?
+    }
+
+    private struct SurfaceReadinessView: View {
+        @ObservedObject var model: SurfaceReadinessModel
+
+        var body: some View {
+            SelectableMarkdownSurface(
+                markdown: model.markdown,
+                width: 320,
+                onLoadStateChange: { model.onStateChange?($0) }
+            ) {
+                Text("Readable fallback")
+            }
+            .frame(width: 320, alignment: .leading)
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
     func testPendingTextViewExposesNativeSelection() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }.first)

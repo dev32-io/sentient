@@ -187,7 +187,10 @@ struct MessageListScrollTests {
         let harness = try Harness(messages: messages, initialExistingHistory: true)
         defer { harness.close() }
         let collection = try await mountedCollection(in: harness.host.view)
-        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count, timeout: 10)
+        try await settle(
+            collection, hostView: harness.host.view, minimumItems: messages.count, timeout: 10,
+            requireRenderedMarkdown: true
+        )
         let native = try #require(collection as? MessageUICollectionView)
         let measured = native.measuredRowCount
         let lastIndex = collection.numberOfItems(inSection: 0) - 1
@@ -197,10 +200,14 @@ struct MessageListScrollTests {
         messages[messages.count - 1] = Self.message(id: "cached-live", role: "assistant", content: "Two.", streaming: true)
         harness.model.messages = messages
         try await waitUntil(timeout: 5) { lastCell.configurationCount > configurations }
-        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        try await settle(
+            collection, hostView: harness.host.view, minimumItems: messages.count,
+            requireRenderedMarkdown: true
+        )
         #expect(abs(collection.contentSize.height - extent) < 1)
         #expect(native.measuredRowCount == measured)
 
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
         collection.setContentOffset(CGPoint(x: 0, y: minimumOffset(of: collection)), animated: false)
         try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
         #expect(!collection.indexPathsForVisibleItems.contains(IndexPath(item: lastIndex, section: 0)))
@@ -753,6 +760,88 @@ struct MessageListScrollTests {
         #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
     }
 
+    @Test func explicitReadingIntentSurvivesNonDragPublication() async throws {
+        let scheduler = HeldMessagePositionScheduler()
+        let harness = try Harness(
+            messages: Self.readerHistory,
+            initialExistingHistory: true,
+            positionScheduler: scheduler.schedule
+        )
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count, timeout: 10
+        )
+        try await waitUntil(timeout: 5) { scheduler.count > 0 }
+        scheduler.runAll()
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count)
+        scheduler.discardAll()
+
+        let native = try #require(collection as? MessageUICollectionView)
+        // Focus navigation uses UIKit's rect reveal without beginning a drag.
+        // VoiceOver page scrolling itself requires a live accessibility context.
+        native.scrollRectToVisible(
+            CGRect(x: 0, y: minimumOffset(of: collection), width: collection.bounds.width, height: 100),
+            animated: false
+        )
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count)
+        let beforeOffset = collection.contentOffset.y
+        #expect(abs(beforeOffset - maximumOffset(of: collection)) > 1)
+        let anchorPath = try #require(collection.indexPathsForVisibleItems.sorted().first)
+        let beforeAnchor = try mountedCellFrame(at: anchorPath, in: collection).minY
+
+        harness.model.messages[harness.model.messages.count - 1] = Self.message(
+            id: "history-\(Self.readerHistory.count - 1)", role: "assistant",
+            content: Array(repeating: Self.readerDetail, count: 20).joined(separator: "\n\n")
+        )
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count)
+        try await waitUntil(timeout: 5) { scheduler.count > 0 }
+        scheduler.runAll()
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count)
+
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) > 1)
+        #expect(abs(try mountedCellFrame(at: anchorPath, in: collection).minY - beforeAnchor) <= 1)
+    }
+
+    @Test func lateRenderedHistoryCorrectionRetainsBottomIntent() async throws {
+        let loader = DelayedImageLoader()
+        let imageURL = URL(string: "https://fixture.invalid/late-bottom.png")!
+        var messages = Self.readerHistory
+        messages[messages.count - 1] = Self.message(
+            id: "late-bottom", role: "assistant",
+            content: "History before image\n\n![fixture](\(imageURL.absoluteString))\n\nHistory after image"
+        )
+        let scheduler = HeldMessagePositionScheduler()
+        let harness = try Harness(
+            messages: messages,
+            initialExistingHistory: true,
+            imageLoader: loader,
+            positionScheduler: scheduler.schedule
+        )
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+        try await waitUntil(timeout: 5) { scheduler.count > 0 }
+        scheduler.runAll()
+        try await waitUntil(timeout: 5) {
+            abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1
+        }
+        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) == 1 }
+        let provisionalExtent = collection.contentSize.height
+
+        await loader.resolve(url: imageURL, image: testImage(width: 240, height: 180))
+        try await waitUntil(timeout: 5) { collection.contentSize.height > provisionalExtent + 50 }
+        try await waitUntil(timeout: 5) { scheduler.count > 0 }
+        scheduler.runAll()
+        try await waitUntil(timeout: 5) {
+            abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1
+        }
+
+        #expect(collection.contentSize.height > provisionalExtent + 50)
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
+    }
+
     @Test(arguments: [false, true])
     func emptyBounceDoesNotCancelColdExistingIntent(whileLoading: Bool) async throws {
         let harness = try Harness(messages: [], initialExistingHistory: true)
@@ -875,6 +964,98 @@ struct MessageListScrollTests {
         #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
     }
 
+    @Test func committedEchoAfterInitialHistoryPositionAcquiresSendAnchor() async throws {
+        let harness = try Harness(messages: Self.readerHistory, initialExistingHistory: true)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count, timeout: 10
+        )
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
+
+        let pendingID = "quick-history-echo"
+        harness.model.messages.append(Self.message(
+            id: "quick-history-echo-message", role: "user",
+            content: Self.readerDetail, pendingID: pendingID
+        ))
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: Self.readerHistory.count + 1,
+            rowID: "chat-user-row-\(pendingID)"
+        )
+
+        #expect(abs(
+            try mountedCellFrame(id: "chat-user-row-\(pendingID)", in: collection).minY
+                - expectedSendMinY(in: collection, priorContent: true)
+        ) <= 1)
+    }
+
+    @Test func resumedHistoryKeepsPreparedRichRowsFlushAfterScrollingBack() async throws {
+        let longReply = Array(repeating: """
+            ## Synthetic section
+
+            This long committed reply keeps final history row taller than viewport while
+            exercising headings, wrapping, and repeated rich-text blocks.
+            """, count: 20).joined(separator: "\n\n")
+        let messages = (0..<8).map { index in
+            let role = index.isMultiple(of: 2) ? "user" : "assistant"
+            let content = index == 7
+                ? longReply
+                : """
+                ## Prepared row \(index)
+
+                Synthetic alternating history content with **rich** text and wrapping.
+                """
+            return Self.message(id: "prepared-\(index)", role: role, content: content)
+        }
+        let harness = try Harness(messages: messages, initialExistingHistory: true)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: messages.count, timeout: 15,
+            requireRenderedMarkdown: true
+        )
+        collection.setContentOffset(CGPoint(x: 0, y: maximumOffset(of: collection)), animated: false)
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: messages.count, timeout: 15,
+            requireRenderedMarkdown: true
+        )
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
+
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        collection.setContentOffset(CGPoint(x: 0, y: minimumOffset(of: collection)), animated: false)
+        try await settle(
+            collection, hostView: harness.host.view,
+            minimumItems: messages.count, timeout: 15,
+            requireRenderedMarkdown: true
+        )
+
+        let paintedRows = collection.indexPathsForVisibleItems.sorted().compactMap { indexPath -> (
+            cell: MessageHostingCell, paintedBottom: CGFloat, allocatedBottom: CGFloat
+        )? in
+            guard let cell = collection.cellForItem(at: indexPath) as? MessageHostingCell,
+                  let markdown = descendants(cell).compactMap({ $0 as? SelectableMarkdownHostView }).first,
+                  markdown.webView.alpha == 1 else { return nil }
+            let frame = cell.convert(cell.bounds, to: collection)
+            return (
+                cell,
+                markdown.webView.convert(markdown.webView.bounds, to: collection).maxY + Space.md,
+                frame.maxY
+            )
+        }
+        #expect(paintedRows.count >= 2)
+        for row in paintedRows {
+            #expect(abs(row.paintedBottom - row.allocatedBottom) <= 1)
+        }
+        for (previous, next) in zip(paintedRows, paintedRows.dropFirst()) {
+            let gap = next.cell.convert(next.cell.bounds, to: collection).minY - previous.paintedBottom
+            #expect(abs(gap - Space.gapMsg) <= 1)
+        }
+    }
+
     @Test func largeHistoryMountsBoundedNativeCellCount() async throws {
         let messages = (0..<1_000).map { index in
             Self.message(id: "large-\(index)", role: index.isMultiple(of: 2) ? "user" : "assistant")
@@ -910,6 +1091,7 @@ struct MessageListScrollTests {
         // native fallback estimates are not the baseline for a WebKit image row.
         _ = try await traverse(collection, hostView: harness.host.view)
         harness.model.messages = messages
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
         collection.setContentOffset(CGPoint(x: 0, y: maximumOffset(of: collection) / 2), animated: false)
         try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
         let anchor = try #require(collection.indexPathsForVisibleItems.sorted().first)
@@ -927,6 +1109,56 @@ struct MessageListScrollTests {
 
         let samples = try await traverse(collection, hostView: harness.host.view)
         #expect(samples.allSatisfy { abs($0 - resolvedExtent) < 1 })
+    }
+
+    @Test func lateRenderedOffscreenCorrectionUpdatesExtentAndKeepsHistoryBottom() async throws {
+        let loader = DelayedImageLoader()
+        let imageURL = URL(string: "https://fixture.invalid/offscreen.png")!
+        var messages = Self.readerHistory
+        let targetIndex = 3
+        messages[targetIndex] = Self.message(
+            id: "offscreen-rendered", role: "assistant",
+            content: "Before image\n\n![fixture](\(imageURL.absoluteString))\n\nAfter image"
+        )
+        let harness = try Harness(
+            messages: messages, initialExistingHistory: true, imageLoader: loader
+        )
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: messages.count, timeout: 10)
+
+        // Reader history contributes one day-divider row before message rows.
+        let targetPath = IndexPath(item: targetIndex + 1, section: 0)
+        let layout = try #require(collection.collectionViewLayout as? ExactMessageLayout)
+        let targetOffset = layout.rowFrames[targetPath.item].midY - collection.bounds.height / 2
+        collection.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
+        try await waitUntil(timeout: 5) {
+            collection.indexPathsForVisibleItems.contains(targetPath)
+        }
+        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) == 1 }
+        let targetCell = try #require(
+            collection.cellForItem(at: targetPath) as? MessageHostingCell
+        )
+        let targetConfigurationToken = targetCell.configurationToken
+        let targetMeasurementKey = try #require(targetCell.measurementKey)
+        let provisionalExtent = collection.contentSize.height
+        let provisionalRowHeight = layout.rowHeights[targetPath.item]
+
+        collection.setContentOffset(CGPoint(x: 0, y: maximumOffset(of: collection)), animated: false)
+        try await waitUntil(timeout: 5) {
+            !collection.indexPathsForVisibleItems.contains(targetPath)
+        }
+        #expect(targetCell.configurationToken == targetConfigurationToken)
+        #expect(targetCell.measurementKey == targetMeasurementKey)
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
+
+        await loader.resolve(url: imageURL, image: testImage(width: 240, height: 180))
+        try await waitUntil(timeout: 5) {
+            !collection.indexPathsForVisibleItems.contains(targetPath)
+                && collection.contentSize.height > provisionalExtent + 50
+        }
+        #expect(layout.rowHeights[targetPath.item] > provisionalRowHeight + 50)
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
     }
 
     @Test func staleMarkdownImageCompletionCannotResizeReplacementRevision() async throws {
@@ -1402,6 +1634,7 @@ struct MessageListScrollTests {
             collection, hostView: hostView, minimumItems: Self.gfmHistory.count, timeout: 10,
             requireRenderedMarkdown: true
         )
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
         var extents = [collection.contentSize.height]
         for fraction in [0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25, 0] {
             collection.setContentOffset(CGPoint(
@@ -1430,6 +1663,9 @@ struct MessageListScrollTests {
     }
 
     private func position(_ collection: UICollectionView, at origin: SendOrigin) {
+        // Programmatic fixture movement explicitly enters reading intent; production
+        // does not infer user intent from UIKit's offset adjustments.
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
         let fraction: CGFloat
         switch origin {
         case .empty, .top: fraction = 0
