@@ -45,6 +45,7 @@ import json
 import os
 import platform
 import pwd
+import re
 import shutil
 import subprocess
 import sys
@@ -951,6 +952,60 @@ def _wheel_payload_complete() -> bool:
     )
 
 
+def _parser_compose_environment(version: str) -> dict[str, str]:
+    """Read fresh parser build identity for Compose interpolation.
+
+    The release build already made and validated this payload. Revalidate its
+    metadata here, then pass explicit values so inherited stale environment
+    values cannot affect the sibling-image build.
+    """
+    payload = REPO_ROOT / "dist" / "gateway" / version / "addons" / "attachment-parser"
+    metadata = payload / "addon.json"
+    validator = REPO_ROOT / "scripts" / "attachment_parser_metadata.py"
+    result = subprocess.run(
+        [sys.executable, str(validator), str(metadata)],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    fields = result.stdout.strip().split("\t")
+    if len(fields) != 4:
+        raise RuntimeError(f"parser metadata validator returned unusable output for {metadata}")
+    name, parser_version, protocol_version, state = fields
+    if state != "ephemeral":
+        raise RuntimeError(f"parser metadata has unexpected state {state!r}")
+    try:
+        protocol_number = int(protocol_version)
+    except ValueError as error:
+        raise RuntimeError(f"parser metadata has invalid protocol version {protocol_version!r}") from error
+
+    identity_path = payload / "identity.json"
+    try:
+        identity = json.loads(identity_path.read_text())
+        addon = identity["addon"]
+        image = identity["image"]
+        revision = image["revision"]
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        raise RuntimeError(f"invalid parser build identity at {identity_path}: {error}") from error
+    if (
+        not isinstance(addon, dict)
+        or addon.get("name") != name
+        or addon.get("version") != parser_version
+        or addon.get("protocolVersion") != protocol_number
+        or not isinstance(revision, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", revision) is None
+    ):
+        raise RuntimeError(f"invalid parser build identity at {identity_path}")
+
+    return {
+        "ATTACHMENT_PARSER_NAME": name,
+        "ATTACHMENT_PARSER_VERSION": parser_version,
+        "ATTACHMENT_PARSER_PROTOCOL_VERSION": protocol_version,
+        "ATTACHMENT_PARSER_REVISION": revision,
+    }
+
+
 def prepare_native_release() -> Path:
     """Build every local prerequisite for a self-contained 2.0 release.
 
@@ -980,15 +1035,21 @@ def prepare_native_release() -> Path:
 
     # Compose has no gateway service in 2.0.  It only bakes image tags for the
     # launchd-managed gateway's Docker addons.
+    version = json.loads((REPO_ROOT / "gateway" / "package.json").read_text())["version"]
+    parser_env = _parser_compose_environment(version)
+    compose_env = os.environ.copy()
+    compose_env.update(parser_env)
+
     info("Building 2.0 addon images")
     subprocess.run(
         ["docker", "compose", "-f", "deploy/mac-prod/docker-compose.yml",
-         "--profile", "build-only", "build"],
+         "--profile", "build-only", "build",
+         "outbound-worker", "ingress-proxy", "inbound-proxy"],
         cwd=REPO_ROOT,
+        env=compose_env,
         check=True,
     )
 
-    version = json.loads((REPO_ROOT / "gateway" / "package.json").read_text())["version"]
     archive = REPO_ROOT / "dist" / "gateway" / f"{version}.tar.gz"
     sidecar = archive.with_suffix(archive.suffix + ".sha256")
     if not archive.is_file() or not sidecar.is_file():

@@ -38,7 +38,7 @@ SearXNG itself. Runtime networks and containers are defined by
 
 - Apple-silicon macOS
 - Docker Desktop, configured to start after login
-- Bun (source `scripts/env.sh` before repository commands)
+- Bun available on `PATH`
 - Homebrew Python 3.14 for `whisper-stt` and `deep-memory`
 - Homebrew Python 3.11 for `local-tts`
 - `opus` and `ffmpeg`
@@ -50,7 +50,14 @@ For a machine that must run with nobody logged in, explicitly select the
 
 ## Build a release
 
-From the repository root:
+For normal production upgrades, run `python3 deploy/setup-prod.py` from the
+repository root. It builds the release and sibling addon images, then invokes
+the installer. Parser build metadata is derived automatically from the release
+payload; no manual exports, development environment, or Java are required.
+The release packager builds the parser once; only the installer changes its
+runtime `:local` alias.
+
+For a manual build on a development host:
 
 ```bash
 source scripts/env.sh
@@ -173,12 +180,13 @@ up a receipt for the candidate version. When a paired release later replaces a
 legacy release, installer-owned receipt records the legacy release's prior
 parser image identity (or an intentionally absent alias) for future rollback.
 Before loading or activating a new pairing, the installer also tags that known
-previous image as `sentient/attachment-parser:retained-<sha256hex>`. This
-non-runtime tag keeps it out of ordinary dangling-image cleanup and is never
-auto-deleted. Explicit tag removal or `docker system prune --all` can still
-remove the retained image, so a missing or pruned receipt/image refuses
-rollback with receipt restoration, `docker load --input <saved-image.tar>`, or
-release-reinstall guidance instead of guessing at the current image. Docker
+previous image as `sentient/attachment-parser:retained-<sha256hex>`. After a
+successful install, targeted cleanup keeps the active image ID and all its
+aliases, then removes prior parser release/retained tags and safe dangling
+parser images. Docker-referenced images are left in place and reported; cleanup
+never uses force or global prune. Release archives remain untouched, so paired
+rollback can reload a retained release's `image.tar`; a legacy receipt without
+an archive may still require image restoration or release reinstall. Docker
 tags and the `current` symlink have no cross-system atomic commit; activation is
 therefore ordered and guarded, not claimed atomic. A host kill in that narrow
 window needs the normal manual rollback command.
@@ -261,7 +269,8 @@ Run installer tests and the local rehearsal before an operator run:
 
 ```bash
 source scripts/env.sh
-python3 -m pytest deploy/mac-prod/tests/test_setup_prod.py \
+python3 -m pytest deploy/tests/test_setup_bootstrap.py \
+  deploy/mac-prod/tests/test_setup_prod.py \
   deploy/mac-prod/tests/test_launchd_live.py \
   scripts/test_attachment_parser_metadata.py
 bash deploy/mac-prod/tests/e2e-install.sh /tmp/sentient-mac-prod-e2e
