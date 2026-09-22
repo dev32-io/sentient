@@ -706,12 +706,17 @@ describe("memory_read — session drill-down (wired)", () => {
     expect(res.content).toContain("deep_memory_unavailable");
   });
 
-  it("errors when the session has no readable entries", async () => {
+  it("returns an explicit unavailable outcome when raw source history expired", async () => {
     const tools = build("adult", false, { readSession: () => [] });
 
-    const res = await invoke(tools, "memory_read", { target: { sessionId: "s_empty" } });
+    const res = await invoke(tools, "memory_read", { target: { sessionId: "s_expired" } });
 
     expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content)).toEqual({
+      error: "memory_source_unavailable",
+      message:
+        "Source conversation is unavailable or expired; use the retained distilled memory without exact quotations.",
+    });
   });
 });
 

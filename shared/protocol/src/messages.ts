@@ -21,6 +21,7 @@
 
 import { audioPrefsPatchSchema } from "@sentient/audio-prefs";
 import { z } from "zod";
+import { attachmentIdSchema } from "./attachments.ts";
 import { conversationFeedItemSchema } from "./conversation.ts";
 import { userRoleSchema } from "./roles.ts";
 import {
@@ -207,13 +208,23 @@ export const audioCancelSchema = withCommandBinding(
   }),
 );
 
-export const textInputSchema = withCommandBinding(
+const textInputEnvelopeSchema = withCommandBinding(
   z.object({
     type: z.literal("text.input"),
-    text: z.string().min(1).max(10000),
+    text: z.string().max(10000),
     pendingId: z.string().optional(),
+    // Wire ceiling; gateway applies its lower operator-configured per-message limit.
+    attachmentIds: z.array(attachmentIdSchema).min(1).max(64).optional(),
   }),
 );
+
+function hasMessageContent(input: { text: string; attachmentIds?: string[] | undefined }): boolean {
+  return input.text.trim().length > 0 || (input.attachmentIds?.length ?? 0) > 0;
+}
+
+export const textInputSchema = textInputEnvelopeSchema.refine(hasMessageContent, {
+  message: "message requires text or attachments",
+});
 
 // Client → gateway answer to a `permission.request` (spec §7.1). Keyed by
 // `requestId`, not `toolCallId`: the gateway may have already resolved the
@@ -276,19 +287,23 @@ export type UserPreferencesPatch = z.infer<typeof userPreferencesPatchSchema>;
 // sessionConfigureSchema.resume) — there is no separate stream.resume frame.
 // The gateway → client reply is stream.resumed (below), still its own frame.
 
-export const clientMessageSchema = z.discriminatedUnion("type", [
-  sessionConfigureSchema,
-  audioStartSchema,
-  audioEndSchema,
-  audioCancelSchema,
-  textInputSchema,
-  permissionResponseSchema,
-  pingSchema,
-  interruptSchema,
-  sessionNewSchema,
-  conversationActivateSchema,
-  userPreferencesPatchSchema,
-]);
+export const clientMessageSchema = z
+  .discriminatedUnion("type", [
+    sessionConfigureSchema,
+    audioStartSchema,
+    audioEndSchema,
+    audioCancelSchema,
+    textInputEnvelopeSchema,
+    permissionResponseSchema,
+    pingSchema,
+    interruptSchema,
+    sessionNewSchema,
+    conversationActivateSchema,
+    userPreferencesPatchSchema,
+  ])
+  .refine((message) => message.type !== "text.input" || hasMessageContent(message), {
+    message: "message requires text or attachments",
+  });
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 

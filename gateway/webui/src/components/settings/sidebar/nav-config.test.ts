@@ -25,6 +25,7 @@ const EVERYONE: SidebarKey[] = [
   "voice",
   "audio",
   "model",
+  "auxiliaryRunners",
   "tools",
   "systemPrompt",
   "advanced",

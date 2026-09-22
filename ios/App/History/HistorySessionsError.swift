@@ -6,7 +6,7 @@
 //     Retry" message + Retry button, shown WHERE the list would be when the
 //     fetch failed and no rows are loaded.
 //   - Stale rows           → SessionsStaleBanner: "Showing saved results" and
-//     refresh detail + Retry/checking, shown ABOVE the still-rendered rows.
+//     refresh detail + Retry, shown ABOVE the still-rendered rows after failure.
 //
 // Both are stateless leaves: the host (HistorySidePanel) decides which to show
 // from HistoryViewModel.error/loading + whether rows exist, and passes `onRetry`.
@@ -46,9 +46,8 @@ struct SessionsErrorEmpty: View {
     }
 }
 
-/// Banner shown above saved rows while a refresh is in flight or after that
-/// refresh fails. The host derives `checking` from HistoryViewModel.loading;
-/// this leaf owns no retry or cached-data state.
+/// Banner shown above saved rows after a refresh fails. `checking` remains a
+/// fixture-only visual state; production refreshes keep populated history quiet.
 struct SessionsStaleBanner: View {
     let onRetry: () -> Void
     var checking = false
@@ -136,6 +135,30 @@ private struct SessionsStaleMaterialCanvas: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+struct SessionsDeleteFailureBanner: View {
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: Space.sm) {
+            Text("Conversation deletion needs attention.")
+                .font(Typo.ui(TypeScale.sm, .medium))
+                .foregroundStyle(DuskColors.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            DesignActionButton(
+                title: "Retry",
+                role: .quiet,
+                accessibilityId: "sessions-delete-retry",
+                fillsWidth: false,
+                action: onRetry
+            )
+        }
+        .padding(.horizontal, Space.md)
+        .padding(.vertical, Space.sm)
+        .designPlate()
+        .accessibilityIdentifier("sessions-delete-failure")
     }
 }
 

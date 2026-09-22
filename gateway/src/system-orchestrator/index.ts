@@ -30,7 +30,10 @@ export interface ServiceVersionRecord {
   hermes: string;
   stt_service: string;
   tts_service: string;
+  attachment_parser: string;
 }
+
+export type ServiceVersionProbe = (signal?: AbortSignal) => Promise<string>;
 
 export interface SystemOrchestratorService {
   readonly registry: Map<ServiceName, ManagedService>;
@@ -50,6 +53,8 @@ export interface SystemOrchestratorService {
     hermesVersionPath: string,
     sttHealthUrl: string,
     ttsHealthUrl: string,
+    attachmentParserVersion?: ServiceVersionProbe,
+    requestSignal?: AbortSignal,
   ): Promise<ServiceVersionRecord>;
 }
 
@@ -408,8 +413,23 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
         healthWatch.start();
       }
     },
-    getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl) =>
-      resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl),
+    getRequiredServicesStatus: (
+      gatewayVersion,
+      hermesVersionPath,
+      sttHealthUrl,
+      ttsHealthUrl,
+      attachmentParserVersion,
+      requestSignal,
+    ) =>
+      resolveVersions(
+        () => lastStatus,
+        gatewayVersion,
+        hermesVersionPath,
+        sttHealthUrl,
+        ttsHealthUrl,
+        attachmentParserVersion,
+        requestSignal,
+      ),
   };
 }
 
@@ -436,6 +456,19 @@ const SERVICE_HEALTH_TIMEOUT_MS = 3000;
  *  tcp/http liveness checks, not version handshakes), so we hit the health
  *  endpoint directly. `label` tags the log lines (e.g. "stt", "tts"). Returns
  *  "unknown" on any error — the caller renders a dash. */
+async function resolveVersionProbe(probe: ServiceVersionProbe | undefined, signal?: AbortSignal): Promise<string> {
+  if (!probe) return "unknown";
+  try {
+    const version = await probe(signal);
+    return typeof version === "string" && version.length > 0 ? version : "unknown";
+  } catch {
+    log.warn("versions.attachment-parser-probe-failed", {
+      reason: "metadata probe failed",
+    });
+    return "unknown";
+  }
+}
+
 async function resolveHealthVersion(healthUrl: string, label: string): Promise<string> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), SERVICE_HEALTH_TIMEOUT_MS);
@@ -469,17 +502,21 @@ async function resolveVersions(
   hermesVersionPath: string,
   sttHealthUrl: string,
   ttsHealthUrl: string,
+  attachmentParserVersion?: ServiceVersionProbe,
+  requestSignal?: AbortSignal,
 ): Promise<ServiceVersionRecord> {
-  const [hermes, stt_service, tts_service] = await Promise.all([
+  const [hermes, stt_service, tts_service, attachment_parser] = await Promise.all([
     readHermesVersion(hermesVersionPath),
     resolveHealthVersion(sttHealthUrl, "stt"),
     resolveHealthVersion(ttsHealthUrl, "tts"),
+    resolveVersionProbe(attachmentParserVersion, requestSignal),
   ]);
   log.debug("versions.resolved", {
     gateway: gatewayVersion,
     hermes,
     stt_service,
     tts_service,
+    attachment_parser,
   });
-  return { gateway: gatewayVersion, hermes, stt_service, tts_service };
+  return { gateway: gatewayVersion, hermes, stt_service, tts_service, attachment_parser };
 }

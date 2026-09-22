@@ -9,9 +9,10 @@
 // native iOS icon set.
 //
 // One case per Settings root-list category (Soul / User / Admin / Support
-// groups). `symbolName` feeds `Image(systemName:)` directly from DesignCategoryRow.
-// All symbols below are documented as available since SF Symbols 1–3 (iOS
-// 13–15), well under this project's iOS 18.0 deployment target.
+// groups), plus `sfSymbol` for shared rows outside Settings. `symbolName` feeds
+// `Image(systemName:)` directly from DesignCategoryRow. All fixed symbols below
+// are documented as available since SF Symbols 1–3 (iOS 13–15), well under this
+// project's iOS 18.0 deployment target.
 // ---------------------------------------------------------------------------
 import Foundation
 
@@ -29,6 +30,7 @@ enum SettingsIcon {
     case members
     case secrets
     case diagnostics
+    case sfSymbol(String)
 
     /// SF Symbol name for `Image(systemName:)`.
     var symbolName: String {
@@ -46,6 +48,7 @@ enum SettingsIcon {
         case .members: return "person.3"
         case .secrets: return "key"
         case .diagnostics: return "waveform.path.ecg"
+        case .sfSymbol(let name): return name
         }
     }
 }

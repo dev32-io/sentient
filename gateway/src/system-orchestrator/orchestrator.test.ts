@@ -32,7 +32,7 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
   };
 }
 
-function nativeSvc(name: string): ManagedService {
+function nativeSvc(name: string, deps: string[] = [], optional = false): ManagedService {
   return {
     name,
     config: {
@@ -40,8 +40,8 @@ function nativeSvc(name: string): ManagedService {
       exec: [`/opt/${name}/venv/bin/python`, "-m", name.replace("-", "_")],
       env: {},
       healthcheck: { url: `http://${name}/health`, timeout_ms: 200 },
-      depends_on: [],
-      optional: false,
+      depends_on: deps,
+      optional,
       infra: false,
     },
   };
@@ -141,6 +141,136 @@ test("optional service health failure leaves orchestrator ready, marks degraded"
   const r = await orch.applyAll();
   expect(r.state).toBe("ready");
   expect(r.services.find((s) => s.name === "opt")?.state).toBe("degraded");
+});
+
+test("required service exit stops health polling and fails the stack", async () => {
+  let probes = 0;
+  let sleeps = 0;
+  const exitedDriver: ServiceDriver = {
+    ...happyDriver,
+    listManaged: async () => [{ id: "req", service: "req", state: "exited" }],
+  };
+  const orch = createSystemOrchestrator({
+    registry: new Map([["req", svc("req")]]),
+    drivers: allBackends(exitedDriver),
+    healthIO: {
+      ...healthyIO,
+      fetch: async () => {
+        probes++;
+        return { ok: false };
+      },
+      sleep: async () => {
+        sleeps++;
+      },
+    },
+    pollIntervalMs: 1,
+    applyTimeoutMs: 100,
+  });
+
+  const r = await orch.applyAll();
+
+  expect(r.state).toBe("failed");
+  expect(r.services[0]).toMatchObject({ state: "failed", lastError: "service-exited" });
+  expect(probes).toBe(1);
+  expect(sleeps).toBe(0);
+});
+
+test("optional service exit degrades only itself after required services become ready", async () => {
+  let optionalProbes = 0;
+  const exitedDriver: ServiceDriver = {
+    ...happyDriver,
+    listManaged: async () => [],
+  };
+  const orch = createSystemOrchestrator({
+    registry: new Map([
+      ["req", svc("req")],
+      ["opt", nativeSvc("opt", ["req"], true)],
+    ]),
+    drivers: allBackends(exitedDriver),
+    healthIO: {
+      ...healthyIO,
+      fetch: async (url) => {
+        if (url.includes("opt")) optionalProbes++;
+        return { ok: !url.includes("opt") };
+      },
+    },
+    pollIntervalMs: 1,
+    applyTimeoutMs: 100,
+  });
+
+  const r = await orch.applyAll();
+
+  expect(r.state).toBe("ready");
+  expect(r.services.find((service) => service.name === "req")?.state).toBe("ready");
+  expect(r.services.find((service) => service.name === "opt")).toMatchObject({
+    state: "degraded",
+    lastError: "service-exited",
+  });
+  expect(optionalProbes).toBe(1);
+});
+
+test("inspection errors and transient unit states keep startup health polling", async () => {
+  let probes = 0;
+  let inspections = 0;
+  const inspectingDriver: ServiceDriver = {
+    ...happyDriver,
+    listManaged: async () => {
+      inspections++;
+      if (inspections === 1) throw new Error("inspection unavailable");
+      return [{ id: "req", service: "req", state: "restarting" }];
+    },
+  };
+  const orch = createSystemOrchestrator({
+    registry: new Map([["req", svc("req")]]),
+    drivers: allBackends(inspectingDriver),
+    healthIO: {
+      ...healthyIO,
+      fetch: async () => ({ ok: ++probes === 3 }),
+    },
+    pollIntervalMs: 1,
+    applyTimeoutMs: 100,
+  });
+
+  const r = await orch.applyAll();
+
+  expect(r.state).toBe("ready");
+  expect(probes).toBe(3);
+  expect(inspections).toBe(2);
+});
+
+test("a stalled liveness inspection is cancelled at the health deadline", async () => {
+  const req = svc("req");
+  req.config.healthcheck = { url: "http://req/health", timeout_ms: 20 };
+  let cancelled = false;
+  const stalledDriver: ServiceDriver = {
+    ...happyDriver,
+    listManaged: (signal) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            cancelled = true;
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      }),
+  };
+  const startedAt = Date.now();
+  const orch = createSystemOrchestrator({
+    registry: new Map([["req", req]]),
+    drivers: allBackends(stalledDriver),
+    healthIO: { ...healthyIO, fetch: async () => ({ ok: false }), now: Date.now },
+    pollIntervalMs: 100,
+    applyTimeoutMs: 100,
+  });
+
+  const r = await orch.applyAll();
+
+  expect(cancelled).toBe(true);
+  expect(Date.now() - startedAt).toBeLessThan(250);
+  expect(r.state).toBe("failed");
+  expect(r.services[0]).toMatchObject({ state: "failed", lastError: "health-timeout" });
 });
 
 test("required service failure leaves orchestrator failed", async () => {

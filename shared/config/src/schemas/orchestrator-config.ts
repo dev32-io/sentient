@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const DEFAULT_ATTACHMENT_VISION_MODEL = "gemma4:31b-cloud";
+
 export const orchestratorConfigSchema = z.object({
   provider: z.object({
     // OPTIONAL OpenAI-compatible base URL override (OpenRouter, local Ollama,
@@ -37,11 +39,6 @@ export const orchestratorConfigSchema = z.object({
     // tool is worse than a slightly slower reply. See config.yaml for the
     // full rationale.
     reasoning_effort: z.enum(["unset", "none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("low"),
-  }),
-  loop: z.object({
-    // ReAct iteration cap: consecutive tool-calling iterations before a
-    // forced content-only final answer.
-    max_iterations: z.number().int().min(1).max(50).default(10),
   }),
   permission: z
     .object({
@@ -198,6 +195,9 @@ export const orchestratorConfigSchema = z.object({
       // is omitted from EVERY request, auxiliary ones included, so a strict
       // endpoint stays working.
       reasoning_effort: z.enum(["unset", "none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("none"),
+      // Default vision model for attachment inspection. Per-user
+      // `auxiliaryModels.attachmentVision` overrides it.
+      attachment_vision_model: z.string().min(1).optional(),
       // TITLING — how many words a generated session title should aim for.
       // Substituted into the template, so it is a target the prompt states,
       // never a cap the code enforces (`title_max_chars` is the cap).

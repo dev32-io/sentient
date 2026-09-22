@@ -171,13 +171,33 @@ describe("cycle-helpers — one bubble per reply", () => {
     });
   });
 
-  it("keeps gateway pending identity and captured streaming time stable across projection updates", () => {
-    const pendingUser = { ...userEntry("hello", 10), pendingId: "pending-1" };
+  it("keeps attachment-only user entries and their restored refs", () => {
+    const item = {
+      ...userEntry("", 10),
+      attachments: [
+        {
+          attachmentId: "att_0123456789abcdef0123456789abcdef",
+          displayName: "fixture.pdf",
+          contentType: "application/pdf",
+          mediaKind: "pdf" as const,
+          size: 100,
+        },
+      ],
+    };
+
+    expect(deriveMessages([item], [])[0]).toMatchObject({
+      text: "",
+      attachments: [{ kind: "remote", ref: { displayName: "fixture.pdf" } }],
+    });
+  });
+
+  it("keeps gateway pending identity, session provenance, and captured streaming time stable", () => {
+    const pendingUser = { ...userEntry("hello", 10), pendingId: "pending-1", sessionId: "session-1" };
     const live = [liveBubble("t1", "m1", "growing")];
     const presentations = new Map([["m1", { id: "inflight-m1", timestamp: 1234 }]]);
 
     expect(deriveMessages([pendingUser], live, "g", undefined, presentations)).toMatchObject([
-      { pendingId: "pending-1", timestamp: 10 },
+      { pendingId: "pending-1", sessionId: "session-1", timestamp: 10 },
       { replyId: "m1", timestamp: 1234, text: "g" },
     ]);
     expect(deriveMessages([pendingUser], live, "grow", undefined, presentations)[1]?.timestamp).toBe(1234);

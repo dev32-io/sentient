@@ -25,7 +25,7 @@ private class CapturingConversationRepository : ConversationRepository {
     override val liveEvents: SharedFlow<SdkEvent> = MutableSharedFlow()
     override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> = MutableStateFlow(emptySet())
     val sent = mutableListOf<Pair<String, String>>()
-    override fun send(text: String, pendingId: String) { sent.add(text to pendingId) }
+    override fun send(text: String, pendingId: String, attachmentIds: List<String>) { sent.add(text to pendingId) }
 }
 
 private fun cacheForRoute(generation: Long): OutboundCache =

@@ -67,7 +67,8 @@ SENTIENT_MANAGED_FILTER="label=sentient.managed=true"
 # other managed_services entry in config.yaml (searxng, egress-proxy)
 # pulls a public tag instead, and the orchestrator's own prepare() step pulls
 # those itself — nothing for preflight to bake.
-BUILD_ONLY_IMAGES=(inbound-proxy ingress-proxy outbound-worker)
+BUILD_ONLY_IMAGES=(inbound-proxy ingress-proxy outbound-worker attachment-parser)
+PARSER_METADATA="$REPO_ROOT/gateway/addons/attachment-parser/addon.json"
 
 GATEWAY_STOP_POLL_S=0.25       # graceful-shutdown poll interval before SIGKILL
 GATEWAY_STOP_MAX_ATTEMPTS=20   # ~5s grace period (poll * attempts)
@@ -278,15 +279,66 @@ preflight_ports() {
   fi
 }
 
-preflight_images() {
-  local missing=()
-  for img in "${BUILD_ONLY_IMAGES[@]}"; do
-    docker image inspect "sentient/$img:local" >/dev/null 2>&1 || missing+=("$img")
-  done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    step "baking missing images: ${missing[*]}"
-    docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build "${missing[@]}"
+prepare_parser_build_args() {
+  [ -f "$PARSER_METADATA" ] || die "no attachment-parser metadata at $PARSER_METADATA" \
+    "restore gateway/addons/attachment-parser/addon.json before building images"
+
+  local fields
+  if ! fields="$(python3 "$REPO_ROOT/scripts/attachment_parser_metadata.py" "$PARSER_METADATA")"; then
+    die "invalid attachment-parser metadata" \
+      "inspect $PARSER_METADATA"
   fi
+  local parser_name parser_version parser_protocol
+  IFS=$'\t' read -r parser_name parser_version parser_protocol _ <<<"$fields"
+
+  local revision
+  revision="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" || \
+    die "cannot determine attachment-parser source revision" "run from a git checkout"
+  if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- gateway/addons/attachment-parser 2>/dev/null)" ]; then
+    revision="${revision}-dirty"
+  fi
+  export ATTACHMENT_PARSER_NAME="$parser_name"
+  export ATTACHMENT_PARSER_VERSION="$parser_version"
+  export ATTACHMENT_PARSER_PROTOCOL_VERSION="$parser_protocol"
+  export ATTACHMENT_PARSER_REVISION="$revision"
+}
+
+verify_parser_image_metadata() {
+  local image="sentient/attachment-parser:local" actual_name actual_version actual_protocol actual_revision
+  if ! actual_name="$(docker image inspect --format '{{index .Config.Labels "io.sentient.addon.name"}}' "$image")"; then
+    die "cannot inspect $image name after build" "check Dockerfile labels and the Docker daemon"
+  fi
+  if ! actual_version="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")"; then
+    die "cannot inspect $image after build" "check Dockerfile labels and the Docker daemon"
+  fi
+  if ! actual_protocol="$(docker image inspect --format '{{index .Config.Labels "io.sentient.addon.protocol-version"}}' "$image")"; then
+    die "cannot inspect $image protocol after build" "check Dockerfile labels and the Docker daemon"
+  fi
+  if ! actual_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")"; then
+    die "cannot inspect $image revision after build" "check Dockerfile labels and the Docker daemon"
+  fi
+  [ "$actual_name" = "$ATTACHMENT_PARSER_NAME" ] || \
+    die "$image has name label '$actual_name', expected '$ATTACHMENT_PARSER_NAME'" \
+      "make Dockerfile consume ADDON_NAME"
+  [ "$actual_version" = "$ATTACHMENT_PARSER_VERSION" ] || \
+    die "$image has version label '$actual_version', expected '$ATTACHMENT_PARSER_VERSION'" \
+      "make Dockerfile consume ADDON_VERSION"
+  [ "$actual_protocol" = "$ATTACHMENT_PARSER_PROTOCOL_VERSION" ] || \
+    die "$image has protocol label '$actual_protocol', expected '$ATTACHMENT_PARSER_PROTOCOL_VERSION'" \
+      "make Dockerfile consume ADDON_PROTOCOL_VERSION"
+  [ "$actual_revision" = "$ATTACHMENT_PARSER_REVISION" ] || \
+    die "$image has revision label '$actual_revision', expected '$ATTACHMENT_PARSER_REVISION'" \
+      "make Dockerfile consume ADDON_REVISION"
+}
+
+preflight_images() {
+  # Existence-only checks accept stale :local tags after source edits. Let
+  # BuildKit compare each context instead: unchanged images stay cached, while
+  # changed parser code (including image_worker.py) replaces old layers without
+  # a second source-hash implementation in this script.
+  step "baking local images (Docker cache)"
+  docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build "${BUILD_ONLY_IMAGES[@]}"
+  verify_parser_image_metadata
 }
 
 build_webui() {
@@ -329,9 +381,18 @@ wait_ready() {
 
 # ── commands ────────────────────────────────────────────────────────────────
 
+cmd_parser_env() {
+  prepare_parser_build_args
+  printf 'export ATTACHMENT_PARSER_NAME=%q\n' "$ATTACHMENT_PARSER_NAME"
+  printf 'export ATTACHMENT_PARSER_VERSION=%q\n' "$ATTACHMENT_PARSER_VERSION"
+  printf 'export ATTACHMENT_PARSER_PROTOCOL_VERSION=%q\n' "$ATTACHMENT_PARSER_PROTOCOL_VERSION"
+  printf 'export ATTACHMENT_PARSER_REVISION=%q\n' "$ATTACHMENT_PARSER_REVISION"
+}
+
 cmd_up() {
   printf '\n  sentient — starting the stack\n\n'
   preflight_config
+  prepare_parser_build_args
   preflight_docker
   preflight_native_code
   preflight_ports
@@ -452,8 +513,9 @@ cmd_status() {
 }
 
 case "${1:-up}" in
-  up)     cmd_up ;;
-  down)   cmd_down ;;
-  status) cmd_status ;;
-  *) die "unknown command: $1" "scripts/stack.sh {up|down|status}" ;;
+  up)          cmd_up ;;
+  down)        cmd_down ;;
+  status)      cmd_status ;;
+  parser-env)  cmd_parser_env ;;
+  *) die "unknown command: $1" "scripts/stack.sh {up|down|status|parser-env}" ;;
 esac

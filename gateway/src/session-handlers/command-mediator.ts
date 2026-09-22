@@ -35,11 +35,10 @@
 // TWO PHASES, AND THE SPLIT IS LOAD-BEARING. `mediateCommand` (credential, then
 // binding) runs BEFORE the runtime is resolved, because on a draft that
 // resolution MINTS a session and a stale-generation command must never mint one.
-// `claimInputFloor` (arbitration) runs AFTER it, because a floor claim is made
-// on behalf of an input that is actually going to be submitted — claiming first
-// burns the floor for a message that ended in `orchestrator_unavailable` and
-// refuses a peer for a dispatch that did nothing. Both phases live here; the
-// switch arms hold no logic of their own.
+// `reserveInputFloor` (arbitration) runs after binding validation but BEFORE
+// durable admission. Failed admission releases its reservation; successful
+// admission commits it through the normal arbitration window. Both phases live
+// here; switch arms hold no arbitration logic of their own.
 //
 // ORDER WITHIN PHASE ONE IS ALSO THE CONTRACT: credential, then binding. A
 // window whose token expired must not be able to act on its way out.
@@ -48,8 +47,9 @@ import type { CommandRefusal, CommandRejectedMessage } from "@sentient/protocol"
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
+import type { InputFloorReservation } from "./input-arbiter.js";
 import { detachSession } from "./session-binding.js";
-import type { Attachment, SessionRegistry } from "./session-registry.js";
+import type { Attachment, DraftInputFloorReservation, SessionRegistry } from "./session-registry.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
 
@@ -216,8 +216,8 @@ function discardUplink(conn: ServerWebSocket<SessionData>, reason: CommandRefusa
 /**
  * Decide whether [cmd] may act, and on what — credential, then binding.
  *
- * ARBITRATION IS NOT HERE; it is `claimInputFloor` below, called by the input
- * call sites AFTER they have a runtime. See that function for why the gate is
+ * ARBITRATION IS NOT HERE; it is `reserveInputFloor` below, called by input
+ * call sites before durable admission. See that function for why gate is
  * two-phase.
  *
  * [nowMs] is injectable so the expiry check is deterministic under test;
@@ -295,19 +295,10 @@ export function mediateCommand(
 }
 
 /**
- * PHASE TWO of the gate: take this session's input floor, or refuse
- * `session_busy` (§8.3).
- *
- * WHY IT IS A SEPARATE PHASE, and why that is not the "sprinkled verb checks"
- * this module exists to prevent. Both phases live in this one module and every
- * input passes through both; what differs is WHEN. Phases 1 and 2 of
- * `mediateCommand` must run BEFORE `ensureBoundRuntime`, because on a draft that
- * call MINTS a session and a stale-generation command must never mint one. The
- * floor must be claimed AFTER it, because a claim is a claim on behalf of an
- * input that is actually going to be submitted — and `ensureBoundRuntime` can
- * still fail (`orchestrator_unavailable`, no active LLM key). Claiming first
- * burns the floor for a message that went nowhere and refuses a peer for a
- * dispatch that did nothing.
+ * PHASE TWO of gate: reserve this session's input floor before durable
+ * admission, or refuse `session_busy` (§8.3). Draft reservations are keyed by
+ * immutable user+draft authority and transfer onto minted session floor before
+ * runtime submission. Failed admission releases only its own reservation.
  *
  * ONLY `text.input` AND `transcript` REACH HERE (§8.3: "every input form: mic
  * onset, text, or anything later"). `audio.start` arms the mic and says nothing
@@ -317,20 +308,41 @@ export function mediateCommand(
  * would let one window's typing lock out the only person watching a runaway
  * reply.
  */
+export function reserveInputFloor(
+  cmd: InboundCommand,
+  conn: ServerWebSocket<SessionData>,
+  registry: SessionRegistry,
+  nowMs: number = Date.now(),
+  draftWindowMs = 0,
+): InputFloorReservation | DraftInputFloorReservation | null {
+  const attachment = conn.data.attachment;
+  if (attachment === null) {
+    const principal = conn.data.principal;
+    const draftKey = conn.data.draftKey;
+    const connectionId = conn.data.sessionId;
+    if (!principal || !draftKey || !connectionId) return { commit() {}, release() {} };
+    const holderId =
+      cmd.pendingId === undefined ? connectionId : JSON.stringify([conn.data.surfaceId ?? connectionId, cmd.pendingId]);
+    const reservation = registry.reserveDraftInput(principal.userId, draftKey, holderId, nowMs, draftWindowMs);
+    if (reservation) return reservation;
+    reject(cmd, conn, "session_busy", "another window claimed this draft's input floor at this dispatch");
+    return null;
+  }
+  const arbiter = registry.handlesFor(attachment.sessionId)?.arbiter ?? null;
+  if (arbiter === null) return { commit() {}, release() {} };
+  const reservation = arbiter.reserve(attachment.attachmentId, nowMs);
+  if (reservation) return reservation;
+  reject(cmd, conn, "session_busy", "another window claimed this session's input floor at this dispatch");
+  return null;
+}
+
 export function claimInputFloor(
   cmd: InboundCommand,
   conn: ServerWebSocket<SessionData>,
   registry: SessionRegistry,
   nowMs: number = Date.now(),
 ): boolean {
-  const attachment = conn.data.attachment;
-  // A DRAFT has no session and therefore no floor to contend for. It is also
-  // the one place contention cannot matter: the mint is idempotent under the
-  // draft key, so two connections on one draft resolve to one session.
-  if (attachment === null) return true;
-  const arbiter = registry.handlesFor(attachment.sessionId)?.arbiter ?? null;
-  if (arbiter === null) return true;
-  if (arbiter.claim(attachment.attachmentId, nowMs)) return true;
-  reject(cmd, conn, "session_busy", "another window claimed this session's input floor at this dispatch");
-  return false;
+  const reservation = reserveInputFloor(cmd, conn, registry, nowMs);
+  reservation?.commit();
+  return reservation !== null;
 }

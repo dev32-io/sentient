@@ -23,12 +23,16 @@ private let providerLabels: [String: String] = [
 struct ModelScreen: View {
     let settings: SettingsComponent
     let onBack: () -> Void
+    let auxiliaryOnly: Bool
+
+    private var accessibilityPrefix: String { auxiliaryOnly ? "settings-auxiliary" : "settings-model" }
 
     @State private var vm: ModelViewModel
     @State private var showDiscard = false
 
-    init(settings: SettingsComponent, onBack: @escaping () -> Void) {
+    init(settings: SettingsComponent, auxiliaryOnly: Bool = false, onBack: @escaping () -> Void) {
         self.settings = settings
+        self.auxiliaryOnly = auxiliaryOnly
         self.onBack = onBack
         _vm = State(initialValue: ModelViewModel(settings: settings))
     }
@@ -44,9 +48,9 @@ struct ModelScreen: View {
 
     var body: some View {
         SettingsPageScaffold(
-            title: "Model", screenId: "settings-model-screen",
+            title: auxiliaryOnly ? "Auxiliary runners" : "Model", screenId: "\(accessibilityPrefix)-screen",
             onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
-            backAccessibilityId: "settings-model-back"
+            backAccessibilityId: "\(accessibilityPrefix)-back"
         ) {
             switch vm.phase {
             case .loading:
@@ -56,18 +60,22 @@ struct ModelScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                selectedModel
-                VStack(alignment: .leading, spacing: Space.md) {
-                    browseControls
-                    modelList
+                if auxiliaryOnly {
+                    auxiliaryRunners
+                } else {
+                    selectedModel
+                    VStack(alignment: .leading, spacing: Space.md) {
+                        browseControls
+                        modelList
+                    }
                 }
             }
         }
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
-            discardAccessibilityId: "settings-model-discard",
-            applyAccessibilityId: "settings-model-save",
+            discardAccessibilityId: "\(accessibilityPrefix)-discard",
+            applyAccessibilityId: "\(accessibilityPrefix)-save",
             onDiscard: attemptBack,
             onApply: { Task { await vm.save() } }
         )
@@ -93,7 +101,7 @@ struct ModelScreen: View {
         let entry = vm.models.first { $0.id == vm.draftModelId && $0.provider == vm.draftProvider }
         return DesignCard(bodyStyle: .padded) {
             VStack(alignment: .leading, spacing: Space.sm) {
-                Label(vm.isDirty ? "Selected model · Unsaved" : "Selected model", systemImage: "checkmark.circle")
+                Label(vm.isMainModelDirty ? "Selected model · Unsaved" : "Selected model", systemImage: "checkmark.circle")
                     .designText(.supporting)
                     .foregroundStyle(DuskColors.ink2)
                     .accessibilityAddTraits(.isHeader)
@@ -112,6 +120,65 @@ struct ModelScreen: View {
                         .designText(.supporting)
                         .foregroundStyle(DuskColors.ink2)
                 }
+            }
+        }
+    }
+
+    private var auxiliaryRunners: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            VStack(alignment: .leading, spacing: .zero) {
+                Text("Auxiliary runners")
+                    .designText(.label)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DuskColors.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Optional models for background work. Choices use your chat model's configured provider.")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(ModelViewModel.AuxiliaryRunner.allCases, id: \.self) { runner in
+                auxiliaryRow(runner)
+            }
+        }
+    }
+
+    private func auxiliaryRow(_ runner: ModelViewModel.AuxiliaryRunner) -> some View {
+        let selection = vm.auxiliarySelection(for: runner)
+        let options = vm.auxiliaryOptions(for: runner)
+        return DesignCard(bodyStyle: .padded) {
+            HStack(alignment: .center, spacing: Space.md) {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text(runner.title)
+                        .designText(.label)
+                        .fontWeight(.medium)
+                        .foregroundStyle(DuskColors.ink)
+                    Text(selection?.id ?? runner.defaultLabel)
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: Space.sm)
+                Menu {
+                    Button(runner.defaultLabel) { vm.selectAuxiliary(nil, for: runner) }
+                    if !options.isEmpty { Divider() }
+                    ForEach(options, id: \.id) { entry in
+                        Button {
+                            vm.selectAuxiliary(entry, for: runner)
+                        } label: {
+                            if selection?.id == entry.id && selection?.provider == entry.provider {
+                                Label(entry.id, systemImage: "checkmark")
+                            } else {
+                                Text(entry.id)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Choose", systemImage: "chevron.up.chevron.down")
+                        .designText(.supporting)
+                }
+                .accessibilityLabel("Choose model for \(runner.title)")
+                .accessibilityIdentifier("settings-model-auxiliary-\(runner.accessibilityKey)")
             }
         }
     }

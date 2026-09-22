@@ -37,6 +37,8 @@ export interface ApiRouterDeps {
   handleVoices: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/sessions*` path. Bearer auth per route. */
   handleSessions: (request: Request) => Promise<Response>;
+  /** Private attachment uploads/downloads. Bearer auth per route. */
+  handleAttachments?: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/calendar/*` path. Bearer auth per route. */
   handleCalendar?: (request: Request) => Promise<Response>;
   /** Handles scheduled-message CRUD and the session-backed card inbox. */
@@ -73,6 +75,8 @@ export function createApiRouter(deps: ApiRouterDeps): ApiRouter {
     if (pathname === `${API_V1}/apply`) return deps.handleApply(request);
     if (pathname.startsWith(`${API_V1}/voices`)) return deps.handleVoices(request);
     if (pathname.startsWith(`${API_V1}/sessions`)) return deps.handleSessions(request);
+    if (pathname === `${API_V1}/attachments` || pathname.startsWith(`${API_V1}/attachments/`))
+      return deps.handleAttachments?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
     if (pathname.startsWith(`${API_V1}/calendar`))
       return deps.handleCalendar?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
     if (

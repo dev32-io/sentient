@@ -11,8 +11,11 @@ import { gatewayMessageSchema } from "@sentient/protocol";
 import type { UserRole } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
+import { createAttachmentStorage, mintAttachmentId } from "../attachments/storage.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { createConversationFeed, snapshotFeedItems } from "../runtime/conversation-feed.js";
+import type { SessionRuntimeRequest } from "../runtime/session-handles.js";
 import type { SessionPermissionBroker } from "../runtime/session-permission-broker.js";
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
@@ -161,7 +164,10 @@ let activateRunSeq = 0;
  *  root (no test can see another's rows), a working (stub) runtime factory so
  *  bindSessionRuntime succeeds, and a real SessionRegistry so attach/detach is
  *  genuine rather than assumed. */
-function activateServices(runtime?: SessionRuntime): GatewayServices {
+function activateServices(
+  runtime?: SessionRuntime,
+  createRuntime?: (request: SessionRuntimeRequest) => SessionRuntime,
+): GatewayServices {
   activateRunSeq += 1;
   const accessManager = createAccessManager({ userDataRoot: `${ACTIVATE_ROOT}/run-${activateRunSeq}` });
   const runtimeStub =
@@ -180,7 +186,11 @@ function activateServices(runtime?: SessionRuntime): GatewayServices {
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
-    createSessionRuntime: () => ({ runtime: runtimeStub, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
+    createSessionRuntime: (request: SessionRuntimeRequest) => ({
+      runtime: createRuntime?.(request) ?? runtimeStub,
+      permissions: { denyAll: () => {} },
+      work: IDLE_WORK,
+    }),
     // Read by every non-recovered `session.ready` — a fixture without it cannot
     // run a handshake to completion.
     webui: { playback: { min_eager_end_ms: 3000, preempt_fadeout_ms: 30 } },
@@ -261,10 +271,10 @@ function activateFrame(sessionId: string): string {
 /** Puts a real session with one entry in [userId]'s own store (opened through
  *  [accessManager]) and returns its id — the state a caller is in when
  *  activate should be able to resolve and reopen it. */
-function seedActivatableSession(accessManager: AccessManager, userId: string): string {
+function seedActivatableSession(accessManager: AccessManager, userId: string, mintKey?: string): string {
   const store = openSessionStore(accessManager.grant(createUserPrincipal(userId, "adult", "home"), "session-store"));
   const sessionId = mintSessionId();
-  store.createSession(sessionId, `mint-${sessionId}`);
+  store.createSession(sessionId, mintKey ?? `mint-${sessionId}`);
   store.close();
   return sessionId;
 }
@@ -308,27 +318,93 @@ function stubPermissions(matches = true): StubPermissions {
 }
 
 describe("ws-handlers routing — text.input", () => {
-  it("submits a conversational stimulus with the message text when runtime is set", async () => {
+  it("submits the authoritative preadmitted entry when runtime is set", async () => {
     const { runtime, submitCalls } = stubRuntime();
+    const services = activateServices(runtime);
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
     const ws = fakeAuthedWs(runtime);
+    ws.data.conversationId = sessionId;
+    ws.data.draftKey = DRAFT_KEY;
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
       JSON.stringify({ type: "text.input", text: "hello there" }),
-      unusedServices,
+      services,
     );
 
-    expect(submitCalls).toEqual([{ kind: "conversational", text: "hello there" }]);
+    expect(submitCalls).toEqual([
+      { kind: "preadmitted-conversational", entrySeq: expect.any(Number), admission: "fresh" },
+    ]);
+    const principal = ws.data.principal;
+    if (!principal) throw new Error("missing principal");
+    const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+    expect(store.readSession(sessionId).map((entry) => entry.text)).toEqual(["hello there"]);
+    store.close();
+  });
+
+  it("keeps a command on captured runtime when connection switches during admission await", async () => {
+    const original = stubRuntime();
+    const switched = stubRuntime();
+    const services = activateServices(original.runtime);
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
+    const ws = fakeAuthedWs(null);
+    ws.data.draftKey = DRAFT_KEY;
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId }),
+      services,
+    );
+
+    const sending = handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({
+        type: "text.input",
+        text: "bound to original",
+        sessionId,
+        attachmentGeneration: ws.data.attachment?.generation,
+      }),
+      services,
+    );
+    // Wait for durable admission, then switch before attachment/model
+    // continuation resumes. This is post-commit route switching, not a
+    // pre-commit fence case.
+    const principal = ws.data.principal;
+    if (!principal) throw new Error("missing principal");
+    let admitted = false;
+    for (let attempt = 0; attempt < 20 && !admitted; attempt += 1) {
+      const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+      admitted = store.readSession(sessionId).length > 0;
+      store.close();
+      if (!admitted) await Promise.resolve();
+    }
+    expect(admitted).toBe(true);
+    ws.data.conversationId = mintSessionId();
+    ws.data.runtime = switched.runtime;
+    ws.data.attachment = {
+      sessionId: ws.data.conversationId,
+      attachmentId: "switched-attachment",
+      connectionId: "switched-connection",
+      generation: 99,
+      ws: ws as unknown as ServerWebSocket<SessionData>,
+    };
+
+    await expect(sending).resolves.toBeUndefined();
+    expect(original.submitCalls).toHaveLength(1);
+    expect(switched.submitCalls).toEqual([]);
   });
 
   it("calls runtime.submit exactly once per message", async () => {
     const { runtime, submitCalls } = stubRuntime();
+    const services = activateServices(runtime);
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
     const ws = fakeAuthedWs(runtime);
+    ws.data.conversationId = sessionId;
+    ws.data.draftKey = DRAFT_KEY;
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
       JSON.stringify({ type: "text.input", text: "one call only" }),
-      unusedServices,
+      services,
     );
 
     expect(submitCalls.length).toBe(1);
@@ -346,6 +422,283 @@ describe("ws-handlers routing — text.input", () => {
     ).resolves.toBeUndefined();
 
     expect(ws.sent).toEqual([{ type: "error", code: "orchestrator_unavailable", message: expect.any(String) }]);
+  });
+});
+
+describe("ws-handlers routing — attachment admission", () => {
+  const attachmentConfig = {
+    max_file_bytes: 1024,
+    max_files_per_message: 2,
+    max_request_bytes: 1024,
+    max_user_bytes: 4096,
+    staging_ttl_ms: 60_000,
+  };
+
+  it("fences first-session admission when route changes before commit", async () => {
+    const original = stubRuntime();
+    const services = activateServices(original.runtime);
+    (services as { attachments?: typeof attachmentConfig }).attachments = attachmentConfig;
+    const ws = fakeAuthedWs(null);
+    ws.data.draftKey = DRAFT_KEY;
+
+    const sending = handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({
+        type: "text.input",
+        text: "must not commit",
+        attachmentIds: ["att_00000000000000000000000000000000"],
+      }),
+      services,
+    );
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "session.new", requestId: "switch-before-commit", intent: "explicit" }),
+      services,
+    );
+    await sending;
+
+    const principal = ws.data.principal;
+    if (!principal) throw new Error("missing principal");
+    const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+    expect(store.findSessionByMintKey(DRAFT_KEY)).toBeNull();
+    expect(store.listSessionsWithMetadata()).toEqual([]);
+    expect(original.submitCalls).toEqual([]);
+    store.close();
+  });
+
+  it.each(["ready", "throwing", "missing"] as const)(
+    "settles committed input after a route change with a %s runtime factory",
+    async (factoryState) => {
+      const original = stubRuntime();
+      const base = activateServices(original.runtime);
+      const sessionId = seedActivatableSession(base.accessManager, "u_deadbeef");
+      let releaseAuthority!: () => void;
+      let authorityStarted!: () => void;
+      const authorityGate = new Promise<void>((resolve) => {
+        releaseAuthority = resolve;
+      });
+      const authorityWait = new Promise<void>((resolve) => {
+        authorityStarted = resolve;
+      });
+      const services = {
+        ...base,
+        createSessionRuntime:
+          factoryState === "ready"
+            ? base.createSessionRuntime
+            : factoryState === "missing"
+              ? undefined
+              : () => {
+                  throw new Error("Synthetic runtime construction failure");
+                },
+        auth: {
+          users: {
+            get: async (userId: string) => {
+              authorityStarted();
+              await authorityGate;
+              return { ok: true as const, value: recordOf("adult", NEVER_REVOKED, userId) };
+            },
+          },
+        },
+      } as unknown as GatewayServices;
+      const ws = fakeAuthedWs(null);
+      ws.data.conversationId = sessionId;
+      ws.data.draftKey = DRAFT_KEY;
+      const principal = ws.data.principal;
+      if (!principal) throw new Error("missing principal");
+      const sending = handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({ type: "text.input", text: "must still run", pendingId: "pending-route-switch" }),
+        services,
+      );
+
+      // The authority read begins only after durable admission; use that actual
+      // boundary instead of guessing how many microtasks admission needs.
+      await authorityWait;
+      const probe = openSessionStore(services.accessManager.grant(principal, "session-store"));
+      expect(probe.readSession(sessionId)).toHaveLength(1);
+      probe.close();
+      await handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({ type: "session.new", requestId: "switch-after-commit", intent: "explicit" }),
+        services,
+      );
+      releaseAuthority();
+      await expect(sending).resolves.toBeUndefined();
+
+      const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+      expect(store.readSession(sessionId).map((entry) => entry.text)).toEqual(["must still run"]);
+      expect(original.submitCalls).toEqual(
+        factoryState === "ready"
+          ? [{ kind: "preadmitted-conversational", entrySeq: expect.any(Number), admission: "fresh" }]
+          : [],
+      );
+      expect(ws.closes).toEqual([]);
+      expect(ws.sent).not.toContainEqual(expect.objectContaining({ type: "command.rejected" }));
+      store.close();
+    },
+  );
+
+  it("leaves no first-session history when a staged ref is invalid", async () => {
+    const { runtime } = stubRuntime();
+    const services = activateServices(runtime);
+    (services as { attachments?: typeof attachmentConfig }).attachments = attachmentConfig;
+    const ws = fakeAuthedWs(null);
+    ws.data.draftKey = DRAFT_KEY;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({
+        type: "text.input",
+        text: "",
+        pendingId: "pending-failed",
+        attachmentIds: ["att_00000000000000000000000000000000"],
+      }),
+      services,
+    );
+
+    const principal = ws.data.principal;
+    if (!principal) throw new Error("missing principal");
+    const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+    expect(store.listSessionsWithMetadata()).toEqual([]);
+    store.close();
+  });
+
+  it("publishes a fresh file-only item once and deduplicates a lost-ack retry", async () => {
+    const submitCalls: Stimulus[] = [];
+    let closeRuntimeStore = () => {};
+    const services = activateServices(undefined, ({ principal, conversationId, emitter }) => {
+      const runtimeStore = openSessionStore(services.accessManager.grant(principal, "session-store"));
+      closeRuntimeStore = () => runtimeStore.close();
+      const feed = createConversationFeed({
+        store: runtimeStore,
+        sessionId: conversationId,
+        userId: principal.userId,
+        emitter,
+        currentReplyId: () => null,
+      });
+      return {
+        ...stubRuntime().runtime,
+        submit(stimulus) {
+          submitCalls.push(stimulus);
+          if (stimulus.kind !== "preadmitted-conversational") return;
+          const entry = runtimeStore
+            .readSince(conversationId, stimulus.entrySeq - 1)
+            .find((candidate) => candidate.seq === stimulus.entrySeq);
+          if (stimulus.admission === "retry" && entry) feed.republish(entry);
+          else feed.publishSettled();
+        },
+        emitConversationSnapshot: () => feed.snapshot(),
+      };
+    });
+    (services as { attachments?: typeof attachmentConfig }).attachments = attachmentConfig;
+    const ws = fakeAuthedWs(null);
+    ws.data.draftKey = DRAFT_KEY;
+    const principal = ws.data.principal;
+    if (!principal) throw new Error("missing principal");
+    const storage = createAttachmentStorage(services.accessManager.grant(principal, "attachment-store") as never, {
+      maxFileBytes: 1024,
+      maxFilesPerAttempt: 2,
+      maxRequestBytes: 1024,
+      maxUserBytes: 4096,
+      stagingTtlMs: 60_000,
+    });
+    const staged = (
+      await storage.stageAttempt("attempt-file-only", [
+        {
+          attachmentId: mintAttachmentId(),
+          fileIdentity: "file-only",
+          displayName: "notes.txt",
+          contentType: "text/plain",
+          bytes: (async function* () {
+            yield new TextEncoder().encode("notes");
+          })(),
+        },
+      ])
+    )[0];
+    if (!staged) throw new Error("missing staged attachment");
+    const stagingStore = openSessionStore(services.accessManager.grant(principal, "session-store"));
+    stagingStore.registerStagedAttachment(staged, staged.stagedAt + 60_000);
+    stagingStore.close();
+    const frame = JSON.stringify({
+      type: "text.input",
+      text: "",
+      pendingId: "pending-file-only",
+      attachmentIds: [staged.attachmentId],
+    });
+
+    await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, frame, services);
+    const freshItems = ws.sent.flatMap((message) =>
+      (message as { type?: string; items?: unknown[] }).type === "conversation.snapshot"
+        ? ((message as { items?: unknown[] }).items ?? [])
+        : [],
+    );
+    expect(freshItems).toHaveLength(1);
+    expect(freshItems[0]).toMatchObject({
+      kind: "user",
+      content: "",
+      pendingId: "pending-file-only",
+      sessionId: ws.data.conversationId,
+      attachments: [{ attachmentId: staged.attachmentId, displayName: "notes.txt", size: 5 }],
+    });
+
+    const retry = fakeAuthedWs(null);
+    retry.data.draftKey = DRAFT_KEY;
+    await handleWebSocketMessage(retry as unknown as ServerWebSocket<SessionData>, frame, services);
+
+    const sessionId = ws.data.conversationId;
+    if (!sessionId) throw new Error("missing admitted session");
+    expect(retry.data.conversationId).toBe(sessionId);
+    const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+    const entries = store.readSession(sessionId);
+    expect(entries).toHaveLength(1);
+    expect(snapshotFeedItems(entries)[0]).toMatchObject({
+      kind: "user",
+      content: "",
+      attachments: [{ attachmentId: staged.attachmentId, displayName: "notes.txt", size: 5 }],
+    });
+    expect(submitCalls).toEqual([
+      expect.objectContaining({ kind: "preadmitted-conversational", admission: "fresh" }),
+      expect.objectContaining({ kind: "preadmitted-conversational", admission: "retry" }),
+    ]);
+    expect(retry.sent).toContainEqual(expect.objectContaining({ type: "session.created", sessionId }));
+    expect(retry.sent.some((frame) => (frame as { type?: string }).type === "command.rejected")).toBe(false);
+
+    const changedTextRetry = fakeAuthedWs(null);
+    changedTextRetry.data.draftKey = DRAFT_KEY;
+    await handleWebSocketMessage(
+      changedTextRetry as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({
+        type: "text.input",
+        text: "changed after submission",
+        pendingId: "pending-file-only",
+        attachmentIds: [staged.attachmentId],
+      }),
+      services,
+    );
+    expect(changedTextRetry.sent).toContainEqual(
+      expect.objectContaining({ type: "error", code: "attachment_conflict" }),
+    );
+    expect(store.readSession(sessionId).map((entry) => entry.text)).toEqual([""]);
+    expect(submitCalls).toHaveLength(2);
+
+    const mismatchedRetry = fakeAuthedWs(null);
+    mismatchedRetry.data.draftKey = DRAFT_KEY;
+    await handleWebSocketMessage(
+      mismatchedRetry as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({
+        type: "text.input",
+        text: "",
+        pendingId: "pending-file-only",
+        attachmentIds: [mintAttachmentId()],
+      }),
+      services,
+    );
+    expect(mismatchedRetry.sent).toContainEqual(
+      expect.objectContaining({ type: "error", code: "attachment_conflict" }),
+    );
+    expect(submitCalls).toHaveLength(2);
+    store.close();
+    closeRuntimeStore();
   });
 });
 
@@ -857,6 +1210,23 @@ describe("ws-handlers routing — session.new", () => {
     expect(ws.data.conversationId).toBeNull();
   });
 
+  it("CONTRACT: an explicit session.new while already on a draft returns a fresh key", async () => {
+    const ws = fakeAuthedWs(null);
+    ws.data.draftKey = DRAFT_KEY;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "session.new", requestId: "r2", intent: "explicit" }),
+      unusedServices,
+    );
+
+    const reply = ws.sent.find((f) => (f as { type: string }).type === "session.draft") as
+      | { draftKey: string }
+      | undefined;
+    expect(reply?.draftKey).toMatch(/^d_[0-9a-f]{32}$/);
+    expect(reply?.draftKey).not.toBe(DRAFT_KEY);
+  });
+
   it("answers on the CONNECTION lane, so the anchor never enters the session's seq space", async () => {
     // `session.created` answers the connection that pressed "+". Journaling it
     // would replay one window's anchor into another window's reconnect.
@@ -1254,6 +1624,13 @@ describe("ws-handlers routing — two windows, one turn", () => {
     expect(commandFrames(b)).toContainEqual(
       expect.objectContaining({ type: "command.rejected", reason: "session_busy", pendingId: "p-b" }),
     );
+    const principal = b.data.principal;
+    if (!principal) throw new Error("missing principal");
+    const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+    const entries = store.readSession(sessionId);
+    expect(entries.map((entry) => entry.text)).not.toContain("same instant");
+    expect(entries.some((entry) => entry.pendingId?.endsWith("p-b") ?? false)).toBe(false);
+    store.close();
   });
 });
 

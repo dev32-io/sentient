@@ -7,6 +7,12 @@ export const PROFILE_SCHEMA_VERSION = 1;
 export const modelProviderSchema = z.enum(["openrouter", "ollama-cloud", "custom"]);
 export type ModelProvider = z.output<typeof modelProviderSchema>;
 
+export const modelRefSchema = z.object({
+  provider: modelProviderSchema,
+  id: z.string().min(1),
+});
+export type ModelRef = z.output<typeof modelRefSchema>;
+
 export const voiceProviderSchema = z.literal("local-tts");
 export type VoiceProvider = z.output<typeof voiceProviderSchema>;
 
@@ -96,10 +102,14 @@ function migrateEnabledToPermissions(v: unknown): unknown {
 export const profileV1Schema = z.object({
   schemaVersion: z.literal(PROFILE_SCHEMA_VERSION),
   userId: z.string().min(1).max(64),
-  model: z.object({
-    provider: modelProviderSchema,
-    id: z.string().min(1),
-  }),
+  model: modelRefSchema,
+  auxiliaryModels: z
+    .object({
+      title: modelRefSchema.optional(),
+      dreamer: modelRefSchema.optional(),
+      attachmentVision: modelRefSchema.optional(),
+    })
+    .optional(),
   // Legacy migration (no schema-version bump, mirroring tools.enabled below):
   // pre-local-tts profiles stored `voice.provider: "fish-audio"` with a Fish
   // reference_id. Fish Audio is gone; rewrite such profiles to the local-tts

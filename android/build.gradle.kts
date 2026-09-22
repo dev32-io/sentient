@@ -55,7 +55,7 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 15; versionName = "1.4.0"
+        versionCode = 16; versionName = "1.5.0"
     }
     buildFeatures { compose = true; buildConfig = true }
     if (visualDiffAndroid) experimentalProperties["android.experimental.enableScreenshotTest"] = true

@@ -50,6 +50,7 @@ data class ProfileV1(
     val tools: ProfileTools,
     val compression: ProfileCompression,
     val advanced: ProfileAdvanced,
+    val auxiliaryModels: ProfileAuxiliaryModels? = null,
 )
 
 /**
@@ -80,6 +81,7 @@ data class ProfileV1PutBody(
     val tools: ProfileToolsPatch,
     val compression: ProfileCompression,
     val advanced: ProfileAdvanced,
+    val auxiliaryModels: ProfileAuxiliaryModels? = null,
 )
 
 /**
@@ -103,10 +105,18 @@ fun ProfileV1.toPutBody(): ProfileV1PutBody = ProfileV1PutBody(
     tools = ProfileToolsPatch(permissions = tools.permissions, toolsets = tools.toolsets),
     compression = compression,
     advanced = advanced,
+    auxiliaryModels = auxiliaryModels,
 )
 
 @Serializable
 data class ProfileModelRef(val provider: String, val id: String)
+
+@Serializable
+data class ProfileAuxiliaryModels(
+    val title: ProfileModelRef? = null,
+    val dreamer: ProfileModelRef? = null,
+    val attachmentVision: ProfileModelRef? = null,
+)
 
 @Serializable
 data class ProfileVoiceRef(val provider: String, val id: String)

@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { ManagedServiceConfigSchema, ServiceTemplateSchema } from "./types.js";
 
 test("ManagedServiceConfigSchema parses a valid entry", () => {
@@ -131,6 +134,46 @@ test("SECURITY: ServiceTemplateSchema rejects an explicitly wildcard-bound port 
 test("SECURITY: ServiceTemplateSchema rejects a LAN-IP-bound port mapping", () => {
   const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["192.168.1.40:8086:8086"] });
   expect(r.success).toBe(false);
+});
+
+test("SECURITY: attachment parser template carries complete confinement", () => {
+  const parsed = ServiceTemplateSchema.parse(
+    parseYaml(
+      readFileSync(join(import.meta.dir, "..", "..", "templates", "services", "attachment-parser.yaml"), "utf8"),
+    ),
+  );
+  expect(parsed).toMatchObject({
+    network_mode: "none",
+    networks: [],
+    ports: [],
+    volumes: [],
+    env: { PARSER_SOCKET: "/tmp/attachment-parser/parser.sock" },
+    read_only: true,
+    tmpfs: { "/tmp": "rw,noexec,nosuid,nodev,size=1280m" },
+    mem_limit_bytes: 2147483648,
+    memswap_limit_bytes: 2147483648,
+    cpus: 1,
+    pids_limit: 32,
+    cap_drop: ["ALL"],
+    security_opt: ["no-new-privileges"],
+    user: "65534:65534",
+  });
+});
+
+test("SECURITY: network_mode none rejects network membership and published ports", () => {
+  expect(
+    ServiceTemplateSchema.safeParse({
+      ...portBase,
+      network_mode: "none",
+      ports: ["127.0.0.1:8086:8086"],
+    }).success,
+  ).toBe(false);
+});
+
+test("SECURITY: a template without network_mode still requires a managed network", () => {
+  expect(
+    ServiceTemplateSchema.safeParse({ image: "a:b", container_name: "isolated-by-mistake", networks: [] }).success,
+  ).toBe(false);
 });
 
 test("returns infra: false when a service entry omits it", () => {

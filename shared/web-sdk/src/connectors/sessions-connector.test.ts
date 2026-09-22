@@ -96,6 +96,73 @@ describe("SessionsConnector", () => {
     expect(onChange).toHaveBeenCalledWith({ kind: "deleted", sessionId: "s-1" });
   });
 
+  it("consumes remote deletion and suppresses the REST delete echo", async () => {
+    const sdk = fakeSdk();
+    let releaseDelete!: () => void;
+    const rest = makeRest({
+      delete: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseDelete = resolve;
+          }),
+      ),
+    });
+    const c = new SessionsConnector({ rest });
+    const onChange = vi.fn();
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+    c.onSessionsChanged(onChange);
+
+    const deleting = c.delete("s-1");
+    sdk.emit("sessions.deleted", { sessionId: "s-1" });
+    releaseDelete();
+    await deleting;
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ kind: "deleted", sessionId: "s-1", deletionId: "s-1" });
+  });
+
+  it("surfaces refused reconnect identity and pairs it with its handshake draft", () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest() });
+    const onChange = vi.fn();
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+    c.onSessionsChanged(onChange);
+
+    sdk.emit("session.refused", { sessionId: "s-deleted" });
+    sdk.emit("session.draft", { draftKey: "d-recovery", ts: 1 });
+
+    expect(onChange.mock.calls).toEqual([
+      [{ kind: "unavailable", sessionId: "s-deleted", deletionId: "s-deleted" }],
+      [{ kind: "draft", draftKey: "d-recovery", ts: 1, deletionId: "s-deleted" }],
+    ]);
+  });
+
+  it("does not attach deletion identity to explicit New Chat drafts", () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest() });
+    const onChange = vi.fn();
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+    c.onSessionsChanged(onChange);
+
+    sdk.emit("session.refused", { sessionId: "s-deleted" });
+    sdk.emit("session.draft", { draftKey: "d-new", ts: 1, requestId: "new-1" });
+
+    expect(onChange).toHaveBeenLastCalledWith({ kind: "draft", draftKey: "d-new", ts: 1 });
+  });
+
+  it("ignores malformed deletion pushes", () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest() });
+    const onChange = vi.fn();
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+    c.onSessionsChanged(onChange);
+
+    sdk.emit("sessions.deleted", {});
+    sdk.emit("sessions.deleted", { sessionId: 42 });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("rename — calls REST and dispatches renamed change event", async () => {
     const sdk = fakeSdk();
     const rest = makeRest();
@@ -186,6 +253,17 @@ describe("SessionsConnector", () => {
     const p = c.newChat();
     sdk.emit("session.draft", { draftKey: "d_abc", ts: 1 });
     await expect(p).resolves.toEqual({ draftKey: "d_abc" });
+  });
+
+  it("newChat — ignores a deletion recovery draft before its own answer", async () => {
+    const sdk = fakeSdk();
+    const c = new SessionsConnector({ rest: makeRest() });
+    c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+    const pending = c.newChat();
+    sdk.emit("session.refused", { sessionId: "s-deleted" });
+    sdk.emit("session.draft", { draftKey: "d_recovery", ts: 1 });
+    sdk.emit("session.draft", { draftKey: "d_new", ts: 2, requestId: "new-1" });
+    await expect(pending).resolves.toEqual({ draftKey: "d_new" });
   });
 
   it("switchTo — rejects promptly when account connection detaches", async () => {

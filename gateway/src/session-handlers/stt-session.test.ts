@@ -10,15 +10,24 @@
 // `unhandledRejection` would take the whole gateway process down over one
 // session's STT socket.
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TurnMode } from "@sentient/protocol";
+import type { Capability } from "../access/capability.js";
 import type { STTAdapter, STTAdapterConfig, STTEvent } from "../adapters/stt/stt-adapter-types.js";
 import { createGatewayLogger } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
+import { openSessionStore } from "../store/session-store.js";
 import { captureDiagnosticRef } from "./capture-diagnostics.js";
+import { admitFirstUserMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
+
+const STORE_ROOT = mkdtempSync(join(tmpdir(), "sentient-stt-session-"));
+afterAll(() => rmSync(STORE_ROOT, { recursive: true, force: true }));
 
 const TEST_CONFIG: STTAdapterConfig = {
   url: "ws://localhost:0",
@@ -182,6 +191,27 @@ describe("createSttSession", () => {
     await settle();
 
     expect(stub.submitted).toEqual([{ kind: "conversational", text: "turn on the lights" }]);
+    session.close();
+  });
+
+  it("submits authoritative preadmitted transcript without a second conversational write", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const stimulus: Stimulus = { kind: "preadmitted-conversational", entrySeq: 42, admission: "fresh" };
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => ({ runtime: stub.runtime, stimulus }),
+    });
+
+    session.start("cap-1", "semantic");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "voice first" });
+    await settle();
+
+    expect(stub.submitted).toEqual([stimulus]);
     session.close();
   });
 
@@ -618,6 +648,13 @@ describe("createSttSession", () => {
   it("INVARIANT: an uplink discarded WHILE a transcript is resolving a runtime commits nothing", async () => {
     const fake = lingeringAdapter();
     const stub = stubRuntime();
+    const capability: Capability = Object.freeze({
+      ownerUserId: "u_stt_test",
+      resource: "session-store",
+      rootPath: `${STORE_ROOT}/u_stt_test`,
+      role: "adult",
+    });
+    const store = openSessionStore(capability);
     let releaseRuntime = (): void => {};
     const runtimeResolving = new Promise<void>((resolve) => {
       releaseRuntime = resolve;
@@ -627,9 +664,30 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      // Suspends exactly where the real one does — mid-mint, mid-record-read.
-      getRuntimeForInput: async () => {
+      // Suspends on authority/binding work, then linearizes immediately before
+      // the same real SQLite admission production uses.
+      getRuntimeForInput: async (_text, captureIsCurrent) => {
         await runtimeResolving;
+        if (!captureIsCurrent()) return null;
+        admitFirstUserMessage(
+          store,
+          `d_${"ab".repeat(16)}`,
+          {
+            turnId: "turn-stt",
+            replyId: null,
+            kind: "user",
+            createdAt: Date.now(),
+            text: "meant for the other chat",
+            toolCallId: null,
+            toolName: null,
+            toolArgs: null,
+            cutoff: null,
+            compactedThroughSeq: null,
+            pendingId: null,
+          },
+          [],
+          0,
+        );
         return stub.runtime;
       },
     });
@@ -639,7 +697,7 @@ describe("createSttSession", () => {
     // The transcript enters `dispatch` and parks on the runtime lookup.
     fake.emit({ type: "transcript", turnIdx: 1, text: "meant for the other chat" });
     await settle();
-    expect(stub.submitted).toEqual([]); // still resolving
+    expect(store.listSessionsWithMetadata()).toEqual([]); // still resolving
 
     // The user clicks another conversation: conversation.activate → unbind →
     // detachSession → discard(). Only THEN does the runtime lookup land.
@@ -647,7 +705,80 @@ describe("createSttSession", () => {
     releaseRuntime();
     await settle();
 
-    expect(stub.submitted).toEqual([]);
+    expect(store.listSessionsWithMetadata()).toEqual([]);
+    expect(store.listSessions()).toEqual([]);
+    store.close();
+    session.close();
+  });
+
+  it("INVARIANT: discard after durable transcript admission cannot strand accepted work", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    const store = openSessionStore(
+      Object.freeze({
+        ownerUserId: "u_stt_accepted",
+        resource: "session-store",
+        rootPath: `${STORE_ROOT}/u_stt_accepted`,
+        role: "adult",
+      } satisfies Capability),
+    );
+    let signalCommitted = (): void => {};
+    const committed = new Promise<void>((resolve) => {
+      signalCommitted = resolve;
+    });
+    let releaseResolution = (): void => {};
+    const resolution = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    const session = createSttSession({
+      sessionId: "sess-accepted",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async (_text, captureIsCurrent) => {
+        if (!captureIsCurrent()) return null;
+        const admitted = admitFirstUserMessage(
+          store,
+          `d_${"cd".repeat(16)}`,
+          {
+            turnId: "turn-accepted",
+            replyId: null,
+            kind: "user",
+            createdAt: Date.now(),
+            text: "accepted speech",
+            toolCallId: null,
+            toolName: null,
+            toolArgs: null,
+            cutoff: null,
+            compactedThroughSeq: null,
+            pendingId: null,
+          },
+          [],
+          0,
+        );
+        signalCommitted();
+        await resolution;
+        return {
+          runtime: stub.runtime,
+          authoritative: true,
+          stimulus: { kind: "preadmitted-conversational", entrySeq: admitted.admission.entry.seq, admission: "fresh" },
+        };
+      },
+    });
+
+    session.start("cap-accepted", "semantic");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "accepted speech" });
+    await committed;
+    session.discard();
+    releaseResolution();
+    await settle();
+
+    expect(store.listSessionsWithMetadata()).toHaveLength(1);
+    expect(stub.submitted).toEqual([
+      expect.objectContaining({ kind: "preadmitted-conversational", admission: "fresh" }),
+    ]);
+    store.close();
     session.close();
   });
 

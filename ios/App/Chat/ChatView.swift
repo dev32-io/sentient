@@ -37,6 +37,34 @@ import SwiftUI
 import UIKit
 import MobileData
 
+struct RouteChangeState: Equatable {
+    private(set) var pending = false
+
+    mutating func begin() -> Bool {
+        guard !pending else { return false }
+        pending = true
+        return true
+    }
+
+    mutating func finish(saved: Bool) -> Bool {
+        if !saved { pending = false }
+        return saved
+    }
+}
+
+func shouldNavigateAfterDiscard(succeeded: Bool, draftId: String, activeDraftId: String?) -> Bool {
+    succeeded && draftId == activeDraftId
+}
+
+func nextAttachmentImportAlertAfterDismissal(
+    dismissedGeneration: Int,
+    current: AttachmentImportAlert?,
+    pickerPresented: Bool
+) -> AttachmentImportAlert? {
+    guard !pickerPresented, current?.generation != dismissedGeneration else { return nil }
+    return current
+}
+
 struct ChatView: View {
     /// The thin per-conversation VM — sole SDK-command surface for this screen.
     @StateObject private var vm: ChatViewModel
@@ -47,9 +75,11 @@ struct ChatView: View {
     let userName: String
     /// Selected route identity used to highlight the active History row.
     let activeSessionId: String?
+    let activeDraftId: String?
 
-    /// History select → host flips activeSessionId (rebuilds the VM).
+    /// History select → host flips route identity (rebuilds the VM).
     let onSelectSession: (String) -> Void
+    let onSelectDraft: (String, String?) -> Void
     /// New chat → host sets activeSessionId = nil (a fresh conversation).
     let onNewChat: () -> Void
     /// Open settings → host pushes the `.settings` route onto the outer NavigationStack
@@ -67,6 +97,7 @@ struct ChatView: View {
     @State private var panelNowMs: Int64 = 0
     @State private var messageMeasurementLoading = false
     @State private var composerHeight: CGFloat = 0
+    @State private var routeChange = RouteChangeState()
 
     // ── Keep-screen-on (S8) ─────────────────────────────────────────────────────
 
@@ -82,8 +113,14 @@ struct ChatView: View {
     // ── Sheet + alert state ───────────────────────────────────────────────────────
 
     @State private var panelRenaming: PanelTarget?
-    @State private var panelDeleting: PanelTarget?
+    @State private var panelDeleting: PanelDestructiveTarget?
     @State private var panelRenameText = ""
+    /// Composer reports picker state; false arrives only at native dismissal completion.
+    @State private var attachmentPickerPresented = false
+    /// Keep alert data stable while SwiftUI dismisses it; generation IDs let native alert
+    /// presentation serialize a newer alert after the visible one finishes.
+    @State private var presentedAttachmentImportAlert: AttachmentImportAlert?
+    @State private var previewedAttachment: AttachmentPreviewSelection?
 
     // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -92,7 +129,9 @@ struct ChatView: View {
         makeHistoryVM: @escaping () -> HistoryViewModel,
         userName: String,
         activeSessionId: String?,
+        activeDraftId: String?,
         onSelectSession: @escaping (String) -> Void,
+        onSelectDraft: @escaping (String, String?) -> Void,
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         onOpenInbox: @escaping () -> Void,
@@ -102,7 +141,9 @@ struct ChatView: View {
         _historyModel = StateObject(wrappedValue: makeHistoryVM())
         self.userName = userName
         self.activeSessionId = activeSessionId
+        self.activeDraftId = activeDraftId
         self.onSelectSession = onSelectSession
+        self.onSelectDraft = onSelectDraft
         self.onNewChat = onNewChat
         self.onOpenSettings = onOpenSettings
         self.onOpenInbox = onOpenInbox
@@ -174,8 +215,18 @@ struct ChatView: View {
         .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
             Task { await historyModel.renameSession(id, title: title) }
         }
-        .panelDeletePrompt($panelDeleting) { id in
-            Task { await historyModel.deleteSession(id) }
+        .panelDeletePrompt($panelDeleting) { action in
+            Task {
+                switch action {
+                case .deleteConversation(let sessionId):
+                    if await historyModel.deleteSession(sessionId), sessionId == activeSessionId { onNewChat() }
+                case .discardDraft(let draftId):
+                    let succeeded = await historyModel.discardDraft(draftId)
+                    if shouldNavigateAfterDiscard(succeeded: succeeded, draftId: draftId, activeDraftId: activeDraftId) {
+                        onNewChat()
+                    }
+                }
+            }
         }
         .permissionPrompt(
             Binding(
@@ -184,10 +235,27 @@ struct ChatView: View {
             ),
             onRespond: { requestId, approved in vm.respondPermission(requestId, approved: approved) }
         )
+        .alert(item: Binding<AttachmentImportAlert?>(
+            get: { presentedAttachmentImportAlert },
+            set: { setPresentedAttachmentImportAlert($0) }
+        )) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK")) {
+                    vm.dismissAttachmentImportAlert(generation: alert.generation)
+                }
+            )
+        }
+        .sheet(item: $previewedAttachment) { attachment in
+            ChatAttachmentPreviewSheet(viewModel: vm, attachment: attachment)
+        }
         .task {
             // Engagement signal: the chat surface appeared. Idempotent — READY → a
             // liveness probe; not-READY → reconnect. Scoped to this view's lifetime.
             vm.ensureConnected()
+            await historyModel.refresh()
+            await historyModel.retryDeletes(includePermanent: false)
         }
         // Clear path (a) + resync: condition-driven changes while this view is the
         // current screen. Skipped while backgrounded — the background handler below owns
@@ -202,10 +270,18 @@ struct ChatView: View {
         // still-true condition needs re-applying on the way back in.
         .onAppear {
             applyIdleTimer(on: vm.keepScreenOn)
+            syncAttachmentImportAlert()
+        }
+        .onChange(of: vm.attachmentImportAlert) { _, _ in
+            syncAttachmentImportAlert()
+        }
+        .onChange(of: attachmentPickerPresented) { _, presented in
+            if !presented { syncAttachmentImportAlert() }
         }
         // Clear path (b): this view leaving the screen (nav-away). isIdleTimerDisabled is
         // APP-GLOBAL — leaving it set here would keep an unrelated screen's display awake.
         .onDisappear {
+            vm.flushDraft()
             forceIdleTimerOff(reason: "teardown")
         }
         // Clear path (c) + resync: scene backgrounding. The screen is off regardless, so
@@ -217,6 +293,7 @@ struct ChatView: View {
                 forceIdleTimerOff(reason: "background")
             case .active:
                 applyIdleTimer(on: vm.keepScreenOn)
+                Task { await historyModel.retryDeletes(includePermanent: false) }
             default:
                 break
             }
@@ -251,7 +328,39 @@ struct ChatView: View {
         keepScreenOnLog.info("flag on=false reason=\(reason)")
     }
 
+    private func syncAttachmentImportAlert() {
+        guard presentedAttachmentImportAlert == nil, !attachmentPickerPresented else { return }
+        presentedAttachmentImportAlert = vm.attachmentImportAlert
+    }
+
+    private func setPresentedAttachmentImportAlert(_ alert: AttachmentImportAlert?) {
+        guard let dismissed = presentedAttachmentImportAlert else {
+            presentedAttachmentImportAlert = alert
+            return
+        }
+        guard alert == nil else {
+            presentedAttachmentImportAlert = alert
+            return
+        }
+        vm.dismissAttachmentImportAlert(generation: dismissed.generation)
+        // `alert(item:)` uses AttachmentImportAlert.id, so assigning B here makes
+        // SwiftUI finish A's dismissal before presenting B instead of reusing A's host.
+        presentedAttachmentImportAlert = nextAttachmentImportAlertAfterDismissal(
+            dismissedGeneration: dismissed.generation,
+            current: vm.attachmentImportAlert,
+            pickerPresented: attachmentPickerPresented
+        )
+    }
+
     // ── Main content column ───────────────────────────────────────────────────────
+
+    private func openAttachmentPreview(_ id: String) {
+        previewedAttachment = attachmentPreviewSelection(
+            id: id,
+            committed: displayMessages.flatMap(\.attachments),
+            pending: vm.pendingAttachmentPresentations.values.flatMap(\.attachments)
+        )
+    }
 
     private func mainColumn(
         messages: [ChatMessage],
@@ -265,6 +374,15 @@ struct ChatView: View {
                     assistantActivity: assistantActivity,
                     userName: userName,
                     pending: pending,
+                    pendingAttachments: vm.pendingAttachments,
+                    pendingAttachmentPreviews: vm.draftAttachmentPreviews,
+                    pendingAttachmentTransfers: vm.attachmentTransfers,
+                    pendingAttachmentPresentations: vm.pendingAttachmentPresentations,
+                    onRetryAttachmentUpload: { vm.retryAttachmentUpload($0) },
+                    attachmentPreviews: vm.attachmentPreviews,
+                    attachmentPreviewFailures: vm.attachmentPreviewFailures,
+                    onPreviewAttachment: { openAttachmentPreview($0) },
+                    onVisibleAttachmentPreviewIdsChange: { vm.setVisibleAttachmentPreviewIds($0) },
                     onRetry: { vm.retry($0) },
                     historyLoading: historyLoading,
                     bottomOcclusion: composerHeight,
@@ -285,6 +403,17 @@ struct ChatView: View {
                         canRetry: banner.canRetry,
                         onRetry: banner.canRetry ? { vm.reconnect() } : nil
                     )
+                }
+                if let draftError = vm.draftSaveError {
+                    ContentErrorBanner(text: draftError, canRetry: false, onRetry: nil)
+                }
+                if !vm.receiptAcknowledgmentFailures.isEmpty {
+                    ContentErrorBanner(
+                        text: "Message sent, but local draft cleanup failed.",
+                        canRetry: true,
+                        onRetry: { vm.retryReceiptAcknowledgments() }
+                    )
+                    .accessibilityIdentifier("receipt-cleanup-retry-banner")
                 }
                 if let notice = vm.state.reopenFailedNotice {
                     ReopenFailedNoticeBanner(
@@ -309,6 +438,25 @@ struct ChatView: View {
             micLevels: vm.micLevels,
             voiceDisabled: connection.status != .ready,
             canInterrupt: canInterrupt,
+            draftText: vm.draftText,
+            attachments: (vm.draftAttachments + vm.pendingAttachments).map(ComposerAttachment.init),
+            pendingAttachmentImportCount: vm.pendingAttachmentImportCount,
+            attachmentTransfers: vm.attachmentTransfers,
+            attachmentPreviews: vm.draftAttachmentPreviews,
+            attachmentPreviewFailures: vm.draftAttachmentPreviewFailures,
+            onDraftChange: { vm.updateDraft($0) },
+            onPickAttachments: { vm.importAttachments($0) },
+            onPrepareAttachments: { vm.prepareAttachments($0) },
+            onAttachmentImportFailure: { source, error in
+                vm.reportAttachmentImportFailure(source: source, error: error)
+            },
+            onAttachmentPickerPresentationChange: { presented in
+                attachmentPickerPresented = presented
+            },
+            onRemoveAttachment: { vm.removeAttachment($0) },
+            onCancelAttachment: { vm.cancelAttachmentUpload($0) },
+            onRetryAttachment: { vm.retryAttachmentUpload($0) },
+            onEditAttachment: { vm.editPendingAttachment($0) },
             onSend: { vm.send($0) },
             onVoiceIntent: { vm.voiceIntent($0) },
             onTtsToggle: { vm.toggleTts() },
@@ -337,24 +485,39 @@ struct ChatView: View {
             userName: userName,
             household: "",
             activeSessionId: activeSessionId,
-            onSelect: { sessionId in
+            activeDraftId: activeDraftId,
+            onSelect: { row in
                 drawerOpen = false
-                onSelectSession(sessionId)
+                navigateAfterSaving {
+                    if let draftId = row.draftId {
+                        onSelectDraft(draftId, row.sessionId)
+                    } else if let sessionId = row.sessionId {
+                        onSelectSession(sessionId)
+                    }
+                }
             },
             onNewChat: {
                 drawerOpen = false
-                onNewChat()
+                navigateAfterSaving(onNewChat)
             },
             onSettings: {
                 drawerOpen = false
                 onOpenSettings()
             },
             onAskRename: { row in
+                guard let sessionId = row.sessionId else { return }
                 panelRenameText = row.title
-                panelRenaming = PanelTarget(id: row.sessionId, title: row.title)
+                panelRenaming = PanelTarget(id: sessionId, title: row.title)
             },
             onAskDelete: { row in
-                panelDeleting = PanelTarget(id: row.sessionId, title: row.title)
+                guard let sessionId = row.sessionId else { return }
+                panelDeleting = PanelDestructiveTarget(
+                    action: .deleteConversation(sessionId: sessionId), title: row.title
+                )
+            },
+            onAskDiscard: { row in
+                guard let draftId = row.draftId else { return }
+                panelDeleting = PanelDestructiveTarget(action: .discardDraft(draftId: draftId), title: row.title)
             }
         )
     }
@@ -365,8 +528,16 @@ struct ChatView: View {
         ChatTitleBar(
             onOpenPanel: { drawerOpen = true },
             onOpenInbox: onOpenInbox,
-            onNewChat: { onNewChat() }
+            onNewChat: { navigateAfterSaving(onNewChat) }
         )
+    }
+
+    private func navigateAfterSaving(_ navigate: @escaping () -> Void) {
+        guard routeChange.begin() else { return }
+        Task {
+            guard routeChange.finish(saved: await vm.saveDraftBeforeNavigation()) else { return }
+            navigate()
+        }
     }
 }
 
@@ -379,6 +550,36 @@ struct ChatView: View {
 // accessibilityIdentifier: history-loading (shared with the side-panel spinner,
 // scoped here to the message-list overlay).
 // ---------------------------------------------------------------------------
+
+private struct ChatAttachmentPreviewSheet: View {
+    @ObservedObject var viewModel: ChatViewModel
+    let attachment: AttachmentPreviewSelection
+
+    var body: some View {
+        MessageAttachmentPreviewSheet(
+            attachment: attachment,
+            preview: attachment.isLocal
+                ? viewModel.draftAttachmentPreviews[attachment.id]
+                : viewModel.attachmentPreviews[attachment.id],
+            previewFailed: attachment.isLocal
+                ? viewModel.draftAttachmentPreviewFailures.contains(attachment.id)
+                : viewModel.attachmentPreviewFailures.contains(attachment.id),
+            file: attachment.isLocal
+                ? attachment.localFile
+                : viewModel.downloadedAttachmentFiles[attachment.id],
+            downloadFailed: !attachment.isLocal && viewModel.attachmentDownloadFailures.contains(attachment.id),
+            downloadAvailable: !attachment.isLocal,
+            onRetryPreview: {
+                if attachment.isLocal {
+                    viewModel.retryDraftAttachmentPreview(attachment.id)
+                } else {
+                    viewModel.retryAttachmentPreview(attachment.id)
+                }
+            },
+            onDownload: { viewModel.downloadAttachment(attachment.id) }
+        )
+    }
+}
 
 private struct HistoryLoadingOverlay: View {
     var body: some View {

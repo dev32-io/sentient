@@ -1,118 +1,266 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchOllamaCloudModels } from "./ollama-fetcher.js";
-
-// Sample mirrors the real /api/tags shape — names with and without size
-// variants so we exercise both tag-form rules (`:cloud` vs `-cloud`).
-const sampleResponse = {
-  models: [
-    { name: "kimi-k2.6", model: "kimi-k2.6", size: 595_148_192_736 },
-    { name: "gemma3:4b", model: "gemma3:4b", size: 8_600_000_000 },
-    { name: "gpt-oss:120b", model: "gpt-oss:120b", size: 65_290_180_781 },
-    { name: "qwen3-vl:235b", model: "qwen3-vl:235b", size: 470_000_000_000 },
-    { name: "deepseek-v4-flash", model: "deepseek-v4-flash", size: 140_000_000_000 },
-    { name: "minimax-m2", model: "minimax-m2", size: 230_000_000_000 },
-  ],
-};
 
 const config = {
   baseUrl: "https://ollama.com/v1",
   timeoutMs: 5_000,
 };
 
-// biome-ignore lint/suspicious/noExplicitAny: vitest fetch spy generic
-let fetchSpy: any;
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status });
+}
 
-beforeEach(() => {
-  fetchSpy = vi.spyOn(globalThis, "fetch");
-});
+function catalog(names: string[]) {
+  return { models: names.map((name) => ({ name })) };
+}
+
 afterEach(() => {
-  fetchSpy.mockRestore();
+  vi.useRealTimers();
 });
 
 describe("fetchOllamaCloudModels", () => {
-  it("hits /api/tags at the origin (strips the /v1 OpenAI-compat suffix)", async () => {
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify(sampleResponse), { status: 200 }));
-    await fetchOllamaCloudModels(config);
-    const calledUrl = fetchSpy.mock.calls[0]?.[0];
-    expect(String(calledUrl)).toBe("https://ollama.com/api/tags");
+  it("uses raw discovered IDs for /api/show and normalizes only catalog IDs", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/api/tags")) return json(catalog(["unfamiliar-model", "gemma4:31b"]));
+      return json({ capabilities: ["completion"], model_info: {} });
+    });
+
+    const result = await fetchOllamaCloudModels({ ...config, fetch });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(calls[0]?.url).toBe("https://ollama.com/api/tags");
+    expect(calls.slice(1).map(({ init }) => JSON.parse(String(init?.body)))).toEqual([
+      { model: "unfamiliar-model" },
+      { model: "gemma4:31b" },
+    ]);
+    expect(calls.slice(1).every(({ init }) => init?.method === "POST")).toBe(true);
+    expect(calls.slice(1).every(({ init }) => new Headers(init?.headers).get("authorization") === null)).toBe(true);
+    expect(result.value.map(({ id }) => id)).toEqual(["unfamiliar-model:cloud", "gemma4:31b-cloud"]);
   });
 
-  it("translates a name without colon into <name>:cloud", async () => {
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify(sampleResponse), { status: 200 }));
-    const r = await fetchOllamaCloudModels(config);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const ids = r.value.map((m) => m.id);
-    expect(ids).toContain("kimi-k2.6:cloud");
-    expect(ids).toContain("deepseek-v4-flash:cloud");
-    expect(ids).toContain("minimax-m2:cloud");
+  it("derives unfamiliar-model capabilities and architecture context from /api/show", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/api/tags")) return json(catalog(["new-hotness", "text-only"]));
+      return json(
+        fetch.mock.calls.length === 2
+          ? {
+              capabilities: ["completion", "tools", "vision"],
+              model_info: {
+                "general.architecture": "newarch",
+                "aaa.context_length": 4_096,
+                "newarch.context_length": 262_144,
+              },
+            }
+          : { capabilities: ["completion"], model_info: { "text.context_length": 32_768 } },
+      );
+    });
+
+    const result = await fetchOllamaCloudModels({ ...config, fetch });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value[0]).toMatchObject({
+      supportsVision: true,
+      supportsTools: true,
+      contextLength: 262_144,
+    });
+    expect(result.value[1]).toMatchObject({
+      supportsVision: false,
+      supportsTools: false,
+      contextLength: 32_768,
+    });
   });
 
-  it("translates a name with size variant into <name>:<size>-cloud", async () => {
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify(sampleResponse), { status: 200 }));
-    const r = await fetchOllamaCloudModels(config);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const ids = r.value.map((m) => m.id);
-    expect(ids).toContain("gemma3:4b-cloud");
-    expect(ids).toContain("gpt-oss:120b-cloud");
-    expect(ids).toContain("qwen3-vl:235b-cloud");
-  });
+  it("keeps inventory and fails closed for malformed, missing, and failed per-model metadata", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith("/api/tags")) return json(catalog(["malformed", "missing", "failed"]));
+      const model = JSON.parse(String(init?.body)).model;
+      if (model === "malformed") return json({ capabilities: "vision", model_info: {} });
+      if (model === "missing") return json({});
+      throw new Error("metadata unavailable");
+    });
 
-  it("infers capability flags via the family table", async () => {
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify(sampleResponse), { status: 200 }));
-    const r = await fetchOllamaCloudModels(config);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const byId = new Map(r.value.map((m) => [m.id, m]));
-    const qwenVl = byId.get("qwen3-vl:235b-cloud");
-    const gpt = byId.get("gpt-oss:120b-cloud");
-    expect(qwenVl?.supportsVision).toBe(true);
-    expect(qwenVl?.supportsTools).toBe(true);
-    expect(gpt?.supportsVision).toBe(false);
-    expect(gpt?.supportsTools).toBe(true);
-  });
+    const result = await fetchOllamaCloudModels({ ...config, fetch });
 
-  it("marks every entry with provider='ollama-cloud' and bundled pricing", async () => {
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify(sampleResponse), { status: 200 }));
-    const r = await fetchOllamaCloudModels(config);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    for (const m of r.value) {
-      expect(m.provider).toBe("ollama-cloud");
-      expect(m.pricingPer1mPrompt).toBe("included");
-      expect(m.pricingPer1mCompletion).toBe("included");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(3);
+    for (const model of result.value) {
+      expect(model).toMatchObject({
+        supportsVision: false,
+        supportsTools: false,
+        contextLength: 0,
+        metadataComplete: false,
+      });
     }
   });
 
-  it("returns fetch-error on non-2xx", async () => {
-    fetchSpy.mockResolvedValue(new Response("nope", { status: 503 }));
-    const r = await fetchOllamaCloudModels(config);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.error.kind).toBe("fetch-error");
-    if (r.error.kind === "fetch-error") expect(r.error.status).toBe(503);
+  it("uses capabilities without model_info and treats ambiguous context as unknown", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/api/tags")) return json(catalog(["capable", "ambiguous"]));
+      return fetch.mock.calls.length === 2
+        ? json({ capabilities: ["tools", "vision"] })
+        : json({ capabilities: ["tools"], model_info: { "one.context_length": 1_024, "two.context_length": 2_048 } });
+    });
+
+    const result = await fetchOllamaCloudModels({ ...config, fetch });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual([
+      expect.objectContaining({
+        supportsTools: true,
+        supportsVision: true,
+        contextLength: 0,
+        metadataComplete: true,
+      }),
+      expect.objectContaining({
+        supportsTools: true,
+        supportsVision: false,
+        contextLength: 0,
+        metadataComplete: true,
+      }),
+    ]);
   });
 
-  it("returns timeout when fetch aborts", async () => {
-    fetchSpy.mockImplementation(
-      () =>
-        new Promise((_resolve, reject) => {
-          setTimeout(() => reject(new DOMException("aborted", "AbortError")), 5);
+  it("preserves exact-ID metadata on failure, but fresh negatives revoke it and removed inventory stays removed", async () => {
+    const priorModels = [
+      {
+        id: "kept:cloud",
+        provider: "ollama-cloud" as const,
+        name: "kept",
+        description: "",
+        contextLength: 8_192,
+        pricingPer1mPrompt: "included" as const,
+        pricingPer1mCompletion: "included" as const,
+        supportsTools: true,
+        supportsVision: true,
+      },
+      {
+        id: "removed:cloud",
+        provider: "ollama-cloud" as const,
+        name: "removed",
+        description: "",
+        contextLength: 4_096,
+        pricingPer1mPrompt: "included" as const,
+        pricingPer1mCompletion: "included" as const,
+        supportsTools: true,
+        supportsVision: true,
+      },
+    ];
+    let freshNegative = false;
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/api/tags")) return json(catalog(["kept"]));
+      return freshNegative
+        ? json({ capabilities: ["completion"], model_info: { "only.context_length": 2_048 } })
+        : new Response("", { status: 503 });
+    });
+
+    const preserved = await fetchOllamaCloudModels({ ...config, fetch, priorModels });
+    expect(preserved.ok).toBe(true);
+    if (!preserved.ok) return;
+    expect(preserved.value).toEqual([
+      expect.objectContaining({
+        id: "kept:cloud",
+        supportsTools: true,
+        supportsVision: true,
+        contextLength: 8_192,
+        metadataComplete: false,
+      }),
+    ]);
+
+    freshNegative = true;
+    const revoked = await fetchOllamaCloudModels({ ...config, fetch, priorModels: preserved.value });
+    expect(revoked.ok).toBe(true);
+    if (!revoked.ok) return;
+    expect(revoked.value).toEqual([
+      expect.objectContaining({
+        id: "kept:cloud",
+        supportsTools: false,
+        supportsVision: false,
+        contextLength: 2_048,
+        metadataComplete: true,
+      }),
+    ]);
+  });
+
+  it("bounds enrichment concurrency and cancels all active requests at one shared deadline", async () => {
+    vi.useFakeTimers();
+    let active = 0;
+    let maximum = 0;
+    let aborted = 0;
+    const signals = new Set<AbortSignal>();
+    const fetch = vi.fn((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const signal = init?.signal;
+      if (signal) signals.add(signal);
+      if (String(input).endsWith("/api/tags")) {
+        return Promise.resolve(json(catalog(Array.from({ length: 8 }, (_, i) => `model-${i}`))));
+      }
+      active++;
+      maximum = Math.max(maximum, active);
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            active--;
+            aborted++;
+            reject(new DOMException("aborted", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    });
+
+    const pending = fetchOllamaCloudModels({ ...config, timeoutMs: 100, fetch });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(maximum).toBe(4);
+
+    vi.advanceTimersByTime(100);
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toHaveLength(8);
+    expect(result.value.every((model) => !model.supportsVision && !model.supportsTools)).toBe(true);
+    expect(aborted).toBe(4);
+    expect(signals.size).toBe(1);
+  });
+
+  it("returns timeout when inventory fetch honors cancellation", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+            once: true,
+          });
         }),
     );
-    const r = await fetchOllamaCloudModels({ ...config, timeoutMs: 50 });
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.error.kind).toBe("timeout");
-    if (r.error.kind === "timeout") expect(r.error.afterMs).toBe(50);
+
+    const pending = fetchOllamaCloudModels({ ...config, timeoutMs: 100, fetch });
+    vi.advanceTimersByTime(100);
+    const result = await pending;
+
+    expect(result).toEqual({ ok: false, error: { kind: "timeout", afterMs: 100 } });
   });
 
-  it("returns parse-error on malformed JSON", async () => {
-    fetchSpy.mockResolvedValue(new Response("{not-json", { status: 200 }));
-    const r = await fetchOllamaCloudModels(config);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.error.kind).toBe("parse-error");
+  it("returns fetch-error for failed inventory HTTP response", async () => {
+    const result = await fetchOllamaCloudModels({ ...config, fetch: async () => new Response("", { status: 503 }) });
+    expect(result).toEqual({ ok: false, error: { kind: "fetch-error", status: 503 } });
+  });
+
+  it("returns parse-error for malformed inventory JSON", async () => {
+    const result = await fetchOllamaCloudModels({
+      ...config,
+      fetch: async () => new Response("{not-json", { status: 200 }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("parse-error");
   });
 });

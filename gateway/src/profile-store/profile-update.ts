@@ -27,11 +27,11 @@ export interface ProfileUpdateBase {
  * A PUT REPLACES ONLY THE PERMISSION KEYS IT NAMES — and a key named with
  * `null` is CLEARED (removed from the merged map) rather than written.
  *
- * Every other field is a whole value the body always carries (the schema
- * requires model, voice, persona, compression, advanced, and `tools.toolsets`
- * is a list, where "partial" means nothing), so all of it is replaced outright.
- * `tools.permissions` is the one field a client can legitimately hold an
- * opinion about only PART of:
+ * Every other required field is a whole value the body carries, so it is
+ * replaced outright. `auxiliaryModels` is optional for old clients: omission
+ * preserves the stored object, while a present object replaces it (including
+ * `{}`, which clears all overrides). `tools.permissions` is the one field a
+ * client can legitimately hold an opinion about only PART of:
  *
  *   - a SERVER the body does not name keeps its stored per-tool map;
  *   - a TOOL the body does not name keeps its stored permission;
@@ -85,7 +85,11 @@ export function applyProfileUpdate(incoming: ProfileV1PutBody, base: ProfileUpda
   // back on. Only a genuinely ABSENT table takes the template.
   const startingPoint = base.stored?.tools.permissions ?? base.permissionDefaults;
   const permissions = mergePermissions(startingPoint, incoming.tools.permissions);
-  return { ...incoming, tools: { ...incoming.tools, permissions } };
+  return {
+    ...incoming,
+    auxiliaryModels: incoming.auxiliaryModels ?? base.stored?.auxiliaryModels,
+    tools: { ...incoming.tools, permissions },
+  };
 }
 
 /** Whether this PUT will seed the role template. Exported so the "when" is

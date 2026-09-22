@@ -1,8 +1,10 @@
+import { attachmentsConfigSchema, historyConfigSchema } from "@sentient/config";
 import { ADMIN_ROLE } from "@sentient/protocol";
 import type { Server, ServerWebSocket } from "bun";
 import type { AdminDeps } from "./api/handlers/admin.ts";
 import { createAdminHandler } from "./api/handlers/admin.ts";
 import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.ts";
+import { createAttachmentsHandler } from "./api/handlers/attachments.ts";
 import { createAuthHandler } from "./api/handlers/auth.ts";
 import { createCalendarHandler } from "./api/handlers/calendar.ts";
 import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
@@ -25,20 +27,24 @@ import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
 import { createVoicesHandler } from "./api/handlers/voices.ts";
 import { createWebuiHandler } from "./api/handlers/webui.ts";
 import { createWsUpgradeHandler } from "./api/handlers/ws.ts";
-import { createProvidersDeps } from "./api/providers-deps.ts";
 import { createApiRouter } from "./api/router.ts";
 import { createWizardHandler } from "./api/wizard/index.ts";
 import { runApply } from "./apply/orchestrator.ts";
 import type { RouterDeps } from "./apply/router.ts";
+import { createAttachmentStorage } from "./attachments/storage.ts";
 import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
 import {
   type CalendarReminderScheduler,
   createCalendarReminderScheduler,
 } from "./calendar/calendar-reminder-scheduler.ts";
+import { createUserPrincipal } from "./identity/user-principal.ts";
 import { getLog } from "./logging/logger.ts";
 import type { PushStore } from "./push/push-store.ts";
+import { createHistoryCleanup } from "./runtime/history-cleanup.ts";
+import { cleanupUser } from "./runtime/history-user-cleanup.ts";
 import type { ScheduleService } from "./scheduling/service.ts";
+import { finishSessionDeletion } from "./session-handlers/session-deletion.ts";
 import {
   type SessionData,
   cleanupSession,
@@ -46,6 +52,7 @@ import {
   openSession,
 } from "./session-handlers/ws-handlers.ts";
 import { errorMessage } from "./session-handlers/ws-helpers.ts";
+import { openSessionStore } from "./store/session-store.ts";
 import type { TokenService } from "./user-auth/token-service.ts";
 import type { UserStore } from "./user-auth/user-store.ts";
 
@@ -104,16 +111,13 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     installState: services.installState,
     currentVersion: services.gatewayVersion,
   });
-  const providersDeps = createProvidersDeps({
-    config: services.providersConfig,
-    env: (name) => process.env[name],
-    secretsStore: services.secretsStore ?? undefined,
-  });
+  const providersDeps = services.providersDeps;
   const handleAdmin = createAdminHandler(buildAdminDeps(services, adminToken, services.auth.tokens));
   const handleSecrets = createSecretsHandler({
     installState: services.installState,
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
     requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken, services.auth.users),
+    invalidateCatalogCache: providersDeps.invalidateCatalogCache,
     systemOrchestrator: services.systemOrchestrator,
     ...(options.pushProviderUrl ? { pushProviderUrl: options.pushProviderUrl } : {}),
   });
@@ -175,6 +179,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     hermesVersionPath: services.hermesVersionPath,
     sttHealthUrl: services.sttHealthUrl,
     ttsHealthUrl: services.ttsHealthUrl,
+    attachmentParser: services.attachmentParser,
     tokens: services.auth.tokens,
     fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
   });
@@ -191,6 +196,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
     testProvider: testProviderImpl,
     listModels: providersDeps.listModels,
+    invalidateCatalogCache: providersDeps.invalidateCatalogCache,
     systemOrchestrator: services.systemOrchestrator,
   });
   const handleSystemStatus = createSystemStatusHandler({
@@ -243,11 +249,80 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     ...(services.calendarHouseholdTimeZone ? { householdTimeZone: services.calendarHouseholdTimeZone } : {}),
     ...(calendarReminderScheduler ? { reminders: calendarReminderScheduler } : {}),
   });
+  const pendingFileCleanups = new Set<Promise<void>>();
   const handleSessions = createSessionsHandler({
     tokens: services.auth.tokens,
     users: services.auth.users,
     accessManager: services.accessManager,
     dbFileName: services.dbFileName,
+    onSessionDeleted: (principal, sessionId) => {
+      finishSessionDeletion(services, principal, sessionId);
+      // Durable intent already committed. Respond without waiting for unlink; failures retry at startup/nightly.
+      const cleanup = (async () => {
+        const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
+        try {
+          const capability = services.accessManager.grant(principal, "attachment-store");
+          if (capability.resource !== "attachment-store") throw new Error("invalid attachment capability");
+          const storage = createAttachmentStorage({ ...capability, resource: capability.resource }, attachmentLimits);
+          await storage.cleanupSession(sessionId);
+          store.ackFileCleanupIntent(sessionId);
+        } finally {
+          store.close();
+        }
+      })().catch(() => {
+        log.warn("history-cleanup.manual-deferred", { userId: principal.userId, reason: "file-cleanup-failed" });
+      });
+      pendingFileCleanups.add(cleanup);
+      void cleanup.then(() => pendingFileCleanups.delete(cleanup));
+    },
+  });
+  const attachmentConfig = attachmentsConfigSchema.parse(services.attachments ?? {});
+  const attachmentLimits = {
+    maxFileBytes: attachmentConfig.max_file_bytes,
+    maxFilesPerAttempt: attachmentConfig.max_files_per_message,
+    maxRequestBytes: attachmentConfig.max_request_bytes,
+    maxUserBytes: attachmentConfig.max_user_bytes,
+    stagingTtlMs: attachmentConfig.staging_ttl_ms,
+  };
+  const handleAttachments = createAttachmentsHandler({
+    tokens: services.auth.tokens,
+    users: services.auth.users,
+    accessManager: services.accessManager,
+    dbFileName: services.dbFileName,
+    limits: attachmentLimits,
+    parser: services.attachmentParser,
+    previewMaxEdge: attachmentConfig.inspection_max_edge,
+  });
+  const historyCleanup = createHistoryCleanup({
+    config: historyConfigSchema.parse(services.history ?? {}),
+    listUsers: async () => {
+      const result = await services.auth.users.list();
+      if (!result.ok) throw new Error("account enumeration failed");
+      return result.value.map((user) => user.userId);
+    },
+    cleanupUser: async (userId, cutoff, batchSize) => {
+      const found = await services.auth.users.get(userId);
+      if (!found.ok) throw new Error("account lookup failed");
+      if (!found.value) return;
+      const principal = createUserPrincipal(userId, found.value.role, "home");
+      const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
+      const capability = services.accessManager.grant(principal, "attachment-store");
+      try {
+        if (capability.resource !== "attachment-store") throw new Error("invalid attachment capability");
+        const result = await cleanupUser({
+          principal,
+          store,
+          storage: createAttachmentStorage({ ...capability, resource: capability.resource }, attachmentLimits),
+          sessionRegistry: services.sessionRegistry,
+          cutoff,
+          batchSize,
+          finishSessionDeletion: (owner, sessionId) => finishSessionDeletion(services, owner, sessionId),
+        });
+        log.info("history-cleanup.account-complete", { userId, ...result });
+      } finally {
+        store.close();
+      }
+    },
   });
   const handleScheduledMessages = options.schedules
     ? createScheduledMessagesHandler({
@@ -273,6 +348,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     // Bun's idleTimeout is in whole seconds, capped at 255. Convert from the
     // ms YAML knob and round down so we never exceed the configured value.
     idleTimeout: Math.floor(services.session.ws_idle_timeout_ms / 1000),
+    maxRequestBodySize: attachmentConfig.max_request_bytes,
     ...(services.tls ? { tls: services.tls } : {}),
 
     error(err: Error): Response {
@@ -303,6 +379,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
         handleVoices,
         handleDiagnostics,
         handleSessions,
+        handleAttachments,
         handleCalendar,
         ...(handleScheduledMessages ? { handleScheduledMessages } : {}),
         ...(handlePush ? { handlePush } : {}),
@@ -339,8 +416,12 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
       },
     },
   });
+  historyCleanup.start();
   return Object.assign(server, {
     async closeOwnedResources() {
+      historyCleanup.stop();
+      await historyCleanup.idle();
+      await Promise.all(pendingFileCleanups);
       const scheduler = calendarReminderScheduler;
       calendarReminderScheduler = undefined;
       await scheduler?.close();

@@ -565,10 +565,13 @@ export function attachWithSnapshot(
   // ── projection and the turn state have all been read: an emission
   // ── interleaving here is a frame that is in neither the snapshot nor the
   // ── drain, which is precisely the silent loss this design exists to prevent.
-  const watermark = handles.journal.newestSeq;
   if (committedFeed === "snapshot") {
     handles.fanOut.directTo(attachment.attachmentId, () => handles.runtime.emitConversationSnapshot());
   }
+  // Snapshot emission may flush a committed tail to peer windows before the
+  // directed snapshot advances the shared feed cursor. Capture watermark after
+  // that flush so the attaching window does not receive the same entry twice.
+  const watermark = handles.journal.newestSeq;
   const turnState = captureTurnStateSnapshot(handles.runtime);
   // ── End of the atomic block.
 

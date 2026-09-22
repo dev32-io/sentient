@@ -49,7 +49,7 @@ import { isRetained, livenessInputsOf } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FanOutTurnEmitter } from "./fan-out-emitter.js";
 import type { FrameJournal } from "./frame-journal.js";
-import type { InputArbiter } from "./input-arbiter.js";
+import type { InputArbiter, InputFloorReservation } from "./input-arbiter.js";
 import type { ReplayLease } from "./replay-registry.js";
 import { type Attachment, type SubscriberSet, createSubscriberSet } from "./subscriber-set.js";
 import type { SessionData } from "./ws-helpers.js";
@@ -151,6 +151,11 @@ export interface SessionDisposalInput {
   dispose(): void;
 }
 
+export interface DraftInputFloorReservation extends InputFloorReservation {
+  /** Move draft authority onto minted session before model submission. */
+  commitToSession(sessionId: string, holderId: string): boolean;
+}
+
 export interface SessionRegistry {
   /**
    * Attach a connection to [sessionId], constructing the session's handles on
@@ -230,6 +235,13 @@ export interface SessionRegistry {
    */
   orphanSessionsForUser(userId: string): readonly SessionRuntime[];
   /**
+   * Remove and terminally dispose every resident incarnation of one durably
+   * deleted session owned by [userId], including credential-orphaned handles.
+   * Returns windows the coordinator must move to a draft binding. A mismatched
+   * user sees no resident and cannot tear down another account's runtime.
+   */
+  disposeDeletedSession(userId: string, sessionId: string): readonly Attachment[];
+  /**
    * True iff ANY resident session owned by [userId] has a turn in flight. The
    * READ-ONLY, non-destructive seam the nightly dreamer's yield gate polls
    * (memory-system spec §8: the dreamer is low priority and waits while a user
@@ -245,11 +257,21 @@ export interface SessionRegistry {
   /** Everything an attaching connection needs to hold onto — see
    *  `SessionHandles`. Null when no session is resident under this id. */
   handlesFor(sessionId: string): SessionHandles | null;
+  /** Reserve copied-draft authority before first-message admission. */
+  reserveDraftInput(
+    userId: string,
+    draftKey: string,
+    holderId: string,
+    nowMs: number,
+    windowMs: number,
+  ): DraftInputFloorReservation | null;
   /** Resident sessions. Exposed so teardown paths can assert no leak. */
   readonly size: number;
 }
 
 interface ResidentSession {
+  /** Durable id retained even when this resident is re-keyed as an orphan. */
+  sessionId: string;
   handles: SessionHandles;
   subscribers: SubscriberSet;
 }
@@ -283,6 +305,20 @@ function orphanKey(sessionId: string): string {
 
 export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhenNoWorkRemains): SessionRegistry {
   const sessions = new Map<string, ResidentSession>();
+  const draftFloors = new Map<
+    string,
+    {
+      holderId: string;
+      atMs: number;
+      reservations: Set<object>;
+      committed: boolean;
+      transferredSessionId: string | null;
+    }
+  >();
+
+  function draftFloorKey(userId: string, draftKey: string): string {
+    return `${userId}\0${draftKey}`;
+  }
 
   function evaluate(sessionId: string, resident: ResidentSession): void {
     policy({
@@ -398,7 +434,7 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       // Built BEFORE anything is recorded, so a throw leaves the registry
       // exactly as it was.
       const handles = build();
-      const resident: ResidentSession = { handles, subscribers: createSubscriberSet(sessionId) };
+      const resident: ResidentSession = { sessionId, handles, subscribers: createSubscriberSet(sessionId) };
       const attachment = resident.subscribers.add(connectionId, ws);
       sessions.set(sessionId, resident);
       log.info("session-registry.resident", {
@@ -416,7 +452,7 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       const existing = sessions.get(sessionId);
       if (existing) return existing.handles;
       const handles = build();
-      sessions.set(sessionId, { handles, subscribers: createSubscriberSet(sessionId) });
+      sessions.set(sessionId, { sessionId, handles, subscribers: createSubscriberSet(sessionId) });
       log.info("session-registry.resident", {
         sessionId,
         residentSessions: sessions.size,
@@ -462,6 +498,27 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       return orphaned;
     },
 
+    disposeDeletedSession(userId, sessionId) {
+      const attachments: Attachment[] = [];
+      for (const [key, resident] of [...sessions.entries()]) {
+        if (resident.sessionId !== sessionId || resident.handles.runtime.userId !== userId) continue;
+        sessions.delete(key);
+        attachments.push(...resident.subscribers.attachments);
+        for (const attachment of resident.subscribers.attachments) resident.subscribers.remove(attachment.attachmentId);
+        resident.handles.dispose();
+      }
+      if (attachments.length > 0) {
+        log.info("session-registry.deleted-session-disposed", {
+          userId,
+          sessionId,
+          droppedWindows: attachments.length,
+          residentSessions: sessions.size,
+          reason: "durable deletion made every resident incarnation terminal",
+        });
+      }
+      return attachments;
+    },
+
     hasActiveTurnForUser(userId) {
       for (const resident of sessions.values()) {
         const runtime = resident.handles.runtime;
@@ -476,6 +533,70 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
 
     handlesFor(sessionId) {
       return sessions.get(sessionId)?.handles ?? null;
+    },
+
+    reserveDraftInput(userId, draftKey, holderId, nowMs, windowMs) {
+      const key = draftFloorKey(userId, draftKey);
+      let floor = draftFloors.get(key) ?? null;
+      if (floor !== null && nowMs - floor.atMs < windowMs && floor.holderId !== holderId) return null;
+      if (floor === null || nowMs - floor.atMs >= windowMs) {
+        floor = {
+          holderId,
+          atMs: nowMs,
+          reservations: new Set(),
+          committed: false,
+          transferredSessionId: null,
+        };
+        draftFloors.set(key, floor);
+      }
+
+      const claimedFloor = floor;
+      const expireCommittedFloor = (): void => {
+        const timer = setTimeout(() => {
+          if (draftFloors.get(key) === claimedFloor) draftFloors.delete(key);
+        }, windowMs);
+        timer.unref?.();
+      };
+      const token = {};
+      claimedFloor.reservations.add(token);
+      let settled = false;
+      return {
+        commit() {
+          if (!claimedFloor.committed) expireCommittedFloor();
+          claimedFloor.committed = true;
+          claimedFloor.reservations.delete(token);
+          settled = true;
+        },
+        release() {
+          if (settled) return;
+          claimedFloor.reservations.delete(token);
+          settled = true;
+          if (
+            draftFloors.get(key) === claimedFloor &&
+            !claimedFloor.committed &&
+            claimedFloor.reservations.size === 0
+          ) {
+            draftFloors.delete(key);
+          }
+        },
+        commitToSession(sessionId, sessionHolderId) {
+          if (settled) return false;
+          if (claimedFloor.transferredSessionId === null) {
+            const reservation =
+              sessions.get(sessionId)?.handles.arbiter.reserve(sessionHolderId, claimedFloor.atMs) ?? null;
+            if (reservation === null) return false;
+            reservation.commit();
+            claimedFloor.transferredSessionId = sessionId;
+          } else if (claimedFloor.transferredSessionId !== sessionId) {
+            return false;
+          }
+          if (!claimedFloor.committed) expireCommittedFloor();
+          claimedFloor.committed = true;
+          claimedFloor.reservations.delete(token);
+          settled = true;
+          return true;
+        },
+      };
     },
 
     get size() {

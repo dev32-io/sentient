@@ -17,6 +17,7 @@ import type { ReconnectConfig, SDKStatus } from "./connector-types.ts";
 import { sdkLog } from "./debug.ts";
 
 const WS_READY_STATE_OPEN = 1;
+const DRAFT_KEY_PATTERN = /^d_[0-9a-f]{32}$/;
 
 // ---------------------------------------------------------------------------
 // Per-tab "current session" pointer
@@ -120,18 +121,21 @@ export function setCurrentSessionId(sessionId: string): void {
  * line reading "refused" there would contradict the gateway's own trail for a
  * case it honoured. `null` means the answer was not a draft frame at all.
  */
-export function clearRefusedSessionId(answeredDraftKey: string | null): void {
-  if (presentedSessionId === null) return;
+export function clearRefusedSessionId(answeredDraftKey: string | null): string | null {
+  if (presentedSessionId === null) return null;
+  const presented = presentedSessionId;
+  const resumedDraft = answeredDraftKey === presented;
+  const isDraft = DRAFT_KEY_PATTERN.test(presented);
   sdkLog.info("session-pointer.dropped", {
-    presentedId: presentedSessionId,
+    presentedId: presented,
     answeredDraftKey,
-    reason:
-      answeredDraftKey === presentedSessionId
-        ? "gateway resumed the draft this tab presented — re-anchoring on the same key"
-        : "gateway did not honour the presented id — dropping it so the next connect starts clean",
+    reason: resumedDraft
+      ? "gateway resumed the draft this tab presented — re-anchoring on the same key"
+      : "gateway did not honour the presented id — dropping it so the next connect starts clean",
   });
   removeSessionStorage(CURRENT_SESSION_STORAGE_KEY);
   presentedSessionId = null;
+  return resumedDraft || isDraft ? null : presented;
 }
 
 /** Test helper — reset module state between tests. */

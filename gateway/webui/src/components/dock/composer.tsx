@@ -1,6 +1,7 @@
 import type { TaskListItem } from "@sentient/protocol";
 import type { JSX, RefObject } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import type { DraftAttachment } from "@sentient/web-sdk";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
 import { Surface } from "../common/foundation.tsx";
 import {
@@ -16,6 +17,7 @@ import { ComposerGlyph } from "./composer-glyph.tsx";
 import { ComposerTaskShelf } from "./composer-task-strip.tsx";
 import { DockStyleSheet } from "./dock-styles.tsx";
 import { InterruptButton } from "./interrupt-button.tsx";
+import { prepareLocalImagePreview } from "./local-image-preview.ts";
 import { SuggestionChips } from "./suggestion-chips.tsx";
 import { TtsButton } from "./tts-button.tsx";
 import { VoiceCaptureControl, type VoiceCaptureState } from "./voice-capture-control.tsx";
@@ -34,6 +36,11 @@ interface LegacyChatComposerProps {
   ttsEnabled: boolean;
   suggestions: readonly string[];
   tasks: readonly TaskListItem[];
+  value?: string;
+  attachments?: readonly DraftAttachment[];
+  onValueChange?(value: string): void;
+  onAttachmentsSelected?(files: readonly File[]): void;
+  onAttachmentRemove?(fileIdentity: string): void;
   onSendText(text: string): void;
   onCaptureStart(mode: LegacyCaptureMode): Promise<string>;
   onCaptureCommit(captureId: string): Promise<void>;
@@ -81,6 +88,36 @@ function DraftEditor({ value, receded, inputRef, onValueChange, onSubmit }: Draf
   );
 }
 
+function DraftAttachmentCard({ attachment, onRemove }: { attachment: DraftAttachment; onRemove?(): void }): JSX.Element {
+  const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let url: string | null = null;
+    setPreview(null);
+    if (attachment.type.startsWith("image/")) {
+      void prepareLocalImagePreview(attachment.blob, controller.signal).then((poster) => {
+        if (!poster || controller.signal.aborted) return;
+        url = URL.createObjectURL(poster);
+        setPreview(url);
+      }).catch(() => {});
+    }
+    return () => {
+      controller.abort();
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [attachment.id, attachment.type, attachment.blob.size]);
+  return (
+    <li class="dock-attachment-card">
+      {preview && <img src={preview} alt="" class="dock-attachment-card__preview" onError={() => {
+        URL.revokeObjectURL(preview);
+        setPreview(null);
+      }} />}
+      <span class="dock-attachment-card__name" title={attachment.name}>{attachment.name}</span>
+      {onRemove && <button type="button" aria-label={`Remove ${attachment.name}`} onClick={onRemove}>×</button>}
+    </li>
+  );
+}
+
 interface ComposerActionsProps {
   draftPresent: boolean;
   held: boolean;
@@ -90,23 +127,32 @@ interface ComposerActionsProps {
   ttsEnabled: boolean;
   capturePort: CapturePort;
   onSend(): void;
+  onPickFiles(files: readonly File[]): void;
   onTtsToggle(): void;
   onInterrupt(): void;
   onVoiceState(state: VoiceCaptureState): void;
 }
 
 function ComposerActions(props: ComposerActionsProps): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <div class="dock-composer__actions">
-      <button
-        type="button"
-        class="dock-composer-control dock-composer__attachment"
-        disabled
-        aria-label="Attachments are not available"
-        title="Attachments are not available"
-      >
+      <button type="button" class="dock-composer-control dock-composer__attachment" aria-label="Attach files" title="Attach files" onClick={() => fileInputRef.current?.click()}>
         <ComposerGlyph name="attachment" />
       </button>
+      <input
+        ref={fileInputRef}
+        class="dock-composer__file-input"
+        type="file"
+        multiple
+        aria-label="Choose attachment files"
+        accept="image/jpeg,image/png,image/heic,image/heif,image/avif,image/webp,image/gif,image/tiff,image/bmp,image/jp2,image/jxl,.jpg,.jpeg,.png,.heic,.heif,.avif,.webp,.gif,.tif,.tiff,.bmp,.jp2,.j2k,.j2c,.jpc,.jpf,.jpx,.jpm,.jxl,application/vnd.sentient.live-photo+zip,.livephoto.zip,text/plain,text/markdown,text/csv,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.toml,.xml,.js,.jsx,.ts,.tsx,.css,.py,.kt,.kts,.swift,.java,.c,.h,.cpp,.hpp,.rs,.go,.sh,application/pdf,.pdf"
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])];
+          event.currentTarget.value = "";
+          if (files.length) props.onPickFiles(files);
+        }}
+      />
       <TtsButton enabled={props.ttsEnabled} onToggle={props.onTtsToggle} />
       <span class="dock-composer__grow" />
       <div class={`dock-composer__end-actions${props.held ? " dock-composer__end-actions--held" : ""}`}>
@@ -166,9 +212,11 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
   }
   const capturePort: CapturePort = capturePortRef.current;
 
-  const draft = semantic ? props.value : legacyDraft;
-  const onValueChange = semantic ? props.onValueChange : setLegacyDraft;
+  const controlledLegacy = !semantic && props.value !== undefined && props.onValueChange !== undefined;
+  const draft = semantic ? props.value : controlledLegacy ? props.value! : legacyDraft;
+  const onValueChange = semantic ? props.onValueChange : controlledLegacy ? props.onValueChange! : setLegacyDraft;
   const submitText = semantic ? props.onTextSubmit : props.onSendText;
+  const attachments = props.attachments ?? [];
   const onTtsToggle = props.onTtsToggle;
   const onInterrupt = props.onInterrupt;
   const onSuggestionClick = props.onSuggestionClick;
@@ -186,14 +234,14 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
 
   function submit(): void {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && attachments.length === 0) return;
     if (!props.connectionReady) {
       setBlockedFlash(true);
       setTimeout(() => setBlockedFlash(false), 1500);
       return;
     }
     submitText(text);
-    onValueChange("");
+    if (semantic || !controlledLegacy) onValueChange("");
     if (blurAfterSend.current) editorRef.current?.blur();
     else focusEditor();
   }
@@ -220,6 +268,12 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
               onFocusCapture={(event) => {
                 if ((event.target as Element).closest(".dock-voice-capture") === null) setFocusOrigin("intentional");
               }}
+              onPaste={(event) => {
+                const files = [...(event.clipboardData?.files ?? [])];
+                if (files.length) props.onAttachmentsSelected?.(files);
+                // Leave native paste untouched so text survives, including mixed
+                // text + file clipboard payloads.
+              }}
               onPointerDown={(event) => {
                 if ((event.target as Element).closest("textarea,button,input,a,[role='button']")) return;
                 event.preventDefault();
@@ -231,9 +285,20 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
               {!props.connectionReady && (
                 <div class={`dock-composer__connection${blockedFlash ? " dock-composer__connection--flash" : ""}`} role="status">Reconnecting…</div>
               )}
+              {attachments.length > 0 && (
+                <ul class="dock-attachment-list" aria-label="Attached files">
+                  {attachments.map((attachment) => (
+                    <DraftAttachmentCard
+                      key={attachment.id}
+                      attachment={attachment}
+                      {...(props.onAttachmentRemove ? { onRemove: () => props.onAttachmentRemove?.(attachment.id) } : {})}
+                    />
+                  ))}
+                </ul>
+              )}
               <DraftEditor value={draft} receded={held} inputRef={editorRef} onValueChange={onValueChange} onSubmit={submit} />
               <ComposerActions
-                draftPresent={!captureLive && draft.trim().length > 0}
+                draftPresent={!captureLive && (draft.trim().length > 0 || attachments.length > 0)}
                 held={held}
                 canInterrupt={canInterrupt}
                 connectionReady={props.connectionReady}
@@ -241,6 +306,7 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
                 ttsEnabled={props.ttsEnabled}
                 capturePort={capturePort}
                 onSend={submit}
+                onPickFiles={(files) => props.onAttachmentsSelected?.(files)}
                 onTtsToggle={() => { onTtsToggle(); focusEditor(); }}
                 onInterrupt={() => { onInterrupt(); focusEditor(); }}
                 onVoiceState={setVoiceState}

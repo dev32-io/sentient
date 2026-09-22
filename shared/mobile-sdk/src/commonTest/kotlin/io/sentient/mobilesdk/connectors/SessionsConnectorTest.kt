@@ -22,6 +22,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import io.sentient.mobilesdk.auth.AuthError
+import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.ServerMessage
@@ -59,7 +61,7 @@ private fun counterIds(): () -> String {
  * since we directly call the fake methods via FakeSessionsHttpClient).
  */
 private class FakeSessionsHttpClient(
-    private val deleteSuccess: Boolean = true,
+    private val deleteResult: AuthResult<Unit> = AuthResult.Success(Unit),
     private val renameSuccess: Boolean = true,
 ) : SessionsHttpClient(
     httpClient = HttpClient(MockEngine { _ -> respond("", HttpStatusCode.OK) }),
@@ -76,9 +78,9 @@ private class FakeSessionsHttpClient(
         return listResult
     }
 
-    override suspend fun delete(sessionId: String): Boolean {
+    override suspend fun delete(sessionId: String): AuthResult<Unit> {
         deleteCalls += sessionId
-        return deleteSuccess
+        return deleteResult
     }
 
     override suspend fun rename(sessionId: String, title: String): Boolean {
@@ -259,7 +261,7 @@ class SessionsConnectorTest {
     @Test
     fun delete_delegates_to_httpClient_and_fans_out() = runTest {
         val sent = mutableListOf<ClientMessage>()
-        val http = FakeSessionsHttpClient(deleteSuccess = true)
+        val http = FakeSessionsHttpClient()
         val c = connector(sent, httpClient = http)
         val events = mutableListOf<SessionsChangeEvent>()
         c.onSessionsChanged { events += it }
@@ -272,15 +274,19 @@ class SessionsConnectorTest {
     }
 
     @Test
-    fun delete_does_not_fan_out_on_rest_failure() = runTest {
+    fun delete_surfaces_typed_rest_failure_without_fan_out() = runTest {
         val sent = mutableListOf<ClientMessage>()
-        val http = FakeSessionsHttpClient(deleteSuccess = false)
+        val http = FakeSessionsHttpClient(
+            deleteResult = AuthResult.Failure(AuthError.Server(404, "{\"code\":\"not_found\"}")),
+        )
         val c = connector(sent, httpClient = http)
         val events = mutableListOf<SessionsChangeEvent>()
         c.onSessionsChanged { events += it }
 
-        c.delete("s-99")
+        val failure = runCatching { c.delete("s-99") }.exceptionOrNull()
 
+        assertIs<SessionsRequestException>(failure)
+        assertEquals("not_found", failure.code)
         assertEquals(listOf("s-99"), http.deleteCalls, "REST call must still be attempted")
         assertEquals(emptyList(), events, "no fan-out when REST call fails")
         assertTrue(sent.isEmpty(), "delete must NOT send WS frame, sent=$sent")

@@ -39,7 +39,8 @@ class SendMessageUseCase(
         combine(connection, authorizedId, authorizedRouteGeneration, transportGeneration, cache.pending) { _, _, _, _, _ -> Unit }
 
     /** Fire an outbound message immediately. Enqueue/optimism is the VM's OutboundCache. */
-    operator fun invoke(text: String, pendingId: String) = conversation.send(text, pendingId)
+    operator fun invoke(text: String, pendingId: String, attachmentIds: List<String> = emptyList()) =
+        conversation.send(text, pendingId, attachmentIds)
 
     /**
      * Drain entries not yet sent on this connection iff READY, route generation
@@ -67,7 +68,7 @@ class SendMessageUseCase(
         val queued = cache.unsent(transportGeneration.value)
         log.info("flush", mapOf("count" to queued.size, "sessionId" to sessionId))
         for (m in queued) {
-            conversation.send(m.text, m.id)
+            conversation.send(m.text, m.id, m.attachmentIds)
             cache.markSent(m.id)
         }
     }

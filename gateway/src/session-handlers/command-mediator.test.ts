@@ -8,9 +8,10 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ServerWebSocket } from "bun";
+import { createUserPrincipal } from "../identity/user-principal.js";
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
-import { type InboundCommand, claimInputFloor, mediateCommand } from "./command-mediator.js";
+import { type InboundCommand, claimInputFloor, mediateCommand, reserveInputFloor } from "./command-mediator.js";
 import { createInputArbiter } from "./input-arbiter.js";
 import { type SessionHandles, type SessionRegistry, createSessionRegistry } from "./session-registry.js";
 import type { SttSession } from "./stt-session.js";
@@ -313,6 +314,37 @@ describe("mediateCommand — input arbitration (§8.3)", () => {
     expect(first).toBe(true);
     expect(second).toBe(false);
     expect(b.sent).toContainEqual(expect.objectContaining({ type: "command.rejected", reason: "session_busy" }));
+  });
+
+  it("releases a failed admission reservation so a peer can submit immediately", () => {
+    const h = harness();
+    const a = fakeWs("conn-a");
+    const b = fakeWs("conn-b");
+    h.attach(a, "s_1");
+    h.attach(b, "s_1");
+
+    const reservation = reserveInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000);
+    expect(reservation).not.toBeNull();
+    reservation?.release();
+
+    expect(claimInputFloor({ type: "text.input" }, asWs(b), h.registry, 1000)).toBe(true);
+  });
+
+  it("releases failed draft admission so copied peer can submit immediately", () => {
+    const h = harness();
+    const a = fakeWs("conn-a");
+    const b = fakeWs("conn-b");
+    for (const connection of [a, b]) {
+      connection.data.principal = createUserPrincipal("u_deadbeef", "adult", "home");
+      connection.data.draftKey = `d_${"ab".repeat(16)}`;
+      connection.data.surfaceId = connection.data.sessionId;
+    }
+
+    const reservation = reserveInputFloor({ type: "text.input", pendingId: "p-a" }, asWs(a), h.registry, 1000, 500);
+    expect(reservation).not.toBeNull();
+    reservation?.release();
+
+    expect(reserveInputFloor({ type: "text.input", pendingId: "p-b" }, asWs(b), h.registry, 1000, 500)).not.toBeNull();
   });
 
   it("the floor is released once the window elapses, so a peer is no longer refused", () => {

@@ -3,7 +3,12 @@ import type { OrchestratorConfig } from "@sentient/config";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
-import { buildSessionCalendar, resolveCalendarConfig, resolveDreamerModel } from "./phase-services.js";
+import {
+  buildSessionCalendar,
+  createAttachmentVisionResolver,
+  resolveCalendarConfig,
+  resolveDreamerModel,
+} from "./phase-services.js";
 
 function memCfg(model: string): OrchestratorConfig["memory"] {
   return { dreamer: { model } } as unknown as OrchestratorConfig["memory"];
@@ -79,6 +84,35 @@ describe("calendar bootstrap", () => {
     session?.close();
     session?.close();
     expect(session?.privateStore.readBaseCandidates(1, {})).toMatchObject({ ok: false, error: "closed" });
+  });
+});
+
+describe("attachment vision bootstrap", () => {
+  it("returns typed unavailable before disabled auxiliary resolution", async () => {
+    let resolutions = 0;
+    const resolveVision = createAttachmentVisionResolver(
+      false,
+      {
+        resolveAttachmentVision: async () => {
+          resolutions++;
+          return { ok: false, error: "catalog-unavailable" };
+        },
+      },
+      "u_12345678",
+      {
+        deadlineMs: 100,
+        maxOutputTokens: 100,
+        maxOutputChars: 100,
+        maxInputBytes: 100,
+        maxImages: 1,
+        maxQuestionChars: 100,
+        reasoningEffort: "high",
+      },
+    );
+
+    expect(await resolveVision()).toEqual({ ok: false, error: "auxiliary-disabled" });
+    expect(await resolveVision()).toEqual({ ok: false, error: "auxiliary-disabled" });
+    expect(resolutions).toBe(0);
   });
 });
 

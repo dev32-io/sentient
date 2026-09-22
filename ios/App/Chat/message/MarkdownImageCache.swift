@@ -1,6 +1,9 @@
+import Foundation
+import ImageIO
 import MarkdownUI
 import NetworkImage
 import SwiftUI
+import UniformTypeIdentifiers
 
 final class MarkdownImageCache {
     enum Metadata: Equatable {
@@ -15,15 +18,21 @@ final class MarkdownImageCache {
         valueOptions: .weakMemory
     )
     private var metadata: [URL: Metadata] = [:]
+    private let encoded = NSCache<NSURL, NSData>()
+    private let pngEncoder: @Sendable (CGImage) -> Data?
 
     init(
         loader: any NetworkImageLoader = DefaultNetworkImageLoader.shared,
         decodedCountLimit: Int = 24,
-        decodedCostLimit: Int = 16 * 1_024 * 1_024
+        decodedCostLimit: Int = 16 * 1_024 * 1_024,
+        pngEncoder: @escaping @Sendable (CGImage) -> Data? = MarkdownImageCache.encodePNG
     ) {
         self.loader = loader
+        self.pngEncoder = pngEncoder
         decoded.countLimit = decodedCountLimit
         decoded.totalCostLimit = decodedCostLimit
+        encoded.countLimit = decodedCountLimit
+        encoded.totalCostLimit = decodedCostLimit
     }
 
     func entry(for url: URL) -> MarkdownImageEntry {
@@ -36,18 +45,44 @@ final class MarkdownImageCache {
     func image(for url: URL) -> CGImage? { decoded.object(forKey: url as NSURL) }
     func knownMetadata(for url: URL) -> Metadata? { metadata[url] }
 
+    /// Loads through same cache used by MarkdownUI, then hands WebKit encoded
+    /// bytes over private scheme. WebKit never receives original network URLs.
+    @MainActor
+    func imageData(for url: URL) async -> Data? {
+        guard !Task.isCancelled else { return nil }
+        if let data = encoded.object(forKey: url as NSURL) { return data as Data }
+        if let image = image(for: url) {
+            return await encodedData(for: url, image: image)
+        }
+
+        let entry = entry(for: url)
+        let lease = entry.lease()
+        defer { lease.release() }
+        do {
+            let image = try await withTaskCancellationHandler {
+                try await entry.image(url: url, using: loader)
+            } onCancel: {
+                Task { @MainActor in lease.release() }
+            }
+            guard !Task.isCancelled else { return nil }
+            store(image, for: url)
+            entry.markKnown(image)
+            return await encodedData(for: url, image: image)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            guard !Task.isCancelled else { return nil }
+            metadata[url] = .failure
+            entry.markFailure()
+            return nil
+        }
+    }
+
     func acquire(_ entry: MarkdownImageEntry, for url: URL) {
         entry.acquire()
         guard image(for: url) == nil else { return }
         entry.load(url: url, using: loader) { [weak self] image in
-            guard let self else { return }
-            let size = CGSize(width: image.width, height: image.height)
-            metadata[url] = .size(size)
-            decoded.setObject(
-                image,
-                forKey: url as NSURL,
-                cost: max(1, image.bytesPerRow * image.height)
-            )
+            self?.store(image, for: url)
         } onFailure: { [weak self] in
             self?.metadata[url] = .failure
         }
@@ -60,6 +95,50 @@ final class MarkdownImageCache {
             entry.cancel()
         }
     }
+
+    private func store(_ image: CGImage, for url: URL) {
+        metadata[url] = .size(CGSize(width: image.width, height: image.height))
+        decoded.setObject(
+            image,
+            forKey: url as NSURL,
+            cost: max(1, image.bytesPerRow * image.height)
+        )
+    }
+
+    @MainActor
+    private func encodedData(for url: URL, image: CGImage) async -> Data? {
+        guard !Task.isCancelled else { return nil }
+        if let data = encoded.object(forKey: url as NSURL) { return data as Data }
+        let worker = Task.detached(priority: .utility) { [pngEncoder] () -> Data? in
+            guard !Task.isCancelled else { return nil }
+            return pngEncoder(image)
+        }
+        let data = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        guard !Task.isCancelled, let data else { return nil }
+        encoded.setObject(
+            data as NSData,
+            forKey: url as NSURL,
+            cost: max(1, data.count)
+        )
+        return data
+    }
+
+    static func encodePNG(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
 }
 
 final class MarkdownImageEntry: ObservableObject {
@@ -70,7 +149,8 @@ final class MarkdownImageEntry: ObservableObject {
     }
 
     @Published private(set) var result: Result
-    private var task: Task<Void, Never>?
+    private var task: Task<CGImage, Error>?
+    private var observedGeneration: Int?
     private var consumers = 0
     private var generation = 0
 
@@ -84,9 +164,30 @@ final class MarkdownImageEntry: ObservableObject {
 
     func acquire() { consumers += 1 }
 
+    fileprivate func lease() -> MarkdownImageLease {
+        acquire()
+        return MarkdownImageLease(entry: self)
+    }
+
     func release() {
         consumers = max(0, consumers - 1)
         if consumers == 0 { cancel() }
+    }
+
+    func image(
+        url: URL,
+        using loader: any NetworkImageLoader
+    ) async throws -> CGImage {
+        guard consumers > 0 else { throw CancellationError() }
+        let (request, requestGeneration) = startTask(url: url, using: loader)
+        do {
+            let image = try await request.value
+            clearTask(for: requestGeneration)
+            return image
+        } catch {
+            clearTask(for: requestGeneration)
+            throw error
+        }
     }
 
     func load(
@@ -95,35 +196,92 @@ final class MarkdownImageEntry: ObservableObject {
         onSuccess: @escaping (CGImage) -> Void,
         onFailure: @escaping () -> Void
     ) {
-        guard consumers > 0, task == nil, result != .failure else { return }
-        generation += 1
-        let currentGeneration = generation
-        task = Task { @MainActor [weak self] in
+        guard consumers > 0, result != .failure else { return }
+        let (request, requestGeneration) = startTask(url: url, using: loader)
+        guard observedGeneration != requestGeneration else { return }
+        observedGeneration = requestGeneration
+        Task { @MainActor [weak self] in
             do {
-                let image = try await loader.image(from: url)
+                let image = try await request.value
                 guard let self, !Task.isCancelled,
-                      generation == currentGeneration, consumers > 0 else { return }
+                      generation == requestGeneration, consumers > 0 else { return }
                 onSuccess(image)
                 result = .known(CGSize(width: image.width, height: image.height))
-                task = nil
+                clearObserver(for: requestGeneration)
+                clearTask(for: requestGeneration)
             } catch is CancellationError {
-                return
+                self?.clearObserver(for: requestGeneration)
+                self?.clearTask(for: requestGeneration)
             } catch {
-                guard let self, generation == currentGeneration, consumers > 0 else { return }
+                guard let self else { return }
+                guard generation == requestGeneration, consumers > 0 else {
+                    clearObserver(for: requestGeneration)
+                    clearTask(for: requestGeneration)
+                    return
+                }
                 onFailure()
                 result = .failure
-                task = nil
+                clearObserver(for: requestGeneration)
+                clearTask(for: requestGeneration)
             }
         }
     }
 
+    func markKnown(_ image: CGImage) {
+        result = .known(CGSize(width: image.width, height: image.height))
+    }
+
+    func markFailure() { result = .failure }
+
     func cancel() {
         generation += 1
+        observedGeneration = nil
         task?.cancel()
         task = nil
     }
 
+    private func startTask(
+        url: URL,
+        using loader: any NetworkImageLoader
+    ) -> (Task<CGImage, Error>, Int) {
+        if let task { return (task, generation) }
+        generation += 1
+        let requestGeneration = generation
+        let task = Task { @MainActor in
+            try await loader.image(from: url)
+        }
+        self.task = task
+        return (task, requestGeneration)
+    }
+
+    private func clearObserver(for requestGeneration: Int) {
+        guard observedGeneration == requestGeneration else { return }
+        observedGeneration = nil
+    }
+
+    private func clearTask(for requestGeneration: Int) {
+        guard generation == requestGeneration else { return }
+        task = nil
+    }
+
     deinit { task?.cancel() }
+}
+
+fileprivate final class MarkdownImageLease {
+    private let entry: MarkdownImageEntry
+    private var released = false
+
+    init(entry: MarkdownImageEntry) {
+        self.entry = entry
+    }
+
+    func release() {
+        guard !released else { return }
+        released = true
+        entry.release()
+    }
+
+    deinit { release() }
 }
 
 struct CachedMarkdownImageProvider: ImageProvider {

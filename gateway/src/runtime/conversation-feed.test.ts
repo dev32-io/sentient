@@ -261,6 +261,45 @@ describe("conversation feed — wire convergence", () => {
     store.close();
   });
 
+  it("CONTRACT: a directed snapshot flushes its unpublished settled tail to peers", () => {
+    // One feed cursor serves every window. The joining window gets a directed
+    // snapshot, while peers only get live entries; advancing the cursor before
+    // publishing the admitted row makes live and replay diverge permanently.
+    const store = openStoreFor("two-window-snapshot-tail");
+    let joinerHeld = false;
+    const peerFrames: RecordedFrame[] = [];
+    const joinerFrames: RecordedFrame[] = [];
+    const feed = createConversationFeed({
+      store,
+      sessionId: SESSION_ID,
+      userId: USER_ID,
+      emitter: {
+        conversationSnapshot: (items) => joinerFrames.push({ type: "conversation.snapshot", items, turnId: undefined }),
+        conversationEntry: (item, turnId) => {
+          peerFrames.push({ type: "conversation.entry", items: [item], turnId });
+          if (!joinerHeld) joinerFrames.push({ type: "conversation.entry", items: [item], turnId });
+        },
+      },
+      currentReplyId: () => null,
+    });
+
+    feed.snapshot();
+    store.append(entry({ kind: "user", text: "first", createdAt: 8201 }));
+    feed.publishSettled();
+
+    joinerHeld = true;
+    store.append(entry({ kind: "user", text: "admitted", createdAt: 8202 }));
+    feed.snapshot();
+    joinerHeld = false;
+
+    store.append(entry({ kind: "assistant", text: "reply", createdAt: 8203 }));
+    feed.publishAll();
+
+    expect(peerFrames.flatMap((frame) => frame.items).map((item) => item.entryId)).toEqual(["1", "2", "3"]);
+    expect(applyFrames(joinerFrames).map((item) => item.entryId)).toEqual(["1", "2", "3"]);
+    store.close();
+  });
+
   it("CONTRACT: rotating the reply id releases the reply it closed, without waiting for the turn", () => {
     // The steer path (spec §4.5): the person speaks mid-turn, their row breaks
     // the bubble, and session-runtime.ts rotates the id — which is exactly what
@@ -361,6 +400,7 @@ describe("conversation feed — wire convergence", () => {
 
     const live = applyFrames(sink.frames);
     expect(live.map((i) => (i.kind === "user" ? i.pendingId : undefined))).toEqual(["p1", undefined]);
+    expect(live[0]).toMatchObject({ kind: "user", sessionId: SESSION_ID });
     expect(live).toEqual(freshSnapshotOf(store));
     store.close();
   });

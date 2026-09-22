@@ -98,6 +98,8 @@ function buildUserMessage(
     content: string;
     channel: ConversationUserChannel;
     pendingId?: string | undefined;
+    sessionId?: string | undefined;
+    attachments?: readonly import("@sentient/protocol").AttachmentRef[] | undefined;
   },
 ): ChatMessage {
   return {
@@ -108,6 +110,10 @@ function buildUserMessage(
     isStreaming: false,
     channel: item.channel,
     ...(item.pendingId ? { pendingId: item.pendingId } : {}),
+    ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+    ...(item.attachments?.length
+      ? { attachments: item.attachments.map((ref) => ({ kind: "remote" as const, ref })) }
+      : {}),
   };
 }
 
@@ -150,7 +156,7 @@ function appendCommittedItems(
     // the composer task strip (`tasklist.state`), which is ephemeral by design.
 
     if (item.kind === "user") {
-      if (item.content.length === 0) continue; // barge-in markers don't render
+      if (item.content.length === 0 && !item.attachments?.length) continue; // barge-in markers don't render
       walk.out.push(buildUserMessage(stableId, item));
       continue;
     }

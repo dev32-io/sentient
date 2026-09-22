@@ -121,7 +121,8 @@ final class AudioViewModel {
             persona: o.persona,
             tools: o.tools,
             compression: o.compression,
-            advanced: o.advanced
+            advanced: o.advanced,
+            auxiliaryModels: o.auxiliaryModels
         )
     }
 }

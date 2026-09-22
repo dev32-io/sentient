@@ -19,6 +19,29 @@ class WireSerializationTest {
         assertEquals("{\"type\":\"audio.cancel\",\"captureId\":\"opaque-1\"}", encode(ClientMessage.AudioCancel("opaque-1")))
     }
 
+    @Test fun text_only_input_omits_empty_attachment_ids_for_gateway_admission() {
+        val expected = """{"type":"text.input","text":"hello","pendingId":"pending-1"}"""
+        for (message in listOf(
+            ClientMessage.TextInput("hello", "pending-1"),
+            ClientMessage.TextInput("hello", "pending-1", emptyList()),
+        )) {
+            assertEquals(expected, WireJson.instance.encodeToString(ClientMessage.serializer(), message))
+        }
+    }
+
+    @Test fun text_input_with_attachments_matches_gateway_contract() {
+        val msg = ClientMessage.TextInput("", "pending-1", listOf("att_0123456789abcdef0123456789abcdef"))
+        val json = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        assertTrue(json.contains("\"attachmentIds\":[\"att_0123456789abcdef0123456789abcdef\"]"), json)
+        assertEquals(msg, WireJson.instance.decodeFromString(ClientMessage.serializer(), json))
+    }
+
+    @Test fun attachment_only_user_feed_item_decodes() {
+        val json = """{"type":"conversation.entry","item":{"entryId":"e1","kind":"user","ts":1,"channel":"text","content":"","attachments":[{"attachmentId":"att_0123456789abcdef0123456789abcdef","displayName":"fixture.pdf","contentType":"application/pdf","mediaKind":"pdf","size":12}]}}"""
+        val item = (WireJson.instance.decodeFromString(ServerMessage.serializer(), json) as ServerMessage.ConversationEntry).item as ConversationFeedItem.User
+        assertEquals("fixture.pdf", item.attachments.single().displayName)
+    }
+
     @Test fun text_input_round_trips() {
         val msg: ClientMessage = ClientMessage.TextInput("hi")
         val s = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
@@ -120,11 +143,12 @@ class WireSerializationTest {
         )
     }
 
-    @Test fun conversation_entry_user_with_pending_id_decodes() {
-        val s = """{"type":"conversation.entry","item":{"kind":"user","ts":1,"channel":"text","content":"hello","pendingId":"p1"}}"""
+    @Test fun conversation_entry_user_with_pending_id_and_session_id_decodes() {
+        val s = """{"type":"conversation.entry","item":{"kind":"user","ts":1,"channel":"text","content":"hello","pendingId":"p1","sessionId":"s1"}}"""
         val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
         val item = msg.item as ConversationFeedItem.User
         assertEquals("p1", item.pendingId)
+        assertEquals("s1", item.sessionId)
         assertEquals("hello", item.content)
     }
 

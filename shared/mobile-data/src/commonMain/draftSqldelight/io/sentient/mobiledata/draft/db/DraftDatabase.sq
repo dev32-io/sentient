@@ -1,0 +1,186 @@
+CREATE TABLE native_draft (
+  account_id TEXT NOT NULL,
+  gateway_id TEXT NOT NULL,
+  draft_id TEXT NOT NULL,
+  session_id TEXT,
+  text TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, gateway_id, draft_id)
+);
+
+CREATE UNIQUE INDEX native_draft_existing_session
+  ON native_draft(account_id, gateway_id, session_id)
+  WHERE session_id IS NOT NULL;
+
+CREATE TABLE native_draft_attachment (
+  account_id TEXT NOT NULL,
+  gateway_id TEXT NOT NULL,
+  draft_id TEXT NOT NULL,
+  attachment_id TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  local_path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY (account_id, gateway_id, draft_id, attachment_id),
+  FOREIGN KEY (account_id, gateway_id, draft_id)
+    REFERENCES native_draft(account_id, gateway_id, draft_id) ON DELETE CASCADE
+);
+
+CREATE TABLE native_pending_send (
+  account_id TEXT NOT NULL,
+  gateway_id TEXT NOT NULL,
+  pending_id TEXT NOT NULL,
+  mint_key TEXT NOT NULL,
+  surface_id TEXT NOT NULL,
+  draft_id TEXT NOT NULL,
+  draft_revision INTEGER NOT NULL,
+  session_id TEXT,
+  text TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, gateway_id, pending_id),
+  UNIQUE (account_id, gateway_id, draft_id)
+);
+
+CREATE TABLE native_pending_attachment (
+  account_id TEXT NOT NULL,
+  gateway_id TEXT NOT NULL,
+  pending_id TEXT NOT NULL,
+  attachment_id TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  local_path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY (account_id, gateway_id, pending_id, attachment_id),
+  FOREIGN KEY (account_id, gateway_id, pending_id)
+    REFERENCES native_pending_send(account_id, gateway_id, pending_id) ON DELETE CASCADE
+);
+
+CREATE TABLE native_delete_intent (
+  account_id TEXT NOT NULL,
+  gateway_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  failure_code TEXT,
+  PRIMARY KEY (account_id, gateway_id, session_id)
+);
+
+CREATE TABLE native_file_cleanup (
+  local_path TEXT NOT NULL PRIMARY KEY
+);
+
+draftsForScope:
+SELECT * FROM native_draft
+WHERE account_id = ? AND gateway_id = ?
+ORDER BY updated_at DESC, draft_id ASC;
+
+draftForId:
+SELECT * FROM native_draft
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
+
+draftForSession:
+SELECT * FROM native_draft
+WHERE account_id = ? AND gateway_id = ? AND session_id = ?;
+
+attachmentsForDraft:
+SELECT * FROM native_draft_attachment
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?
+ORDER BY sort_order ASC, attachment_id ASC;
+
+pendingSendsForScope:
+SELECT * FROM native_pending_send
+WHERE account_id = ? AND gateway_id = ?
+ORDER BY created_at ASC, pending_id ASC;
+
+pendingSendForId:
+SELECT * FROM native_pending_send
+WHERE account_id = ? AND gateway_id = ? AND pending_id = ?;
+
+pendingSendForDraft:
+SELECT * FROM native_pending_send
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
+
+pendingAttachments:
+SELECT * FROM native_pending_attachment
+WHERE account_id = ? AND gateway_id = ? AND pending_id = ?
+ORDER BY sort_order ASC, attachment_id ASC;
+
+deleteIntentsForScope:
+SELECT * FROM native_delete_intent
+WHERE account_id = ? AND gateway_id = ?
+ORDER BY created_at ASC, session_id ASC;
+
+deleteIntentForSession:
+SELECT * FROM native_delete_intent
+WHERE account_id = ? AND gateway_id = ? AND session_id = ?;
+
+pathReferenceCount:
+SELECT
+  (SELECT COUNT(*) FROM native_draft_attachment WHERE local_path = ?) +
+  (SELECT COUNT(*) FROM native_pending_attachment WHERE local_path = ?);
+
+fileCleanupPaths:
+SELECT local_path FROM native_file_cleanup ORDER BY local_path ASC;
+
+insertFileCleanup:
+INSERT OR IGNORE INTO native_file_cleanup(local_path) VALUES (?);
+
+deleteFileCleanup:
+DELETE FROM native_file_cleanup WHERE local_path = ?;
+
+insertDraft:
+INSERT INTO native_draft(
+  account_id, gateway_id, draft_id, session_id, text, revision, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+updateDraft:
+UPDATE native_draft
+SET session_id = ?, text = ?, revision = ?, updated_at = ?
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
+
+deleteDraftAttachments:
+DELETE FROM native_draft_attachment
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
+
+insertDraftAttachment:
+INSERT INTO native_draft_attachment(
+  account_id, gateway_id, draft_id, attachment_id, display_name, media_type,
+  size_bytes, local_path, sort_order
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteDraft:
+DELETE FROM native_draft
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
+
+insertPendingSend:
+INSERT INTO native_pending_send(
+  account_id, gateway_id, pending_id, mint_key, surface_id, draft_id,
+  draft_revision, session_id, text, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertPendingAttachment:
+INSERT INTO native_pending_attachment(
+  account_id, gateway_id, pending_id, attachment_id, display_name, media_type,
+  size_bytes, local_path, sort_order
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deletePendingAttachments:
+DELETE FROM native_pending_attachment
+WHERE account_id = ? AND gateway_id = ? AND pending_id = ?;
+
+deletePendingSend:
+DELETE FROM native_pending_send
+WHERE account_id = ? AND gateway_id = ? AND pending_id = ?;
+
+upsertDeleteIntent:
+INSERT OR REPLACE INTO native_delete_intent(
+  account_id, gateway_id, session_id, created_at, updated_at, failure_code
+) VALUES (?, ?, ?, ?, ?, ?);
+
+deleteDeleteIntent:
+DELETE FROM native_delete_intent
+WHERE account_id = ? AND gateway_id = ? AND session_id = ?;

@@ -18,5 +18,9 @@ data class PendingMessage(
     val text: String,
     val status: MessageStatus = MessageStatus.QUEUED,
     val sentAtMs: Long? = null,
-)
+    val attachmentIds: List<String> = emptyList(),
+) {
+    constructor(id: String, text: String, status: MessageStatus, sentAtMs: Long?) :
+        this(id, text, status, sentAtMs, emptyList())
+}
 

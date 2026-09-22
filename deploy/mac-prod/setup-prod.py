@@ -38,7 +38,9 @@ Invariants this script exists to hold:
     Nothing executable lives under $HOME in either domain.
   * NOTHING FETCHES AT DEPLOY TIME. The gateway binary embeds its JS
     dependencies; the release archive embeds its native-service sources and
-    vendored wheels, which install with `pip install --no-index`.
+    vendored wheels, plus a checked attachment-parser image archive for paired
+    releases. Legacy archives may omit that parser payload. Native wheels
+    install with `pip install --no-index`; Docker only loads packaged images.
   * THE OPERATOR'S config.yaml IS NEVER CLOBBERED. It is seeded once from the
     template and hand-edited thereafter.
   * TLS VERIFICATION IS NEVER DISABLED. Two health probes gate a successful
@@ -53,8 +55,11 @@ Invariants this script exists to hold:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
+import json
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -63,6 +68,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 # This script lives at <repo>/deploy/mac-prod/setup-prod.py and is run from the
@@ -152,6 +158,45 @@ CURRENT_STAGING = ".current.tmp"
 # Relative to a release dir; produced by scripts/build-gateway.sh.
 GATEWAY_BINARY = "bin/sentient-gateway"
 CODE_OWNER = "root:wheel"
+
+# The parser is the one packaged Docker addon whose image must move with the
+# gateway release. Its runtime alias is fixed by the existing service template
+# and operator allowlist; release images use a separate revision-derived tag so
+# docker load cannot replace the active alias before activation.
+PARSER_NAME = "attachment-parser"
+# Compatibility contract from addon.json; parser Docker frame version stays a
+# separate runtime concern and is not used as this release identity.
+PARSER_PROTOCOL_VERSION = 2
+PARSER_STATE = "ephemeral"
+PARSER_ARTIFACT_DIR = "addons/attachment-parser"
+PARSER_METADATA_FILE = "addon.json"
+PARSER_IDENTITY_FILE = "identity.json"
+PARSER_IMAGE_ARCHIVE = "image.tar"
+PARSER_IMAGE_REPOSITORY = f"sentient/{PARSER_NAME}"
+PARSER_RUNTIME_IMAGE = f"{PARSER_IMAGE_REPOSITORY}:local"
+PARSER_RETAINED_IMAGE_PREFIX = f"{PARSER_IMAGE_REPOSITORY}:retained-"
+PARSER_NAME_LABEL = "io.sentient.addon.name"
+PARSER_VERSION_LABEL = "org.opencontainers.image.version"
+PARSER_PROTOCOL_LABEL = "io.sentient.addon.protocol-version"
+PARSER_REVISION_LABEL = "org.opencontainers.image.revision"
+PARSER_LEGACY_RECEIPT = ".attachment-parser-legacy.json"
+PARSER_CONTAINER_NAME_KEY = "container_name"
+PARSER_SERVICE_TEMPLATE = "attachment-parser.yaml"
+DOCKER_CLI_TIMEOUT_SECONDS = 5
+# Image imports can be hundreds of megabytes; keep short bounds for inspect/tag/
+# exec while giving `docker load` its own finite budget.
+DOCKER_LOAD_TIMEOUT_SECONDS = 300
+PARSER_HEALTH_ATTEMPTS = 30
+PARSER_HEALTH_INTERVAL_SECONDS = 1
+IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_PARSER_REQUIRED_KEYS = {"name", "version", "protocolVersion", "description", "state"}
+_PARSER_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+_PARSER_SEMVER_RE = re.compile(
+    rf"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    rf"(?:-(?:{_PARSER_IDENTIFIER})(?:\.(?:{_PARSER_IDENTIFIER}))*)?"
+    rf"(?:\+(?:[0-9A-Za-z-]+)(?:\.[0-9A-Za-z-]+)*)?"
+)
 # 755: root writes, everyone executes. Never group- or world-writable — that
 # would hand the service user a way to rewrite its own binary.
 CODE_MODE = "755"
@@ -417,12 +462,776 @@ class InstallError(Exception):
     """Install or rollback failed. The message names which, and why."""
 
 
+class DockerCommandTimeout(InstallError):
+    """Docker CLI did not finish; its mutation state must be reconciled."""
+
+
+class DockerCommandFailed(InstallError):
+    """Docker CLI returned nonzero; callers may classify missing objects."""
+
+
+class InstallerLock:
+    """One non-blocking lock for install/rollback transition and health."""
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._handle = None
+
+    def acquire(self) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = self._path.open("a+")
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            if self._handle is not None:
+                self._handle.close()
+                self._handle = None
+            raise InstallError(
+                f"another setup-prod install or rollback holds {self._path}; refusing concurrent transition"
+            ) from e
+        except OSError as e:
+            if self._handle is not None:
+                self._handle.close()
+                self._handle = None
+            raise InstallError(f"cannot acquire installer lock {self._path}: {e}") from e
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        try:
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._handle.close()
+            self._handle = None
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, _type, _value, _traceback):
+        self.release()
+        return False
+
+
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for block in iter(lambda: handle.read(HASH_CHUNK_BYTES), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class AttachmentParserArtifact:
+    """A checked parser image payload embedded in one gateway release."""
+
+    metadata: dict
+    version: str
+    protocol_version: int
+    image_ref: str
+    image_id: str
+    revision: str
+    runtime_image: str
+    archive: Path
+    archive_sha256: str
+
+
+@dataclass(frozen=True)
+class DockerImageIdentity:
+    image_id: str
+    version: str | None
+    revision: str | None
+    name: str | None = None
+    protocol_version: int | None = None
+
+
+def _read_json_object(path: Path, label: str) -> dict:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise InstallError(f"cannot read {label} {path}: {e}") from e
+    if not isinstance(value, dict):
+        raise InstallError(f"{label} {path} must contain a JSON object")
+    return value
+
+
+def _verify_parser_archive_tags(archive: Path, image_ref: str, runtime_image: str) -> None:
+    """Prove `docker load` cannot replace the active runtime alias."""
+    try:
+        with tarfile.open(archive, "r:*") as bundle:
+            member = bundle.extractfile("manifest.json")
+            if member is None:
+                raise InstallError("attachment-parser image archive has no manifest.json")
+            raw_manifest = member.read(1024 * 1024 + 1)
+    except (OSError, tarfile.TarError) as e:
+        raise InstallError(f"cannot read attachment-parser image manifest: {e}") from e
+    if len(raw_manifest) > 1024 * 1024:
+        raise InstallError("attachment-parser image manifest is too large")
+    try:
+        manifest = json.loads(raw_manifest)
+    except ValueError as e:
+        raise InstallError("attachment-parser image manifest is not valid JSON") from e
+    if not isinstance(manifest, list) or not manifest:
+        raise InstallError("attachment-parser image manifest must be a non-empty list")
+
+    tags: set[str] = set()
+    for entry in manifest:
+        if not isinstance(entry, dict) or not isinstance(entry.get("RepoTags"), list):
+            raise InstallError("attachment-parser image manifest has invalid RepoTags")
+        if not all(isinstance(tag, str) for tag in entry["RepoTags"]):
+            raise InstallError("attachment-parser image manifest has invalid image tags")
+        tags.update(entry["RepoTags"])
+    if runtime_image in tags:
+        raise InstallError(
+            f"attachment-parser image archive carries active runtime tag {runtime_image}; refusing docker load"
+        )
+    if tags != {image_ref}:
+        raise InstallError("attachment-parser image archive tags do not match its immutable identity")
+
+
+def _parser_tag_version(version: str) -> str:
+    """Derive Docker tag text without changing canonical manifest version."""
+    return version.replace("+", "_")
+
+
+def _validate_parser_metadata(metadata: dict) -> None:
+    if set(metadata) != _PARSER_REQUIRED_KEYS:
+        raise InstallError(
+            "attachment-parser metadata must contain exactly name, version, protocolVersion, description, state"
+        )
+    if metadata.get("name") != PARSER_NAME:
+        raise InstallError(f"attachment-parser metadata name must be {PARSER_NAME!r}")
+    version = metadata.get("version")
+    if (
+        not isinstance(version, str)
+        or len(version) > 64
+        or _PARSER_SEMVER_RE.fullmatch(version) is None
+    ):
+        raise InstallError("attachment-parser metadata version must be SemVer (maximum 64 characters)")
+    if type(metadata.get("protocolVersion")) is not int or metadata["protocolVersion"] != PARSER_PROTOCOL_VERSION:
+        raise InstallError(
+            f"attachment-parser metadata protocolVersion must be {PARSER_PROTOCOL_VERSION}"
+        )
+    description = metadata.get("description")
+    if not isinstance(description, str) or not 1 <= len(description) <= 256:
+        raise InstallError("attachment-parser metadata description must be 1..256 characters")
+    if metadata.get("state") != PARSER_STATE:
+        raise InstallError(f"attachment-parser metadata state must be {PARSER_STATE!r}")
+
+
+def read_attachment_parser_artifact(release: Path) -> AttachmentParserArtifact:
+    """Validate parser metadata, image identity, manifest tags and checksum."""
+    root = release / PARSER_ARTIFACT_DIR
+    metadata_path = root / PARSER_METADATA_FILE
+    identity_path = root / PARSER_IDENTITY_FILE
+    archive = root / PARSER_IMAGE_ARCHIVE
+    for path, label in (
+        (metadata_path, "attachment-parser metadata"),
+        (identity_path, "attachment-parser identity"),
+        (archive, "attachment-parser image archive"),
+    ):
+        if not path.is_file():
+            raise InstallError(
+                f"release {release.name} is missing {label} at {path.relative_to(release)}"
+            )
+
+    metadata = _read_json_object(metadata_path, "attachment-parser metadata")
+    _validate_parser_metadata(metadata)
+    version = metadata["version"]
+
+    identity = _read_json_object(identity_path, "attachment-parser identity")
+    addon = identity.get("addon")
+    if not isinstance(addon, dict):
+        raise InstallError("attachment-parser identity is missing its addon object")
+    if (
+        addon.get("name") != metadata["name"]
+        or addon.get("version") != version
+        or addon.get("protocolVersion") != metadata["protocolVersion"]
+    ):
+        raise InstallError("attachment-parser identity does not match addon.json")
+
+    image = identity.get("image")
+    if not isinstance(image, dict):
+        raise InstallError("attachment-parser identity is missing its image object")
+    image_id = image.get("imageId")
+    if not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id):
+        raise InstallError("attachment-parser identity imageId is not a sha256 image ID")
+    revision = image.get("revision")
+    if (
+        not isinstance(revision, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", revision) is None
+    ):
+        raise InstallError("attachment-parser identity revision is invalid")
+    image_ref = image.get("ref")
+    expected_image_ref = (
+        f"{PARSER_IMAGE_REPOSITORY}:release-{_parser_tag_version(version)}-{revision}"
+    )
+    if image_ref != expected_image_ref:
+        raise InstallError(
+            f"attachment-parser image ref must be {expected_image_ref!r}; got {image_ref!r}"
+        )
+    runtime_image = image.get("runtimeImage")
+    if runtime_image != PARSER_RUNTIME_IMAGE:
+        raise InstallError(
+            f"attachment-parser runtime image must remain {PARSER_RUNTIME_IMAGE!r}, got {runtime_image!r}"
+        )
+    if image.get("archive") != PARSER_IMAGE_ARCHIVE:
+        raise InstallError(
+            f"attachment-parser identity archive must be {PARSER_IMAGE_ARCHIVE!r}"
+        )
+    archive_sha256 = image.get("archiveSha256")
+    if not isinstance(archive_sha256, str) or not HEX_RE.fullmatch(archive_sha256.lower()):
+        raise InstallError("attachment-parser identity archiveSha256 is not a sha256 digest")
+    archive_sha256 = archive_sha256.lower()
+    actual_sha256 = sha256_of(archive)
+    if actual_sha256 != archive_sha256:
+        raise InstallError(
+            f"attachment-parser image archive checksum mismatch: expected {archive_sha256}, got {actual_sha256}"
+        )
+    _verify_parser_archive_tags(archive, image_ref, runtime_image)
+
+    return AttachmentParserArtifact(
+        metadata=metadata,
+        version=version,
+        protocol_version=metadata["protocolVersion"],
+        image_ref=image_ref,
+        image_id=image_id,
+        revision=revision,
+        runtime_image=runtime_image,
+        archive=archive,
+        archive_sha256=archive_sha256,
+    )
+
+
+def read_optional_attachment_parser_artifact(release: Path) -> AttachmentParserArtifact | None:
+    """Legacy releases omit the parser directory; anything present is strict."""
+    root = release / PARSER_ARTIFACT_DIR
+    if not os.path.lexists(root):
+        return None
+    if not root.is_dir():
+        raise InstallError(
+            f"release {release.name} has a non-directory parser payload at {root.relative_to(release)}"
+        )
+    return read_attachment_parser_artifact(release)
+
+
+def validate_attachment_parser_operator_config(config_path: Path) -> None:
+    """Require the explicit managed-service identity used by the gateway.
+
+    Existing operator config is never migrated here. The gateway deliberately
+    treats a missing service identity as an unavailable parser, so a paired
+    release must refuse before Docker state changes instead of installing an
+    image that the running release cannot use.
+    """
+    try:
+        lines = config_path.read_text().splitlines()
+    except OSError as e:
+        raise InstallError(
+            f"cannot read operator config {config_path} while checking the attachment-parser prerequisite: {e}"
+        ) from e
+
+    in_managed_services = False
+    in_parser = False
+    parser_found = False
+    parser_template = None
+    for raw_line in lines:
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        key, separator, value = line.strip().partition(":")
+        if not separator:
+            continue
+        value = value.strip().strip("'\"")
+        if indent == 0:
+            in_managed_services = key == "managed_services"
+            in_parser = False
+            continue
+        if not in_managed_services:
+            continue
+        if indent == 2:
+            in_parser = key == PARSER_NAME
+            parser_found = parser_found or in_parser
+            continue
+        if in_parser and indent >= 4 and key == "template":
+            parser_template = value
+
+    if not parser_found or parser_template != PARSER_SERVICE_TEMPLATE:
+        raise InstallError(
+            f"operator config {config_path} is missing the required "
+            f"managed_services.{PARSER_NAME} entry with template: {PARSER_SERVICE_TEMPLATE}; "
+            "merge that block from gateway/config.yaml manually and retry. "
+            "Installer does not migrate existing config and no Docker image was loaded, tagged, or removed."
+        )
+
+
+def archive_contains_attachment_parser(tarball: Path, version: str) -> bool:
+    """Classify candidate archive without extracting or mutating host state."""
+    prefix = f"{version}/{PARSER_ARTIFACT_DIR}/"
+    try:
+        with tarfile.open(tarball, "r:gz") as archive:
+            return any(name.startswith(prefix) for name in archive.getnames())
+    except (OSError, tarfile.TarError) as e:
+        raise InstallError(f"cannot inspect release archive {tarball}: {e}") from e
+
+
+def preflight_attachment_parser_install(
+    tarball: Path,
+    version: str,
+    operator_config: Path,
+    template_config: Path,
+) -> None:
+    """Check parser's explicit operator prerequisite before install effects."""
+    if not archive_contains_attachment_parser(tarball, version):
+        return
+    # A missing config is a fresh-host case: only the shipped template may seed
+    # it. An existing config is operator-owned and must be repaired by hand.
+    config_to_check = (
+        operator_config if os.path.lexists(operator_config) else template_config
+    )
+    validate_attachment_parser_operator_config(config_to_check)
+
+
+class DockerContainerIdentity:
+    def __init__(self, image_id: str, running: bool):
+        self.image_id = image_id
+        self.running = running
+
+
+class DockerCli:
+    """Small injected Docker CLI seam used only for parser image activation."""
+
+    def __init__(
+        self,
+        runner=subprocess.run,
+        timeout_seconds: float = DOCKER_CLI_TIMEOUT_SECONDS,
+        load_timeout_seconds: float = DOCKER_LOAD_TIMEOUT_SECONDS,
+    ):
+        self._run = runner
+        self._timeout = timeout_seconds
+        self._load_timeout = load_timeout_seconds
+
+    def _run_checked(self, argv: list[str], label: str, timeout: float | None = None):
+        timeout = self._timeout if timeout is None else timeout
+        try:
+            return self._run(
+                argv,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise DockerCommandTimeout(
+                f"docker {label} timed out after {timeout:g}s; state may be unknown"
+            ) from e
+        except OSError as e:
+            raise InstallError(f"docker {label} failed: {e}") from e
+        except subprocess.CalledProcessError as e:
+            raise DockerCommandFailed(f"docker {label} failed") from e
+
+    def inspect(self, image: str, missing_ok: bool = False) -> DockerImageIdentity | None:
+        try:
+            result = self._run_checked(["docker", "image", "inspect", image], "image inspect")
+        except InstallError as error:
+            if missing_ok and isinstance(error, DockerCommandFailed):
+                return None
+            raise
+
+        try:
+            records = json.loads(result.stdout or "")
+            record = records[0]
+            image_id = record["Id"]
+            labels = record.get("Config", {}).get("Labels") or {}
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            raise InstallError(f"docker image inspect returned unusable metadata for {image}") from e
+        if not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id):
+            raise InstallError(f"docker image inspect returned an invalid ID for {image}")
+        if not isinstance(labels, dict):
+            raise InstallError(f"docker image inspect returned invalid labels for {image}")
+        name = labels.get(PARSER_NAME_LABEL)
+        version = labels.get(PARSER_VERSION_LABEL)
+        protocol_raw = labels.get(PARSER_PROTOCOL_LABEL)
+        revision = labels.get(PARSER_REVISION_LABEL)
+        if name is not None and not isinstance(name, str):
+            raise InstallError(f"docker image inspect returned an invalid name label for {image}")
+        if version is not None and not isinstance(version, str):
+            raise InstallError(f"docker image inspect returned an invalid version label for {image}")
+        if protocol_raw is not None and (
+            not isinstance(protocol_raw, str) or not protocol_raw.isdigit()
+        ):
+            raise InstallError(f"docker image inspect returned an invalid protocol label for {image}")
+        if revision is not None and not isinstance(revision, str):
+            raise InstallError(f"docker image inspect returned an invalid revision label for {image}")
+        return DockerImageIdentity(
+            image_id=image_id,
+            version=version,
+            revision=revision,
+            name=name,
+            protocol_version=int(protocol_raw) if protocol_raw is not None else None,
+        )
+
+    def inspect_container(self, container: str) -> DockerContainerIdentity:
+        result = self._run_checked(
+            ["docker", "container", "inspect", container], "container inspect"
+        )
+        try:
+            record = json.loads(result.stdout or "")[0]
+            state = record["State"]
+            image_id = record["Image"]
+            running = state["Running"]
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            raise InstallError(
+                f"docker container inspect returned unusable metadata for {container}"
+            ) from e
+        if not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id):
+            raise InstallError(f"docker container inspect returned an invalid image ID for {container}")
+        if not isinstance(running, bool):
+            raise InstallError(f"docker container inspect returned invalid running state for {container}")
+        return DockerContainerIdentity(image_id, running)
+
+    def load(self, archive: Path) -> None:
+        self._run_checked(
+            ["docker", "load", "--input", str(archive)],
+            "load",
+            timeout=self._load_timeout,
+        )
+
+    def tag(self, image_id: str, image: str) -> None:
+        if not IMAGE_ID_RE.fullmatch(image_id):
+            raise InstallError("refusing to tag an invalid Docker image ID")
+        self._run_checked(["docker", "image", "tag", image_id, image], "image tag")
+
+    def remove(self, image: str) -> None:
+        self._run_checked(["docker", "image", "rm", image], "image cleanup")
+
+    def parser_health(
+        self,
+        container: str,
+        artifact: AttachmentParserArtifact,
+    ) -> None:
+        alias = self.inspect(artifact.runtime_image, missing_ok=True)
+        if alias is None:
+            raise InstallError(f"attachment-parser alias {artifact.runtime_image} is missing")
+        if alias.image_id != artifact.image_id:
+            raise InstallError(
+                f"attachment-parser alias has image {alias.image_id}, expected {artifact.image_id}"
+            )
+        running = self.inspect_container(container)
+        if not running.running:
+            raise InstallError(f"attachment-parser container {container} is not running")
+        if running.image_id != artifact.image_id:
+            raise InstallError(
+                f"attachment-parser container {container} runs image {running.image_id}, expected {artifact.image_id}"
+            )
+        result = self._run_checked(
+            ["docker", "exec", container, "python3", "/app/exec_client.py", "--health"],
+            "exec attachment-parser health",
+        )
+        try:
+            live_metadata = json.loads(result.stdout or "")
+        except (TypeError, ValueError) as e:
+            raise InstallError("attachment-parser health returned invalid JSON") from e
+        if live_metadata != artifact.metadata:
+            raise InstallError("attachment-parser health metadata does not match addon.json")
+
+
+def _ensure_parser_alias(docker: DockerCli, runtime_image: str, image_id: str | None) -> None:
+    current = docker.inspect(runtime_image, missing_ok=True)
+    if image_id is None:
+        if current is None:
+            return
+        try:
+            docker.remove(runtime_image)
+        except DockerCommandTimeout as timeout:
+            if docker.inspect(runtime_image, missing_ok=True) is None:
+                return
+            try:
+                docker.remove(runtime_image)
+            except DockerCommandTimeout as retry_timeout:
+                if docker.inspect(runtime_image, missing_ok=True) is None:
+                    return
+                raise retry_timeout from timeout
+        return
+    if current is not None and current.image_id == image_id:
+        return
+    try:
+        docker.tag(image_id, runtime_image)
+    except DockerCommandTimeout as timeout:
+        observed = docker.inspect(runtime_image, missing_ok=True)
+        if observed is not None and observed.image_id == image_id:
+            return
+        try:
+            docker.tag(image_id, runtime_image)
+        except DockerCommandTimeout as retry_timeout:
+            observed = docker.inspect(runtime_image, missing_ok=True)
+            if observed is not None and observed.image_id == image_id:
+                return
+            raise retry_timeout from timeout
+
+
+def _retain_parser_image(docker: DockerCli, image_id: str | None) -> None:
+    """Keep one known previous image reachable without changing the runtime alias."""
+    if image_id is None:
+        return
+    if not IMAGE_ID_RE.fullmatch(image_id):
+        raise InstallError("cannot retain an invalid Docker image ID")
+    retained = f"{PARSER_RETAINED_IMAGE_PREFIX}{image_id[len('sha256:'):]}"
+    _ensure_parser_alias(docker, retained, image_id)
+
+
+class AttachmentParserPairing:
+    """Stage an immutable image, then reconcile the existing runtime alias."""
+
+    def __init__(
+        self,
+        docker: DockerCli,
+        artifact: AttachmentParserArtifact,
+        previous_image_id: str | None,
+    ):
+        self._docker = docker
+        self.artifact = artifact
+        self._previous_image_id = previous_image_id
+
+    @property
+    def previous_image_id(self) -> str | None:
+        return self._previous_image_id
+
+    def activate(self) -> None:
+        _ensure_parser_alias(self._docker, self.artifact.runtime_image, self.artifact.image_id)
+
+    def restore(self) -> None:
+        _ensure_parser_alias(self._docker, self.artifact.runtime_image, self._previous_image_id)
+
+
+class LegacyAttachmentParserPairing:
+    """Pair a legacy release using the installer receipt, never current image."""
+
+    def __init__(self, docker: DockerCli, target_image_id: str | None, previous_image_id: str | None):
+        self._docker = docker
+        self.target_image_id = target_image_id
+        self.previous_image_id = previous_image_id
+
+    def activate(self) -> None:
+        _ensure_parser_alias(self._docker, PARSER_RUNTIME_IMAGE, self.target_image_id)
+
+    def restore(self) -> None:
+        _ensure_parser_alias(self._docker, PARSER_RUNTIME_IMAGE, self.previous_image_id)
+
+
+class LegacyCandidateAttachmentParserPairing:
+    """Keep previous paired parser while candidate gateway is legacy.
+
+    A legacy candidate has no receipt yet. Receipt lookup belongs only to a
+    legacy release already selected as a rollback target; using it here would
+    confuse the candidate version with the previous release and restore the
+    wrong parser image after a failed install.
+    """
+
+    def __init__(self, docker: DockerCli, previous_image_id: str):
+        self._docker = docker
+        self.previous_image_id = previous_image_id
+
+    def activate(self) -> None:
+        current = self._docker.inspect(PARSER_RUNTIME_IMAGE, missing_ok=True)
+        if current is None or current.image_id != self.previous_image_id:
+            raise InstallError(
+                f"active parser image {PARSER_RUNTIME_IMAGE} changed while preparing a legacy candidate; "
+                "refusing to run a legacy gateway against an unknown pairing"
+            )
+
+    def restore(self) -> None:
+        _ensure_parser_alias(self._docker, PARSER_RUNTIME_IMAGE, self.previous_image_id)
+
+
+def _check_loaded_parser_image(docker: DockerCli, artifact: AttachmentParserArtifact) -> DockerImageIdentity:
+    loaded = docker.inspect(artifact.image_ref, missing_ok=True)
+    if loaded is None:
+        raise InstallError(f"docker load did not make {artifact.image_ref} inspectable")
+    if loaded.image_id != artifact.image_id:
+        raise InstallError(
+            f"attachment-parser image ID mismatch for {artifact.image_ref}: "
+            f"expected {artifact.image_id}, got {loaded.image_id}"
+        )
+    if loaded.version != artifact.version:
+        raise InstallError(
+            f"attachment-parser image version label mismatch: expected {artifact.version}, got {loaded.version}"
+        )
+    if loaded.revision != artifact.revision:
+        raise InstallError(
+            f"attachment-parser image revision label mismatch: expected {artifact.revision}, got {loaded.revision}"
+        )
+    if loaded.name != artifact.metadata["name"]:
+        raise InstallError(
+            f"attachment-parser image name label mismatch: expected {artifact.metadata['name']}, got {loaded.name}"
+        )
+    if loaded.protocol_version != artifact.protocol_version:
+        raise InstallError(
+            f"attachment-parser image protocol label mismatch: expected {artifact.protocol_version}, got {loaded.protocol_version}"
+        )
+    return loaded
+
+
+def prepare_attachment_parser(
+    release: Path,
+    previous_version: str | None,
+    docker: DockerCli,
+    *,
+    allow_missing_previous: bool = False,
+    expected_previous_image_id: str | None = None,
+) -> AttachmentParserPairing:
+    """Load/check parser image without touching the active `:local` tag."""
+    artifact = read_attachment_parser_artifact(release)
+    previous = docker.inspect(PARSER_RUNTIME_IMAGE, missing_ok=True)
+    if previous is None and previous_version is not None and not allow_missing_previous:
+        raise InstallError(
+            f"cannot prepare attachment-parser for {release.name}: active image "
+            f"{PARSER_RUNTIME_IMAGE} is missing, so rollback cannot restore the "
+            f"parser paired with previous gateway {previous_version}"
+        )
+    if (
+        expected_previous_image_id is not None
+        and previous is not None
+        and previous.image_id != expected_previous_image_id
+    ):
+        raise InstallError(
+            f"cannot prepare attachment-parser for {release.name}: active image "
+            f"{PARSER_RUNTIME_IMAGE} is {previous.image_id}, but previous gateway "
+            f"{previous_version} is paired with {expected_previous_image_id}; refusing to load or tag"
+        )
+    if expected_previous_image_id is not None and previous is None and not allow_missing_previous:
+        raise InstallError(
+            f"cannot prepare attachment-parser for {release.name}: active image "
+            f"{PARSER_RUNTIME_IMAGE} is missing, but previous gateway {previous_version} "
+            f"is paired with {expected_previous_image_id}; refusing to load or tag"
+        )
+    previous_image_id = previous.image_id if previous else None
+    _retain_parser_image(docker, previous_image_id)
+
+    try:
+        docker.load(artifact.archive)
+    except DockerCommandTimeout as timeout:
+        # `docker load` may have completed before the client timed out.
+        # Inspect the immutable ref before deciding whether staging failed.
+        try:
+            _check_loaded_parser_image(docker, artifact)
+        except InstallError:
+            raise timeout
+    _check_loaded_parser_image(docker, artifact)
+    return AttachmentParserPairing(docker, artifact, previous_image_id)
+
+
+def write_legacy_parser_receipt(root: Path, release_version: str, image_id: str | None) -> None:
+    if image_id is not None and not IMAGE_ID_RE.fullmatch(image_id):
+        raise InstallError("cannot record an invalid legacy attachment-parser image ID")
+    root.mkdir(parents=True, exist_ok=True)
+    receipt = root / PARSER_LEGACY_RECEIPT
+    temporary = receipt.with_name(f"{receipt.name}.tmp")
+    temporary.write_text(json.dumps({"release": release_version, "imageId": image_id}, sort_keys=True) + "\n")
+    temporary.replace(receipt)
+
+
+def read_legacy_parser_receipt(root: Path, release_version: str) -> str | None:
+    receipt = root / PARSER_LEGACY_RECEIPT
+    try:
+        value = json.loads(receipt.read_text())
+    except (OSError, ValueError) as e:
+        raise InstallError(
+            f"legacy rollback target {release_version} has no valid installer receipt at {receipt}; "
+            "refusing to guess its parser pairing — restore the receipt or reinstall a release "
+            "carrying attachment-parser payload"
+        ) from e
+    if not isinstance(value, dict) or set(value) != {"release", "imageId"} or value.get("release") != release_version:
+        raise InstallError(
+            f"legacy rollback target {release_version} has no matching installer receipt; "
+            "refusing to guess its parser pairing — reinstall a release carrying attachment-parser "
+            "payload before retrying rollback"
+        )
+    image_id = value.get("imageId")
+    if image_id is not None and (not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id)):
+        raise InstallError(f"legacy rollback receipt for {release_version} has an invalid image ID")
+    return image_id
+
+
+def prepare_legacy_attachment_parser(
+    root: Path,
+    target_version: str,
+    current_version: str,
+    docker: DockerCli,
+    current_image_id: str | None = None,
+) -> LegacyAttachmentParserPairing:
+    target_image_id = read_legacy_parser_receipt(root, target_version)
+    if target_image_id is not None and docker.inspect(target_image_id, missing_ok=True) is None:
+        raise InstallError(
+            f"legacy rollback target {target_version} requires parser image {target_image_id}, "
+            "but Docker no longer has it (it may have been removed by docker image prune); "
+            "restore it with `docker load --input <saved-image.tar>` or reinstall a release carrying "
+            "its payload, then retry rollback. Refusing to use the current image."
+        )
+    previous = docker.inspect(PARSER_RUNTIME_IMAGE, missing_ok=True)
+    current_artifact = read_optional_attachment_parser_artifact(
+        root / RELEASES_SUBDIR / current_version
+    )
+    if current_artifact is not None and current_image_id is None:
+        raise InstallError(
+            f"cannot roll back from {current_version}: current release has an attachment-parser payload "
+            "but its image identity was not supplied; refusing to guess the active pairing"
+        )
+    if current_image_id is not None and (previous is None or previous.image_id != current_image_id):
+        raise InstallError(
+            f"cannot roll back from {current_version}: active parser image {PARSER_RUNTIME_IMAGE} "
+            "is missing or stale; restore the current release pairing before retrying"
+        )
+    if previous is None and current_artifact is not None:
+        raise InstallError(
+            f"cannot roll back from {current_version}: active parser image {PARSER_RUNTIME_IMAGE} is missing; "
+            "restore it from its release payload before retrying"
+        )
+    previous_image_id = previous.image_id if previous else None
+    _retain_parser_image(docker, previous_image_id)
+    return LegacyAttachmentParserPairing(
+        docker,
+        target_image_id,
+        previous_image_id,
+    )
+
+
+def prepare_legacy_candidate_attachment_parser(
+    previous_version: str,
+    previous_artifact: AttachmentParserArtifact,
+    docker: DockerCli,
+) -> LegacyCandidateAttachmentParserPairing:
+    """Keep paired parser identity while installing a legacy candidate.
+
+    No receipt lookup belongs on this path: the candidate has no parser payload
+    and therefore cannot yet have an installer receipt. The receipt for a
+    legacy release is written only when a paired candidate replaces it.
+    """
+    previous = docker.inspect(PARSER_RUNTIME_IMAGE, missing_ok=True)
+    if previous is None or previous.image_id != previous_artifact.image_id:
+        observed = previous.image_id if previous is not None else "missing"
+        raise InstallError(
+            f"cannot prepare legacy gateway {previous_version}: active parser image "
+            f"{PARSER_RUNTIME_IMAGE} is {observed}, expected {previous_artifact.image_id}; "
+            "refusing to guess the previous pairing"
+        )
+    _retain_parser_image(docker, previous.image_id)
+    return LegacyCandidateAttachmentParserPairing(docker, previous.image_id)
+
+
+def parser_container_name(release: Path) -> str:
+    template = release / "share" / "templates" / "services" / "attachment-parser.yaml"
+    try:
+        for raw_line in template.read_text().splitlines():
+            line = raw_line.split("#", 1)[0].strip()
+            key, separator, value = line.partition(":")
+            if key == PARSER_CONTAINER_NAME_KEY and separator:
+                name = value.strip().strip("'\"")
+                if name:
+                    return name
+    except OSError as e:
+        raise InstallError(f"cannot read attachment-parser service template {template}: {e}") from e
+    raise InstallError(f"attachment-parser service template {template} has no container_name")
 
 
 def verify_tarball_checksum(tarball: Path, sidecar: Path) -> bool:
@@ -692,7 +1501,15 @@ def stage_native_services(repo: Path, release: Path, wheels_root: Path, runner=s
     time.
     """
     bundled_helper = release / RELEASE_INSTALL_VENV
-    helper = bundled_helper if bundled_helper.is_file() else repo / INSTALL_VENV_SCRIPT
+    # Disposable rehearsal hook: production always uses the bundled helper or
+    # checkout helper; tests may replace only this native boundary without
+    # running package installers or requiring a host-specific Python minor.
+    test_helper = os.environ.get("SENTIENT_MAC_PROD_TEST_VENV_HELPER")
+    helper = (
+        Path(test_helper)
+        if test_helper
+        else (bundled_helper if bundled_helper.is_file() else repo / INSTALL_VENV_SCRIPT)
+    )
     if not helper.is_file():
         raise InstallError(f"missing the offline venv helper {helper}")
 
@@ -1106,47 +1923,134 @@ class Installer:
     take the mini down — is testable without root, launchd or a live gateway.
     """
 
-    def __init__(self, fs, launchd, health, verify_checksum, prepare=None):
+    def __init__(
+        self,
+        fs,
+        launchd,
+        health,
+        verify_checksum,
+        prepare=None,
+        activate=None,
+        restore=None,
+        repair=None,
+        preflight=None,
+    ):
         self._fs = fs
         self._launchd = launchd
         self._health = health
         self._verify_checksum = verify_checksum
+        self._preflight = preflight or (lambda _version, _tarball: None)
         self._prepare = prepare or (lambda _version: None)
+        self._repair = repair
+        # `prepare` stages immutable payloads. `activate` is the small final
+        # alias/pairing swap that must happen only after the release is ready;
+        # `restore` puts that pairing back before a failed release is restarted.
+        self._activate = activate or (lambda _prepared: None)
+        self._restore = restore or (lambda _prepared: None)
 
     def install(self, version, tarball):
         previous = self._fs.current
 
-        # Verify FIRST, before even the idempotency shortcut. The operator handed
-        # us an artifact; if we cannot verify it we say so rather than reporting
-        # "live and healthy" because the version happened to match what is
-        # already running. Otherwise a corrupted release re-deployed to repair a
-        # host looks like a successful deploy.
+        # Verify FIRST, including same-version repair. The operator handed us an
+        # artifact; report success only after its checksum is known good.
         if not self._verify_checksum(tarball):
             raise InstallError(f"checksum mismatch for {tarball}; refusing to install")
 
-        # Idempotent: an identical, healthy install must not bounce the service.
-        # Only probed when the version already matches — on an upgrade the OLD
-        # version's health is irrelevant, and probing it would burn the whole
-        # budget before unpacking whenever the running gateway is down.
+        # Candidate/config checks run before unpack, native staging, Docker
+        # mutation, symlink activation, or launchd restart.
+        self._preflight(version, tarball)
+
         if previous == version:
             already_healthy, _ = self._is_healthy()
             if already_healthy:
                 return
+            if self._repair is not None:
+                # Never unpack a hardened current directory. Repair pairing from
+                # the installed release payload, then restart and gate it.
+                prepared = self._repair(version)
+                try:
+                    self._activate(prepared)
+                    self._launchd.kickstart()
+                except Exception as e:
+                    cleanup = self._reconcile_same_version_failure(prepared)
+                    raise InstallError(
+                        f"{version} same-version repair activation failed: {e}; {cleanup}"
+                    ) from e
+                healthy, cause = self._is_healthy()
+                if healthy:
+                    return
+                detail = f" [{cause}]" if cause else ""
+                raise InstallError(
+                    f"{version} failed health after same-version repair; no distinct "
+                    f"rollback target exists — current release retained{detail}"
+                )
 
         self._fs.unpack(version, tarball)
-        # Finish the release BEFORE it goes live. The native services' venvs are
-        # built here, and a failure must leave the working version current
-        # rather than hand launchd a release with no interpreter.
-        self._prepare(version)
+        # Finish the release BEFORE it goes live. The native services' venvs and
+        # any immutable Docker payload are prepared here, and a failure must
+        # leave the working version current rather than hand launchd a partial
+        # release.
+        prepared = self._prepare(version)
         self._fs.harden_release(version)
         self._fs.point_current_at(version)
-        self._launchd.kickstart()
+        try:
+            # Keep the active alias untouched until current points at the staged
+            # release. No gateway restart occurs until both sides are ready.
+            self._activate(prepared)
+            self._launchd.kickstart()
+        except Exception as e:
+            cleanup = self._restore_after_activation_failure(previous, version, prepared)
+            if cleanup is not None:
+                raise InstallError(f"{version} activation failed: {e}; {cleanup}") from e
+            raise InstallError(f"{version} activation failed: {e}") from e
 
         healthy, cause = self._is_healthy()
         if healthy:
             return
 
-        self._roll_back(failed=version, previous=previous, cause=cause)
+        self._roll_back(failed=version, previous=previous, cause=cause, prepared=prepared)
+
+    def _reconcile_same_version_failure(self, prepared) -> str:
+        try:
+            self._activate(prepared)
+        except Exception as e:
+            return f"parser pairing remains unknown: {e}; no rollback target exists; manual intervention required"
+        return "no rollback target exists; current release retained and parser pairing reconciled"
+
+    def _restore_after_activation_failure(self, previous, failed, prepared) -> str | None:
+        """Best-effort restore while the old gateway process may still run."""
+        if previous is None or previous == failed or not self._fs.has_version(previous):
+            try:
+                self._activate(prepared)
+            except Exception as e:
+                return (
+                    "no distinct previous release exists and parser pairing remains unknown: "
+                    f"{e}; manual intervention required"
+                )
+            return "no distinct previous release exists; current pairing retained; manual intervention required"
+        try:
+            # Restore/reconcile alias first. A timed-out mutation is inspected by
+            # the pairing before any decision to switch current.
+            self._restore(prepared)
+        except Exception as e:
+            return f"parser pairing could not be restored: {e}; manual intervention required"
+        try:
+            self._fs.point_current_at(previous)
+        except Exception as e:
+            try:
+                self._activate(prepared)
+            except Exception as reactivate_error:
+                return (
+                    f"previous gateway {previous} could not be selected: {e}; "
+                    f"new parser pairing could not be re-established: {reactivate_error}; "
+                    "manual intervention required"
+                )
+            return f"previous gateway {previous} could not be selected: {e}; new pairing kept"
+        try:
+            self._launchd.kickstart()
+        except Exception as e:
+            return f"previous gateway {previous} could not be restarted: {e}; manual intervention required"
+        return None
 
     def _is_healthy(self) -> tuple[bool, str | None]:
         """Health as a verdict, never as an exception. Returns (healthy, cause).
@@ -1168,7 +2072,7 @@ class Installer:
         """
         try:
             result = self._health()
-        except (InstallError, OSError) as e:
+        except (InstallError, OSError, subprocess.SubprocessError) as e:
             return (False, f"health check could not complete: {e}")
         # The arity check is part of the contract, not decoration: an unpack of
         # the wrong-length tuple would raise HERE, outside the try above, and a
@@ -1183,8 +2087,8 @@ class Installer:
             return (bool(healthy), cause)
         return (bool(result), None)
 
-    def _roll_back(self, failed, previous, cause=None):
-        """Restore `previous` and re-verify it. Always raises — the install failed.
+    def _roll_back(self, failed, previous, cause=None, prepared=None):
+        """Restore `previous` and its staged pairing, then re-verify it.
 
         Each refusal below is a case where flipping the symlink would make
         things WORSE than the failed install, so it is reported instead of
@@ -1212,8 +2116,37 @@ class Installer:
                 f"and needs manual intervention{detail}"
             )
 
-        self._fs.point_current_at(previous)
-        self._launchd.kickstart()
+        try:
+            # Restore the image alias before switching current. A failed restore
+            # leaves the new current/alias pair intact instead of launching an
+            # old gateway against a new parser image.
+            self._restore(prepared)
+            self._fs.point_current_at(previous)
+        except Exception as e:
+            try:
+                # If selecting the old release failed after the alias changed,
+                # re-establish the new pair rather than leave a split-brain
+                # current/alias state.
+                self._activate(prepared)
+            except Exception as reactivate_error:
+                raise InstallError(
+                    f"{failed} failed health and parser rollback to {previous} could not "
+                    f"restore either pairing: {e}; reactivation also failed: "
+                    f"{reactivate_error}; the service is down and needs manual intervention"
+                ) from e
+            raise InstallError(
+                f"{failed} failed health and parser rollback to {previous} could not "
+                f"switch current: {e}; the failed release pairing was restored and "
+                "the service needs manual intervention"
+            ) from e
+
+        try:
+            self._launchd.kickstart()
+        except Exception as e:
+            raise InstallError(
+                f"{failed} failed health; parser pairing restored but rollback to {previous} "
+                f"could not restart the gateway: {e}; manual intervention required{detail}"
+            ) from e
         healthy, rollback_cause = self._is_healthy()
         if not healthy:
             rollback_detail = f" [rollback: {rollback_cause}]" if rollback_cause else ""
@@ -1368,6 +2301,23 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
+def _wait_for_parser_health(
+    docker: DockerCli,
+    container: str,
+    artifact: AttachmentParserArtifact,
+) -> tuple[bool, str]:
+    last_reason = "not probed"
+    for attempt in range(PARSER_HEALTH_ATTEMPTS):
+        try:
+            docker.parser_health(container, artifact)
+            return True, "attachment-parser is running with matching image and metadata"
+        except InstallError as error:
+            last_reason = str(error)
+        if attempt + 1 < PARSER_HEALTH_ATTEMPTS:
+            time.sleep(PARSER_HEALTH_INTERVAL_SECONDS)
+    return False, last_reason
+
+
 def run_install(args) -> None:
     domain = args.domain
     operator = args.operator or resolve_operator(os.environ, domain)
@@ -1375,24 +2325,30 @@ def run_install(args) -> None:
     repo = args.repo
     plist = args.plist or repo / PLIST_SOURCE
     ca_bundle = args.ca_bundle or home / STATE_ROOT / CERT_RELATIVE
-
-    # Domain policy: drives launchd dir, plist ownership, code hardening, and
-    # the launchd target string. See DomainPolicy.
     policy = DomainPolicy(domain, operator, home)
     launchd_dir = args.launchd_dir or policy.launchd_dir
-
+    release_root = args.opt_root or policy.release_root
     version = read_release_version(args.tarball)
     info(f"installing gateway {version} for operator {operator} (domain: {domain})")
+
+    # Nothing below this line may create state, rewrite a plist, load/tag an
+    # image, or restart launchd until artifact provenance and the explicit
+    # parser prerequisite are known good.
+    sidecar = args.tarball.with_suffix(args.tarball.suffix + CHECKSUM_SUFFIX)
+    if not verify_tarball_checksum(args.tarball, sidecar):
+        raise InstallError(f"checksum mismatch for {args.tarball}; refusing to install")
+    preflight_attachment_parser_install(
+        args.tarball,
+        version,
+        home / STATE_ROOT / OPERATOR_CONFIG_RELATIVE,
+        repo / TEMPLATE_CONFIG,
+    )
 
     info("seeding operator state")
     ensure_state_dirs(home, repo / TEMPLATE_CONFIG,
                       chown=lambda path: shutil.chown(path, user=operator))
     ok(f"{home / STATE_ROOT} ready")
 
-    # Resolved AFTER ensure_state_dirs, and not alongside ca_bundle above: on a
-    # genuinely fresh host the operator's config.yaml does not exist until the
-    # seed above just created it, and this must read the real, possibly
-    # hand-edited file rather than race that seed.
     if args.outward_cert:
         outward_cert = args.outward_cert
     else:
@@ -1401,8 +2357,27 @@ def run_install(args) -> None:
         )
         (warn if cert_is_fallback else info)(cert_reason)
 
+    with InstallerLock(release_root / ".setup-prod.lock"):
+        _run_install_locked(
+            args, domain, operator, repo, plist, ca_bundle, policy, launchd_dir,
+            release_root, version, outward_cert,
+        )
+
+
+def _run_install_locked(
+    args,
+    domain: str,
+    operator: str,
+    repo: Path,
+    plist: Path,
+    ca_bundle: Path,
+    policy: DomainPolicy,
+    launchd_dir: Path,
+    release_root: Path,
+    version: str,
+    outward_cert: Path,
+) -> None:
     info(f"installing the launchd job (domain: {domain})")
-    release_root = args.opt_root or policy.release_root
     launchd = RealLaunchd(plist, operator=operator, daemon_dir=launchd_dir,
                           domain_policy=policy, release_root=release_root)
     launchd.install_plist()
@@ -1410,30 +2385,23 @@ def run_install(args) -> None:
 
     fs = RealFs(release_root, domain_policy=policy)
     previous = fs.current
+    docker = DockerCli()
+
     probe = HealthProbe(args.health_url, ca_bundle,
                         attempts=args.health_attempts,
                         interval_seconds=args.health_interval)
-    # check_hostname=False: this dials `localhost`, but the pinned cert may be
-    # the mini's real acme.sh certificate for `sentient.dev32.io` — see
-    # build_tls_context()'s docstring for why the name check is inapplicable
-    # here while chain verification (verify_mode=CERT_REQUIRED) still runs
-    # unconditionally. is_success accepts 2xx/3xx: the root may redirect to a
-    # login route, and a redirect through nginx already proves the proxy, the
-    # cert and the reverse-proxy path all work.
-    edge_probe = HealthProbe(args.edge_url, outward_cert,
-                             attempts=args.edge_attempts,
-                             interval_seconds=args.edge_interval,
-                             check_hostname=False,
-                             is_success=lambda status: (
-                                 EDGE_SUCCESS_STATUS_MIN <= status < EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE
-                             ))
+    edge_probe = HealthProbe(
+        args.edge_url,
+        outward_cert,
+        attempts=args.edge_attempts,
+        interval_seconds=args.edge_interval,
+        check_hostname=False,
+        is_success=lambda status: EDGE_SUCCESS_STATUS_MIN <= status < EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE,
+    )
 
-    def prepare(staged: str) -> None:
+    def prepare(staged: str):
         info(f"staging native services into {version}")
         release = fs.release_dir(staged)
-        # New archives are self-contained; the checkout fallback keeps old
-        # archives installable and is intentionally announced so it cannot
-        # quietly reintroduce a hidden deployment dependency.
         bundled_wheels = release / RELEASE_WHEELS_DIR
         wheels = bundled_wheels if bundled_wheels.is_dir() else (args.wheels or repo / WHEELS_ROOT)
         if bundled_wheels.is_dir():
@@ -1443,32 +2411,98 @@ def run_install(args) -> None:
         stage_native_services(repo, release, wheels)
         ok("whisper-stt + local-tts venvs built from vendored wheels")
 
-    def health() -> tuple[bool, str | None]:
-        """Gateway (8888) first, edge (443) second — both must pass.
+        release_artifact = read_optional_attachment_parser_artifact(release)
+        previous_artifact = (
+            read_optional_attachment_parser_artifact(fs.release_dir(previous))
+            if previous is not None else None
+        )
+        if release_artifact is None:
+            if previous is None or previous_artifact is None:
+                # A true legacy-to-legacy transition has no parser pairing to
+                # invent or gate.
+                return None
+            # This is a legacy CANDIDATE, not a legacy rollback target. It has
+            # no receipt yet; leave the previous paired alias in place and only
+            # restore it if the candidate's gateway changes Docker state.
+            return prepare_legacy_candidate_attachment_parser(
+                previous,
+                previous_artifact,
+                docker,
+            )
 
-        Returns (healthy, cause): the two failures are named distinctly both
-        on the console (via `ok`/`fail` below, for a human reading the live
-        transcript) AND in the returned `cause` (for `_roll_back`'s raised
-        message — see `Installer._is_healthy`'s "pair form" comment — so
-        anything capturing only the final exception text still learns which
-        probe failed, not just that install failed). The edge probe is skipped
-        entirely when the gateway itself is not healthy: proxying through a
-        dead upstream cannot succeed, and there is no reason to burn the edge
-        probe's own budget finding that out a second way.
-        """
+        parser_pairing = prepare_attachment_parser(
+            release,
+            previous,
+            docker,
+            allow_missing_previous=previous is None or previous_artifact is None,
+            expected_previous_image_id=(
+                previous_artifact.image_id if previous_artifact is not None else None
+            ),
+        )
+        if previous is not None and previous_artifact is None:
+            write_legacy_parser_receipt(release_root, previous, parser_pairing.previous_image_id)
+        ok(
+            f"attachment-parser {parser_pairing.artifact.version} image staged "
+            f"({parser_pairing.artifact.image_id})"
+        )
+        return parser_pairing
+
+    def repair(staged: str):
+        # Same-version repair reads the hardened installed release only. The
+        # supplied tarball was checksum-verified, but is never unpacked here.
+        release = fs.release_dir(staged)
+        artifact = read_optional_attachment_parser_artifact(release)
+        if artifact is None:
+            return None
+        return prepare_attachment_parser(
+            release,
+            staged,
+            docker,
+            allow_missing_previous=True,
+            expected_previous_image_id=artifact.image_id,
+        )
+
+    def activate(prepared) -> None:
+        if prepared is not None:
+            prepared.activate()
+
+    def restore(prepared) -> None:
+        if prepared is not None:
+            prepared.restore()
+
+    def health() -> tuple[bool, str | None]:
         gateway_healthy = probe.wait()
         (ok if gateway_healthy else fail)(f"gateway (8888): {probe.last_reason}")
         if not gateway_healthy:
-            fail("gateway not healthy — the binary itself did not come up; edge (443) was not probed")
-            return (False, f"gateway not healthy: {probe.last_reason}")
+            fail("gateway not healthy — edge (443) and attachment-parser were not probed")
+            return False, f"gateway not healthy: {probe.last_reason}"
 
+        expected_artifact = None
+        expected_container = None
+        current_version = fs.current
+        if current_version is not None:
+            current_release = fs.release_dir(current_version)
+            try:
+                expected_artifact = read_optional_attachment_parser_artifact(current_release)
+                if expected_artifact is not None:
+                    expected_container = parser_container_name(current_release)
+            except InstallError as error:
+                fail(f"attachment-parser: {error}")
+                return False, f"attachment-parser not ready: {error}"
+        if expected_artifact is not None and expected_container is not None:
+            parser_healthy, parser_reason = _wait_for_parser_health(
+                docker, expected_container, expected_artifact
+            )
+            (ok if parser_healthy else fail)(f"attachment-parser: {parser_reason}")
+            if not parser_healthy:
+                fail("attachment-parser not ready — edge (443) was not probed")
+                return False, f"attachment-parser not ready: {parser_reason}"
         edge_healthy = edge_probe.wait()
         (ok if edge_healthy else fail)(f"edge (443): {edge_probe.last_reason}")
         if not edge_healthy:
-            fail("gateway healthy, edge not — nginx config, the web bundle, or the outward "
-                 "cert is broken even though the gateway binary is fine")
-            return (False, f"gateway healthy, edge (443) not: {edge_probe.last_reason}")
-        return (True, None)
+            fail("gateway and attachment-parser healthy, edge not — nginx config, web bundle, or outward cert is broken")
+            return False, f"gateway and attachment-parser healthy, edge (443) not: {edge_probe.last_reason}"
+        return True, None
 
     installer = Installer(
         fs=fs,
@@ -1478,13 +2512,13 @@ def run_install(args) -> None:
             tarball, tarball.with_suffix(tarball.suffix + CHECKSUM_SUFFIX)
         ),
         prepare=prepare,
+        activate=activate,
+        restore=restore,
+        repair=repair,
     )
     info(f"verifying and installing (previous: {previous or 'none'})")
     installer.install(version, args.tarball)
     ok(f"gateway {version} is live and healthy")
-
-    # Protect the version we just replaced: it is the rollback target for a
-    # future failed upgrade, and prune must never be what removes it.
     fs.prune(keep=args.keep, protect=(previous,) if previous else ())
     ok(f"kept the {args.keep} most recent releases")
 
@@ -1515,12 +2549,6 @@ def run_uninstall(args) -> None:
 
 
 def run_rollback(args) -> None:
-    """Roll back to the most recent release on disk that is NOT `current`.
-
-    Lists the release directories by mtime (install order), excludes the
-    current one, and points `current` at the most recent remaining. Then
-    kickstarts the job and health-gates the result — the same gate as install,
-    so a rollback to a broken release is caught rather than shipped."""
     domain = args.domain
     operator = args.operator or resolve_operator(os.environ, domain)
     home = args.home or Path(f"/Users/{operator}")
@@ -1529,14 +2557,38 @@ def run_rollback(args) -> None:
     ca_bundle = args.ca_bundle or home / STATE_ROOT / CERT_RELATIVE
     policy = DomainPolicy(domain, operator, home)
     launchd_dir = args.launchd_dir or policy.launchd_dir
-
     release_root = args.opt_root or policy.release_root
+
+    outward_cert = args.outward_cert
+    if outward_cert is None:
+        outward_cert, cert_reason, _ = resolve_outward_cert(
+            home, home / STATE_ROOT / OPERATOR_CONFIG_RELATIVE
+        )
+        info(cert_reason)
+
+    with InstallerLock(release_root / ".setup-prod.lock"):
+        _run_rollback_locked(
+            args, operator, repo, plist, ca_bundle, policy, launchd_dir,
+            release_root, outward_cert,
+        )
+
+
+def _run_rollback_locked(
+    args,
+    operator: str,
+    repo: Path,
+    plist: Path,
+    ca_bundle: Path,
+    policy: DomainPolicy,
+    launchd_dir: Path,
+    release_root: Path,
+    outward_cert: Path,
+) -> None:
+    """Health-gated rollback while one installer lock is held."""
     fs = RealFs(release_root, domain_policy=policy)
     current = fs.current
     if current is None:
         raise InstallError("no `current` symlink — nothing to roll back from")
-
-    # Most recent release that is NOT current, by mtime (install order).
     ordered = sorted(
         (p for p in fs._releases() if p.name != current),
         key=lambda p: p.stat().st_mtime,
@@ -1549,47 +2601,146 @@ def run_rollback(args) -> None:
     target = ordered[0].name
     info(f"rolling back: {current} -> {target}")
 
-    # Resolve the outward cert for the health gate (same as install).
-    outward_cert = args.outward_cert
-    if outward_cert is None:
-        outward_cert, cert_reason, _ = resolve_outward_cert(
-            home, home / STATE_ROOT / OPERATOR_CONFIG_RELATIVE
-        )
-        info(cert_reason)
-
     launchd = RealLaunchd(plist, operator=operator, daemon_dir=launchd_dir,
                           domain_policy=policy)
+    docker = DockerCli()
+    current_release = fs.release_dir(current)
+    target_release = fs.release_dir(target)
+    current_artifact = read_optional_attachment_parser_artifact(current_release)
+    target_artifact = read_optional_attachment_parser_artifact(target_release)
+    if target_artifact is not None:
+        config_path = policy.home / STATE_ROOT / OPERATOR_CONFIG_RELATIVE
+        validate_attachment_parser_operator_config(
+            config_path if os.path.lexists(config_path) else repo / TEMPLATE_CONFIG
+        )
+    parser_activate = lambda: None
+    parser_restore = lambda: None
+    if target_artifact is not None:
+        parser_pairing = prepare_attachment_parser(
+            target_release,
+            current,
+            docker,
+            allow_missing_previous=current_artifact is None,
+            expected_previous_image_id=(
+                current_artifact.image_id if current_artifact is not None else None
+            ),
+        )
+        parser_activate = parser_pairing.activate
+        parser_restore = parser_pairing.restore
+        target_container = parser_container_name(target_release)
+        if current_artifact is None:
+            write_legacy_parser_receipt(release_root, current, parser_pairing.previous_image_id)
+    elif current_artifact is not None:
+        parser_pairing = prepare_legacy_attachment_parser(
+            release_root,
+            target,
+            current,
+            docker,
+            current_image_id=current_artifact.image_id,
+        )
+        parser_activate = parser_pairing.activate
+        parser_restore = parser_pairing.restore
+        target_container = None
+    else:
+        # Legacy-to-legacy rollback has no parser identity to change or gate.
+        target_container = None
+
     probe = HealthProbe(args.health_url, ca_bundle,
                         attempts=args.health_attempts,
                         interval_seconds=args.health_interval)
-    edge_probe = HealthProbe(args.edge_url, outward_cert,
-                             attempts=args.edge_attempts,
-                             interval_seconds=args.edge_interval,
-                             check_hostname=False,
-                             is_success=lambda status: (
-                                 EDGE_SUCCESS_STATUS_MIN <= status < EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE
-                             ))
-
-    fs.point_current_at(target)
-    launchd.kickstart()
+    edge_probe = HealthProbe(
+        args.edge_url,
+        outward_cert,
+        attempts=args.edge_attempts,
+        interval_seconds=args.edge_interval,
+        check_hostname=False,
+        is_success=lambda status: EDGE_SUCCESS_STATUS_MIN <= status < EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE,
+    )
+    gate_artifact = target_artifact
+    gate_container = target_container
 
     def health() -> tuple[bool, str | None]:
         gateway_healthy = probe.wait()
         (ok if gateway_healthy else fail)(f"gateway (8888): {probe.last_reason}")
         if not gateway_healthy:
-            return (False, f"gateway not healthy: {probe.last_reason}")
+            return False, f"gateway not healthy: {probe.last_reason}"
+        if gate_artifact is not None and gate_container is not None:
+            parser_healthy, parser_reason = _wait_for_parser_health(
+                docker, gate_container, gate_artifact
+            )
+            (ok if parser_healthy else fail)(f"attachment-parser: {parser_reason}")
+            if not parser_healthy:
+                return False, f"attachment-parser not ready: {parser_reason}"
         edge_healthy = edge_probe.wait()
         (ok if edge_healthy else fail)(f"edge (443): {edge_probe.last_reason}")
         if not edge_healthy:
-            return (False, f"gateway healthy, edge (443) not: {edge_probe.last_reason}")
-        return (True, None)
+            return False, f"edge (443) not healthy: {edge_probe.last_reason}"
+        return True, None
+
+    def restore_previous() -> None:
+        nonlocal gate_artifact, gate_container
+        try:
+            parser_restore()
+        except Exception as e:
+            raise InstallError(
+                f"manual rollback could not restore gateway {current} parser pairing: {e}"
+            ) from e
+        try:
+            fs.point_current_at(current)
+        except Exception as e:
+            try:
+                parser_activate()
+            except Exception as reactivate_error:
+                raise InstallError(
+                    f"manual rollback could not select gateway {current}: {e}; "
+                    f"target parser pairing could not be re-established: {reactivate_error}"
+                ) from e
+            raise InstallError(
+                f"manual rollback could not select gateway {current}: {e}; target "
+                "parser pairing was restored"
+            ) from e
+        gate_artifact = current_artifact
+        gate_container = parser_container_name(current_release) if current_artifact is not None else None
+        try:
+            launchd.kickstart()
+        except Exception as e:
+            raise InstallError(
+                f"manual rollback restored gateway {current} and its parser pairing but "
+                f"could not restart it: {e}"
+            ) from e
+
+    try:
+        # Alias first, then current: never restart an old gateway against the
+        # target image, and never leave current changed if Docker activation fails.
+        parser_activate()
+        fs.point_current_at(target)
+        launchd.kickstart()
+    except Exception as e:
+        try:
+            restore_previous()
+        except InstallError as cleanup:
+            raise InstallError(f"manual rollback activation failed: {e}; {cleanup}") from e
+        raise InstallError(f"manual rollback activation failed: {e}") from e
 
     healthy, cause = health()
     if healthy:
         ok(f"rolled back to {target} — live and healthy")
-    else:
-        fail(f"rolled back to {target} but health gate failed: {cause}")
-        raise InstallError(f"rollback to {target} failed health: {cause}")
+        return
+
+    fail(f"rolled back to {target} but health gate failed: {cause}")
+    try:
+        restore_previous()
+    except InstallError as cleanup:
+        raise InstallError(f"rollback to {target} failed health: {cause}; {cleanup}") from cleanup
+    restored, restore_cause = health()
+    if not restored:
+        raise InstallError(
+            f"rollback to {target} failed health and restoring {current} also failed: "
+            f"{restore_cause}"
+        )
+    raise InstallError(
+        f"rollback to {target} failed health; restored {current} and its parser pairing"
+    )
 
 
 def main(argv=None) -> int:

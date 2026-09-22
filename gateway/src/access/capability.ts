@@ -19,7 +19,8 @@ export type ResourceClass =
   | "calendar-household"
   | "schedule-private"
   | "push-private"
-  | "web-artifact";
+  | "web-artifact"
+  | "attachment-store";
 
 export interface Capability {
   /** Whose authority this grant derives from. Stamped at mint, never rewritten. */

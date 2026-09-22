@@ -45,6 +45,23 @@ describe("UserTextInputConnector", () => {
     expect(internal.sentMessages).toEqual([{ type: "text.input", text: "hello", pendingId: expect.any(String) }]);
   });
 
+  it("sends attachment-only input with caller-owned idempotency identity", () => {
+    const connector = new UserTextInputConnector();
+    const internal = createMockInternal();
+    connector.attach(internal);
+
+    connector.sendText("", "pending-1", ["att_0123456789abcdef0123456789abcdef"]);
+
+    expect(internal.sentMessages).toEqual([
+      {
+        type: "text.input",
+        text: "",
+        pendingId: "pending-1",
+        attachmentIds: ["att_0123456789abcdef0123456789abcdef"],
+      },
+    ]);
+  });
+
   it("CONTRACT: gives every message a distinct pendingId", () => {
     // The gateway's "one entry per message" guarantee is keyed on this field
     // and its dedup is durable. Two messages sharing an id would make the

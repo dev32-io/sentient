@@ -29,6 +29,15 @@ export interface ProviderTool {
   function: { name: string; description: string; parameters: Record<string, unknown> };
 }
 
+/** OpenAI-compatible content parts used only for transient provider requests.
+ * Durable session messages remain text-only `ChatMessage`s. */
+export type ProviderContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | {
+      readonly type: "image_url";
+      readonly image_url: { readonly url: string; readonly detail?: "auto" | "low" | "high" };
+    };
+
 export interface ProviderRequest {
   messages: ChatMessage[];
   tools: ProviderTool[];
@@ -66,6 +75,23 @@ export interface ProviderRequest {
   model?: string;
 }
 
+export type TransientProviderMessage =
+  | ChatMessage
+  | { readonly role: "user"; readonly content: readonly ProviderContentPart[] };
+
+export interface TransientProviderRequest extends Omit<ProviderRequest, "messages"> {
+  messages: readonly TransientProviderMessage[];
+}
+
 export interface ProviderClient {
   stream(req: ProviderRequest): AsyncGenerator<ProviderStreamChunk>;
+}
+
+/** Route transient rich content through existing provider serialization without
+ * widening durable text callers' `ProviderRequest` contract. */
+export function streamTransient(
+  client: ProviderClient,
+  req: TransientProviderRequest,
+): AsyncGenerator<ProviderStreamChunk> {
+  return (client.stream as unknown as (request: TransientProviderRequest) => AsyncGenerator<ProviderStreamChunk>)(req);
 }

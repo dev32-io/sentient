@@ -87,6 +87,10 @@ export interface ReplayRegistry {
   /** Drop one hold. The entry starts its retention clock only when the LAST
    *  hold is released. No-op unless `lease` is one of the entry's holders. */
   release(lease: ReplayLease): void;
+  /** Forget this session's stream immediately, even while stale holders still
+   *  exist. Used only after durable session deletion. Their later releases are
+   *  no-ops, and any future acquisition receives a fresh epoch. */
+  invalidate(sessionId: string): void;
   readonly size: number;
 }
 
@@ -213,6 +217,18 @@ export function createReplayRegistry(options: ReplayRegistryOptions): ReplayRegi
       // Sweep on every release, held or not — that is the only lifecycle that
       // bounds registry growth.
       sweep();
+    },
+
+    invalidate(sessionId: string): void {
+      const entry = entries.get(sessionId);
+      if (entry === undefined) return;
+      entries.delete(sessionId);
+      log.info("replay-registry.invalidated", {
+        sessionId,
+        epoch: entry.epoch,
+        holders: entry.leaseIds.size,
+        reason: "durable session deletion invalidated every replay cursor immediately",
+      });
     },
 
     get size() {

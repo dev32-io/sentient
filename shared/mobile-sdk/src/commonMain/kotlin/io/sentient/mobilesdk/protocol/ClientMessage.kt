@@ -1,5 +1,7 @@
 package io.sentient.mobilesdk.protocol
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -67,7 +69,13 @@ sealed class ClientMessage {
     data class AudioCancel(val captureId: String) : ClientMessage()
 
     @Serializable @SerialName("text.input")
-    data class TextInput(val text: String, val pendingId: String? = null) : ClientMessage()
+    data class TextInput(
+        val text: String,
+        val pendingId: String? = null,
+        @OptIn(ExperimentalSerializationApi::class)
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val attachmentIds: List<String> = emptyList(),
+    ) : ClientMessage()
 
     /** User's Allow / Deny for an open [ServerMessage.PermissionRequest] (design §7.1).
      *  Replaces the retired `tool.confirm`. Keyed by requestId, NOT toolCallId — the

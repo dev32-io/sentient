@@ -6,6 +6,7 @@ export type SidebarKey =
   | "voice"
   | "audio"
   | "model"
+  | "auxiliaryRunners"
   | "tools"
   | "systemPrompt"
   | "advanced"
@@ -44,6 +45,7 @@ const ALL_NAV_GROUPS: readonly NavGroup[] = [
       { key: "voice", label: "Voice", icon: "waveform" },
       { key: "audio", label: "Audio", icon: "volume-2" },
       { key: "model", label: "Model", icon: "cpu" },
+      { key: "auxiliaryRunners", label: "Auxiliary runners", icon: "sliders-h" },
       { key: "tools", label: "Tools", icon: "wrench" },
       { key: "systemPrompt", label: "System Prompt", icon: "book-open" },
       { key: "advanced", label: "Advanced", icon: "sliders-h" },
@@ -94,6 +96,7 @@ export const SOUL_KEYS: ReadonlySet<SidebarKey> = new Set([
   "voice",
   "audio",
   "model",
+  "auxiliaryRunners",
   "tools",
   "systemPrompt",
   "advanced",

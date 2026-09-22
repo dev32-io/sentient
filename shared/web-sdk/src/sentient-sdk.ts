@@ -80,7 +80,7 @@ export class SentientSDK {
   private readonly messageHandlers = new Map<string, Set<(msg: unknown) => void>>();
   private readonly binaryHandlers = new Set<(data: ArrayBuffer) => void>();
   private readonly deviceId: string;
-  private readonly surfaceId: string;
+  private surfaceId: string;
   private readonly cursor: ResumeCursorState;
   /** This tab's `{sessionId, generation}` attachment (gateway spec §3.7).
    *  Stamped onto every outbound command in `sendRaw`. */
@@ -268,6 +268,11 @@ export class SentientSDK {
     };
   }
 
+  /** Dispatch SDK-owned lifecycle facts through connector subscriptions. */
+  private dispatchInternalMessage(type: string, message: unknown): void {
+    for (const handler of this.messageHandlers.get(type) ?? []) handler(message);
+  }
+
   private resumeHandlerDeps(): StreamResumeHandlerDeps {
     return {
       cursor: this.cursor,
@@ -332,15 +337,24 @@ export class SentientSDK {
     // the mint key. It is replaced by the real id on the `session.created` the
     // first message triggers.
     this.addMessageHandler("session.draft", (msg: unknown) => {
-      const m = msg as { draftKey?: string };
-      // THE REFUSING ANSWER. If this tab presented an id, the gateway did not
-      // honour it — drop it, so the next connect stops re-presenting a session
-      // this user's store cannot resolve. Guarded on having presented one, so a
-      // first-ever connect (which is answered with a draft too) deletes nothing.
-      // Must run BEFORE the draft key is stored, or it would delete the key it
-      // was just handed.
-      clearRefusedSessionId(m.draftKey ?? null);
-      if (m.draftKey) setCurrentSessionId(m.draftKey);
+      const m = msg as { draftKey?: unknown; requestId?: unknown };
+      const draftKey = typeof m.draftKey === "string" ? m.draftKey : null;
+      const boundSessionId = this.binding.current()?.sessionId ?? null;
+      // THE REFUSING ANSWER. If this tab presented a durable session id, the
+      // gateway did not honour it. Surface that fact internally before the
+      // pointer moves to the gateway draft; connectors use it only to recover
+      // local state, never to issue a server delete.
+      const refusedSessionId = clearRefusedSessionId(draftKey);
+      if (refusedSessionId !== null) {
+        this.dispatchInternalMessage("session.refused", { sessionId: refusedSessionId });
+      }
+      // A deletion unbinds an already-attached connection and sends a draft
+      // handshake without requestId. Pair its exact old session with that
+      // handshake; explicit New Chat replies carry requestId and are unrelated.
+      if (boundSessionId !== null && typeof m.requestId !== "string") {
+        this.dispatchInternalMessage("session.unbound", { sessionId: boundSessionId });
+      }
+      if (draftKey !== null) setCurrentSessionId(draftKey);
       // A draft has NO attachment, so the binding must go with it. Keeping the
       // previous session's pair would stamp it onto this draft's first
       // `text.input` — the one frame that mints the next session — and the
@@ -468,6 +482,23 @@ export class SentientSDK {
       presenceReconnect: () => this.connect(),
       forceReconnect: () => this.reconnect.forceReconnect(),
     };
+  }
+
+  /** Gateway-confirmed session attachment; null for drafts and disconnected sockets. */
+  boundSessionId(): string | null {
+    return this.currentStatus === "ready" ? (this.binding.current()?.sessionId ?? null) : null;
+  }
+
+  currentSurfaceId(): string {
+    return this.surfaceId;
+  }
+
+  /** Reopen one durable pending send under its original route and dedupe namespace. */
+  recoverPendingRoute(routeId: string, surfaceId: string): void {
+    if (!routeId || !surfaceId) throw new TypeError("pending route identity must not be empty");
+    this.surfaceId = surfaceId;
+    setCurrentSessionId(routeId);
+    this.reconnect.forceReconnect();
   }
 
   private sendRaw(message: unknown): void {

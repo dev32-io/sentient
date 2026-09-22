@@ -226,6 +226,18 @@
   font-size: 14px;
 }
 
+/* ---- Auxiliary runner selection ---- */
+.settings-v2 .aux-runner-current {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+}
+.settings-v2 .aux-runner-current code { color: var(--color-ink); overflow-wrap: anywhere; }
+.settings-v2 .aux-runner-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.settings-v2 .aux-runner-actions + .snt-pane { margin-top: 12px; }
+
 /* ---- Model "current selection" tile (in card body, full width) ---- */
 .settings-v2 .m-current { width: 100%; }
 .settings-v2 .m-current > .mod {

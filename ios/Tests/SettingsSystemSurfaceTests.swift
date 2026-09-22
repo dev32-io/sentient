@@ -33,6 +33,20 @@ final class SettingsSystemSurfaceTests: XCTestCase {
         XCTAssertFalse(label.contains("/"))
     }
 
+    func testAuxiliaryModelOverridesPreserveRefsAndResetToDefaults() {
+        let title = AuxiliaryModelSelection(provider: "custom", id: "title-model")
+        let vision = AuxiliaryModelSelection(provider: "custom", id: "vision-model")
+
+        let overrides = profileAuxiliaryModels(title: title, dreamer: nil, attachmentVision: vision)
+        XCTAssertEqual(overrides?.title?.provider, "custom")
+        XCTAssertEqual(overrides?.title?.id, "title-model")
+        XCTAssertNil(overrides?.dreamer)
+        XCTAssertEqual(overrides?.attachmentVision?.id, "vision-model")
+        XCTAssertEqual(auxiliaryModelSelection(overrides?.title), title)
+
+        XCTAssertNil(profileAuxiliaryModels(title: nil, dreamer: nil, attachmentVision: nil))
+    }
+
     @MainActor
     func testOwnedStateAlphabetsIncludeAppliedAndFailClosedAccess() {
         XCTAssertEqual(MemoryViewModel.Save.applied, .applied)

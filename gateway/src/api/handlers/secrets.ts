@@ -83,6 +83,7 @@ export interface SecretsDeps {
     applySubset(names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus>;
   } | null;
   pushProviderUrl?: string;
+  invalidateCatalogCache?: (provider: LlmProvider) => void;
 }
 
 // --- Handler ----------------------------------------------------------------
@@ -197,6 +198,7 @@ async function handlePutLlmActive(deps: SecretsDeps, req: Request): Promise<Resp
   const result = await deps.secretsStore.setActiveLlmProvider(provider);
   if (!result.ok) return jsonError(HTTP_INTERNAL_ERROR, "io-error", result.error.kind);
 
+  deps.invalidateCatalogCache?.(provider);
   log.info("secrets.llm.active-changed", { provider });
   return Response.json({ ok: true }, { status: HTTP_OK });
 }
@@ -218,6 +220,7 @@ async function handlePutLlmProvider(deps: SecretsDeps, req: Request, provider: L
   const result = await deps.secretsStore.setLlmProviderKey(provider, patch);
   if (!result.ok) return jsonError(HTTP_INTERNAL_ERROR, "io-error", result.error.kind);
 
+  deps.invalidateCatalogCache?.(provider);
   log.info("secrets.llm.key-set", {
     provider,
     hasKey: patch.api_key !== undefined ? patch.api_key !== null : undefined,

@@ -43,7 +43,7 @@ const NETWORK_DRIVER = "bridge";
  *  `modem.followProgress` so the pull actually completes (and errors surface)
  *  before we try to use the image. */
 export interface DockerodeLike {
-  listContainers(opts?: { all?: boolean; filters?: string }): Promise<
+  listContainers(opts?: { all?: boolean; filters?: string; abortSignal?: AbortSignal }): Promise<
     Array<{
       Id: string;
       Labels: Record<string, string>;
@@ -129,7 +129,7 @@ export function createDockerDriver(deps: DockerDriverDeps): ServiceDriver {
         return { ok: false, error: { kind: "remove-failed", reason: errMsg(err) } };
       }
     },
-    listManaged: async () => listManaged(deps.docker),
+    listManaged: async (signal) => listManaged(deps.docker, signal),
   };
 }
 
@@ -165,9 +165,10 @@ async function recreate(
   // the skip's own precondition, NOT by verifyIdentity, which for this backend
   // is an unconditional pass (see createDockerDriver above). The precondition is
   // that OUR container name is Running with a spec hash matching the one we
-  // would create; dockerd holds that container's published ports for its whole
-  // lifetime and would have refused to start it if the port had been taken. A
-  // foreign holder therefore implies our container is not running,
+  // would create and an image ID matching the current tag; dockerd holds that
+  // container's published ports for its whole lifetime and would have refused
+  // to start it if the port had been taken. A foreign holder therefore implies
+  // our container is not running,
   // isUnchangedAndRunning returns false, and the full recreate path runs — where
   // the failure to bind surfaces as create/start-failed. The orchestrator's
   // health probe does still run after this returns.
@@ -208,8 +209,9 @@ async function recreate(
   }
   // Docker only honours the FIRST entry in NetworkingConfig.EndpointsConfig at
   // create time. Attach to remaining networks via network.connect BEFORE start
-  // so DNS resolution works on every network the template lists.
-  const otherNets = ms.template.networks.slice(1);
+  // so DNS resolution works on every network the template lists. `network_mode:
+  // none` has no entries and therefore cannot reach this path.
+  const otherNets = ms.template.network_mode === "none" ? [] : ms.template.networks.slice(1);
   for (const net of otherNets) {
     try {
       await docker.getNetwork(net).connect({ Container: created.id });
@@ -294,6 +296,31 @@ function enforcePublishReachable(ms: DockerManagedService, declared: ManagedNetw
 }
 
 function enforcePolicy(ms: DockerManagedService): Result<undefined, DriverError> {
+  if (ms.template.network_mode === "none" && (ms.template.networks.length > 0 || ms.template.ports.length > 0)) {
+    return { ok: false, error: { kind: "policy-violation", reason: "network_mode none forbids networks and ports" } };
+  }
+  if (ms.template.network_mode === undefined && ms.template.networks.length === 0) {
+    return { ok: false, error: { kind: "policy-violation", reason: "managed network required" } };
+  }
+  if (ms.name === "attachment-parser") {
+    const userId = Number(ms.template.user?.split(":", 1)[0]);
+    const confined =
+      ms.template.network_mode === "none" &&
+      ms.template.volumes.length === 0 &&
+      ms.template.read_only === true &&
+      ms.template.tmpfs?.["/tmp"]?.includes("noexec") &&
+      ms.template.pids_limit !== undefined &&
+      ms.template.mem_limit_bytes !== undefined &&
+      ms.template.memswap_limit_bytes === ms.template.mem_limit_bytes &&
+      ms.template.cpus !== undefined &&
+      ms.template.cap_drop?.includes("ALL") &&
+      ms.template.security_opt?.includes("no-new-privileges") &&
+      Number.isInteger(userId) &&
+      userId > 0;
+    if (!confined) {
+      return { ok: false, error: { kind: "policy-violation", reason: "attachment-parser confinement incomplete" } };
+    }
+  }
   if (!ms.config.allowed_images.includes(ms.template.image)) {
     return { ok: false, error: { kind: "policy-violation", reason: `image ${ms.template.image} not allowed` } };
   }
@@ -341,7 +368,7 @@ function buildPortPublishing(ms: DockerManagedService): Result<PortPublishing, D
 
 function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): Record<string, unknown> {
   const env = Object.entries(ms.template.env).map(([k, v]) => `${k}=${v}`);
-  const primaryNet = ms.template.networks[0] ?? "";
+  const primaryNet = ms.template.network_mode ?? ms.template.networks[0] ?? "";
   const spec: Record<string, unknown> = {
     name: ms.template.container_name,
     Image: ms.template.image,
@@ -357,12 +384,19 @@ function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): R
       Binds: ms.template.volumes,
       ExtraHosts: ms.template.extra_hosts,
       Memory: ms.template.mem_limit_bytes ?? 0,
+      MemorySwap: ms.template.memswap_limit_bytes ?? 0,
       NanoCpus: ms.template.cpus ? Math.floor(ms.template.cpus * 1_000_000_000) : 0,
+      PidsLimit: ms.template.pids_limit ?? 0,
+      ReadonlyRootfs: ms.template.read_only ?? false,
+      Tmpfs: ms.template.tmpfs ?? {},
+      CapDrop: ms.template.cap_drop ?? [],
+      SecurityOpt: ms.template.security_opt ?? [],
       GroupAdd: ms.template.group_add,
       // Loopback-only, built by buildPortPublishing. Empty when the template
       // declares no ports — defence in depth against accidental exposure.
       PortBindings: published.bindings,
     },
+    User: ms.template.user,
     // NetworkingConfig is intentionally omitted — Docker only honours the
     // first entry at create time, so secondary networks would be silently
     // dropped here. They are attached after create via network.connect.
@@ -377,26 +411,49 @@ function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): R
   return spec;
 }
 
-/** True when this exact spec is already running under this container name.
+function asInspectObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** True when this exact spec is already running under this container name and
+ *  uses the image currently tagged for the service.
  *
- *  Deliberately requires BOTH: a matching hash on a stopped container is not a
- *  reason to leave it alone, and a running container with a stale hash is not
- *  the thing we were asked to create. Any inspect failure — 404, unreadable
- *  label, unreachable daemon — answers false, so the fallback is always the
- *  existing recreate path. */
+ *  Deliberately requires ALL: a matching hash on a stopped container is not a
+ *  reason to leave it alone, a running container with a stale hash is not the
+ *  thing we were asked to create, and a matching hash does not prove its image
+ *  was rebuilt in place. Any inspect failure or missing metadata — 404,
+ *  unreadable label, unknown image ID, unreachable daemon — answers false, so
+ *  the fallback is always the existing recreate path. */
 async function isUnchangedAndRunning(
   docker: DockerodeLike,
   ms: DockerManagedService,
   published: PortPublishing,
 ): Promise<boolean> {
   try {
-    const info = (await docker.getContainer(ms.template.container_name).inspect()) as {
-      State?: { Running?: boolean };
-      Config?: { Labels?: Record<string, string> };
-    };
-    if (info.State?.Running !== true) return false;
+    const [rawInfo, rawImage] = await Promise.all([
+      docker.getContainer(ms.template.container_name).inspect(),
+      docker.getImage(ms.template.image).inspect(),
+    ]);
+    const info = asInspectObject(rawInfo);
+    const image = asInspectObject(rawImage);
+    const state = asInspectObject(info?.State);
+    const labels = asInspectObject(asInspectObject(info?.Config)?.Labels);
+    if (
+      !info ||
+      !image ||
+      state?.Running !== true ||
+      !labels ||
+      typeof info.Image !== "string" ||
+      info.Image.length === 0 ||
+      typeof image.Id !== "string" ||
+      image.Id.length === 0
+    ) {
+      return false;
+    }
     const want = computeSpecHash(buildCreateSpec(ms, published));
-    return info.Config?.Labels?.[LABEL_SPEC_HASH] === want;
+    return labels[LABEL_SPEC_HASH] === want && info.Image === image.Id;
   } catch {
     return false;
   }
@@ -414,11 +471,11 @@ async function isUnchangedAndRunning(
  *  probes noop-healthcheck units (report not-running, so the next apply
  *  recreates them). Rejecting instead took the whole boot reconcile down with
  *  it — see index.ts's `reconcile`. */
-async function listManaged(docker: DockerodeLike): Promise<ManagedProcessInfo[]> {
+async function listManaged(docker: DockerodeLike, signal?: AbortSignal): Promise<ManagedProcessInfo[]> {
   const filters = JSON.stringify({ label: [`${LABEL_MANAGED}=true`] });
   let list: Awaited<ReturnType<DockerodeLike["listContainers"]>>;
   try {
-    list = await docker.listContainers({ all: true, filters });
+    list = await docker.listContainers({ all: true, filters, ...(signal ? { abortSignal: signal } : {}) });
   } catch (err) {
     log.warn("driver.list-managed-failed", {
       reason: errMsg(err),

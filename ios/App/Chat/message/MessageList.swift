@@ -10,6 +10,19 @@ struct MessageList: View {
     var assistantActivity = AssistantActivityState(phase: .idle, turnId: nil, replyId: nil)
     var userName: String = "You"
     var pending: [PendingMessage] = []
+    var pendingAttachments: [NativeDraftAttachment] = []
+    var pendingAttachmentPreviews: [String: UIImage] = [:]
+    var pendingAttachmentTransfers: [String: AttachmentTransferState] = [:]
+    var pendingAttachmentPresentations: [String: PendingAttachmentPresentation] = [:]
+    var onRetryAttachmentUpload: (String) -> Void = { _ in }
+    var attachmentPreviews: [String: UIImage] = [:]
+    var attachmentPreviewFailures: Set<String> = []
+    // Retained as row revision inputs for existing collection callers; export UI
+    // now lives in ChatView's preview sheet, not inside recycled rows.
+    var attachmentFiles: [String: URL] = [:]
+    var attachmentDownloadFailures: Set<String> = []
+    var onPreviewAttachment: (String) -> Void = { _ in }
+    var onVisibleAttachmentPreviewIdsChange: (Set<String>) -> Void = { _ in }
     var onRetry: (String) -> Void = { _ in }
     var historyLoading = false
     /// Height covered by floating composer/task group while collection remains full-height.
@@ -40,9 +53,16 @@ struct MessageList: View {
                 playbackEnabled: playbackEnabled,
                 bottomOcclusion: bottomOcclusion,
                 environmentRevision: "\(dynamicTypeSize)|\(locale.identifier)|\(layoutDirection)",
+                attachmentPreviews: attachmentPreviews,
+                attachmentPreviewFailures: attachmentPreviewFailures,
+                attachmentFiles: attachmentFiles,
+                attachmentDownloadFailures: attachmentDownloadFailures,
                 imageLoader: imageLoader,
                 positionScheduler: positionScheduler,
                 onRetry: onRetry,
+                onPreviewAttachment: onPreviewAttachment,
+                onRetryAttachmentUpload: onRetryAttachmentUpload,
+                onVisibleAttachmentPreviewIdsChange: onVisibleAttachmentPreviewIdsChange,
                 onMeasurementLoadingChange: onMeasurementLoadingChange
             )
             if messages.isEmpty && pending.isEmpty { emptyState.allowsHitTesting(false) }
@@ -51,6 +71,8 @@ struct MessageList: View {
 
     private func layoutRows(for chronology: MessageChronology) -> [MessageLayoutRow] {
         let activeAvatar = activeAssistantAvatar(in: messages, activity: assistantActivity)
+        let previewIds = Set(attachmentPreviews.keys)
+        let pendingAttachmentOwnerId = pending.count == 1 ? pending.first?.id : nil
         return chronology.rows.map { row in
             let mode: SentientIdentityState
             if case let .message(_, index, _) = row, index == activeAvatar?.index {
@@ -58,7 +80,30 @@ struct MessageList: View {
             } else {
                 mode = .idle
             }
-            return MessageLayoutRow(row: row, avatarMode: mode)
+            let rowPendingPresentation: PendingAttachmentPresentation?
+            if case let .pending(message, _) = row {
+                rowPendingPresentation = pendingAttachmentPresentations[message.id]
+                    ?? (message.id == pendingAttachmentOwnerId
+                        ? PendingAttachmentPresentation(
+                            attachments: pendingAttachments,
+                            previews: pendingAttachmentPreviews,
+                            transfers: pendingAttachmentTransfers
+                        )
+                        : nil)
+            } else {
+                rowPendingPresentation = nil
+            }
+            return MessageLayoutRow(
+                row: row,
+                avatarMode: mode,
+                attachmentPreviewIds: previewIds,
+                attachmentPreviewFailures: attachmentPreviewFailures,
+                attachmentFiles: attachmentFiles,
+                attachmentDownloadFailures: attachmentDownloadFailures,
+                pendingAttachments: rowPendingPresentation?.attachments ?? [],
+                pendingAttachmentPreviews: rowPendingPresentation?.previews ?? [:],
+                pendingAttachmentTransfers: rowPendingPresentation?.transfers ?? [:]
+            )
         }
     }
 

@@ -27,6 +27,7 @@ import { basename, dirname, join } from "node:path";
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ClientError, DeepMemoryClient, EntryAudience, IndexEntry, SourceRef } from "./deep-memory-client.js";
+import { parseJournalEpisodes, parseJournalNarrative } from "./dreamer/episode-writer.js";
 import { MEMORY_SLUG_RE } from "./memory-file.js";
 import type { MemoryConfig, MemoryStore } from "./memory-store.js";
 
@@ -43,6 +44,7 @@ const JOURNAL_PREFIX = "journal/";
 const MD_EXT = ".md";
 const JOURNAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+const KIND_EPISODE_SUMMARY = "episode-summary";
 const KIND_FILE_SECTION = "file-section";
 const KIND_JOURNAL = "journal";
 
@@ -52,12 +54,9 @@ const STATUS_SUPERSEDED = "superseded";
  *  accumulate duplicate active entries per sourceRef and pollute spark. */
 const REASON_FILE_EDITED = "file-edited";
 
-/** Provenance stamped on entries this module projects from file content
- *  (spec §3.1: model-written file sections are `assistant`-authored). Callers
- *  that know better — the dreamer distilling tainted sessions — supply their
- *  own provenance via `enqueueEntries`. Re-feeding journals through
- *  `enqueueFile` in a rebuild cannot recover per-section taint; that fidelity
- *  belongs to the dreamer's own feed, not the disposable rebuild path. */
+/** Provenance stamped on generic core/topic sections projected from file
+ *  content (spec §3.1: model-written file sections are `assistant`-authored).
+ *  Dreamer journals use their canonical parser so rebuild preserves taint. */
 const DEFAULT_FILE_PROVENANCE = "assistant";
 
 /** Markdown ATX heading — captures the heading text (sans `#`). */
@@ -337,6 +336,33 @@ export function createIndexSync(
     log.info("index-sync.enqueue-entries", { count: entries.length, pending: pendingCount(cursor) });
   }
 
+  function enqueueJournal(date: string): void {
+    const content = scope.store.readJournal(date);
+    if (content === null) return;
+    const file = `${JOURNAL_PREFIX}${date}${MD_EXT}`;
+    const timestamp = `${date}T00:00:00.000Z`;
+    const episodes = parseJournalEpisodes(content);
+    enqueueEntries([
+      ...episodes.map((episode) => ({
+        kind: KIND_EPISODE_SUMMARY,
+        text: episode.text,
+        timestamp,
+        scope: scope.scopeId,
+        sourceRef: { file, heading: `session ${episode.sessionId}` },
+        sessionRef: { sessionId: episode.sessionId },
+        provenance: episode.provenance,
+      })),
+      {
+        kind: KIND_JOURNAL,
+        text: parseJournalNarrative(content),
+        timestamp,
+        scope: scope.scopeId,
+        sourceRef: { file },
+        provenance: episodes.some((episode) => episode.provenance === "tool-derived") ? "tool-derived" : "user-speech",
+      },
+    ]);
+  }
+
   function retireEntry(target: string, lineText: string, reason: string): void {
     // The id episode-writer stamped on this line's fact entry: a headless
     // file-section keyed on the target file + the line text (computeId +
@@ -470,7 +496,7 @@ export function createIndexSync(
       enqueueFile(`${TOPICS_PREFIX}${topic.name}${MD_EXT}`);
     }
     for (const date of scope.store.listJournal()) {
-      enqueueFile(`${JOURNAL_PREFIX}${date}${MD_EXT}`);
+      enqueueJournal(date);
     }
     if (cfg.spark.raw_chunks && scope.replayRawChunks) {
       enqueueEntries(scope.replayRawChunks());

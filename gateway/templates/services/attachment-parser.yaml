@@ -1,0 +1,30 @@
+image: sentient/attachment-parser:local
+container_name: sentient-attachment-parser
+network_mode: none
+networks: []
+env:
+  PARSER_SOCKET: /tmp/attachment-parser/parser.sock
+  MAX_INPUT_BYTES: "536870912"
+  MAX_RESPONSE_BYTES: "16777216"
+  MAX_TEXT_BYTES: "2097152"
+  MAX_PIXELS: "225000000"
+  MAX_MOTION_PIXELS: "16000000" # Tested scope: stills through 225 MP; Live Photo motion through 4K.
+  MAX_ARCHIVE_ENTRIES: "4"
+  MAX_EXPANDED_BYTES: "536870912"
+  MAX_PDF_PAGES: "50"
+  MAX_EDGE: "1600"
+  HEADER_DEADLINE_SECONDS: "2"
+  ITEM_DEADLINE_SECONDS: "20"
+  TEXT_DEADLINE_SECONDS: "30"
+  PARSER_CONCURRENCY: "1"
+volumes: []
+read_only: true
+tmpfs:
+  /tmp: rw,noexec,nosuid,nodev,size=1280m
+mem_limit_bytes: 2147483648
+memswap_limit_bytes: 2147483648
+cpus: 1
+pids_limit: 32
+cap_drop: [ALL]
+security_opt: [no-new-privileges]
+user: "65534:65534"

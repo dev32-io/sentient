@@ -202,6 +202,13 @@ export async function handleSessionConfigure(
   // client so and closed it (session-binding.ts). Everything below writes
   // frames and opens a store handle, all of it for a corpse.
   if (bind?.kind === "refused") return;
+  if (bind?.kind === "missing-session") {
+    if (resolved.sessionId !== null) {
+      sendConnectionFrame(ws, { type: "sessions.deleted", sessionId: resolved.sessionId });
+    }
+    sendConnectionFrame(ws, { type: "sessions.error", code: "not_found", message: "session was deleted" });
+    return;
+  }
   const hasRuntime = bind?.kind === "bound";
   // A resume is honourable only when this connection's cursor is in the same
   // seq space the session's journal is still allocating from.

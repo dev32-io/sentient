@@ -12,6 +12,7 @@ package io.sentient.mobilesdk.sdk
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
 import io.sentient.mobilesdk.connectors.PermissionPrompt
+import io.sentient.mobilesdk.connectors.SessionsChangeEvent
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
@@ -174,6 +175,13 @@ class SentientSdk(
     )
     val events: SharedFlow<SdkEvent> = _events.asSharedFlow()
 
+    private val _sessionChanges = MutableSharedFlow<SessionsChangeEvent>(
+        replay = 0,
+        extraBufferCapacity = EVENTS_BUFFER_CAPACITY,
+        onBufferOverflow = BufferOverflow.SUSPEND,
+    )
+    val sessionChanges: SharedFlow<SessionsChangeEvent> = _sessionChanges.asSharedFlow()
+
     private fun emitEvent(event: SdkEvent) {
         if (!_events.tryEmit(event)) {
             scope.launch { _events.emit(event) }
@@ -267,6 +275,7 @@ class SentientSdk(
     // Stable per-install device id (Task 3.10). Resolved ONCE — the gateway requires
     // it in session.configure and keys the per-device replay buffer by it.
     private val deviceId: String = DeviceIdProvider(bundle.deviceIdStore).getOrCreate()
+    val surfaceId: String get() = deviceId
 
     // Downlink voice pipeline (E3). Built BEFORE connectors so the downlink hooks
     // exist when the connector set reads them. The real-time mic UPLINK lives in the
@@ -388,6 +397,19 @@ class SentientSdk(
         // follows the actual audio — no preference→configure coupling needed. The prefs
         // change still folds into the deriver (UI toggle state) inside PreferencesConnector.
     )
+
+    init {
+        connectors.sessions.onSessionsChanged { event ->
+            if (event is SessionsChangeEvent.Deleted && event.sessionId == _currentSessionId.value) {
+                claimOutboundRoute()
+                desiredSessionId = null
+                _currentSessionId.value = null
+                _outboundSessionId.value = null
+                routePhase = RoutePhase.ATTACHED
+            }
+            if (!_sessionChanges.tryEmit(event)) scope.launch { _sessionChanges.emit(event) }
+        }
+    }
 
     private var routedFrameDepth = 0
     private val router = MessageRouter(
@@ -633,10 +655,10 @@ class SentientSdk(
     }
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */
-    fun sendText(text: String, pendingId: String? = null) {
+    fun sendText(text: String, pendingId: String? = null, attachmentIds: List<String> = emptyList()) {
         if (!canSendUserInput()) return
         markInteraction()
-        connectors.text.sendText(text, pendingId)
+        connectors.text.sendText(text, pendingId, attachmentIds)
     }
 
     /** UI Stop / Escape — idempotent hard interrupt. Fire-and-forget: clears local
@@ -1016,6 +1038,22 @@ class SentientSdk(
         return nextOutboundRouteGeneration
     }
 
+    /** Reestablish one selected durable first-send identity on a fresh route generation. */
+    fun restorePendingMintAnchor(draftKey: String, surfaceId: String): Long? {
+        if (surfaceId != deviceId || draftKey.isBlank() || consumerDisconnected || terminallyDisconnected) return null
+        val generation = claimOutboundRoute()
+        cancelSessionActivations()
+        desiredSessionId = null
+        _currentSessionId.value = draftKey
+        _outboundSessionId.value = null
+        routePhase = RoutePhase.RECOVERING_MINT
+        lifecycle.activeTransport?.commandBinding = null
+        voice.invalidateCaptureForRoute()
+        resumeCursor.reset()
+        if (hasReachedReadyOnce) resetAmbiguousActivationTransport()
+        return generation
+    }
+
     /** Compatibility alias for older platform callers. */
     fun sendNewChat() = startFreshChat()
 
@@ -1057,13 +1095,15 @@ class SentientSdk(
         connectors.sessions.sendSwitch(id)
     }
 
-    /** Delete a session via REST DELETE /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
-    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
+    /** Delete via REST, then clear local resume continuity after confirmed success. */
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTransportException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
     suspend fun deleteSession(id: String) {
-        // Drop any durable resume cursor for the deleted conversation (Task 4.7 clear)
-        // so a relaunch never seeds a resume for a session the server no longer has.
-        cursorPersistence.clearFor(id)
         connectors.sessions.delete(id)
+        cursorPersistence.clearFor(id)
     }
 
     /** Rename a session via REST PATCH /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */

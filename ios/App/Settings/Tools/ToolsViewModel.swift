@@ -231,7 +231,8 @@ final class ToolsViewModel {
             persona: o.persona,
             tools: ProfileToolsPatch(permissions: mergedPermissions, toolsets: draftToolsets),
             compression: o.compression,
-            advanced: o.advanced
+            advanced: o.advanced,
+            auxiliaryModels: o.auxiliaryModels
         )
     }
 }

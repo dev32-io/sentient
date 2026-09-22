@@ -13,7 +13,7 @@ describe("DiagnosticsPane trust-safe status", () => {
   it("does not claim readiness or a version before either is observed", () => {
     render(<DiagnosticsPane token="token" />);
     expect(screen.getByText("Checking readiness")).not.toBeNull();
-    expect(screen.getAllByText("Unknown")).toHaveLength(4);
+    expect(screen.getAllByText("Unknown")).toHaveLength(5);
   });
 
   it("shows an observed failure with recovery guidance", () => {
@@ -25,10 +25,11 @@ describe("DiagnosticsPane trust-safe status", () => {
 
   it("formats sanitized component versions only inside Diagnostics", () => {
     hooks.readiness = true;
-    hooks.versions = { gateway: "1.2.3", hermes: "unknown", stt_service: "v4", tts_service: "" };
+    hooks.versions = { gateway: "1.2.3", hermes: "unknown", stt_service: "v4", tts_service: "", attachment_parser: "0.2.0" };
     render(<DiagnosticsPane token="token" />);
     expect(screen.getByTestId("diagnostics-version-gateway").textContent).toBe("v1.2.3");
     expect(screen.getByTestId("diagnostics-version-hermes").textContent).toBe("Unknown");
     expect(screen.getByTestId("diagnostics-version-stt_service").textContent).toBe("v4");
+    expect(screen.getByTestId("diagnostics-version-attachment_parser").textContent).toBe("v0.2.0");
   });
 });

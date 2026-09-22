@@ -12,6 +12,7 @@ const COMPONENTS: ReadonlyArray<{ key: keyof Omit<ServiceVersions, "features">; 
   { key: "hermes", label: "Hermes delegation" },
   { key: "stt_service", label: "Speech recognition service" },
   { key: "tts_service", label: "Speech synthesis service" },
+  { key: "attachment_parser", label: "Attachment parser" },
 ];
 
 function versionLabel(value: string | undefined): string {

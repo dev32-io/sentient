@@ -20,7 +20,7 @@ plugins {
 // Bumped to 0.7.0: design-refresh calendar projection/viewport behavior and
 // authenticated connection teardown, alongside mobile-sdk 0.7.0.
 // Bumped to 0.8.0: scheduling cards and per-device push settings user scope.
-version = "0.8.0"
+version = "0.9.0"
 
 kotlin {
     androidTarget {
@@ -82,6 +82,10 @@ sqldelight {
         create("CalendarDatabase") {
             packageName.set("io.sentient.mobiledata.cache.db")
             schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+        }
+        create("DraftDatabase") {
+            packageName.set("io.sentient.mobiledata.draft.db")
+            srcDirs.setFrom("src/commonMain/draftSqldelight")
         }
     }
 }

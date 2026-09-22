@@ -79,16 +79,24 @@ fun createSessionsHttpClient(
  * server certificate against the system trust store.
  */
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-private fun buildSessionsHttpClient(
+internal fun buildSessionsHttpClient(
     allowSelfSignedDevHost: Boolean,
     token: () -> String,
     isOwnerActive: () -> Boolean,
     onAuthenticationRequired: (() -> Unit)?,
+    requestTimeoutSeconds: Double? = null,
 ): HttpClient = HttpClient(Darwin) {
     if (onAuthenticationRequired != null) {
         installAuthenticatedBearer401Observer(token, isOwnerActive, onAuthenticationRequired)
     }
     engine {
+        if (requestTimeoutSeconds != null) {
+            configureSession {
+                setTimeoutIntervalForRequest(requestTimeoutSeconds)
+                setTimeoutIntervalForResource(requestTimeoutSeconds)
+            }
+            configureRequest { setTimeoutInterval(requestTimeoutSeconds) }
+        }
         if (allowSelfSignedDevHost) {
             log.warn(
                 "DEV-ONLY: TLS certificate validation disabled — self-signed cert trusted",

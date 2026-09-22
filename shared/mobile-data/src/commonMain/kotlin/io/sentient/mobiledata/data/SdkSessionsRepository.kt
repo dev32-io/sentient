@@ -1,6 +1,9 @@
 package io.sentient.mobiledata.data
 
+import io.sentient.mobilesdk.connectors.SessionsRequestException
+import io.sentient.mobilesdk.connectors.SessionsTransportException
 import io.sentient.mobilesdk.sdk.SentientSdk
+import kotlinx.coroutines.CancellationException
 
 /** SDK-backed SessionsRepository: maps SDK SessionRow → SessionSummary; commands delegate. */
 class SdkSessionsRepository(private val sdk: SentientSdk) : SessionsRepository {
@@ -20,5 +23,7 @@ class SdkSessionsRepository(private val sdk: SentientSdk) : SessionsRepository {
     override suspend fun newChat(): String = sdk.newChat()
 
     override suspend fun rename(sessionId: String, title: String) { sdk.renameSession(id = sessionId, title = title) }
+
+    @Throws(SessionsRequestException::class, SessionsTransportException::class, CancellationException::class)
     override suspend fun delete(sessionId: String) { sdk.deleteSession(id = sessionId) }
 }

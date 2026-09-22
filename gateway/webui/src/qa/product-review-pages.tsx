@@ -46,12 +46,14 @@ const items = signal(state === "populated" || state === "stale" ? rows : []);
 const searchHits = signal<SessionRow[] | null>(null);
 const currentId = signal<string | null>("review-0");
 const sessions: UseSessions = {
-  items, searchHits, currentId, loading: signal(state === "loading"), error: signal(state === "error" || state === "stale" ? "Fixture unavailable" : null),
+  items, drafts: signal([]), searchHits, currentId, loading: signal(state === "loading"), error: signal(state === "error" || state === "stale" ? "Fixture unavailable" : null), deleteFailureCount: signal(0),
   async load() {},
   async search(query) { searchHits.value = query.trim() ? items.value.filter((row) => row.title.toLowerCase().includes(query.toLowerCase())) : null; },
   async switchTo(id) { if (!items.value.some((row) => row.sessionId === id)) return false; currentId.value = id; return true; },
+  async openDraft() { return false; },
   async newChat() { currentId.value = null; return true; },
   async delete(id) { items.value = items.value.filter((row) => row.sessionId !== id); searchHits.value = null; if (currentId.value === id) currentId.value = null; },
+  async retryFailedDeletes() {},
   async rename(id, title) { items.value = items.value.map((row) => row.sessionId === id ? { ...row, title } : row); searchHits.value = null; },
   dispose() {},
 };

@@ -250,6 +250,34 @@ store:
   # Domain stores share this file, not authority. Household/global stores stay separate.
   db_filename: sessions.db
 
+# Durable history and committed attachments; unrelated to session.retention_ms.
+history:
+  retention_days: 90  # 0 disables automatic deletion; otherwise 30–36500 days since conversation activity.
+  cleanup_hour: 3    # Nightly, gateway host-local time; also reconciles on startup.
+  batch_size: 100    # Bound each cleanup batch. Manual deletion still works when retention_days is 0.
+
+attachments:
+  max_file_bytes: 536870912
+  max_files_per_message: 8
+  max_request_bytes: 536870912  # One original per HTTP upload; Bun and parser share this finite cap.
+  max_user_bytes: 2147483648
+  staging_ttl_ms: 86400000    # Abandoned uploads only. Committed files live with chat history.
+  # Gateway-side parser/inspection ceilings. Container decoder limits (pixels,
+  # PDF pages, concurrency and item deadlines) remain in its managed-service YAML.
+  parser_max_output_bytes: 16777216
+  parser_max_header_bytes: 16384
+  parser_deadline_ms: 30000
+  parser_cleanup_timeout_ms: 2000
+  inspection_max_pages: 8
+  inspection_max_text_bytes: 2097152
+  inspection_max_text_chars: 200000
+  inspection_max_question_chars: 2000
+  inspection_max_edge: 1600
+  vision_deadline_ms: 60000
+  vision_max_output_tokens: 1000
+  vision_max_output_chars: 12000
+  vision_max_input_bytes: 16777216
+
 # ---------------------------------------------------------------------------
 # Orchestrator — the native LLM agent loop (Sentient 2.0, spec §4/§5).
 # Wired by the Plan 2 composition root (gateway/src/bootstrap/phase-services.ts).
@@ -319,8 +347,6 @@ orchestrator:
     # reasoning effort", still sent and still a 400 risk on a provider that
     # doesn't recognize the field at all.
     reasoning_effort: low
-  loop:
-    max_iterations: 10                       # ReAct iteration cap (1-50)
   permission:
     request_timeout_ms: 120000               # confirm-prompt deadline before auto-deny (5000-600000)
   # Native web fetches always go through the confined outbound-worker. These
@@ -422,12 +448,13 @@ orchestrator:
   # rather than part of it. Session titling is the first user of this seam;
   # tags, follow-up suggestions and summarisation are the named next ones, and
   # each is a prompt template plus a caller rather than a new config block.
-  # That is why only the two `title_*` keys below are task-specific.
+  # Task-specific defaults can be overridden in each user's Auxiliary runners settings.
   auxiliary:
     # Master switch for EVERY auxiliary task. false = the gateway never makes
     # an out-of-band model call; a session then keeps the fallback title its
     # own first message produced, and is never left "New chat".
     enabled: true
+    attachment_vision_model: gemma4:31b-cloud  # Direct Ollama endpoint spelling is normalized at provider boundary.
     # Baked-in template dir, relative to the gateway asset root (the repo's
     # gateway/ in a checkout, the unpacked share/ dir beside a compiled
     # binary). Ships with the build: gateway/system_prompts/auxiliary/title.md.
@@ -950,6 +977,15 @@ system_orchestrator:
 # orchestrator refuses to operate on any container whose runtime spec
 # violates these constraints.
 managed_services:
+  attachment-parser:
+    template: attachment-parser.yaml
+    allowed_images: ["sentient/attachment-parser:local"]
+    networks: []
+    healthcheck:
+      noop: true  # Internal UDS only; gateway uses bounded Docker exec transport.
+    depends_on: []
+    optional: false
+
   egress-proxy:
     template: egress-proxy.yaml
     allowed_images: ["kalaksi/tinyproxy:latest"]

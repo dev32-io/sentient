@@ -9,12 +9,35 @@ const log = getLog(["sentient", "provider", "openai"]);
 /** Usage tallies read off the terminal `chunk.usage` (stream_options.include_usage). */
 type StreamUsage = { promptTokens: number; cachedTokens: number; completionTokens: number };
 
+export type ProviderFailureKind = "http" | "timeout" | "connection" | "unknown";
+
+/** Safe adapter-boundary failure. Never retains provider text, body, headers, or cause. */
+export class ProviderFailure extends Error {
+  readonly name = "ProviderFailure";
+
+  constructor(
+    readonly kind: ProviderFailureKind,
+    readonly status?: number,
+  ) {
+    super("Provider request failed");
+  }
+}
+
+function providerFailure(err: unknown): ProviderFailure {
+  if (err instanceof OpenAI.APIConnectionTimeoutError) return new ProviderFailure("timeout");
+  if (err instanceof OpenAI.APIConnectionError) return new ProviderFailure("connection");
+  if (err instanceof OpenAI.APIError && Number.isInteger(err.status)) return new ProviderFailure("http", err.status);
+  return new ProviderFailure("unknown");
+}
+
 export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey: string): ProviderClient {
   const client = new OpenAI({
     apiKey,
     baseURL: cfg.base_url,
     defaultHeaders: { "HTTP-Referer": cfg.site_name, "X-Title": cfg.site_name },
     timeout: cfg.request_timeout_ms,
+    // SDK parse diagnostics include raw response chunks. Adapter owns safe failures.
+    logLevel: "off",
   });
 
   return {
@@ -92,30 +115,34 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
           { signal: req.signal },
         );
       } catch (err) {
-        // The SDK's makeRequest throws APIUserAbortError synchronously when the
-        // signal is already aborted, or asynchronously if it aborts before
-        // headers arrive — neither path is a real provider error.
+        // Cancellation is expected and silent; all other SDK failures cross
+        // this boundary as allowlisted metadata only.
         if (req.signal.aborted) return;
-        throw err;
+        throw providerFailure(err);
       }
 
       const acc = new ToolCallAccumulator();
       let finishReason = "stop";
       let usage: StreamUsage | undefined;
 
-      for await (const chunk of response) {
-        if (req.signal.aborted) return; // stop consuming, do not throw
-        const choice = chunk.choices[0];
-        if (choice?.delta?.content) yield { type: "text", content: choice.delta.content };
-        if (choice?.delta?.tool_calls) acc.feed(choice.delta.tool_calls);
-        if (choice?.finish_reason) finishReason = choice.finish_reason;
-        if (chunk.usage) {
-          usage = {
-            promptTokens: chunk.usage.prompt_tokens ?? 0,
-            cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
-            completionTokens: chunk.usage.completion_tokens ?? 0,
-          };
+      try {
+        for await (const chunk of response) {
+          if (req.signal.aborted) return; // stop consuming, do not throw
+          const choice = chunk.choices[0];
+          if (choice?.delta?.content) yield { type: "text", content: choice.delta.content };
+          if (choice?.delta?.tool_calls) acc.feed(choice.delta.tool_calls);
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
+          if (chunk.usage) {
+            usage = {
+              promptTokens: chunk.usage.prompt_tokens ?? 0,
+              cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+              completionTokens: chunk.usage.completion_tokens ?? 0,
+            };
+          }
         }
+      } catch (err) {
+        if (req.signal.aborted) return;
+        throw providerFailure(err);
       }
 
       // The OpenAI SDK swallows AbortError inside its own SSE iterator (exits

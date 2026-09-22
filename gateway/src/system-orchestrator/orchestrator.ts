@@ -12,6 +12,7 @@ import type {
 } from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "orchestrator"]);
+const EXITED_UNIT_STATES = new Set(["dead", "exited"]);
 
 export interface SystemOrchestratorDeps {
   registry: Map<ServiceName, ManagedService>;
@@ -134,6 +135,12 @@ async function runApply(
       healthcheck: ms.config.healthcheck,
       pollIntervalMs: deps.pollIntervalMs,
       io: deps.healthIO,
+      hasExited: async (signal) => {
+        const units = await deps.drivers[ms.config.launch].listManaged(signal);
+        const unit = units.find((candidate) => candidate.service === name);
+        if (!unit) return ms.config.launch === "native";
+        return EXITED_UNIT_STATES.has(unit.state.toLowerCase());
+      },
     });
     if (!health.ok) {
       const newState: ServiceState = ms.config.optional ? "degraded" : "failed";

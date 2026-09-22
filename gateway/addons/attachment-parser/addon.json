@@ -1,0 +1,7 @@
+{
+  "name": "attachment-parser",
+  "version": "0.2.0",
+  "protocolVersion": 2,
+  "description": "Bounded attachment decoding over Docker exec and an internal Unix socket.",
+  "state": "ephemeral"
+}

@@ -44,6 +44,8 @@ export interface CommandBindingState {
   attached(binding: CommandBinding): void;
   /** Forget it — a draft, a new socket, or a disconnect. */
   clear(reason: string): void;
+  /** Current server-confirmed attachment, or null while routed to a draft/disconnected. */
+  current(): CommandBinding | null;
   /** [message] with the binding merged in, when it is a command AND this tab
    *  holds one. Anything else passes through untouched, which is what keeps a
    *  draft's first `text.input` sendable. */
@@ -63,6 +65,10 @@ export function createCommandBindingState(): CommandBindingState {
       if (binding === null) return;
       sdkLog.debug("command-binding.cleared", { sessionId: binding.sessionId, reason });
       binding = null;
+    },
+
+    current() {
+      return binding;
     },
 
     stamp(message) {

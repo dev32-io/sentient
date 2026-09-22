@@ -41,6 +41,8 @@ export interface ToolDefinition extends Partial<ProductToolMetadata> {
 }
 
 /** A single in-flight tool call, as dispatched by the loop to a broker. */
+export type AttachmentVisionRoute = "direct" | "auxiliary";
+
 export interface ToolInvocation {
   toolCallId: string;
   name: string;
@@ -52,6 +54,8 @@ export interface ToolInvocation {
    *  stay in react-loop.ts (see tool-broker.ts's file header); the broker
    *  reads this field for frame correlation only. */
   turnId: string;
+  /** Derived from exact main-model snapshot that emitted this call. Never model-controlled. */
+  attachmentVisionRoute?: AttachmentVisionRoute;
 }
 
 /** Thrown by a `requestConfirm` implementation when the permission request

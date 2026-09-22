@@ -34,8 +34,13 @@ export class UserTextInputConnector implements Connector {
    * a client that omits the key silently opts out of it. Mobile has always sent
    * one; this closes the gap so the claim holds for every shipped client.
    */
-  sendText(text: string): void {
+  sendText(text: string, pendingId: string = globalThis.crypto.randomUUID(), attachmentIds?: readonly string[]): void {
     if (this.sdk === null) return;
-    this.sdk.send({ type: "text.input", text, pendingId: globalThis.crypto.randomUUID() });
+    this.sdk.send({
+      type: "text.input",
+      text,
+      pendingId,
+      ...(attachmentIds?.length ? { attachmentIds: [...attachmentIds] } : {}),
+    });
   }
 }

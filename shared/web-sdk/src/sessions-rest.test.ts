@@ -96,7 +96,15 @@ describe("sessions REST client", () => {
 
   it("GET /sessions/:id/messages returns items and sends bearer", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
-    const feedItem = { entryId: "e", kind: "assistant" as const, ts: 1000, content: "hello" };
+    const feedItem = {
+      entryId: "e",
+      kind: "user" as const,
+      ts: 1000,
+      channel: "text" as const,
+      content: "hello",
+      pendingId: "pending-1",
+      sessionId: "s-1",
+    };
     const fetchFn = mockFetch(async (url, init) => {
       calls.push([url, init]);
       return new Response(JSON.stringify({ items: [feedItem], total: 1, offset: 0, limit: 100 }), { status: 200 });
@@ -105,8 +113,12 @@ describe("sessions REST client", () => {
     const items = await rest.getMessages("s-1");
     expect(items).toHaveLength(1);
     const item = items[0];
-    expect(item?.kind).toBe("assistant");
-    if (item?.kind === "assistant") expect(item.content).toBe("hello");
+    expect(item?.kind).toBe("user");
+    if (item?.kind === "user") {
+      expect(item.content).toBe("hello");
+      expect(item.pendingId).toBe("pending-1");
+      expect(item.sessionId).toBe("s-1");
+    }
     const [url, init] = calls[0] ?? [];
     expect(url).toContain("/sessions/s-1/messages");
     expect((init?.headers as Record<string, string>)?.authorization).toBe("Bearer tok");

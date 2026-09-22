@@ -25,6 +25,16 @@ func parsedKeyboardAnimationTiming(from notification: Notification) -> KeyboardA
     )
 }
 
+func rowAttachmentPreviews(
+    ownedBy row: MessageChronologyRow,
+    from previews: [String: UIImage]
+) -> [String: UIImage] {
+    guard case let .message(message, _, _) = row else { return [:] }
+    return Dictionary(uniqueKeysWithValues: message.attachments.compactMap { attachment in
+        previews[attachment.attachmentId].map { (attachment.attachmentId, $0) }
+    })
+}
+
 struct MessageCollectionView: UIViewRepresentable {
     let rows: [MessageLayoutRow]
     let messageCount: Int
@@ -34,9 +44,16 @@ struct MessageCollectionView: UIViewRepresentable {
     let playbackEnabled: Bool
     let bottomOcclusion: CGFloat
     let environmentRevision: String
+    let attachmentPreviews: [String: UIImage]
+    let attachmentPreviewFailures: Set<String>
+    let attachmentFiles: [String: URL]
+    let attachmentDownloadFailures: Set<String>
     let imageLoader: any NetworkImageLoader
     let positionScheduler: MessagePositionScheduler
     let onRetry: (String) -> Void
+    let onPreviewAttachment: (String) -> Void
+    let onRetryAttachmentUpload: (String) -> Void
+    let onVisibleAttachmentPreviewIdsChange: (Set<String>) -> Void
     let onMeasurementLoadingChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -69,6 +86,9 @@ struct MessageCollectionView: UIViewRepresentable {
             guard let coordinator, let view else { return }
             coordinator.receiveStableLayout(view)
         }
+        view.onUserNavigation = { [weak coordinator = context.coordinator] in
+            coordinator?.beginReading()
+        }
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.dismissKeyboard))
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
@@ -86,7 +106,14 @@ struct MessageCollectionView: UIViewRepresentable {
             bottomOcclusion: bottomOcclusion,
             reduceMotion: context.environment.accessibilityReduceMotion,
             environmentRevision: environmentRevision,
+            attachmentPreviews: attachmentPreviews,
+            attachmentPreviewFailures: attachmentPreviewFailures,
+            attachmentFiles: attachmentFiles,
+            attachmentDownloadFailures: attachmentDownloadFailures,
             onRetry: onRetry,
+            onPreviewAttachment: onPreviewAttachment,
+            onRetryAttachmentUpload: onRetryAttachmentUpload,
+            onVisibleAttachmentPreviewIdsChange: onVisibleAttachmentPreviewIdsChange,
             onMeasurementLoadingChange: onMeasurementLoadingChange,
             in: view
         )
@@ -107,27 +134,54 @@ struct MessageCollectionView: UIViewRepresentable {
         private var reduceMotion = false
         private var environmentRevision = ""
         private var onRetry: (String) -> Void = { _ in }
+        private var onPreviewAttachment: (String) -> Void = { _ in }
+        private var onRetryAttachmentUpload: (String) -> Void = { _ in }
+        private var onVisibleAttachmentPreviewIdsChange: (Set<String>) -> Void = { _ in }
+        private var lastVisibleAttachmentPreviewIds: Set<String> = []
+        private var attachmentPreviews: [String: UIImage] = [:]
+        private var attachmentPreviewFailures: Set<String> = []
+        private var attachmentFiles: [String: URL] = [:]
+        private var attachmentDownloadFailures: Set<String> = []
         private var onMeasurementLoadingChange: (Bool) -> Void = { _ in }
-        private var heightCache: [String: CGFloat] = [:]
-        private var pendingRenderedHeights: [String: (key: String, height: CGFloat)] = [:]
+
+        private struct CachedHeight {
+            let height: CGFloat
+            let quality: MessageRowGeometry.Quality
+        }
+
+        private struct VisibleAnchor {
+            let id: String
+            let delta: CGFloat
+        }
+
+        private enum ScrollIntent {
+            case undecided
+            case historyBottom(initial: Bool)
+            case reading
+            case send(id: String, usesContextOffset: Bool, placement: CGFloat, animate: Bool)
+        }
+
+        private var heightCache: [String: CachedHeight] = [:]
+        // Callbacks capture cells weakly; one batched apply may retain originating cell.
+        private var pendingRenderedHeights: [String: (
+            report: MessageRowGeometry, configurationToken: Int, cell: MessageHostingCell
+        )] = [:]
         private var heightUpdateScheduled = false
         private var generation = 0
+        // Cell-local counts collide after recycling; callbacks need coordinator-wide identity.
+        private var configurationGeneration = 0
         private var measurementTask: Task<Void, Never>?
         private var signature = ""
         private var publishedSizingContext = ""
         private var boundsSize = CGSize.zero
         private let initialExistingHistory: Bool?
-        private var positionedHistory = false
         private var startedEmpty = false
         private var awaitingHistory = false
-        private var pendingInitialHistoryPosition: Bool
         private var pendingSendIDsDuringHistory: [String] = []
         private var previousHistoryLoading = false
         private var positionGeneration = 0
         private var sendAnchorState = SendAnchorState()
-        private var ownedSendID: String?
-        private var ownedSendUsesContextOffset = false
-        private var ownedSendPlacement: CGFloat = 0
+        private var scrollIntent: ScrollIntent
         private var retainedTail: CGFloat = 0
         private var loading = false
         private var positioningAnimationActive = false
@@ -143,7 +197,7 @@ struct MessageCollectionView: UIViewRepresentable {
             self.imageCache = imageCache
             self.initialExistingHistory = initialExistingHistory
             self.positionScheduler = positionScheduler
-            pendingInitialHistoryPosition = initialExistingHistory == true
+            scrollIntent = initialExistingHistory == true ? .historyBottom(initial: true) : .undecided
             measurer = MessageRowMeasurer(imageCache: imageCache)
         }
 
@@ -163,7 +217,14 @@ struct MessageCollectionView: UIViewRepresentable {
             bottomOcclusion: CGFloat,
             reduceMotion: Bool,
             environmentRevision: String,
+            attachmentPreviews: [String: UIImage],
+            attachmentPreviewFailures: Set<String>,
+            attachmentFiles: [String: URL],
+            attachmentDownloadFailures: Set<String>,
             onRetry: @escaping (String) -> Void,
+            onPreviewAttachment: @escaping (String) -> Void,
+            onRetryAttachmentUpload: @escaping (String) -> Void,
+            onVisibleAttachmentPreviewIdsChange: @escaping (Set<String>) -> Void,
             onMeasurementLoadingChange: @escaping (Bool) -> Void,
             in collectionView: MessageUICollectionView
         ) {
@@ -173,14 +234,21 @@ struct MessageCollectionView: UIViewRepresentable {
             self.playbackEnabled = playbackEnabled
             self.reduceMotion = reduceMotion
             self.environmentRevision = environmentRevision
+            self.attachmentPreviews = attachmentPreviews
+            self.attachmentPreviewFailures = attachmentPreviewFailures
+            self.attachmentFiles = attachmentFiles
+            self.attachmentDownloadFailures = attachmentDownloadFailures
             self.onRetry = onRetry
+            self.onPreviewAttachment = onPreviewAttachment
+            self.onRetryAttachmentUpload = onRetryAttachmentUpload
+            self.onVisibleAttachmentPreviewIdsChange = onVisibleAttachmentPreviewIdsChange
             self.onMeasurementLoadingChange = onMeasurementLoadingChange
             collectionView.setBottomOcclusion(bottomOcclusion)
             let historyFinished = previousHistoryLoading && !historyLoading
             if historyLoading && !previousHistoryLoading { resetForHistoryReload(in: collectionView) }
             previousHistoryLoading = historyLoading
             awaitingHistory = awaitingHistory || historyLoading
-            if rows.isEmpty, !historyLoading, !positionedHistory { startedEmpty = true }
+            if rows.isEmpty, !historyLoading, isUndecided { startedEmpty = true }
             updateAvatarPlayback()
 
             if boundsSize == .zero { boundsSize = collectionView.bounds.size }
@@ -206,15 +274,13 @@ struct MessageCollectionView: UIViewRepresentable {
             measurementTask = nil
             pendingRenderedHeights.removeAll()
             setLoading(false)
-            positionedHistory = false
             startedEmpty = false
             awaitingHistory = true
-            pendingInitialHistoryPosition = true
+            scrollIntent = initialExistingHistory == false
+                ? .undecided
+                : .historyBottom(initial: true)
             pendingSendIDsDuringHistory = []
             sendAnchorState = SendAnchorState()
-            ownedSendID = nil
-            ownedSendUsesContextOffset = false
-            ownedSendPlacement = 0
             pendingViewportPlacementRefresh = false
             cancelPositioningAnimation(in: collectionView)
             retainedTail = 0
@@ -233,14 +299,7 @@ struct MessageCollectionView: UIViewRepresentable {
                 refreshOwnedSendPlacement(in: collectionView)
                 refreshTail(in: collectionView)
             }
-            guard widthChanged else {
-                guard !positioningAnimationActive,
-                      !collectionView.isDragging, !collectionView.isDecelerating else { return }
-                if !alignOwnedSendIfNeeded(in: collectionView) {
-                    setOffset(collectionView.contentOffset.y, in: collectionView)
-                }
-                return
-            }
+            guard widthChanged else { return }
             pendingViewportPlacementRefresh = true
             if positioningAnimationActive {
                 positionGeneration += 1
@@ -263,10 +322,6 @@ struct MessageCollectionView: UIViewRepresentable {
             guard pendingViewportPlacementRefresh else { return }
             pendingViewportPlacementRefresh = false
             refreshTail(in: collectionView)
-            if !positioningAnimationActive,
-               !collectionView.isDragging, !collectionView.isDecelerating {
-                _ = alignOwnedSendIfNeeded(in: collectionView)
-            }
         }
 
         private func needsMeasurement(_ rows: [MessageLayoutRow], in view: UICollectionView) -> Bool {
@@ -277,8 +332,8 @@ struct MessageCollectionView: UIViewRepresentable {
         /// This bootstrap is never cached as an exact measurement. Unseen rows and
         /// changed layout environments still require exact sizing before publication.
         private func displayHeight(for row: MessageLayoutRow, in view: UICollectionView) -> CGFloat? {
-            if let height = heightCache[cacheKey(for: row, in: view)] { return height }
-            guard !previousHistoryLoading, !pendingInitialHistoryPosition,
+            if let height = heightCache[cacheKey(for: row, in: view)]?.height { return height }
+            guard !previousHistoryLoading, !isInitialHistoryPositionPending,
                   publishedSizingContext == sizingContext(in: view),
                   let index = displayedRows.firstIndex(where: { $0.id == row.id }),
                   view.indexPathsForVisibleItems.contains(IndexPath(item: index, section: 0)),
@@ -314,9 +369,14 @@ struct MessageCollectionView: UIViewRepresentable {
                         row: row,
                         messageCount: messageCount,
                         paneWidth: collectionView.bounds.width,
-                        userName: userName
+                        userName: userName,
+                        attachmentPreviews: rowAttachmentPreviews(ownedBy: row.row, from: attachmentPreviews),
+                        attachmentPreviewFailures: attachmentPreviewFailures
                     )
-                    heightCache[cacheKey(for: row, in: collectionView)] = height
+                    heightCache[cacheKey(for: row, in: collectionView)] = CachedHeight(
+                        height: height,
+                        quality: .estimated
+                    )
                     if index.isMultiple(of: 8) { await Task.yield() }
                 }
                 guard !Task.isCancelled, currentGeneration == generation,
@@ -343,6 +403,7 @@ struct MessageCollectionView: UIViewRepresentable {
                 measureAndPublish(in: collectionView)
                 return
             }
+
             let anchor = visibleAnchor(in: collectionView)
             let previousIDs = displayedRows.map(\.id)
             let previousIDSet = Set(previousIDs)
@@ -352,71 +413,104 @@ struct MessageCollectionView: UIViewRepresentable {
                 if case .pending = row.row { return row.id }
                 return nil
             }
-            if pendingInitialHistoryPosition {
+            let historyIntent = isHistoryBottom || awaitingHistory
+            if historyIntent {
                 for identity in pendingRowIdentities where !pendingSendIDsDuringHistory.contains(identity) {
                     pendingSendIDsDuringHistory.append(identity)
                 }
             }
-            let firstContent = !positionedHistory && !nextRows.isEmpty
+
             let containsPending = !pendingRowIdentities.isEmpty
-            if firstContent, initialExistingHistory == nil,
+            let wasUndecided = isUndecided
+            if wasUndecided, !nextRows.isEmpty, initialExistingHistory == nil,
                initialHistory || !startedEmpty && !containsPending {
-                pendingInitialHistoryPosition = true
+                scrollIntent = .historyBottom(initial: true)
             }
+
             let (nextState, reducedNewSend) = reduceSendAnchor(sendAnchorState, identities: identities)
             let explicitNewSend = identities.last {
                 pendingSendIDsDuringHistory.contains($0) && !sendAnchorState.observed.contains($0)
             }
-            let newSend = pendingInitialHistoryPosition ? explicitNewSend : reducedNewSend
-            let shouldPositionHistory = canPosition && firstContent
-                && pendingInitialHistoryPosition && newSend == nil
+            let newSend = canPosition
+                ? (isInitialHistoryPositionPending ? explicitNewSend : reducedNewSend)
+                : nil
+            let initialHistoryPosition = isInitialHistoryPositionPending
+
             displayedRows = nextRows
             publishedSizingContext = sizingContext(in: collectionView)
             let liveKeys = Set(nextRows.map { cacheKey(for: $0, in: collectionView) })
             heightCache = heightCache.filter { liveKeys.contains($0.key) }
-            if canPosition, !shouldPositionHistory {
+
+            if canPosition {
                 sendAnchorState = nextState
             }
-            if let newSend, canPosition, !shouldPositionHistory {
-                pendingInitialHistoryPosition = false
+            if let newSend, canPosition {
                 pendingSendIDsDuringHistory = []
                 awaitingHistory = false
-                ownedSendID = newSend
-                if let index = nextRows.firstIndex(where: { $0.id == newSend }) {
-                    ownedSendUsesContextOffset = nextRows[..<index].contains { row in
+                let usesContextOffset = nextRows.firstIndex(where: { $0.id == newSend }).map { index in
+                    nextRows[..<index].contains { row in
                         switch row.row {
                         case .message, .pending: true
                         case .divider: false
                         }
                     }
-                } else {
-                    ownedSendUsesContextOffset = false
-                }
+                } ?? false
+                scrollIntent = .send(
+                    id: newSend,
+                    usesContextOffset: usesContextOffset,
+                    placement: 0,
+                    animate: !reduceMotion
+                )
                 refreshOwnedSendPlacement(in: collectionView)
-                positionedHistory = true
             }
 
-            let rowGeometryChanged = layout?.rowHeights != nextHeights
-                || layout?.rowFrames.first?.width != collectionView.bounds.width
+            let structureChanged = previousIDs != nextRows.map(\.id)
+            let animateInsertedRows = !initialHistoryPosition
+            commitGeometry(
+                rowHeights: nextHeights,
+                anchor: anchor,
+                structureChanged: structureChanged,
+                insertedIDs: insertedIDs,
+                shouldAnimateInsertedRows: animateInsertedRows,
+                canPosition: canPosition,
+                viewportChanged: pendingViewportPlacementRefresh,
+                in: collectionView
+            )
+            setLoading(false)
+        }
+
+        /// Apply one row/layout snapshot and its corresponding scroll decision.
+        /// Publications, late rendered corrections, and viewport changes all use
+        /// this path so an older scheduled offset cannot win after newer geometry.
+        private func commitGeometry(
+            rowHeights: [CGFloat],
+            anchor: VisibleAnchor?,
+            structureChanged: Bool = false,
+            insertedIDs: Set<String> = [],
+            shouldAnimateInsertedRows: Bool = false,
+            canPosition: Bool = true,
+            viewportChanged: Bool = false,
+            in collectionView: MessageUICollectionView
+        ) {
+            guard let layout else { return }
+            let rowGeometryChanged = layout.rowHeights != rowHeights
+                || layout.rowFrames.first?.width != collectionView.bounds.width
             if rowGeometryChanged {
-                layout?.update(
-                    rowHeights: nextHeights,
+                layout.update(
+                    rowHeights: rowHeights,
                     width: collectionView.bounds.width,
                     scale: collectionView.traitCollection.displayScale
                 )
             }
-            let viewportGeometryChanged = pendingViewportPlacementRefresh
-            if viewportGeometryChanged {
-                refreshOwnedSendPlacement(in: collectionView)
-            }
+
             retainedTail = tailHeight(in: collectionView)
-            if ownedSendID == nil, retainedTail > 0,
+            if !hasOwnedSend, retainedTail > 0,
                !collectionView.isDragging, !collectionView.isDecelerating {
                 retainedTail = min(retainedTail, requiredRetainedTail(in: collectionView))
             }
-            let tailChanged = layout?.tailHeight != retainedTail
-            layout?.tailHeight = retainedTail
-            let structureChanged = previousIDs != nextRows.map(\.id)
+            let tailChanged = layout.tailHeight != retainedTail
+            layout.tailHeight = retainedTail
+
             if structureChanged { collectionView.reloadData() }
             else { updateAvatarPlayback(refreshContent: true) }
             if structureChanged || rowGeometryChanged || tailChanged {
@@ -424,42 +518,101 @@ struct MessageCollectionView: UIViewRepresentable {
                 collectionView.layoutIfNeeded()
             }
 
+            // Invalidate even when this snapshot cannot position yet. This is the
+            // single fence for all scheduled geometry-to-position work.
             positionGeneration += 1
             let currentPositionGeneration = positionGeneration
-            let publishedRevisions = nextRows.map(\.revision)
+            let publishedRevisions = displayedRows.map(\.revision)
+            let preservedOffset = collectionView.contentOffset.y
             let position = { [weak self, weak collectionView] in
                 guard let self, let collectionView,
-                      positionGeneration == currentPositionGeneration,
-                      displayedRows.map(\.revision) == publishedRevisions else { return }
-                if shouldPositionHistory {
-                    scrollToBottom(collectionView)
-                    pendingInitialHistoryPosition = false
-                    pendingSendIDsDuringHistory = []
-                    positionedHistory = true
-                    awaitingHistory = false
-                    sendAnchorState = SendAnchorState(observed: Set(identities))
-                } else if let newSend,
-                          let index = displayedRows.firstIndex(where: { $0.id == newSend }) {
-                    scrollToOwnedSend(index, animated: !reduceMotion, in: collectionView)
-                } else if !positioningAnimationActive,
-                          !collectionView.isDragging && !collectionView.isDecelerating,
-                          !alignOwnedSendIfNeeded(in: collectionView) {
-                    restore(anchor, in: collectionView)
-                }
-                if !insertedIDs.isEmpty && !reduceMotion && !shouldPositionHistory && !(firstContent && newSend == nil) {
-                    collectionView.layoutIfNeeded()
-                    animateInsertedRows(insertedIDs, in: collectionView)
-                }
-                updateAvatarPlayback()
-                if viewportGeometryChanged {
-                    collectionView.requestStableLayoutCallback()
+                      self.positionGeneration == currentPositionGeneration,
+                      self.displayedRows.map(\.revision) == publishedRevisions else { return }
+                if canPosition {
+                    self.positionAfterGeometry(
+                        anchor: anchor,
+                        insertedIDs: insertedIDs,
+                        shouldAnimateInsertedRows: shouldAnimateInsertedRows,
+                        viewportChanged: viewportChanged,
+                        in: collectionView
+                    )
+                } else if !collectionView.isDragging, !collectionView.isDecelerating,
+                          !self.positioningAnimationActive {
+                    self.setOffset(preservedOffset, in: collectionView)
                 }
             }
             // UICollectionView applies its own content-size offset adjustment after
             // reload/layout. Position once on the next main turn, fenced to this
             // published geometry; this is not a retry loop.
             positionScheduler(position)
-            setLoading(false)
+        }
+
+        private func positionAfterGeometry(
+            anchor: VisibleAnchor?,
+            insertedIDs: Set<String>,
+            shouldAnimateInsertedRows: Bool,
+            viewportChanged: Bool,
+            in collectionView: MessageUICollectionView
+        ) {
+            switch scrollIntent {
+            case let .historyBottom(initial):
+                guard !displayedRows.isEmpty else { break }
+                scrollToBottom(collectionView)
+                if initial {
+                    scrollIntent = .historyBottom(initial: false)
+                    pendingSendIDsDuringHistory = []
+                    awaitingHistory = false
+                    sendAnchorState.observed.formUnion(sendIdentities(in: displayedRows))
+                }
+            case let .send(id, _, _, animate):
+                guard !collectionView.isDragging, !collectionView.isDecelerating,
+                      let index = displayedRows.firstIndex(where: { $0.id == id }) else { break }
+                if !positioningAnimationActive || animate {
+                    if animate {
+                        setSendAnimationConsumed(id: id)
+                    }
+                    scrollToOwnedSend(index, animated: animate, in: collectionView)
+                }
+            case .undecided, .reading:
+                if !positioningAnimationActive,
+                   !collectionView.isDragging, !collectionView.isDecelerating {
+                    restore(anchor, in: collectionView)
+                }
+            }
+
+            if shouldAnimateInsertedRows && !insertedIDs.isEmpty && !reduceMotion {
+                collectionView.layoutIfNeeded()
+                animateInsertedRows(insertedIDs, in: collectionView)
+            }
+            updateAvatarPlayback()
+            if viewportChanged {
+                collectionView.requestStableLayoutCallback()
+            }
+        }
+
+        private var isUndecided: Bool {
+            if case .undecided = scrollIntent { return true }
+            return false
+        }
+
+        private var isHistoryBottom: Bool {
+            if case .historyBottom = scrollIntent { return true }
+            return false
+        }
+
+        private var isInitialHistoryPositionPending: Bool {
+            if case let .historyBottom(initial) = scrollIntent { return initial }
+            return false
+        }
+
+        private var hasOwnedSend: Bool {
+            if case .send = scrollIntent { return true }
+            return false
+        }
+
+        private var ownedSendID: String? {
+            guard case let .send(id, _, _, _) = scrollIntent else { return nil }
+            return id
         }
 
         private func tailHeight(in collectionView: UICollectionView) -> CGFloat {
@@ -478,15 +631,15 @@ struct MessageCollectionView: UIViewRepresentable {
             rows.compactMap { row in row.id.hasPrefix("send-") ? row.id : nil }
         }
 
-        private func visibleAnchor(in collectionView: UICollectionView) -> (id: String, delta: CGFloat)? {
+        private func visibleAnchor(in collectionView: UICollectionView) -> VisibleAnchor? {
             let top = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
             guard let layout,
                   let index = layout.rowFrames.firstIndex(where: { $0.maxY >= top }),
                   displayedRows.indices.contains(index) else { return nil }
-            return (displayedRows[index].id, layout.rowFrames[index].minY - top)
+            return VisibleAnchor(id: displayedRows[index].id, delta: layout.rowFrames[index].minY - top)
         }
 
-        private func restore(_ anchor: (id: String, delta: CGFloat)?, in collectionView: UICollectionView) {
+        private func restore(_ anchor: VisibleAnchor?, in collectionView: UICollectionView) {
             guard let anchor,
                   let index = displayedRows.firstIndex(where: { $0.id == anchor.id }),
                   let frame = layout?.rowFrames[index] else { return }
@@ -540,29 +693,48 @@ struct MessageCollectionView: UIViewRepresentable {
         }
 
         private func sendPlacement(in collectionView: UICollectionView) -> CGFloat {
-            ownedSendUsesContextOffset ? ownedSendPlacement : 0
+            guard case let .send(_, usesContextOffset, placement, _) = scrollIntent else { return 0 }
+            return usesContextOffset ? placement : 0
         }
 
         private func refreshOwnedSendPlacement(in collectionView: UICollectionView) {
-            guard ownedSendUsesContextOffset else {
-                ownedSendPlacement = 0
+            guard case let .send(id, usesContextOffset, _, animate) = scrollIntent else { return }
+            guard usesContextOffset else {
+                scrollIntent = .send(
+                    id: id, usesContextOffset: false, placement: 0, animate: animate
+                )
                 return
             }
             let usable = collectionView.bounds.height
                 - collectionView.adjustedContentInset.top
                 - collectionView.adjustedContentInset.bottom
-            ownedSendPlacement = max(0, usable) * 0.20
+            scrollIntent = .send(
+                id: id,
+                usesContextOffset: true,
+                placement: max(0, usable) * 0.20,
+                animate: animate
+            )
         }
 
-        private func refreshTail(in collectionView: UICollectionView) {
-            retainedTail = tailHeight(in: collectionView)
-            if ownedSendID == nil, retainedTail > 0,
-               !collectionView.isDragging, !collectionView.isDecelerating {
-                retainedTail = min(retainedTail, requiredRetainedTail(in: collectionView))
-            }
-            layout?.tailHeight = retainedTail
-            collectionView.collectionViewLayout.invalidateLayout()
-            collectionView.layoutIfNeeded()
+        private func setSendAnimationConsumed(id: String) {
+            guard case let .send(currentID, usesContextOffset, placement, _) = scrollIntent,
+                  currentID == id else { return }
+            scrollIntent = .send(
+                id: currentID,
+                usesContextOffset: usesContextOffset,
+                placement: placement,
+                animate: false
+            )
+        }
+
+        private func refreshTail(in collectionView: MessageUICollectionView) {
+            guard let layout else { return }
+            commitGeometry(
+                rowHeights: layout.rowHeights,
+                anchor: visibleAnchor(in: collectionView),
+                canPosition: true,
+                in: collectionView
+            )
         }
 
         @discardableResult
@@ -675,11 +847,29 @@ struct MessageCollectionView: UIViewRepresentable {
 
         func collectionView(
             _ collectionView: UICollectionView,
+            willDisplay cell: UICollectionViewCell,
+            forItemAt indexPath: IndexPath
+        ) {
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView = collectionView as? MessageUICollectionView else { return }
+                self.publishVisibleAttachmentPreviewIds(in: collectionView)
+            }
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
             didEndDisplaying cell: UICollectionViewCell,
             forItemAt indexPath: IndexPath
         ) {
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                self.publishVisibleAttachmentPreviewIds(in: collectionView)
+            }
             guard let cell = cell as? MessageHostingCell,
-                  let key = cell.measurementKey, heightCache[key] == nil else { return }
+                  collectionView.indexPath(for: cell) == nil else { return }
+            let key = cell.measurementKey
+            cell.clearContent()
+            guard let key, heightCache[key] == nil else { return }
             // A rapid drag can recycle a revised cell before its geometry report.
             // Finish exact sizing if it is still unseen after queued reports apply.
             DispatchQueue.main.async { [weak self, weak collectionView] in
@@ -694,6 +884,8 @@ struct MessageCollectionView: UIViewRepresentable {
             let row = displayedRows[index]
             let key = cacheKey(for: row, in: collectionView)
             let playback = avatarPlaybackEnabled(for: index, in: collectionView)
+            configurationGeneration += 1
+            let configurationToken = configurationGeneration
             cell.accessibilityIdentifier = row.accessibilityIdentifier
             cell.set(rootView: AnyView(MessageRowLayout(
                 row: row.row,
@@ -704,20 +896,45 @@ struct MessageCollectionView: UIViewRepresentable {
                 avatarPlaybackEnabled: playback,
                 measurement: false,
                 imageCache: imageCache,
+                attachmentPreviews: rowAttachmentPreviews(ownedBy: row.row, from: attachmentPreviews),
+                attachmentPreviewFailures: attachmentPreviewFailures,
+                pendingAttachments: row.pendingAttachments,
+                pendingAttachmentPreviews: row.pendingAttachmentPreviews,
+                pendingAttachmentTransfers: row.pendingAttachmentTransfers,
                 onRetry: { [weak self] id in self?.onRetry(id) },
+                onPreviewAttachment: { [weak self] id in self?.onPreviewAttachment(id) },
+                onRetryAttachmentUpload: { [weak self] id in self?.onRetryAttachmentUpload(id) },
                 heightRevision: key,
-                onHeightChange: { [weak self] height in
-                    self?.renderedHeightDidChange(height, rowID: row.id, key: key)
+                onGeometryChange: { [weak self, weak cell] report in
+                    self?.rowGeometryDidChange(
+                        report, rowID: row.id, key: key,
+                        configurationToken: configurationToken, cell: cell
+                    )
                 }
             )), avatarPlaybackEnabled: playback,
-                configurationKey: configurationKey(for: row, in: collectionView), measurementKey: key)
+                configurationKey: configurationKey(for: row, in: collectionView), measurementKey: key,
+                configurationToken: configurationToken)
         }
 
-        private func renderedHeightDidChange(_ height: CGFloat, rowID: String, key: String) {
-            guard height.isFinite, height > 0, let collectionView,
-                  let row = displayedRows.first(where: { $0.id == rowID }),
-                  cacheKey(for: row, in: collectionView) == key else { return }
-            pendingRenderedHeights[rowID] = (key, height)
+        private func rowGeometryDidChange(
+            _ report: MessageRowGeometry,
+            rowID: String,
+            key: String,
+            configurationToken: Int,
+            cell: MessageHostingCell?
+        ) {
+            guard report.revision == key, report.width.isFinite, report.height.isFinite,
+                  report.height > 0, let collectionView, let cell,
+                  abs(report.width - collectionView.bounds.width) <= 1,
+                  let rowIndex = displayedRows.firstIndex(where: { $0.id == rowID }),
+                  cell.configurationToken == configurationToken,
+                  cell.measurementKey == key,
+                  cacheKey(for: displayedRows[rowIndex], in: collectionView) == key else { return }
+            if let cached = heightCache[key],
+               cached.quality == .rendered, report.quality == .estimated { return }
+            if let existing = pendingRenderedHeights[rowID],
+               existing.report.quality == .rendered, report.quality == .estimated { return }
+            pendingRenderedHeights[rowID] = (report, configurationToken, cell)
             guard !heightUpdateScheduled else { return }
             heightUpdateScheduled = true
             // Geometry callbacks run during SwiftUI layout. Apply their latest values
@@ -734,42 +951,52 @@ struct MessageCollectionView: UIViewRepresentable {
             var heights = layout.rowHeights
             var changed = false
             for (index, row) in displayedRows.enumerated() {
-                guard heights.indices.contains(index), let report = pending[row.id],
-                      report.key == cacheKey(for: row, in: collectionView) else { continue }
-                // Even an equal-height revision needs an exact cache entry before
-                // recycling; the previous revision's height was only a bootstrap.
-                heightCache[report.key] = report.height
+                guard heights.indices.contains(index), let pendingReport = pending[row.id],
+                      pendingReport.report.revision == cacheKey(for: row, in: collectionView),
+                      abs(pendingReport.report.width - collectionView.bounds.width) <= 1,
+                      pendingReport.cell.measurementKey == pendingReport.report.revision,
+                      pendingReport.cell.configurationToken == pendingReport.configurationToken else { continue }
+                let report = pendingReport.report
+                heightCache[report.revision] = CachedHeight(
+                    height: report.height,
+                    quality: report.quality
+                )
                 if abs(heights[index] - report.height) > 1 / scale {
                     heights[index] = report.height
                     changed = true
                 }
             }
             guard changed else { return }
-            let anchor = visibleAnchor(in: collectionView)
-            layout.update(rowHeights: heights, width: collectionView.bounds.width, scale: scale)
-            refreshTail(in: collectionView)
-            if !positioningAnimationActive,
-               !collectionView.isDragging && !collectionView.isDecelerating,
-               !alignOwnedSendIfNeeded(in: collectionView) {
-                restore(anchor, in: collectionView)
-            }
+            commitGeometry(
+                rowHeights: heights,
+                anchor: visibleAnchor(in: collectionView),
+                in: collectionView
+            )
         }
 
-        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        func beginReading() {
             guard !displayedRows.isEmpty else { return }
             positionGeneration += 1
             if let collectionView { cancelPositioningAnimation(in: collectionView) }
-            pendingInitialHistoryPosition = false
+            scrollIntent = .reading
             pendingSendIDsDuringHistory = []
             awaitingHistory = false
-            positionedHistory = true
             sendAnchorState.observed.formUnion(sendIdentities(in: displayedRows))
-            ownedSendID = nil
-            ownedSendUsesContextOffset = false
-            ownedSendPlacement = 0
         }
 
-        func scrollViewDidScroll(_ scrollView: UIScrollView) { updateAvatarPlayback() }
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            beginReading()
+        }
+
+        func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+            beginReading()
+            return true
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            updateAvatarPlayback()
+            if let collectionView { publishVisibleAttachmentPreviewIds(in: collectionView) }
+        }
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             retireTailAtRest(in: scrollView)
             updateAvatarPlayback()
@@ -797,6 +1024,20 @@ struct MessageCollectionView: UIViewRepresentable {
             layout?.tailHeight = required
             layout?.invalidateLayout()
             scrollView.layoutIfNeeded()
+        }
+
+        private func publishVisibleAttachmentPreviewIds(in collectionView: UICollectionView) {
+            let ids = Set(collectionView.indexPathsForVisibleItems.flatMap { indexPath -> [String] in
+                guard displayedRows.indices.contains(indexPath.item),
+                      case let .message(message, _, _) = displayedRows[indexPath.item].row else { return [] }
+                return message.attachments.compactMap { attachment in
+                    attachment.mediaKind == "image" || attachment.mediaKind == "pdf"
+                        ? attachment.attachmentId : nil
+                }
+            })
+            guard ids != lastVisibleAttachmentPreviewIds else { return }
+            lastVisibleAttachmentPreviewIds = ids
+            onVisibleAttachmentPreviewIdsChange(ids)
         }
 
         private func updateAvatarPlayback(refreshContent: Bool = false) {
@@ -844,6 +1085,7 @@ final class MessageUICollectionView: UICollectionView {
     var onBoundsChange: (() -> Void)?
     var onKeyboardOverlapChange: (() -> Void)?
     var onStableLayout: (() -> Void)?
+    var onUserNavigation: (() -> Void)?
     var measuredRowCount = 0
     var entranceAnimationCount = 0
     var positioningAnimationCompletionCount = 0
@@ -868,6 +1110,26 @@ final class MessageUICollectionView: UICollectionView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit { NotificationCenter.default.removeObserver(self) }
+
+    override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        onUserNavigation?()
+        return super.accessibilityScroll(direction)
+    }
+
+    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {
+        onUserNavigation?()
+        super.scrollRectToVisible(rect, animated: animated)
+    }
+
+    override func didUpdateFocus(
+        in context: UIFocusUpdateContext,
+        with coordinator: UIFocusAnimationCoordinator
+    ) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard let focused = context.nextFocusedView,
+              focused === self || focused.isDescendant(of: self) else { return }
+        onUserNavigation?()
+    }
 
     @objc private func receiveKeyboardAnimation(_ notification: Notification) {
         if let timing = parsedKeyboardAnimationTiming(from: notification) {
@@ -986,6 +1248,7 @@ final class MessageHostingCell: UICollectionViewCell {
     private let host = UIHostingController(rootView: AnyView(EmptyView()))
     private(set) var avatarPlaybackEnabled = false
     private(set) var configurationCount = 0
+    private(set) var configurationToken = 0
     private(set) var configurationKey: String?
     private(set) var measurementKey: String?
 
@@ -1006,18 +1269,30 @@ final class MessageHostingCell: UICollectionViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        clearContent()
+    }
+
+    func clearContent() {
         accessibilityIdentifier = nil
         alpha = 1
         transform = .identity
         avatarPlaybackEnabled = false
+        configurationToken = 0
         configurationKey = nil
         measurementKey = nil
         host.rootView = AnyView(EmptyView())
     }
 
-    func set(rootView: AnyView, avatarPlaybackEnabled: Bool, configurationKey: String, measurementKey: String) {
+    func set(
+        rootView: AnyView,
+        avatarPlaybackEnabled: Bool,
+        configurationKey: String,
+        measurementKey: String,
+        configurationToken: Int = 0
+    ) {
         self.configurationKey = configurationKey
         self.measurementKey = measurementKey
+        self.configurationToken = configurationToken
         self.avatarPlaybackEnabled = avatarPlaybackEnabled
         configurationCount += 1
         // SwiftUI otherwise centers a taller intrinsic row in the old cell bounds
@@ -1046,7 +1321,9 @@ private final class MessageRowMeasurer {
         row: MessageLayoutRow,
         messageCount: Int,
         paneWidth: CGFloat,
-        userName: String
+        userName: String,
+        attachmentPreviews: [String: UIImage],
+        attachmentPreviewFailures: Set<String>
     ) -> CGFloat {
         onMeasure()
         host.rootView = AnyView(MessageRowLayout(
@@ -1058,7 +1335,14 @@ private final class MessageRowMeasurer {
             avatarPlaybackEnabled: false,
             measurement: true,
             imageCache: imageCache,
-            onRetry: { _ in }
+            attachmentPreviews: attachmentPreviews,
+            attachmentPreviewFailures: attachmentPreviewFailures,
+            pendingAttachments: row.pendingAttachments,
+            pendingAttachmentPreviews: row.pendingAttachmentPreviews,
+            pendingAttachmentTransfers: row.pendingAttachmentTransfers,
+            onRetry: { _ in },
+            onPreviewAttachment: { _ in },
+            onRetryAttachmentUpload: { _ in }
         ))
         host.view.frame = CGRect(x: -10_000, y: 0, width: paneWidth, height: 1)
         host.view.setNeedsLayout()
@@ -1068,6 +1352,8 @@ private final class MessageRowMeasurer {
         host.view.bounds.size = CGSize(width: paneWidth, height: first.height)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
-        return host.sizeThatFits(in: proposal).height
+        let height = host.sizeThatFits(in: proposal).height
+        host.rootView = AnyView(EmptyView())
+        return height
     }
 }

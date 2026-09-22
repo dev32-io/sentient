@@ -39,6 +39,17 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
   const panelRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const canonicalRows = sessions.items.value;
+  const previousSessionsRef = useRef({ sessions, ids: new Set(canonicalRows.map((row) => row.sessionId)) });
+  const insertedIds = new Set(
+    previousSessionsRef.current.sessions === sessions
+      ? canonicalRows.filter((row) => !previousSessionsRef.current.ids.has(row.sessionId)).map((row) => row.sessionId)
+      : [],
+  );
+
+  useEffect(() => {
+    previousSessionsRef.current = { sessions, ids: new Set(canonicalRows.map((row) => row.sessionId)) };
+  }, [canonicalRows, sessions]);
 
   // Closing/replacing the authenticated context invalidates every awaiting action,
   // including a guard that has not yet allowed any session side effects.
@@ -109,12 +120,14 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
   }, [open, onClose, renaming, deleting]);
 
   const searchActive = sessions.searchHits.value !== null;
-  const visible = sessions.searchHits.value ?? sessions.items.value;
+  const visible = sessions.searchHits.value ?? canonicalRows;
   const hasError = sessions.error.value !== null;
   const emptyMessage = hasError ? EMPTY_LOAD_FAIL : EMPTY_DEFAULT;
-  const showLoadingBlank = sessions.loading.value && sessions.items.value.length === 0;
+  const visibleDrafts = searchActive ? [] : sessions.drafts.value;
+  const hasVisibleRows = visible.length > 0 || visibleDrafts.length > 0;
+  const showLoadingBlank = sessions.loading.value && canonicalRows.length === 0 && visibleDrafts.length === 0;
   const showNoResults = searchActive && !hasError && !showLoadingBlank && visible.length === 0;
-  const showStaleBanner = visible.length > 0 && (hasError || sessions.loading.value);
+  const showStaleBanner = hasVisibleRows && hasError;
   const clearSearch = (): void => {
     setClearSearchSignal((value) => (value ?? 0) + 1);
     void sessions.search("");
@@ -177,14 +190,19 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
             void sessions.search(q);
           }}
         />
-        {showStaleBanner && <StaleBanner checking={sessions.loading.value} onRetry={() => void sessions.load()} />}
+        {showStaleBanner && <StaleBanner checking={false} onRetry={() => void sessions.load()} />}
         {actionError && <Notice tone="error">{actionError}</Notice>}
+        {sessions.deleteFailureCount.value > 0 && (
+          <Notice tone="error">
+            Conversation deletion failed. <ActionButton variant="quiet" onClick={() => void sessions.retryFailedDeletes()}>Retry</ActionButton>
+          </Notice>
+        )}
         <div class="drawer__list" aria-busy={pending}>
           {showLoadingBlank ? (
             <AsyncState state="loading" title="Loading past chats" />
           ) : showNoResults ? (
             <NoResultsState onClear={clearSearch} />
-          ) : visible.length === 0 ? (
+          ) : !hasVisibleRows ? (
             <AsyncState
               state={hasError ? "error" : "empty"}
               title={emptyMessage}
@@ -193,10 +211,13 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
           ) : (
             <SessionList
               rows={visible}
+              drafts={visibleDrafts}
               currentId={sessions.currentId.value}
+              insertedIds={insertedIds}
               emptyMessage={emptyMessage}
               pending={pending}
               onSwitch={(id, event) => void changeSession(() => sessions.switchTo(id), event.currentTarget as HTMLElement)}
+              onOpenDraft={(id, event) => void changeSession(() => sessions.openDraft(id), event.currentTarget as HTMLElement)}
               onAskDelete={(id, title) => setDeleting({ id, title })}
               onAskRename={(id, title) => setRenaming({ id, title })}
             />

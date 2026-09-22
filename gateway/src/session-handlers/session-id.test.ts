@@ -18,8 +18,13 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import type { Capability } from "../access/capability.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
-import { type SessionStore, openSessionStore } from "../store/session-store.js";
-import { mintOnFirstMessage, mintSessionId, resolveSession } from "./session-id.js";
+import {
+  AttachmentAdmissionError,
+  type AttachmentSessionStore,
+  DeletedSessionError,
+  openSessionStore,
+} from "../store/session-store.js";
+import { admitFirstUserMessage, mintOnFirstMessage, mintSessionId, resolveSession } from "./session-id.js";
 
 const ROOT = "/tmp/sentient-session-id-test";
 
@@ -29,7 +34,7 @@ let storeSeq = 0;
 
 /** A fresh, isolated on-disk store per test — each gets its own user dir so no
  *  test can see another's rows. */
-function freshStore(): SessionStore {
+function freshStore(): AttachmentSessionStore {
   storeSeq += 1;
   const userId: `u_${string}` = `u_${storeSeq.toString(16).padStart(8, "0")}`;
   mkdirSync(`${ROOT}/${userId}`, { recursive: true });
@@ -112,6 +117,21 @@ describe("session id — addressing", () => {
 });
 
 describe("session id — minting on the first message", () => {
+  it("atomically admits metadata with the first entry and leaves no row when attachment validation fails", () => {
+    const store = freshStore();
+    const { sessionId: _unused, ...entry } = entryFor("unused");
+
+    expect(() =>
+      admitFirstUserMessage(store, "k-atomic-fail", entry, ["att_00000000000000000000000000000000"], 1),
+    ).toThrow(AttachmentAdmissionError);
+    expect(store.listSessionsWithMetadata()).toEqual([]);
+
+    const admitted = admitFirstUserMessage(store, "k-atomic-ok", { ...entry, text: "" }, [], 1);
+    expect(store.readSession(admitted.sessionId)).toHaveLength(1);
+    expect(admitted.admission.entry.text).toBe("");
+    store.close();
+  });
+
   it("INVARIANT: retrying the first message with one mint key yields one session", () => {
     const store = freshStore();
     const a = mintOnFirstMessage({ store, mintKey: "k-1", text: "hello" });
@@ -128,6 +148,18 @@ describe("session id — minting on the first message", () => {
     const store = freshStore();
     expect(mintOnFirstMessage({ store, mintKey: "k-2", text: "hello" }).replayed).toBe(false);
     expect(mintOnFirstMessage({ store, mintKey: "k-2", text: "hello" }).replayed).toBe(true);
+    store.close();
+  });
+
+  it("INVARIANT: a deleted session's old id and mint key cannot resurrect it", () => {
+    const store = freshStore();
+    const { sessionId: _unused, ...entry } = entryFor("unused");
+    const minted = admitFirstUserMessage(store, "k-deleted", entry, [], 0);
+    expect(store.deleteSession(minted.sessionId).status).toBe("deleted");
+
+    expect(resolveSession({ store, presented: minted.sessionId })).toEqual({ rejected: "unknown-session" });
+    expect(() => admitFirstUserMessage(store, "k-deleted", entry, [], 0)).toThrow(DeletedSessionError);
+    expect(store.listSessionsWithMetadata()).toEqual([]);
     store.close();
   });
 });

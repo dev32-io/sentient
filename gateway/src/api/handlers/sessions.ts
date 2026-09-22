@@ -25,7 +25,7 @@ import { type UserPrincipal, createUserPrincipal } from "../../identity/user-pri
 import { getLog } from "../../logging/logger.js";
 import { snapshotFeedItems } from "../../runtime/conversation-feed.js";
 import { withSessionStore } from "../../session-handlers/session-binding.js";
-import { resolveSession } from "../../session-handlers/session-id.js";
+import { isWellFormedSessionId, resolveSession } from "../../session-handlers/session-id.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 import type { UserStore } from "../../user-auth/user-store.js";
 
@@ -52,6 +52,7 @@ const REST_HOUSEHOLD_ID = "home";
 
 const SESSIONS_PATH = "/api/v1/sessions";
 const MESSAGES_PATH_RE = /^\/api\/v1\/sessions\/([^/]+)\/messages$/;
+const SESSION_PATH_RE = /^\/api\/v1\/sessions\/([^/]+)$/;
 
 export interface SessionsHandlerDeps {
   tokens: { validate: (token: string) => Promise<TokenResult<TokenPayload>> };
@@ -61,6 +62,8 @@ export interface SessionsHandlerDeps {
   /** `store.db_filename` (config.yaml#store) — threaded into `withSessionStore`
    *  so this REST readback opens the same db the runtime does. */
   dbFileName: string;
+  /** Runs synchronously after durable deletion, including an idempotent retry. */
+  onSessionDeleted(principal: UserPrincipal, sessionId: string): void;
 }
 
 export function createSessionsHandler(deps: SessionsHandlerDeps): (request: Request) => Promise<Response> {
@@ -115,6 +118,21 @@ async function handleSessions(deps: SessionsHandlerDeps, request: Request): Prom
   if (pathname === SESSIONS_PATH) {
     if (request.method !== "GET") return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed");
     return handleList(deps, principal);
+  }
+
+  const sessionMatch = SESSION_PATH_RE.exec(pathname);
+  if (sessionMatch) {
+    if (request.method !== "DELETE") return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed");
+    const sessionId = safeDecode(sessionMatch[1] ?? "");
+    if (sessionId === null || !isWellFormedSessionId(sessionId)) return jsonError(HTTP_NOT_FOUND, "not-found");
+    return withSessionStore(deps, principal, (store) => {
+      const result = store.deleteSession(sessionId);
+      if (result.status !== "deleted") return jsonError(HTTP_NOT_FOUND, "not-found");
+      // No await between durable fence and runtime teardown. A retry also repairs
+      // teardown if its prior attempt failed after the transaction committed.
+      deps.onSessionDeleted(principal, sessionId);
+      return new Response(null, { status: 204 });
+    });
   }
 
   const messagesMatch = MESSAGES_PATH_RE.exec(pathname);

@@ -27,8 +27,8 @@ targets:
         # This spec owns the app version; xcodegen regenerates Info.plist.
         # App releases use their own track, separate from mobile-sdk/data source
         # versions. An iOS-only release does not bump the deprecated Android app.
-        CFBundleShortVersionString: 1.6.0
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: 1.7.0
+        CFBundleVersion: "14"
         # Register bundled custom fonts so UIKit can load them by family name.
         # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
         UIAppFonts:
@@ -42,6 +42,7 @@ targets:
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
+        NSCameraUsageDescription: Sentient uses the camera when you choose to take a photo attachment.
         CFBundleURLTypes:
           - CFBundleTypeRole: Viewer
             CFBundleURLName: io.dev32.sentient.session

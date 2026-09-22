@@ -35,6 +35,7 @@ export interface WizardDeps {
   secretsStore: SecretsStore;
   testProvider: (provider: LlmProvider, apiKey: string | null, baseUrl: string | null) => Promise<TestProviderResult>;
   listModels?: () => Promise<ProvidersListResult<ModelEntry[]>>;
+  invalidateCatalogCache?: (provider: LlmProvider) => void;
   systemOrchestrator?: SystemOrchestratorHandle | null;
 }
 

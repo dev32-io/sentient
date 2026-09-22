@@ -13,6 +13,8 @@ export interface ServiceVersions {
   hermes: string;
   stt_service: string;
   tts_service: string;
+  /** Absent on older gateways. */
+  attachment_parser?: string;
   features: ServiceVersionsFeatures;
 }
 

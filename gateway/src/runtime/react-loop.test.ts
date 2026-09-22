@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import type { OrchestratorConfig } from "@sentient/config";
+import { attachmentsConfigSchema } from "@sentient/config";
 import type { Capability } from "../access/capability.js";
+import { createGatewayLogger } from "../logging/logger.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import { projectForClient } from "../store/client-projection.js";
-import type { NewSessionEntry } from "../store/entry-types.js";
-import { openSessionStore } from "../store/session-store.js";
+import type { NewSessionEntry, SessionEntry } from "../store/entry-types.js";
+import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
 import type { ToolDefinition, ToolInvocation, ToolResult } from "../tools/tool-types.js";
@@ -34,7 +35,41 @@ const cap: Capability = Object.freeze({
 
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
-const loopConfig = (maxIterations: number): OrchestratorConfig["loop"] => ({ max_iterations: maxIterations });
+const NORMALIZED_PNG = Uint8Array.from(
+  Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+);
+
+function normalizedImageResponse() {
+  return {
+    requestId: "r",
+    status: 200,
+    headers: {
+      "X-Sentient-Visual-Metadata": JSON.stringify({
+        source: {
+          kind: "image",
+          mediaType: "image/png",
+          sizeBytes: 9,
+          originalAvailable: true,
+          width: 1,
+          height: 1,
+          storedWidth: 1,
+          storedHeight: 1,
+        },
+        view: {
+          kind: "overview",
+          width: 1,
+          height: 1,
+          sourceWidth: 1,
+          sourceHeight: 1,
+          downsampled: false,
+          partialCoverage: false,
+        },
+      }),
+    },
+    contentType: "image/png" as const,
+    body: NORMALIZED_PNG,
+  };
+}
 
 function seedUserMessage(store: ReturnType<typeof openSessionStore>, sessionId: string, text: string): void {
   const entry: NewSessionEntry = {
@@ -164,7 +199,6 @@ describe("runTurn — tool vocabulary", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
@@ -201,7 +235,6 @@ describe("runTurn — text-only response", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: (_turnId, text) => deltas.push(text),
         onToolUpdate: () => {},
@@ -228,6 +261,62 @@ describe("runTurn — text-only response", () => {
 // ---------------------------------------------------------------------------
 
 describe("runTurn — one tool call", () => {
+  it("logs malformed tool arguments as bounded metadata only", async () => {
+    const logs: string[] = [];
+    await createGatewayLogger({ testSink: (line) => logs.push(line), logLevel: "debug" });
+    const secret = ["TOOL", "SENTINEL", "4zP"].join("_");
+    const malformed = `{${secret}`;
+    const nonObject = JSON.stringify(`data:image/png;base64,${secret}`);
+    const store = openSessionStore(cap);
+    const sessionId = "tool-args-safe-log";
+    seedUserMessage(store, sessionId, "safe");
+    const provider = fakeProvider(async function* (call) {
+      if (call === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: "bad-json", type: "function", function: { name: "safe-tool", arguments: malformed } },
+        };
+        yield {
+          type: "tool_call",
+          toolCall: { id: "not-object", type: "function", function: { name: "safe-tool", arguments: nonObject } },
+        };
+      } else {
+        yield { type: "text", content: "done" };
+      }
+      yield { type: "done", finishReason: call === 1 ? "tool_calls" : "stop" };
+    });
+
+    await runTurn(
+      {
+        provider,
+        broker: fakeBroker(
+          [{ name: "safe-tool", description: "safe", parameters: {}, category: "foreground", tier: "read" }],
+          async () => ({ content: "ok", isError: false }),
+        ),
+        store,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "system",
+        sessionId,
+        requestTimeoutMs: 1000,
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "safe-log-turn", signal: new AbortController().signal },
+    );
+
+    const output = logs.join("\n");
+    expect(output).toContain("react-loop.tool-args.parse-failed");
+    expect(output).toContain('reason="invalid_json"');
+    expect(output).toContain("react-loop.tool-args.not-an-object");
+    expect(output).toContain('reason="not_object"');
+    expect(output).toContain("rawLength=");
+    expect(output).toContain('toolCallId="bad-json"');
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain("data:image");
+    expect(output).not.toContain("base64");
+    store.close();
+  });
+
   it("dispatches, appends tool_call+tool_result, and the 2nd call's messages include role:tool (2 iterations)", async () => {
     const store = openSessionStore(cap);
     const sessionId = "tool-round-trip";
@@ -268,7 +357,6 @@ describe("runTurn — one tool call", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: (_turnId, u) => toolUpdates.push(u),
@@ -306,38 +394,37 @@ describe("runTurn — one tool call", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Case 3: runaway tool-calling model — stops at max_iterations, still
-// commits a final content entry (forceFinal).
+// Case 3: tool-calling models run until they answer or the turn is cancelled.
 // ---------------------------------------------------------------------------
 
-describe("runTurn — runaway tool-calling model", () => {
-  it("forces a content-only final iteration at max_iterations instead of silence", async () => {
+describe("runTurn — unbounded tool rounds", () => {
+  const noopDef: ToolDefinition = {
+    name: "noop_tool",
+    description: "does nothing",
+    parameters: { type: "object", properties: {} },
+    category: "foreground",
+    tier: "read",
+  };
+
+  it("keeps the mediated tool set past the former 50-round ceiling before a genuine answer", async () => {
+    const rounds = 51;
     const store = openSessionStore(cap);
-    const sessionId = "runaway";
+    const sessionId = "unbounded-rounds";
     seedUserMessage(store, sessionId, "do something complicated");
 
     const provider = fakeProvider(async function* (callIndex, req) {
-      if (req.tools.length === 0) {
-        // forceFinal iteration: no tools offered, so a real provider could
-        // never emit a tool_call here either.
-        yield { type: "text", content: "Out of turns." };
-        yield { type: "done", finishReason: "stop" };
+      expect(req.tools.map((tool) => tool.function.name)).toEqual(["noop_tool"]);
+      if (callIndex <= rounds) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: `call_${callIndex}`, type: "function", function: { name: "noop_tool", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
         return;
       }
-      yield {
-        type: "tool_call",
-        toolCall: { id: `call_${callIndex}`, type: "function", function: { name: "noop_tool", arguments: "{}" } },
-      };
-      yield { type: "done", finishReason: "tool_calls" };
+      yield { type: "text", content: "The genuine answer." };
+      yield { type: "done", finishReason: "stop" };
     });
-
-    const noopDef: ToolDefinition = {
-      name: "noop_tool",
-      description: "does nothing",
-      parameters: { type: "object", properties: {} },
-      category: "foreground",
-      tier: "read",
-    };
     const broker = fakeBroker([noopDef], async () => ({ content: "ok", isError: false }));
 
     const result = await runTurn(
@@ -348,31 +435,79 @@ describe("runTurn — runaway tool-calling model", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(3),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
-      { turnId: "turn-3", signal: new AbortController().signal },
+      { turnId: "turn-unbounded", signal: new AbortController().signal },
     );
 
-    expect(result).toMatchObject({ completed: true, iterations: 3 });
-    expect(provider.calls).toHaveLength(3);
-    // The 3rd (forced-final) call must have been offered NO tools.
-    expect(provider.calls[2]?.tools).toEqual([]);
+    expect(result).toMatchObject({ completed: true, iterations: rounds + 1 });
+    expect(provider.calls).toHaveLength(rounds + 1);
+    expect(provider.calls.every((request) => request.tools.length === 1)).toBe(true);
+    expect(broker.dispatchCalls).toHaveLength(rounds);
 
     const entries = store.readSession(sessionId);
-    expect(entries.map((e) => e.kind)).toEqual([
-      "user",
-      "tool_call",
-      "tool_result",
-      "tool_call",
-      "tool_result",
-      "assistant",
-    ]);
-    const last = entries[entries.length - 1];
-    expect(last?.kind).toBe("assistant");
-    expect(last?.text).toBe("Out of turns.");
+    expect(entries).toHaveLength(1 + rounds * 2 + 1);
+    expect(entries[entries.length - 1]).toMatchObject({ kind: "assistant", text: "The genuine answer." });
+
+    store.close();
+  });
+
+  it("cancels cleanly after the former ceiling without dispatching another tool round", async () => {
+    const rounds = 51;
+    const store = openSessionStore(cap);
+    const sessionId = "unbounded-cancel";
+    seedUserMessage(store, sessionId, "keep working until I stop you");
+
+    let markBeyondCeilingStarted: (() => void) | undefined;
+    const beyondCeilingStarted = new Promise<void>((resolve) => {
+      markBeyondCeilingStarted = resolve;
+    });
+    const provider = fakeProvider(async function* (callIndex, req) {
+      if (callIndex <= rounds) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: `call_${callIndex}`, type: "function", function: { name: "noop_tool", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+
+      markBeyondCeilingStarted?.();
+      await new Promise<void>((resolve) => {
+        if (req.signal.aborted) {
+          resolve();
+        } else {
+          req.signal.addEventListener("abort", () => resolve(), { once: true });
+        }
+      });
+    });
+    const broker = fakeBroker([noopDef], async () => ({ content: "ok", isError: false }));
+    const controller = new AbortController();
+
+    const resultPromise = runTurn(
+      {
+        provider,
+        broker,
+        store,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        requestTimeoutMs: 120000,
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-unbounded-cancel", signal: controller.signal },
+    );
+    await beyondCeilingStarted;
+    controller.abort();
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ completed: false, iterations: rounds + 1 });
+    expect(provider.calls).toHaveLength(rounds + 1);
+    expect(broker.dispatchCalls).toHaveLength(rounds);
+    expect(store.readSession(sessionId)).toHaveLength(1 + rounds * 2);
 
     store.close();
   });
@@ -411,7 +546,6 @@ describe("runTurn — abort mid-stream", () => {
           timeZone: { zone: () => "UTC" },
           systemPrompt: "you are a test assistant",
           sessionId,
-          config: loopConfig(10),
           requestTimeoutMs: 120000,
           onTextDelta: () => {},
           onToolUpdate: () => {},
@@ -435,7 +569,7 @@ describe("runTurn — abort mid-stream", () => {
 // the same iteration must survive replay (spec §3.2 Invariant B), not just
 // stream live via onTextDelta. Regression test for the bug where
 // `outcome.text` was discarded whenever an iteration ALSO produced tool
-// calls (not forceFinal): the store never got the narration, so a page
+// calls: the store never got the narration, so a page
 // reload dropped text the live client already showed.
 // ---------------------------------------------------------------------------
 
@@ -481,7 +615,6 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: (_turnId, text) => deltas.push(text),
         onToolUpdate: () => {},
@@ -497,7 +630,7 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
     expect(deltas.join("")).toBe("Let me check.\n\nIt is sunny.");
 
     // Before this fix, "Let me check." would be ABSENT here — discarded the
-    // instant the loop saw toolCalls.length > 0 on a non-forceFinal iteration.
+    // instant the loop saw toolCalls.length > 0 on a non-terminal iteration.
     const entries = store.readSession(sessionId);
     expect(entries.map((e) => e.kind)).toEqual(["user", "assistant", "tool_call", "tool_result", "assistant"]);
     // Stored WITH its terminator, byte-identical to what the live stream sent.
@@ -564,7 +697,6 @@ describe("runTurn — provider exhausts its output budget before any visible tex
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
@@ -610,7 +742,6 @@ describe("runTurn — provider exhausts its output budget before any visible tex
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
@@ -684,7 +815,6 @@ describe("runTurn — background tool dispatch", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
@@ -753,7 +883,6 @@ describe("runTurn — background tool dispatch", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
@@ -781,6 +910,572 @@ describe("runTurn — background tool dispatch", () => {
 // committed as a completed reply.
 // ---------------------------------------------------------------------------
 
+describe("runTurn — direct main vision", () => {
+  it("assembles current image bytes on first request even when model advertises tools=false", async () => {
+    const attachmentId = `att_${"d".repeat(32)}`;
+    const entries: SessionEntry[] = [
+      {
+        seq: 10,
+        sessionId: "vision-first",
+        turnId: "different-admitted-id",
+        replyId: null,
+        kind: "user",
+        createdAt: 1,
+        text: "What is this?",
+        toolCallId: null,
+        toolName: null,
+        toolArgs: null,
+        cutoff: null,
+        compactedThroughSeq: null,
+        pendingId: "pending",
+        attachments: [
+          { attachmentId, displayName: "hidden.png", contentType: "image/png", mediaKind: "image", size: 9 },
+        ],
+      },
+    ];
+    const store = {
+      readSession: () => entries,
+      append: (value: NewSessionEntry) => {
+        const saved = { ...value, seq: entries.length + 11, attachments: [] } as SessionEntry;
+        entries.push(saved);
+        return saved;
+      },
+    } as unknown as SessionStore;
+    const provider = fakeProvider(async function* (call) {
+      if (call === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: {
+            id: "call-after-image",
+            type: "function",
+            function: { name: "unused", arguments: "{}" },
+          },
+        };
+      } else {
+        yield { type: "text", content: "seen" };
+      }
+      yield { type: "done", finishReason: call === 1 ? "tool_calls" : "stop" };
+    });
+    const fallback = fakeProvider(async function* () {
+      yield { type: "done", finishReason: "unexpected" };
+    });
+    const definition: ToolDefinition = {
+      name: "unused",
+      description: "unused",
+      parameters: {},
+      category: "foreground",
+      tier: "read",
+    };
+    const ref = {
+      attachmentId,
+      ownerUserId: cap.ownerUserId,
+      sessionId: "vision-first",
+      entrySeq: 10,
+      status: "ready" as const,
+      mediaKind: "image" as const,
+      contentType: "image/png",
+      displayName: "hidden.png",
+      size: 9,
+      sha256: "a".repeat(64),
+      sendAttemptId: "attempt",
+      fileIdentity: "file",
+      stagedAt: 1,
+      expiresAt: 2,
+    };
+    let parserCalls = 0;
+
+    await runTurn(
+      {
+        provider: fallback,
+        resolveMainModel: async () => ({
+          client: provider,
+          provider: "ollama-cloud",
+          catalogModelId: "vision:cloud",
+          outboundModel: "vision",
+          supportsVision: true,
+          supportsTools: false,
+          contextLength: 8192,
+        }),
+        directVision: {
+          capability: Object.freeze({
+            ownerUserId: cap.ownerUserId,
+            resource: "attachment-store",
+            rootPath: ROOT,
+            role: "adult",
+          }),
+          sessionId: "vision-first",
+          store: { findAttachment: () => ref },
+          storage: {
+            async *read() {
+              yield Uint8Array.from([1]);
+            },
+          },
+          parser: {
+            parse: async () => {
+              parserCalls++;
+              return {
+                ok: true,
+                value: normalizedImageResponse(),
+              };
+            },
+          },
+          limits: { maxPages: 8, maxTextBytes: 1024, maxTextChars: 1000, maxQuestionChars: 2000, maxEdge: 1600 },
+          config: attachmentsConfigSchema.parse({}),
+        },
+        broker: fakeBroker([definition], async () => ({ content: "unused", isError: false })),
+        store,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "system",
+        sessionId: "vision-first",
+        requestTimeoutMs: 1000,
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "active-turn", signal: new AbortController().signal, inputAfterSeq: 9 },
+    );
+
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[0]?.tools).toEqual([]);
+    expect(provider.calls[0]?.model).toBe("vision");
+    expect(JSON.stringify(provider.calls[0]?.messages).match(/"type":"image_url"/g)).toHaveLength(1);
+    expect(JSON.stringify(provider.calls[1]?.messages).match(/"type":"image_url"/g)).toHaveLength(1);
+    expect(JSON.stringify(entries)).not.toContain("base64");
+    expect(parserCalls).toBe(1);
+    expect(fallback.calls).toHaveLength(0);
+  });
+
+  it("prepares auxiliary overview before first request for false and unknown vision without a model tool", async () => {
+    for (const supportsVision of [false, "unknown"] as const) {
+      const attachmentId = `att_${supportsVision === false ? "a".repeat(32) : "b".repeat(32)}`;
+      const sessionId = `automatic-aux-${supportsVision}`;
+      const entries: SessionEntry[] = [
+        {
+          seq: 1,
+          sessionId,
+          turnId: "turn",
+          replyId: null,
+          kind: "user",
+          createdAt: 1,
+          text: "What is this?",
+          toolCallId: null,
+          toolName: null,
+          toolArgs: null,
+          cutoff: null,
+          compactedThroughSeq: null,
+          pendingId: null,
+          attachments: [
+            { attachmentId, displayName: "hidden.png", contentType: "image/png", mediaKind: "image", size: 9 },
+          ],
+        },
+      ];
+      const store = {
+        readSession: () => entries,
+        append: (value: NewSessionEntry) => {
+          const saved = { ...value, seq: entries.length + 1, attachments: [] } as SessionEntry;
+          entries.push(saved);
+          return saved;
+        },
+      } as unknown as SessionStore;
+      const provider = fakeProvider(async function* () {
+        yield { type: "text", content: "answered from overview" };
+        yield { type: "done", finishReason: "stop" };
+      });
+      const ref = {
+        attachmentId,
+        ownerUserId: cap.ownerUserId,
+        sessionId,
+        entrySeq: 1,
+        status: "ready" as const,
+        mediaKind: "image" as const,
+        contentType: "image/png",
+        displayName: "hidden.png",
+        size: 9,
+        sha256: "a".repeat(64),
+        sendAttemptId: "attempt",
+        fileIdentity: "file",
+        stagedAt: 1,
+        expiresAt: 2,
+      };
+      let auxiliaryCalls = 0;
+      let dispatches = 0;
+
+      await runTurn(
+        {
+          provider,
+          resolveMainModel: async () => ({
+            client: provider,
+            provider: "ollama-cloud",
+            catalogModelId: "main:cloud",
+            outboundModel: "main",
+            supportsVision,
+            supportsTools: true,
+            contextLength: 8192,
+          }),
+          directVision: {
+            capability: Object.freeze({
+              ownerUserId: cap.ownerUserId,
+              resource: "attachment-store",
+              rootPath: ROOT,
+              role: "adult",
+            }),
+            sessionId,
+            store: { findAttachment: () => ref },
+            storage: {
+              async *read() {
+                yield Uint8Array.from([1]);
+              },
+            },
+            parser: {
+              parse: async () => ({
+                ok: true,
+                value: normalizedImageResponse(),
+              }),
+            },
+            limits: { maxPages: 8, maxTextBytes: 1024, maxTextChars: 1000, maxQuestionChars: 2000, maxEdge: 1600 },
+            config: attachmentsConfigSchema.parse({}),
+            auxiliary: {
+              resolveVision: async () => ({
+                ok: true,
+                value: {
+                  inspect: async (request) => {
+                    auxiliaryCalls += 1;
+                    return {
+                      ok: true,
+                      value: {
+                        text: "screened automatic overview",
+                        provenance: request.pages.map((p) => p.provenance),
+                      },
+                    };
+                  },
+                },
+              }),
+              gate: {
+                screen: (text) => ({ text, flagged: false, maxSeverity: null }),
+                getRiskLevel: () => "none",
+              },
+            },
+          },
+          broker: fakeBroker(
+            [
+              {
+                name: "inspect_attachment",
+                description: "inspect",
+                parameters: {},
+                category: "foreground",
+                tier: "read",
+              },
+            ],
+            async () => {
+              dispatches += 1;
+              return { content: "unexpected", isError: false };
+            },
+          ),
+          store,
+          timeZone: { zone: () => "UTC" },
+          systemPrompt: "system",
+          sessionId,
+          requestTimeoutMs: 1000,
+          onTextDelta: () => {},
+          onToolUpdate: () => {},
+        },
+        { turnId: "turn", signal: new AbortController().signal },
+      );
+
+      expect(auxiliaryCalls).toBe(1);
+      expect(dispatches).toBe(0);
+      expect(JSON.stringify(provider.calls[0]?.messages)).toContain("screened automatic overview");
+      expect(JSON.stringify(provider.calls[0]?.messages)).not.toContain("image_url");
+    }
+  });
+
+  it("tracks latest inspection response by store call seq across reused model ids and mixed outcomes", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "vision-batches";
+    seedUserMessage(store, sessionId, "inspect");
+    const image = `att_${"1".repeat(32)}`;
+    const old = `att_${"2".repeat(32)}`;
+    const imageCount = (messages: readonly unknown[]) =>
+      JSON.stringify(messages).match(/"type":"image_url"/g)?.length ?? 0;
+    const toolCall = (id: string, name: string, args: Record<string, unknown>) => ({
+      type: "tool_call" as const,
+      toolCall: { id, type: "function" as const, function: { name, arguments: JSON.stringify(args) } },
+    });
+    const provider = fakeProvider(async function* (call, req) {
+      expect(imageCount(req.messages)).toBe([0, 2, 2, 1, 0][call - 1] ?? -1);
+      if (call === 1) {
+        yield toolCall("reused", "inspect_attachment", { attachmentId: image, question: "first", mode: "visual" });
+        yield toolCall("second", "inspect_attachment", { attachmentId: old, question: "second", mode: "visual" });
+      } else if (call === 2) {
+        yield toolCall("reused", "unrelated", {});
+      } else if (call === 3) {
+        yield toolCall("mixed-ok", "inspect_attachment", { attachmentId: image, question: "ok", mode: "visual" });
+        yield toolCall("mixed-deny", "inspect_attachment", { attachmentId: old, question: "deny", mode: "visual" });
+      } else if (call === 4) {
+        yield toolCall("mixed-ok", "inspect_attachment", { attachmentId: old, question: "fail", mode: "visual" });
+      } else {
+        yield { type: "text", content: "done" };
+      }
+      yield { type: "done", finishReason: call < 5 ? "tool_calls" : "stop" };
+    });
+    const marker = (attachmentId: string) =>
+      JSON.stringify({
+        kind: "sentient.visual-evidence",
+        version: 1,
+        status: "prepared",
+        attachmentId,
+        pages: [1],
+        totalPages: 1,
+        partial: false,
+      });
+    const broker = fakeBroker(
+      [
+        { name: "inspect_attachment", description: "inspect", parameters: {}, category: "foreground", tier: "read" },
+        { name: "unrelated", description: "other", parameters: {}, category: "foreground", tier: "read" },
+      ],
+      async (inv) => {
+        if (inv.name === "unrelated") return { content: "ok", isError: false };
+        const attachmentId = String(inv.args.attachmentId);
+        return {
+          content: marker(attachmentId),
+          isError: inv.args.question === "deny" || inv.args.question === "fail",
+        };
+      },
+    );
+    const refs = new Map(
+      [image, old].map((attachmentId) => [
+        attachmentId,
+        {
+          attachmentId,
+          ownerUserId: cap.ownerUserId,
+          sessionId,
+          entrySeq: 1,
+          status: "ready" as const,
+          mediaKind: "image" as const,
+          contentType: "image/png",
+          displayName: "hidden.png",
+          size: 9,
+          sha256: "a".repeat(64),
+          sendAttemptId: "attempt",
+          fileIdentity: attachmentId,
+          stagedAt: 1,
+          expiresAt: 2,
+        },
+      ]),
+    );
+
+    const result = await runTurn(
+      {
+        provider,
+        resolveMainModel: async () => ({
+          client: provider,
+          provider: "ollama-cloud",
+          catalogModelId: "vision:cloud",
+          outboundModel: "vision",
+          supportsVision: true,
+          supportsTools: true,
+          contextLength: 8192,
+        }),
+        directVision: {
+          capability: Object.freeze({
+            ownerUserId: cap.ownerUserId,
+            resource: "attachment-store",
+            rootPath: ROOT,
+            role: "adult",
+          }),
+          sessionId,
+          store: { findAttachment: (id) => refs.get(id) ?? null },
+          storage: {
+            async *read() {
+              yield Uint8Array.from([1]);
+            },
+          },
+          parser: {
+            parse: async () => ({
+              ok: true,
+              value: normalizedImageResponse(),
+            }),
+          },
+          limits: { maxPages: 8, maxTextBytes: 1024, maxTextChars: 1000, maxQuestionChars: 2000, maxEdge: 1600 },
+          config: attachmentsConfigSchema.parse({ inspection_max_pages: 3, vision_max_input_bytes: 1024 }),
+        },
+        broker,
+        store,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "system",
+        sessionId,
+        requestTimeoutMs: 1000,
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "batch-turn", signal: new AbortController().signal },
+    );
+
+    expect(result.completed).toBe(true);
+    expect(provider.calls).toHaveLength(5);
+    store.close();
+  });
+});
+
+describe("runTurn — main model changes between iterations", () => {
+  it("keeps emitted tool routing on producing snapshot and falls back to auxiliary after capability becomes unknown", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "vision-model-switch";
+    seedUserMessage(store, sessionId, "inspect prior attachment");
+    const attachmentId = `att_${"e".repeat(32)}`;
+    const marker = JSON.stringify({
+      kind: "sentient.visual-evidence",
+      version: 1,
+      status: "prepared",
+      attachmentId,
+      pages: [1],
+      totalPages: 1,
+      partial: false,
+    });
+    const provider = fakeProvider(async function* (call) {
+      if (call === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: {
+            id: "inspect-1",
+            type: "function",
+            function: {
+              name: "inspect_attachment",
+              arguments: JSON.stringify({ attachmentId, question: "q", pages: [1], mode: "visual" }),
+            },
+          },
+        };
+      } else if (call === 2) {
+        yield {
+          type: "tool_call",
+          toolCall: {
+            id: "inspect-2",
+            type: "function",
+            function: {
+              name: "inspect_attachment",
+              arguments: JSON.stringify({ attachmentId, question: "q again", pages: [1], mode: "visual" }),
+            },
+          },
+        };
+      } else {
+        yield { type: "text", content: "auxiliary inspected" };
+      }
+      yield { type: "done", finishReason: call < 3 ? "tool_calls" : "stop" };
+    });
+    const routes: unknown[] = [];
+    const broker = fakeBroker(
+      [{ name: "inspect_attachment", description: "inspect", parameters: {}, category: "foreground", tier: "read" }],
+      async (inv) => {
+        routes.push(inv.attachmentVisionRoute);
+        return inv.attachmentVisionRoute === "direct"
+          ? { content: marker, isError: false }
+          : { content: '{"answer":"auxiliary inspected"}', isError: false };
+      },
+    );
+    let resolution = 0;
+
+    await runTurn(
+      {
+        provider,
+        resolveMainModel: async () => ({
+          client: provider,
+          provider: "ollama-cloud",
+          catalogModelId: resolution++ === 0 ? "vision:cloud" : "unknown:cloud",
+          outboundModel: resolution === 1 ? "vision" : "unknown",
+          supportsVision: resolution === 1 ? true : "unknown",
+          supportsTools: true,
+          contextLength: null,
+        }),
+        broker,
+        store,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "system",
+        sessionId,
+        requestTimeoutMs: 1000,
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "switch-turn", signal: new AbortController().signal },
+    );
+
+    expect(provider.calls).toHaveLength(3);
+    expect(routes).toEqual(["direct", "auxiliary"]);
+    expect(JSON.stringify(provider.calls[1]?.messages)).toContain("Prepared visual evidence is unavailable");
+    expect(JSON.stringify(provider.calls[1]?.messages)).not.toContain("image_url");
+    expect(JSON.stringify(provider.calls[2]?.messages)).not.toContain("image_url");
+    store.close();
+  });
+
+  for (const capability of [false, "unknown"] as const) {
+    it(`routes supportsVision=${capability} inspection through auxiliary with zero main image bytes`, async () => {
+      const store = openSessionStore(cap);
+      const sessionId = `vision-${capability}`;
+      seedUserMessage(store, sessionId, "inspect");
+      const attachmentId = `att_${"f".repeat(32)}`;
+      const provider = fakeProvider(async function* (call) {
+        if (call === 1) {
+          yield {
+            type: "tool_call",
+            toolCall: {
+              id: "inspect",
+              type: "function",
+              function: {
+                name: "inspect_attachment",
+                arguments: JSON.stringify({ attachmentId, question: "q", mode: "visual" }),
+              },
+            },
+          };
+        } else {
+          yield { type: "text", content: "done" };
+        }
+        yield { type: "done", finishReason: call === 1 ? "tool_calls" : "stop" };
+      });
+      const routes: unknown[] = [];
+
+      await runTurn(
+        {
+          provider,
+          resolveMainModel: async () => ({
+            client: provider,
+            provider: "ollama-cloud",
+            catalogModelId: "model:cloud",
+            outboundModel: "model",
+            supportsVision: capability,
+            supportsTools: true,
+            contextLength: null,
+          }),
+          broker: fakeBroker(
+            [
+              {
+                name: "inspect_attachment",
+                description: "inspect",
+                parameters: {},
+                category: "foreground",
+                tier: "read",
+              },
+            ],
+            async (inv) => {
+              routes.push(inv.attachmentVisionRoute);
+              return { content: '{"answer":"auxiliary"}', isError: false };
+            },
+          ),
+          store,
+          timeZone: { zone: () => "UTC" },
+          systemPrompt: "system",
+          sessionId,
+          requestTimeoutMs: 1000,
+          onTextDelta: () => {},
+          onToolUpdate: () => {},
+        },
+        { turnId: "turn", signal: new AbortController().signal },
+      );
+
+      expect(routes).toEqual(["auxiliary"]);
+      expect(JSON.stringify(provider.calls).match(/"type":"image_url"/g)).toBeNull();
+      store.close();
+    });
+  }
+});
+
 describe("runTurn — mid-stream provider stall", () => {
   it("fails the turn (not a cutoff) when the provider goes silent past requestTimeoutMs", async () => {
     const store = openSessionStore(cap);
@@ -807,7 +1502,6 @@ describe("runTurn — mid-stream provider stall", () => {
         timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         sessionId,
-        config: loopConfig(10),
         requestTimeoutMs: 40, // short stall budget so the watchdog fires fast
         onTextDelta: () => {},
         onToolUpdate: () => {},

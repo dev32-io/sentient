@@ -874,7 +874,6 @@ function testOrchestratorConfig(): OrchestratorConfig {
       reasoning_effort: "low",
     },
     skills: { max_index_entries: 50, max_body_chars: 20000 },
-    loop: { max_iterations: 4 },
     permission: { request_timeout_ms: 120000 },
     tools: {
       foreground_timeout_ms: 30000,
@@ -1099,7 +1098,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(replayed.some((m) => m.role === "assistant" && m.content === "hello back")).toBe(true);
   });
 
-  it("INVARIANT: a retried first message reaches ONE session and ONE entry", async () => {
+  it("INVARIANT: fresh browser-session recovery restores route and original surface for ONE session/entry/turn", async () => {
     // The `session.created` ack cannot join the SQLite transaction that wrote
     // the row (spec §4.2). Commit lands, ack is lost, the client retries over a
     // NEW socket: the draft key is the same, so the retry must resolve to the
@@ -1112,12 +1111,17 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // shipped client sends — must not append the message twice or answer twice.
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
-    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+    const provider = fakeProvider("ok");
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
 
     const first = fakeAuthedWs("connection-1");
     await configure(first, services, SURFACE_A);
-    const draftKey = first.data.draftKey as string;
-    const sessionId = await sendFirstMessage(first, services, "hello", "pending-1");
+    const durablePending = {
+      mintKey: first.data.draftKey as string,
+      surfaceId: SURFACE_A,
+      pendingId: "pending-1",
+    };
+    const sessionId = await sendFirstMessage(first, services, "hello", durablePending.pendingId);
     await waitUntilIdle(first.data.runtime as SessionRuntime);
     // The socket drops before the ack is read. Its close event has NOT been
     // processed, so the claim it took at mint time is still in the registry —
@@ -1125,11 +1129,14 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     dropSocket(first);
     cleanupSession(asWs(first), services);
 
-    // The retry arrives on a NEW socket carrying the same unspent draft key.
+    // A fresh browser tab generated another surface after sessionStorage died.
+    // Durable pending state must override that fresh value with the ORIGINAL
+    // issuing surface; gateway pending-id dedupe is scoped by this namespace.
+    expect(SURFACE_B).not.toBe(SURFACE_A);
     const retry = fakeAuthedWs("connection-2");
-    await configure(retry, services, SURFACE_A, draftKey);
+    await configure(retry, services, durablePending.surfaceId, durablePending.mintKey);
     expect(retry.data.conversationId).toBeNull();
-    const retriedId = await sendFirstMessage(retry, services, "hello", "pending-1");
+    const retriedId = await sendFirstMessage(retry, services, "hello", durablePending.pendingId);
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
     cleanupSession(asWs(retry), services);
 
@@ -1141,6 +1148,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
       { kind: "user", text: "hello" },
       { kind: "assistant", text: "ok" },
     ]);
+    expect(provider.calls.filter((call) => call.reasoningEffort === undefined)).toHaveLength(1);
   });
 
   it("INVARIANT: a retry without a pendingId still reaches one session, and duplicates only the entry", async () => {
@@ -1454,6 +1462,140 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     ]);
     cleanupSession(asWs(duplicate), services);
     cleanupSession(asWs(original), services);
+  });
+
+  it("INVARIANT: copied-draft contenders arbitrate before durable first-message admission", async () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const provider = fakeProvider("ok");
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
+    (services.session as { input_arbitration_window_ms?: number }).input_arbitration_window_ms = 500;
+
+    const winner = fakeAuthedWs("connection-winner");
+    await configure(winner, services, SURFACE_A);
+    const draftKey = winner.data.draftKey as string;
+    const loser = fakeAuthedWs("connection-loser");
+    await configure(loser, services, SURFACE_B, draftKey);
+
+    await Promise.all([
+      handleWebSocketMessage(
+        asWs(winner),
+        JSON.stringify({ type: "text.input", text: "accepted", pendingId: "pending-winner" }),
+        services,
+      ),
+      handleWebSocketMessage(
+        asWs(loser),
+        JSON.stringify({ type: "text.input", text: "must not persist", pendingId: "pending-loser" }),
+        services,
+      ),
+    ]);
+
+    const sessionId = winner.data.conversationId;
+    if (!sessionId) throw new Error("winner did not mint session");
+    await waitUntilIdle(winner.data.runtime as SessionRuntime);
+    const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+    expect(store.listSessionsWithMetadata()).toHaveLength(1);
+    expect(
+      store
+        .readSession(sessionId)
+        .filter((entry) => entry.kind === "user")
+        .map((entry) => entry.text),
+    ).toEqual(["accepted"]);
+    store.close();
+    expect(provider.calls.filter((call) => call.reasoningEffort === undefined)).toHaveLength(1);
+    expect(loser.sent).toContainEqual(
+      expect.objectContaining({
+        type: "command.rejected",
+        reason: "session_busy",
+        pendingId: "pending-loser",
+      }),
+    );
+    expect(loser.data.conversationId).toBeNull();
+    cleanupSession(asWs(winner), services);
+    cleanupSession(asWs(loser), services);
+  });
+
+  it("INVARIANT: stale draft resolves existing session floor before durable admission", async () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const provider = fakeProvider("ok");
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
+    (services.session as { input_arbitration_window_ms?: number }).input_arbitration_window_ms = 500;
+
+    const attached = fakeAuthedWs("connection-attached");
+    await configure(attached, services, SURFACE_A);
+    const staleDraft = fakeAuthedWs("connection-stale-draft");
+    await configure(staleDraft, services, SURFACE_B, attached.data.draftKey as string);
+    const sessionId = await sendFirstMessage(attached, services, "first message", "pending-first");
+    await waitUntilIdle(attached.data.runtime as SessionRuntime);
+
+    // Let copied-draft reservation expire, then claim actual session floor from
+    // attached window. Stale draft must resolve mint before it can admit.
+    await new Promise((resolve) => setTimeout(resolve, 520));
+    await handleWebSocketMessage(
+      asWs(attached),
+      JSON.stringify({
+        type: "text.input",
+        text: "actual floor winner",
+        pendingId: "pending-attached",
+        sessionId,
+        attachmentGeneration: attached.data.attachment?.generation,
+      }),
+      services,
+    );
+    await handleWebSocketMessage(
+      asWs(staleDraft),
+      JSON.stringify({ type: "text.input", text: "rejected stale draft", pendingId: "pending-stale" }),
+      services,
+    );
+    await waitUntilIdle(attached.data.runtime as SessionRuntime);
+
+    const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+    expect(
+      store
+        .readSession(sessionId)
+        .filter((entry) => entry.kind === "user")
+        .map((entry) => entry.text),
+    ).toEqual(["first message", "actual floor winner"]);
+    store.close();
+    expect(staleDraft.sent).toContainEqual(
+      expect.objectContaining({ type: "command.rejected", reason: "session_busy", pendingId: "pending-stale" }),
+    );
+    expect(provider.calls.filter((call) => call.reasoningEffort === undefined)).toHaveLength(2);
+    cleanupSession(asWs(attached), services);
+    cleanupSession(asWs(staleDraft), services);
+  });
+
+  it("INVARIANT: concurrent retry of the same pending first message stays idempotent", async () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const provider = fakeProvider("ok");
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
+    (services.session as { input_arbitration_window_ms?: number }).input_arbitration_window_ms = 500;
+
+    const original = fakeAuthedWs("connection-original-retry");
+    await configure(original, services, SURFACE_A);
+    const retry = fakeAuthedWs("connection-retry");
+    await configure(retry, services, SURFACE_A, original.data.draftKey as string);
+    const frame = JSON.stringify({ type: "text.input", text: "one message", pendingId: "same-pending" });
+
+    await Promise.all([
+      handleWebSocketMessage(asWs(original), frame, services),
+      handleWebSocketMessage(asWs(retry), frame, services),
+    ]);
+    const sessionId = original.data.conversationId ?? retry.data.conversationId;
+    if (!sessionId) throw new Error("retry did not mint session");
+    await waitUntilIdle((original.data.runtime ?? retry.data.runtime) as SessionRuntime);
+
+    const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+    expect(store.listSessionsWithMetadata()).toHaveLength(1);
+    expect(store.readSession(sessionId).filter((entry) => entry.kind === "user")).toHaveLength(1);
+    store.close();
+    expect(provider.calls.filter((call) => call.reasoningEffort === undefined)).toHaveLength(1);
+    expect(original.sent.some((message) => message.type === "command.rejected")).toBe(false);
+    expect(retry.sent.some((message) => message.type === "command.rejected")).toBe(false);
+    cleanupSession(asWs(original), services);
+    cleanupSession(asWs(retry), services);
   });
 
   it("INVARIANT: a first-message retry over a new socket is served while the original is still CLOSING", async () => {

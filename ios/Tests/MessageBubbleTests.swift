@@ -83,9 +83,11 @@ struct MessageBubbleTests {
         }
         .environment(\.bubbleMaxWidth, 280)
         .environment(\.sentientIdentityMeasurement, true)
+        .environment(\.dynamicTypeSize, .large)
 
-        let bubbleHeight = UIHostingController(rootView: bubble)
-            .sizeThatFits(in: CGSize(width: 280, height: 500)).height
+        let bubbleHost = UIHostingController(rootView: bubble)
+        bubbleHost.traitOverrides.preferredContentSizeCategory = .large
+        let bubbleHeight = bubbleHost.sizeThatFits(in: CGSize(width: 280, height: 500)).height
         let normalBodyHeight = pulseHeight(dynamicType: .large, contentSize: .large)
         let largerBodyHeight = pulseHeight(
             dynamicType: .accessibility3,

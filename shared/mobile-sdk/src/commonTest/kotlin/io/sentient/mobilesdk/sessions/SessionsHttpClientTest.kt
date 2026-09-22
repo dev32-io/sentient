@@ -9,9 +9,12 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import io.sentient.mobilesdk.auth.AuthError
+import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -118,8 +121,32 @@ class SessionsHttpClientTest {
             capturedPath = req.url.encodedPath
             respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }
-        buildClient(engine).delete("s-99")
+        assertIs<AuthResult.Success<Unit>>(buildClient(engine).delete("s-99"))
         assertEquals(true, capturedPath?.endsWith("/s-99") == true, "path=$capturedPath")
+    }
+
+    @Test
+    fun delete_keeps_404_as_typed_failure() = runTest {
+        val engine = MockEngine { _ ->
+            respond(
+                """{"code":"not_found"}""",
+                HttpStatusCode.NotFound,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+
+        val result = assertIs<AuthResult.Failure>(buildClient(engine).delete("missing"))
+        val error = assertIs<AuthError.Server>(result.error)
+        assertEquals(404, error.status)
+    }
+
+    @Test
+    fun delete_preserves_cancellation() = runTest {
+        val engine = MockEngine { _ -> throw CancellationException("test cancellation") }
+
+        val failure = runCatching { buildClient(engine).delete("s-99") }.exceptionOrNull()
+
+        assertIs<CancellationException>(failure)
     }
 
     @Test

@@ -43,7 +43,7 @@ export interface AuthApi {
   listUsers(): Promise<Result<PublicUser[]>>;
   login(input: { userId: string; pin: string }): Promise<Result<{ token: string; user: AuthUser }>>;
   me(token: string): Promise<Result<{ token: string; user: AuthUser }>>;
-  logout(token: string): Promise<Result<{ ok: boolean }>>;
+  logout(token: string, signal?: AbortSignal): Promise<Result<{ ok: boolean }>>;
   updateMe(token: string, input: { displayName: string }): Promise<Result<{ token: string; user: AuthUser }>>;
   changePin(token: string, input: { currentPin: string; newPin: string }): Promise<Result<{ ok: true }>>;
 }
@@ -89,12 +89,13 @@ export function createAuthApi(config?: AuthApiConfig): AuthApi {
       );
     },
 
-    async logout(token) {
+    async logout(token, signal) {
       log.debug("logout");
       return handleFetch<{ ok: boolean }>(
         fetch(`${base}/api/v1/auth/logout`, {
           method: "POST",
           headers: bearerHeaders(token),
+          ...(signal ? { signal } : {}),
         }),
       );
     },

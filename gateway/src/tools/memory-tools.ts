@@ -82,6 +82,7 @@ function isAdultRole(role: UserRole): boolean {
  *  the `str_replace_*` / `remove_lines_*` codes are the pinned op-failure
  *  vocabulary (task brief). */
 const ERR_DEEP_MEMORY_UNAVAILABLE = "deep_memory_unavailable";
+const ERR_MEMORY_SOURCE_UNAVAILABLE = "memory_source_unavailable";
 const ERR_DEEP_MEMORY_REBUILD_REQUIRED = "deep_memory_rebuild_required";
 const ERR_FAMILY_SCOPE_UNAVAILABLE = "family_scope_unavailable";
 const ERR_STR_REPLACE_AMBIGUOUS = "str_replace_ambiguous";
@@ -649,7 +650,10 @@ function readSessionExcerpt(deps: MemoryToolsDeps, target: Record<string, unknow
     ...(offset !== undefined ? { offset } : {}),
   });
   if (excerpt.length === 0) {
-    return fail("That past conversation could not be found, or it has no readable messages.");
+    return typedError(
+      ERR_MEMORY_SOURCE_UNAVAILABLE,
+      "Source conversation is unavailable or expired; use the retained distilled memory without exact quotations.",
+    );
   }
   const capped = capToolResult(excerpt, { limit: deps.cfg.read_max_chars });
   log.info("memory-tools.read.session.ok", { entries: entries.length });

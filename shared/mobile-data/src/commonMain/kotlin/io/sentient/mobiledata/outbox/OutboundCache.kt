@@ -56,6 +56,11 @@ class OutboundCache(
     internal fun bindToRoute(generation: Long) {
         if (routeGeneration == null) routeGeneration = generation
     }
+
+    internal fun rebindToRoute(generation: Long) {
+        routeGeneration = generation
+        sentOnConnection.clear()
+    }
     private val _pending = MutableStateFlow<List<PendingMessage>>(emptyList())
     val pending: StateFlow<List<PendingMessage>> = _pending.asStateFlow()
 
@@ -65,9 +70,9 @@ class OutboundCache(
      * failed entry. The gateway dedups by pendingId, so a reconnect re-send of an
      * existing QUEUED entry is handled by [queued] + flush, not by re-enqueuing.
      */
-    fun enqueue(id: String, text: String) {
+    fun enqueue(id: String, text: String, attachmentIds: List<String> = emptyList()) {
         if (queue[id] != null) return
-        queue[id] = PendingMessage(id, text, MessageStatus.QUEUED)
+        queue[id] = PendingMessage(id, text, MessageStatus.QUEUED, attachmentIds = attachmentIds)
         publish()
     }
 

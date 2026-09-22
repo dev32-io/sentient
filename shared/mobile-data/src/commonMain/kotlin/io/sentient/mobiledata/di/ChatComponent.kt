@@ -5,6 +5,10 @@ import io.sentient.mobiledata.data.SdkConnectionStateRepository
 import io.sentient.mobiledata.data.SdkConversationRepository
 import io.sentient.mobiledata.data.SdkSessionsRepository
 import io.sentient.mobiledata.data.SessionsRepository
+import io.sentient.mobiledata.draft.NativeDraft
+import io.sentient.mobiledata.draft.NativeDraftCoordinator
+import io.sentient.mobiledata.draft.NativePendingSend
+import io.sentient.mobiledata.draft.NativeSendAnchorUnavailableException
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobiledata.usecase.ActivateSessionUseCase
 import io.sentient.mobiledata.usecase.DeleteSessionUseCase
@@ -13,8 +17,14 @@ import io.sentient.mobiledata.usecase.ObserveSessionsUseCase
 import io.sentient.mobiledata.usecase.RenameSessionUseCase
 import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
+import io.sentient.mobilesdk.attachments.AttachmentRef
+import io.sentient.mobilesdk.attachments.AttachmentRequestException
+import io.sentient.mobilesdk.attachments.AttachmentsHttpClient
 import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
 import io.sentient.mobilesdk.connectors.PermissionPrompt
+import io.sentient.mobilesdk.connectors.SessionsChangeEvent
+import io.sentient.mobilesdk.connectors.SessionsRequestException
+import io.sentient.mobilesdk.connectors.SessionsTransportException
 import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.SdkEvent
@@ -22,6 +32,7 @@ import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
 import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,12 +40,24 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.time.Clock as KtClock
+
+private sealed interface DraftAnchorWait {
+    data object Waiting : DraftAnchorWait
+    data object Invalidated : DraftAnchorWait
+    data class Ready(val mintKey: String) : DraftAnchorWait
+}
 
 /**
  * User/Connection-scoped component: one per logged-in user. Builds the stateless repos +
@@ -58,9 +81,28 @@ open class ChatComponent(
      * and any caller that does not care keep the DEFAULT preferences.
      */
     private val loadAudioPreferences: (suspend () -> AudioPreferences?)? = null,
+    /** Protected account+gateway local draft state; absent only when platform storage failed. */
+    val drafts: NativeDraftCoordinator? = null,
+    private val attachments: AttachmentsHttpClient? = null,
+    private val attachmentBody: ((String) -> io.sentient.mobilesdk.attachments.AttachmentUploadBody)? = null,
+    private val attachmentDownload: (suspend (String, String) -> String)? = null,
+    private val removeAttachmentDownload: ((String) -> Unit)? = null,
+    private val closeAttachmentDownloads: (() -> Unit)? = null,
 ) {
     private val disconnectLifecycle = AsyncDisconnectLifecycle { clearSession ->
         sdk.disconnect(clearSession)
+    }
+    private val componentScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val _sessionChanges = MutableSharedFlow<SessionsChangeEvent>()
+    val sessionChanges: SharedFlow<SessionsChangeEvent> = _sessionChanges.asSharedFlow()
+
+    init {
+        componentScope.launch {
+            sdk.sessionChanges.collect { event ->
+                if (event is SessionsChangeEvent.Deleted) drafts?.detachDeletedSession(event.sessionId)
+                _sessionChanges.emit(event)
+            }
+        }
     }
     // VM-facing repos are the pure SDK passthroughs: data in, data out, no accumulated
     // state. The active conversation is anchored by the SDK ([currentSessionId]); the
@@ -86,6 +128,12 @@ open class ChatComponent(
 
     /** Read current SDK status, never a lagging native UI projection. */
     fun flushOutbound(cache: OutboundCache) = sendMessage.flushIfReady(cache, connection.state.value.status)
+
+    /** Move active editor onto gateway's post-delete draft route after dropping old sends. */
+    fun rebindAfterRemoteDelete(cache: OutboundCache) {
+        cache.dropPending()
+        outboundRouteGeneration.value?.let(cache::rebindToRoute)
+    }
 
     /** Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Thin
      *  passthrough mirroring [currentSessionId] — a single StateFlow with no combine/mapping
@@ -147,10 +195,166 @@ open class ChatComponent(
     val renameSession = RenameSessionUseCase(sessionsRepository)
     val deleteSession = DeleteSessionUseCase(sessionsRepository)
 
+    /**
+     * Wait for gateway mint without entering the draft mutation barrier. Route changes cancel
+     * immediately; a dead/offline gateway becomes a typed, bounded failure instead of wedging
+     * local draft writes forever.
+     */
+    @Throws(NativeSendAnchorUnavailableException::class, CancellationException::class)
+    suspend fun awaitDraftSendAnchor(expectedGeneration: Long?): String {
+        val expected = expectedGeneration
+            ?: throw NativeSendAnchorUnavailableException("route unavailable")
+        val result = withTimeoutOrNull(DRAFT_SEND_ANCHOR_TIMEOUT_MILLIS) {
+            combine(outboundRouteGeneration, outboundSessionId) { generation, mintKey ->
+                when {
+                    generation != expected -> DraftAnchorWait.Invalidated
+                    mintKey != null -> DraftAnchorWait.Ready(mintKey)
+                    else -> DraftAnchorWait.Waiting
+                }
+            }.first { it !is DraftAnchorWait.Waiting }
+        } ?: throw NativeSendAnchorUnavailableException("outbound anchor unavailable")
+        return when (result) {
+            is DraftAnchorWait.Ready -> result.mintKey
+            DraftAnchorWait.Invalidated -> throw CancellationException("route changed")
+            DraftAnchorWait.Waiting -> error("anchor wait did not settle")
+        }
+    }
+
+    /** Freeze send identity after [mintKey] was captured outside the mutation barrier. */
+    @Throws(NativeSendAnchorUnavailableException::class, CancellationException::class)
+    suspend fun beginDraftSend(
+        draftId: String,
+        mintKey: String,
+        expectedGeneration: Long?,
+    ): NativePendingSend {
+        val coordinator = drafts
+            ?: throw NativeSendAnchorUnavailableException("draft storage unavailable")
+        val generation = expectedGeneration
+            ?: throw NativeSendAnchorUnavailableException("route unavailable")
+        if (outboundRouteGeneration.value != generation) throw CancellationException("route changed")
+        return coordinator.beginSend(draftId, mintKey, sdk.surfaceId)
+    }
+
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun uploadPendingAttachments(
+        pending: NativePendingSend,
+        expectedRouteGeneration: Long?,
+        onProgress: (String, Long, Long) -> Unit,
+    ): List<AttachmentRef> = try {
+        val client = attachments ?: error("attachment transport unavailable")
+        val body = attachmentBody ?: error("attachment file access unavailable")
+        val uploaded = mutableListOf<AttachmentRef>()
+        for (file in pending.attachments) {
+            if (outboundRouteGeneration.value != expectedRouteGeneration ||
+                drafts?.snapshot?.value?.pendingSends?.none { it.pendingId == pending.pendingId } != false
+            ) throw CancellationException("pending route changed")
+            uploaded += client.upload(
+                sendAttemptId = pending.pendingId,
+                fileIdentity = file.id,
+                displayName = file.displayName,
+                contentType = file.mediaType,
+                body = body(file.localPath),
+            ) { sent, total -> onProgress(file.id, sent, total) }
+        }
+        if (outboundRouteGeneration.value != expectedRouteGeneration ||
+            drafts?.snapshot?.value?.pendingSends?.none { it.pendingId == pending.pendingId } != false
+        ) throw CancellationException("pending route changed")
+        uploaded
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: AttachmentRequestException) {
+        throw failure
+    } catch (_: Throwable) {
+        throw AttachmentRequestException(0, "local_file_error")
+    }
+
+    /**
+     * Re-submit each frozen file identity, then delete its staged manifest. DELETE is the
+     * gateway's admission fence: any ambiguous/already-committed attempt fails closed.
+     */
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun cancelPendingSend(pending: NativePendingSend): NativeDraft = try {
+        require(pending.attachments.isNotEmpty())
+        val client = attachments ?: error("attachment transport unavailable")
+        val body = attachmentBody ?: error("attachment file access unavailable")
+        for (file in pending.attachments) {
+            val ref = client.upload(
+                sendAttemptId = pending.pendingId,
+                fileIdentity = file.id,
+                displayName = file.displayName,
+                contentType = file.mediaType,
+                body = body(file.localPath),
+            )
+            client.delete(ref.attachmentId)
+        }
+        checkNotNull((drafts ?: error("draft storage unavailable")).notCommitted(pending.pendingId))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: AttachmentRequestException) {
+        throw failure
+    } catch (_: Throwable) {
+        throw AttachmentRequestException(0, "local_file_error")
+    }
+
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun previewAttachment(attachmentId: String): ByteArray = attachmentExport {
+        (attachments ?: error("attachment transport unavailable")).preview(attachmentId)
+    }
+
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun previewDraftAttachment(attachmentId: String, maxPixelSize: Int): ByteArray? = attachmentExport {
+        (drafts ?: error("draft storage unavailable")).previewAttachment(attachmentId, maxPixelSize)
+    }
+
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun downloadAttachment(attachmentId: String, displayName: String): String = attachmentExport {
+        (attachmentDownload ?: error("attachment file access unavailable"))(attachmentId, displayName)
+    }
+
+    private suspend fun <T> attachmentExport(block: suspend () -> T): T = try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: AttachmentRequestException) {
+        throw failure
+    } catch (_: Throwable) {
+        throw AttachmentRequestException(0, "local_file_error")
+    }
+
+    fun removeDownloadedAttachment(path: String) = removeAttachmentDownload?.invoke(path)
+
+    /** Process an already-durable client delete intent and retain typed retry state. */
+    suspend fun processDeleteIntent(sessionId: String) {
+        val coordinator = drafts ?: return
+        try {
+            deleteSession(sessionId)
+            coordinator.completeDelete(sessionId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: SessionsTransportException) {
+            coordinator.markDeleteFailure(sessionId, "transient")
+        } catch (failure: SessionsRequestException) {
+            coordinator.markDeleteFailure(
+                sessionId,
+                if (failure.code in TRANSIENT_DELETE_CODES) "transient" else "permanent",
+            )
+        } catch (_: Throwable) {
+            coordinator.markDeleteFailure(sessionId, "transient")
+        }
+    }
+
     /** Bind one VM-owned cache to its route request. A pre-authorized deep-link route
      * reuses the generation claimed by the awaited activation. */
-    fun bindChatRoute(cache: OutboundCache, sessionId: String?, activate: Boolean = true) {
+    fun bindChatRoute(
+        cache: OutboundCache,
+        sessionId: String?,
+        draftId: String? = null,
+        activate: Boolean = true,
+    ) {
+        val pending = draftId?.let { id -> drafts?.snapshot?.value?.pendingSends?.firstOrNull { it.draftId == id } }
         val generation = when {
+            pending?.sessionId != null -> sdk.beginSessionRoute(pending.sessionId)
+            pending != null -> sdk.restorePendingMintAnchor(pending.mintKey, pending.surfaceId)
             activate && sessionId == null -> sdk.beginFreshChatRoute()
             activate && sessionId != null -> sdk.beginSessionRoute(sessionId)
             sessionId != null && acknowledgedRoute.value?.sessionId == sessionId &&
@@ -230,6 +434,7 @@ open class ChatComponent(
      */
     suspend fun connect() {
         seedAudioPreferences()
+        drafts?.restore()
         sdk.connect()
     }
 
@@ -256,7 +461,17 @@ open class ChatComponent(
      * stable platform-facing teardown hook (call after [disconnect]); idempotent.
      */
     fun close() {
+        componentScope.cancel()
+        closeAttachmentDownloads?.invoke()
+        attachments?.close()
         disconnectLifecycle.closeAfterDisconnect()
+    }
+
+    private companion object {
+        const val DRAFT_SEND_ANCHOR_TIMEOUT_MILLIS = 2_000L
+        val TRANSIENT_DELETE_CODES = setOf(
+            "unavailable", "internal", "provider_unavailable", "unauthorized", "expired", "auth-required",
+        )
     }
 }
 

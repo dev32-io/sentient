@@ -35,7 +35,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 interface StoredAuth {
   token: string;
+  user: AuthUser | null;
 }
+
+const LEGACY_AUTH_IDENTITY_STORAGE_KEY = `${AUTH_STORAGE_KEY}.identity`;
 
 /**
  * Per-tab auth storage. sessionStorage is primary so two browser tabs in the
@@ -44,57 +47,60 @@ interface StoredAuth {
  * sessionStorage from it so the user isn't forced to re-PIN on every new tab,
  * but never *overrides* a tab that already has a logged-in session.
  */
-function readFromStore(store: Storage): string | null {
-  try {
-    const raw = store.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === "object" && parsed !== null && "token" in parsed) {
-      return (parsed as StoredAuth).token;
-    }
-    return null;
-  } catch {
-    return null;
-  }
+function validUser(value: unknown): value is AuthUser {
+  if (typeof value !== "object" || value === null) return false;
+  const user = value as Record<string, unknown>;
+  const role = user.role;
+  return typeof user.userId === "string" && typeof user.displayName === "string" &&
+    typeof user.isAdmin === "boolean" && typeof user.avatarTint === "string" &&
+    (role === undefined || role === "admin" || role === "adult" || role === "child" || role === "guest") &&
+    (user.calendarCapabilities === undefined ||
+      (typeof user.calendarCapabilities === "object" && user.calendarCapabilities !== null));
 }
 
-function readStoredToken(): string | null {
-  try {
-    const fromSession = readFromStore(sessionStorage);
-    if (fromSession) return fromSession;
-    const fromLocal = readFromStore(localStorage);
-    if (fromLocal) {
-      // Seed sessionStorage so subsequent reads in this tab don't fall back
-      // to localStorage and accidentally pick up a different account swapped
-      // in by another tab mid-session.
-      sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: fromLocal }));
-      return fromLocal;
-    }
+function readFromStore(store: Storage): StoredAuth | null {
+  const raw = store.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return null;
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || typeof (parsed as Record<string, unknown>).token !== "string")
     return null;
+  const user = (parsed as Record<string, unknown>).user;
+  return { token: (parsed as { token: string }).token, user: validUser(user) ? user : null };
+}
+
+function readStoredAuth(): StoredAuth | null {
+  try {
+    // Presence of a session record owns this tab, even when legacy/ambiguous.
+    if (sessionStorage.getItem(AUTH_STORAGE_KEY) !== null) return readFromStore(sessionStorage);
+    const local = readFromStore(localStorage);
+    if (local) sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(local));
+    return local;
   } catch {
     log.warn("storage-read-failed");
     return null;
   }
 }
 
-function persistToken(token: string): void {
-  const payload = JSON.stringify({ token });
+function persistToken(token: string, user: AuthUser): void {
+  const payload = JSON.stringify({ token, user });
   sessionStorage.setItem(AUTH_STORAGE_KEY, payload);
-  // Mirror to localStorage so a brand-new tab on this device defaults to the
-  // same user. Each tab's sessionStorage takes precedence once it's been set.
   try {
     localStorage.setItem(AUTH_STORAGE_KEY, payload);
+    localStorage.removeItem(LEGACY_AUTH_IDENTITY_STORAGE_KEY);
   } catch {
     /* localStorage may be disabled / over quota — sessionStorage suffices */
   }
+  sessionStorage.removeItem(LEGACY_AUTH_IDENTITY_STORAGE_KEY);
 }
 
 function clearStoredToken(): void {
   // Logout clears THIS tab's session and the device-wide hint. Other tabs
   // keep their sessionStorage and remain logged in until they reload.
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  sessionStorage.removeItem(LEGACY_AUTH_IDENTITY_STORAGE_KEY);
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_AUTH_IDENTITY_STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -151,9 +157,9 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
   useEffect(() => {
     mountedRef.current = true;
     const generation = generationRef.current;
-    const storedToken = readStoredToken();
+    const stored = readStoredAuth();
 
-    if (!storedToken) {
+    if (!stored) {
       log.debug("hydrate-no-token");
       if (mountedRef.current) setState({ status: "anonymous" });
       return;
@@ -161,10 +167,15 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
 
     log.debug("hydrate-validating");
     (async () => {
-      const result = await api.me(storedToken);
+      const result = await api.me(stored.token);
       if (!mountedRef.current || generation !== generationRef.current) return;
 
       if (!result.ok) {
+        if (result.error.status === 0 && stored.user) {
+          log.warn("hydrate-offline", { userId: stored.user.userId });
+          setState({ status: "authenticated", token: stored.token, user: stored.user });
+          return;
+        }
         log.warn("hydrate-token-invalid", { code: result.error.code });
         clearStoredToken();
         setState({ status: "anonymous" });
@@ -172,7 +183,7 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
       }
 
       log.debug("hydrate-success", { userId: result.value.user.userId });
-      persistToken(result.value.token);
+      persistToken(result.value.token, result.value.user);
       setState({
         status: "authenticated",
         token: result.value.token,
@@ -209,7 +220,7 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
       await loginBoundary(() => options?.beforeCommit?.(), controller.signal);
       // Presentation completion is not authorization to persist a stale attempt.
       if (!current() || controller.signal.aborted) return cancelled;
-      persistToken(result.value.token);
+      persistToken(result.value.token, result.value.user);
       pendingLoginRef.current = null;
       setState({ status: "authenticated", token: result.value.token, user: result.value.user });
       log.debug("login-success", { userId: result.value.user.userId });
@@ -245,7 +256,7 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
     }
 
     log.debug("setup-success", { userId: result.value.user.userId });
-    persistToken(result.value.token);
+    persistToken(result.value.token, result.value.user);
     setState({
       status: "authenticated",
       token: result.value.token,
@@ -255,19 +266,30 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
   };
 
   const logout = async () => {
+    const token = state.status === "authenticated" ? state.token : null;
     invalidateLogin();
-    const generation = generationRef.current;
-    if (state.status === "authenticated") {
-      await api.logout(state.token);
-    }
-    if (!mountedRef.current || generation !== generationRef.current) return;
-    log.debug("logout");
     clearStoredToken();
     setState({ status: "anonymous" });
+    log.debug("logout");
+    if (!token) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+    try {
+      await api.logout(token, controller.signal);
+    } catch {
+      /* local logout already complete; server logout is best effort */
+    } finally {
+      window.clearTimeout(timer);
+      controller.abort();
+    }
   };
 
   const updateUser: AuthContextValue["updateUser"] = (user) => {
-    setState((prev) => (prev.status === "authenticated" ? { ...prev, user } : prev));
+    setState((prev) => {
+      if (prev.status !== "authenticated") return prev;
+      persistToken(prev.token, user);
+      return { ...prev, user };
+    });
   };
 
   const value: AuthContextValue = { ...state, login, setup, logout, updateUser };

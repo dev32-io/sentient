@@ -149,7 +149,7 @@ describe("a never-tabled profile is seeded before the body's delta is applied", 
   });
 });
 
-describe("everything outside tools.permissions is replaced outright", () => {
+describe("full-profile field updates", () => {
   it("takes toolsets from the body verbatim, including an explicitly empty list", () => {
     // An empty toolsets list is legal and meaningful — "no built-ins,
     // MCP-only". Refilling it here would silently hand four Hermes toolsets
@@ -168,6 +168,31 @@ describe("everything outside tools.permissions is replaced outright", () => {
       { stored: { ...incoming, voice: { provider: "local-tts", id: "old-voice" } }, permissionDefaults: TEMPLATE },
     );
     expect(out.voice.id).toBe("new-voice");
+  });
+
+  it("preserves auxiliary models when an older full-profile writer omits the field", () => {
+    const incoming = profile(undefined);
+    const auxiliaryModels = { title: { provider: "openrouter" as const, id: "vendor/title" } };
+    const out = applyProfileUpdate(incoming, {
+      stored: { ...incoming, auxiliaryModels },
+      permissionDefaults: TEMPLATE,
+    });
+    expect(out.auxiliaryModels).toEqual(auxiliaryModels);
+  });
+
+  it("replaces auxiliary models when the body carries the field, including an empty object", () => {
+    const incoming = profile(undefined);
+    const out = applyProfileUpdate(
+      { ...incoming, auxiliaryModels: {} },
+      {
+        stored: {
+          ...incoming,
+          auxiliaryModels: { title: { provider: "openrouter", id: "vendor/title" } },
+        },
+        permissionDefaults: TEMPLATE,
+      },
+    );
+    expect(out.auxiliaryModels).toEqual({});
   });
 });
 

@@ -10,6 +10,10 @@ function sample(userId = "kevin"): ProfileV1 {
     schemaVersion: 1,
     userId,
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+    auxiliaryModels: {
+      title: { provider: "openrouter", id: "google/gemini-2.5-flash-lite" },
+      attachmentVision: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+    },
     voice: { provider: "local-tts", id: "voice-abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     // Non-default values (spark off, dreaming on) so the round-trip test

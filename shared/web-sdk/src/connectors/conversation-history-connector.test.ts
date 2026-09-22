@@ -64,7 +64,7 @@ describe("ConversationHistoryConnector", () => {
     expect(onUpdate).toHaveBeenCalledOnce();
   });
 
-  it("appends on conversation.entry", () => {
+  it("appends on conversation.entry and retains authoritative user provenance", () => {
     const onEntry = vi.fn();
     const onUpdate = vi.fn();
     const connector = new ConversationHistoryConnector({ onEntry, onUpdate });
@@ -72,7 +72,10 @@ describe("ConversationHistoryConnector", () => {
     connector.attach(internal);
 
     internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
-    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+    internal.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      item: { ...userItem("hi"), pendingId: "pending-1", sessionId: "s-authoritative" },
+    });
     internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: assistantItem("hello") });
     internal.messageHandlers.get("conversation.entry")?.({
       type: "conversation.entry",
@@ -81,7 +84,9 @@ describe("ConversationHistoryConnector", () => {
 
     expect(connector.items()).toHaveLength(3);
     expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "trigger"]);
+    expect(connector.items()[0]).toMatchObject({ pendingId: "pending-1", sessionId: "s-authoritative" });
     expect(onEntry).toHaveBeenCalledTimes(3);
+    expect(onEntry.mock.calls[0]?.[0]).toMatchObject({ pendingId: "pending-1", sessionId: "s-authoritative" });
     // 1 for snapshot + 3 for entries
     expect(onUpdate).toHaveBeenCalledTimes(4);
   });

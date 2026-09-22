@@ -3,7 +3,7 @@
 <!--
   Sentient gateway — launchd job definition (TEMPLATE).
 
-  Works in TWO domains (see deploy/mac-prod/setup-prod.py --domain):
+  Works in TWO domains (see setup-prod.py domain option):
 
     * `gui` (default): installed as a LaunchAgent in ~/Library/LaunchAgents/,
       operator-owned. The job runs in the user's GUI session and survives reboot

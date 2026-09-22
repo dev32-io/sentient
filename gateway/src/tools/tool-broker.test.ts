@@ -110,6 +110,12 @@ function fakeStore(): SessionStore {
     getSession: () => null,
     listSessionsWithMetadata: () => [],
     setTitle: () => false,
+    deleteSession: () => {
+      throw new Error("not used by ToolBroker — deletion requires lifecycle authority");
+    },
+    listRetentionCandidates: () => [],
+    listFileCleanupIntents: () => [],
+    ackFileCleanupIntent: () => false,
     close: () => {},
   };
 }

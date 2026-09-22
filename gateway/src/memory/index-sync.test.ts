@@ -6,6 +6,7 @@ import type { Capability } from "../access/capability.js";
 import { scanContent } from "../security/injection-scanner.js";
 import type { ClientError, DeepMemoryClient, HealthInfo, IndexEntry } from "./deep-memory-client.js";
 import { withIndexSync } from "./deep-memory-wiring.js";
+import { writeDreamOutputs } from "./dreamer/episode-writer.js";
 import type { EnqueueEntry, ScopeHandle } from "./index-sync.js";
 import { createIndexSync } from "./index-sync.js";
 import { type MemoryConfig, type MemoryStore, openMemoryStore } from "./memory-store.js";
@@ -335,8 +336,61 @@ describe("rebuildScope — drop and re-feed all sources", () => {
     expect(files).toContain("MEMORY.md");
     expect(files).toContain("topics/trips.md");
     expect(files).toContain("journal/2026-08-09.md");
-    const journalEntry = entries.find((e) => e.sourceRef.file === "journal/2026-08-09.md");
-    expect(journalEntry?.kind).toBe("journal");
+    const journalEntry = entries.find(
+      (entry) => entry.sourceRef.file === "journal/2026-08-09.md" && entry.kind === "journal",
+    );
+    expect(journalEntry).toBeDefined();
+  });
+
+  it("rebuilds canonical journal entries once with preserved provenance and stable ids", async () => {
+    const fake = makeFakeClient();
+    const sync = createIndexSync(makeScope(), fake.client, memCfg(false), { now });
+    const written = writeDreamOutputs(store, sync, SCOPE_ID, "2026-08-09", {
+      sessions: [
+        { sessionId: "s-clean", episode: "Clean episode.", facts: [], containsToolDerived: false },
+        { sessionId: "s-tool", episode: "Tool-derived episode.", facts: [], containsToolDerived: true },
+      ],
+    });
+    expect(written.ok).toBe(true);
+    await sync.flush();
+    const original = at(fake.upserts, 0).entries;
+
+    await sync.rebuildScope();
+
+    const entries = at(fake.upserts, 1).entries;
+    expect(
+      entries.map((entry) => ({
+        kind: entry.kind,
+        text: entry.text,
+        sourceRef: entry.sourceRef,
+        sessionRef: entry.sessionRef,
+        provenance: entry.provenance,
+      })),
+    ).toEqual([
+      {
+        kind: "episode-summary",
+        text: "Clean episode.",
+        sourceRef: { file: "journal/2026-08-09.md", heading: "session s-clean" },
+        sessionRef: { sessionId: "s-clean" },
+        provenance: "user-speech",
+      },
+      {
+        kind: "episode-summary",
+        text: "Tool-derived episode.",
+        sourceRef: { file: "journal/2026-08-09.md", heading: "session s-tool" },
+        sessionRef: { sessionId: "s-tool" },
+        provenance: "tool-derived",
+      },
+      {
+        kind: "journal",
+        text: "Clean episode. Tool-derived episode.",
+        sourceRef: { file: "journal/2026-08-09.md" },
+        sessionRef: undefined,
+        provenance: "tool-derived",
+      },
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(original.map((entry) => entry.id));
   });
 
   it("discards stale pending rows and feeds only current state", async () => {

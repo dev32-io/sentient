@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createGatewayLogger } from "../../logging/logger.js";
 import { fetchOpenRouterModels } from "./openrouter-fetcher.js";
 
 const sampleResponse = {
@@ -65,6 +66,46 @@ describe("fetchOpenRouterModels", () => {
     expect(m1.supportsVision).toBe(false);
   });
 
+  it("preserves per-capability unknown metadata and checks vision input rather than output", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: "missing", name: "Missing" },
+            {
+              id: "tools-only",
+              name: "Tools only",
+              supported_parameters: ["tools"],
+              architecture: { input_modalities: "malformed" },
+            },
+            {
+              id: "image-output",
+              name: "Image output",
+              supported_parameters: "malformed",
+              architecture: { modality: "text->image" },
+            },
+            {
+              id: "image-input",
+              name: "Image input",
+              architecture: { input_modalities: ["text", "image"], modality: "text->text" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await fetchOpenRouterModels(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual([
+      expect.objectContaining({ visionCapabilityKnown: false, toolsCapabilityKnown: false }),
+      expect.objectContaining({ visionCapabilityKnown: false, toolsCapabilityKnown: true, supportsTools: true }),
+      expect.objectContaining({ visionCapabilityKnown: true, supportsVision: false, toolsCapabilityKnown: false }),
+      expect.objectContaining({ visionCapabilityKnown: true, supportsVision: true, toolsCapabilityKnown: false }),
+    ]);
+  });
+
   it("returns fetch-error on non-2xx", async () => {
     fetchSpy.mockResolvedValue(new Response("nope", { status: 503 }));
 
@@ -76,6 +117,21 @@ describe("fetchOpenRouterModels", () => {
     if (r.error.kind === "fetch-error") {
       expect(r.error.status).toBe(503);
     }
+  });
+
+  it("logs a finite network diagnostic without exposing fetch error text", async () => {
+    const sentinel = "https://user:secret@private.example/models";
+    const lines: string[] = [];
+    await createGatewayLogger({ testSink: (line) => lines.push(line) });
+    fetchSpy.mockRejectedValue(new Error(`request failed for ${sentinel}`));
+
+    const result = await fetchOpenRouterModels(config);
+
+    expect(result).toEqual({ ok: false, error: { kind: "fetch-error", status: 0 } });
+    const failure = lines.find((line) => line.includes("fetchOpenRouterModels.fetchFailed"));
+    expect(failure).toContain("network_error");
+    expect(failure).not.toContain("private.example");
+    expect(failure).not.toContain("secret");
   });
 
   it("returns timeout when fetch aborts", async () => {

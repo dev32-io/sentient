@@ -92,7 +92,12 @@ interface Harness {
 
 /** A session with `first` already attached and delivering. Real registry, real
  *  journal, real turn-state tracker — only the store projection is a double. */
-function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES, onDispose?: () => void): Harness {
+function harness(
+  first: FakeWindow,
+  maxLagBytes = MAX_LAG_BYTES,
+  onDispose?: () => void,
+  onSnapshot?: () => void,
+): Harness {
   const registry = createSessionRegistry((input) => {
     // Residency is session-registry.test.ts's subject; these cases only care
     // that a disposal does not fire in the middle of an emission.
@@ -108,6 +113,7 @@ function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES, onDispose?: () 
   const state = { feedItems: [] as ConversationFeedItem[] };
   const runtime = {
     emitConversationSnapshot() {
+      onSnapshot?.();
       fanOut.conversationSnapshot(state.feedItems);
     },
     get turnState() {
@@ -450,6 +456,23 @@ describe("fan-out emitter", () => {
 });
 
 describe("attachWithSnapshot", () => {
+  it("two-window cursor: snapshot flush is included in watermark, not replayed", () => {
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    let emitDuringSnapshot = () => {};
+    const h = harness(connA, MAX_LAG_BYTES, undefined, () => emitDuringSnapshot());
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    const item: ConversationFeedItem = { entryId: "e1", ts: 1, kind: "user", channel: "text", content: "hello" };
+    h.feedItems = [item];
+    emitDuringSnapshot = () => h.emit.conversationEntry(item);
+
+    h.attach(connB);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+
+    expect(texts(connA).filter((frame) => frame.type === "conversation.entry")).toHaveLength(1);
+    expect(texts(connB).map((frame) => frame.type)).toEqual(["conversation.snapshot"]);
+  });
+
   it("INVARIANT: a frame emitted during attach is delivered exactly once, in order", () => {
     const connA = fakeWindow("conn-a");
     const connB = fakeWindow("conn-b");

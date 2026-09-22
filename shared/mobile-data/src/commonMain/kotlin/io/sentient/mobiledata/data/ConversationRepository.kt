@@ -40,5 +40,5 @@ interface ConversationRepository {
     val echoedPendingIds: Flow<Set<String>>
 
     /** Fire an outbound message with a client-generated pendingId (reconciliation key). */
-    fun send(text: String, pendingId: String)
+    fun send(text: String, pendingId: String, attachmentIds: List<String> = emptyList())
 }

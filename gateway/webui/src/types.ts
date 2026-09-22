@@ -1,5 +1,22 @@
-import type { ConversationAssistantCutoff, ConversationUserChannel } from "@sentient/protocol";
+import type { AttachmentRef, ConversationAssistantCutoff, ConversationUserChannel } from "@sentient/protocol";
 import type { AuthUser } from "./services/auth-api.js";
+
+export type ChatAttachment =
+  | { readonly kind: "remote"; readonly ref: AttachmentRef }
+  | {
+      readonly kind: "local";
+      readonly id: string;
+      readonly name: string;
+      readonly type: string;
+      readonly blob: Blob;
+      readonly status: "pending" | "uploading" | "failed" | "cancelled" | "uploaded";
+      readonly progress?: number;
+      readonly statusMessage?: string;
+      readonly onCancel?: () => void;
+      readonly onRetry?: () => void;
+      readonly onEdit?: () => void;
+      readonly onRemove?: () => void;
+    };
 
 /** Chat message for UI rendering.
  *
@@ -23,6 +40,9 @@ export interface ChatMessage {
   readonly channel?: ConversationUserChannel;
   /** Gateway-echoed idempotency key. Identifies this tab's explicit sends exactly. */
   readonly pendingId?: string;
+  /** Authoritative owning session on committed user messages. */
+  readonly sessionId?: string;
+  readonly attachments?: readonly ChatAttachment[];
   /** Present for assistant messages that ended with a cutoff (barge-in or interrupt). */
   readonly cutoff?: ConversationAssistantCutoff;
 }

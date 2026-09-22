@@ -12,7 +12,9 @@ const log = createLogger(["sentient", "sdk", "connectors", "conversation-history
 // join a committed assistant entry to its live streaming bubble WITHOUT
 // inventing an id (no ts-window stamping, no position guessing). `turnId` is
 // undefined for snapshot / REST-history items (historical entries have no live
-// turn) and for user / trigger entries (no originating turn).
+// turn) and for user / trigger entries (no originating turn). User items retain
+// optional `sessionId` from the protocol: gateway-owned provenance for binding
+// mint-pending state; absence means legacy gateway, never infer it from route.
 // ---------------------------------------------------------------------------
 
 export type CommittedFeedItem = ConversationFeedItem & {

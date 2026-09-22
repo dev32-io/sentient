@@ -9,17 +9,17 @@
 // `projectForModel(store.readSession(...))` call out of the `while`.
 //
 // Prior-art lessons carried forward (do not regress):
-//  - `tools[]` is computed ONCE from `broker.definitions()` and passed
-//    unchanged every iteration — an immutable tool set is both a caching
-//    property and a security property (spec §4.6); mutating it per-turn is
-//    the bug this loop must never reintroduce.
+//  - `tools[]` is computed ONCE from `broker.definitions()`; every
+//    tool-capable request receives that unchanged mediated set. It is both a
+//    caching property and a security property (spec §4.6); mutating it
+//    per-turn is the bug this loop must never reintroduce.
 //  - The model MUST see its own tool result. A foreground dispatch appends
 //    BOTH `tool_call` and `tool_result`; skip the result and the model
 //    re-issues the same call next iteration (the pre-Hermes 3x-refire bug).
 //  - Text is never smuggled through as a tool. Assistant text streams from
 //    provider `text` chunks straight to `onTextDelta`; on the FINAL response
-//    (no tool_calls, or the forced-final iteration) it is committed as the
-//    terminal `assistant` entry — matching spec §4.3's flowchart. Narration
+//    (no tool_calls) it is committed as the terminal `assistant` entry —
+//    matching spec §4.3's flowchart. Narration
 //    that precedes a tool call in the SAME iteration (content AND tool_calls
 //    in one assistant message — Qwen/DeepSeek/GLM/many OpenRouter routes do
 //    this; multi-iteration ReAct narration hits this on every acting
@@ -32,9 +32,9 @@
 //    render(live)`) — text is committed exactly once per iteration, either
 //    as this standalone narration entry or as the terminal assistant entry,
 //    never both.
-//  - `max_iterations` bounds the loop; the FINAL allowed iteration is forced
-//    content-only (`tools: []`) so budget exhaustion always yields a reply,
-//    never silence.
+//  - The mediated tool set stays unchanged across iterations. The loop ends
+//    when the provider returns no tool calls, or when cancellation or a
+//    provider/stall failure ends the turn.
 //  - AbortSignal is checked at every yield point (top of iteration, after
 //    the stream settles, before each tool dispatch). On abort: stop
 //    consuming, stop dispatching, append NOTHING further, return without
@@ -42,23 +42,32 @@
 //    layer above this one (Task 8) — this loop's contract stops at "don't
 //    throw, don't partially commit."
 
-import type { OrchestratorConfig } from "@sentient/config";
+import {
+  type DirectVisionDeps,
+  assembleAutomaticVisualUnderstanding,
+  assembleDirectVision,
+  hasDirectVisionEvidence,
+} from "../attachments/direct-vision.js";
+import type { MainModelSnapshot } from "../bootstrap/user-model-provider.js";
 import type { TimeZoneProvider } from "../context/message-time.js";
 import { getLog } from "../logging/logger.js";
-import type { ProviderClient, ProviderTool } from "../provider/provider-client.js";
+import {
+  type ProviderClient,
+  type ProviderTool,
+  type TransientProviderMessage,
+  streamTransient,
+} from "../provider/provider-client.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
-import type { ChatMessage, ChatToolCall } from "../store/model-projection.js";
+import type { ChatToolCall } from "../store/model-projection.js";
 import { projectForModel } from "../store/model-projection.js";
 import type { SessionStore } from "../store/session-store.js";
+import { ATTACHMENT_TOOL_NAME, parseDirectVisionMarker } from "../tools/attachment-tools.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
 import type { ToolDefinition, ToolInvocation } from "../tools/tool-types.js";
 
 const log = getLog(["sentient", "runtime", "react-loop"]);
 
-const DEBUG_PREVIEW_LEN = 120;
-
-/** Task-strip preview budget (`taskListItemSchema.argsPreview`). Separate from
- *  DEBUG_PREVIEW_LEN: this one ships to a UI, not a log. */
+/** Task-strip preview budget (`taskListItemSchema.argsPreview`). Ships to UI, not logs. */
 const ARGS_PREVIEW_LEN = 120;
 
 export type ToolUpdateStatus = "running" | "done" | "error";
@@ -90,6 +99,9 @@ export interface ToolUpdate {
 
 export interface ReactLoopDeps {
   provider: ProviderClient;
+  /** Production main-only seam. Omitted harnesses retain static provider behavior. */
+  resolveMainModel?: () => Promise<MainModelSnapshot>;
+  directVision?: DirectVisionDeps;
   broker: ToolBroker;
   store: SessionStore;
   systemPrompt: string;
@@ -102,7 +114,6 @@ export interface ReactLoopDeps {
    *  downstream of it can be invalidated by it. */
   situationBlock?: () => Promise<string | null>;
   sessionId: string;
-  config: OrchestratorConfig["loop"];
   /** Per-request provider deadline (`provider.request_timeout_ms`). Covers the
    *  HTTP call AND now the MID-STREAM gap: if no chunk arrives within this many
    *  ms while consuming the stream, the loop aborts the provider call and FAILS
@@ -117,8 +128,8 @@ export interface ReactLoopDeps {
   onTextDelta: (turnId: string, text: string) => void;
   onToolUpdate: (turnId: string, u: ToolUpdate) => void;
   /** Fired synchronously, immediately after the terminal assistant entry is
-   *  appended to the store (natural completion — no-toolcalls or
-   *  forced-final iteration). A pure durability notification, same category
+   *  appended to the store (natural completion with no tool calls). A pure
+   *  durability notification, same category
    *  as `onToolUpdate`: it tells the caller "this turn's final text is now
    *  in the store," nothing more. Does NOT reopen this loop's "don't stamp
    *  cutoff" contract — this loop still never touches `cutoff` itself. */
@@ -128,6 +139,8 @@ export interface ReactLoopDeps {
 export interface RunTurnArgs {
   turnId: string;
   signal: AbortSignal;
+  /** Store high-water mark before this turn's admitted trigger window. */
+  inputAfterSeq?: number;
 }
 
 function toProviderTool(def: ToolDefinition): ProviderTool {
@@ -146,15 +159,17 @@ function parseToolArgs(raw: string, toolName: string, toolCallId: string): Recor
     log.warn("react-loop.tool-args.not-an-object", {
       toolName,
       toolCallId,
-      rawPreview: raw.slice(0, DEBUG_PREVIEW_LEN),
+      reason: "not_object",
+      rawLength: raw.length,
+      parsedKind: parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed,
     });
     return {};
-  } catch (err) {
+  } catch {
     log.warn("react-loop.tool-args.parse-failed", {
       toolName,
       toolCallId,
-      reason: err instanceof Error ? err.message : String(err),
-      rawPreview: raw.slice(0, DEBUG_PREVIEW_LEN),
+      reason: "invalid_json",
+      rawLength: raw.length,
     });
     return {};
   }
@@ -267,8 +282,16 @@ async function dispatchToolCalls(
   signal: AbortSignal,
   toolCalls: ChatToolCall[],
   backgroundByKey: Map<string, string>,
+  attachmentVisionRoute: ToolInvocation["attachmentVisionRoute"],
+  successfulInspectionCallSeqs: Set<number>,
 ): Promise<boolean> {
   const { broker, store, onToolUpdate } = deps;
+
+  // Model response is inspection batch boundary. Any new inspection batch,
+  // including one that wholly fails, supersedes prior prepared evidence.
+  if (toolCalls.some((call) => call.function.name === ATTACHMENT_TOOL_NAME)) {
+    successfulInspectionCallSeqs.clear();
+  }
 
   for (const call of toolCalls) {
     if (signal.aborted) {
@@ -280,7 +303,7 @@ async function dispatchToolCalls(
     const toolName = call.function.name;
     const argsPreview = call.function.arguments.slice(0, ARGS_PREVIEW_LEN);
 
-    store.append({
+    const callEntry = store.append({
       ...blankEntry(sessionId, turnId),
       kind: "tool_call",
       toolCallId,
@@ -311,7 +334,14 @@ async function dispatchToolCalls(
     }
 
     const args = parseToolArgs(call.function.arguments, toolName, toolCallId);
-    const invocation: ToolInvocation = { toolCallId, name: toolName, args, signal, turnId };
+    const invocation: ToolInvocation = {
+      toolCallId,
+      name: toolName,
+      args,
+      signal,
+      turnId,
+      ...(attachmentVisionRoute ? { attachmentVisionRoute } : {}),
+    };
     const outcome = await broker.dispatch(invocation);
 
     if (signal.aborted) {
@@ -345,6 +375,14 @@ async function dispatchToolCalls(
       toolName,
       toolArgs: outcome.content,
     });
+    if (
+      attachmentVisionRoute === "direct" &&
+      toolName === ATTACHMENT_TOOL_NAME &&
+      !outcome.isError &&
+      parseDirectVisionMarker(outcome.content)
+    ) {
+      successfulInspectionCallSeqs.add(callEntry.seq);
+    }
     onToolUpdate(turnId, { toolCallId, toolName, status: outcome.isError ? "error" : "done", argsPreview });
     log.info("react-loop.tool-dispatch.foreground", {
       sessionId,
@@ -378,11 +416,12 @@ interface StreamOutcome {
  *  broken out of early. */
 async function consumeStream(
   provider: ProviderClient,
-  messages: ChatMessage[],
+  messages: readonly TransientProviderMessage[],
   tools: ProviderTool[],
   signal: AbortSignal,
   onTextDelta: (text: string) => void,
   requestTimeoutMs: number,
+  model?: string,
 ): Promise<StreamOutcome> {
   // The provider call runs on a MERGED signal: the turn's own signal (user
   // cutoff) OR a local stall controller. The HTTP client's `timeout` only bounds
@@ -392,7 +431,12 @@ async function consumeStream(
   // stall controller when the inter-chunk gap exceeds `requestTimeoutMs`.
   const stallController = new AbortController();
   const providerSignal = AbortSignal.any([signal, stallController.signal]);
-  const stream = provider.stream({ messages, tools, signal: providerSignal });
+  const stream = streamTransient(provider, {
+    messages,
+    tools,
+    signal: providerSignal,
+    ...(model ? { model } : {}),
+  });
   let text = "";
   const toolCalls: ChatToolCall[] = [];
   let finishReason = "";
@@ -494,15 +538,16 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     sessionBlock,
     situationBlock,
     sessionId,
-    config,
     requestTimeoutMs,
     onTextDelta,
     onTurnCommitting,
   } = deps;
   const { turnId, signal } = args;
+  const inputAfterSeq = args.inputAfterSeq ?? 0;
 
-  // Immutable per spec §4.6 — computed once, passed unchanged every
-  // iteration below. Never re-derived or mutated inside the loop.
+  // Immutable per spec §4.6 — broker definitions are computed once. Every
+  // tool-capable request below receives this unchanged list; it is never
+  // re-derived or mutated inside the loop.
   //
   // Awaited first: the MCP half of the vocabulary is I/O and lands ~100ms after
   // a session binds, while the first turn of a fresh session starts in the same
@@ -512,19 +557,24 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
   // second turn on. See `ToolBroker.ready`.
   await broker.ready();
   const tools = broker.definitions().map(toProviderTool);
-  const maxIterations = config.max_iterations;
 
   // (toolName, args) -> taskId for background dispatches made by THIS turn.
   // Turn-scoped on purpose: a later turn asking for the same delegation is a
   // new user intent and must be allowed; the same iteration-loop asking twice
   // is the D7 refire. Dropped with the turn, so nothing accumulates.
   const backgroundByKey = new Map<string, string>();
+  const successfulInspectionCallSeqs = new Set<number>();
+  const directVisionState = {
+    successfulInspectionCallSeqs,
+    automaticInspections: new Map(),
+    preparedVisuals: new Map(),
+  };
 
-  log.info("react-loop.start", { sessionId, turnId, maxIterations, toolCount: tools.length });
+  log.info("react-loop.start", { sessionId, turnId, toolCount: tools.length });
 
   let iteration = 0;
   let consumedThroughSeq = 0;
-  while (iteration < maxIterations) {
+  while (true) {
     iteration += 1;
 
     if (signal.aborted) {
@@ -532,7 +582,8 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       return { completed: false, iterations: iteration - 1, consumedThroughSeq };
     }
 
-    const forceFinal = iteration === maxIterations;
+    const snapshot = deps.resolveMainModel ? await deps.resolveMainModel() : null;
+    const visionRoute = snapshot ? (snapshot.supportsVision === true ? "direct" : "auxiliary") : undefined;
     // The re-read that makes steer free (spec §4.5): every iteration
     // rebuilds messages[] from the store, never from a cached prior value.
     const entries = store.readSession(sessionId);
@@ -546,28 +597,66 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     // it, which is why the volatile block is LAST — anywhere earlier and every
     // turn would break the cached prefix. See context/session-block.ts.
     const [sessionText, situationText] = await Promise.all([sessionBlock?.() ?? null, situationBlock?.() ?? null]);
-    const messages: ChatMessage[] = [
+    const messages: TransientProviderMessage[] = [
       { role: "system", content: systemPrompt },
       ...(sessionText === null ? [] : [{ role: "system" as const, content: sessionText }]),
       ...projectForModel(entries, { timeZone: timeZone.zone() }),
       ...(situationText === null ? [] : [{ role: "system" as const, content: situationText }]),
     ];
+    if (deps.directVision && visionRoute) {
+      const evidence =
+        visionRoute === "direct"
+          ? await assembleDirectVision(deps.directVision, entries, turnId, inputAfterSeq, directVisionState, signal)
+          : await assembleAutomaticVisualUnderstanding(
+              deps.directVision,
+              entries,
+              inputAfterSeq,
+              directVisionState,
+              signal,
+            );
+      messages.push(...evidence.messages);
+      log.info("react-loop.visual-preparation", {
+        sessionId,
+        turnId,
+        iteration,
+        route: visionRoute,
+        includedCount: evidence.included.length,
+        omittedCount: evidence.omitted.length,
+      });
+    }
+    if (
+      visionRoute === "auxiliary" &&
+      snapshot &&
+      hasDirectVisionEvidence(entries, turnId, successfulInspectionCallSeqs)
+    ) {
+      messages.push({
+        role: "user",
+        content:
+          "Prepared visual evidence is unavailable to current main model. Use available gateway-prepared overview or request inspect_attachment for closer inspection.",
+      });
+    }
+    if (signal.aborted) {
+      log.info("react-loop.aborted-during-vision-preparation", { sessionId, turnId, iteration });
+      return { completed: false, iterations: iteration - 1, consumedThroughSeq };
+    }
 
     log.debug("react-loop.iteration.start", {
       sessionId,
       turnId,
       iteration,
-      forceFinal,
       messageCount: messages.length,
     });
 
+    const requestProvider = snapshot?.client ?? provider;
+    const requestTools = snapshot?.supportsTools === false ? [] : tools;
     const outcome = await consumeStream(
-      provider,
+      requestProvider,
       messages,
-      forceFinal ? [] : tools,
+      requestTools,
       signal,
       (text) => onTextDelta(turnId, text),
       requestTimeoutMs,
+      snapshot?.outboundModel,
     );
 
     if (outcome.aborted) {
@@ -594,14 +683,13 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       sessionId,
       turnId,
       iteration,
-      forceFinal,
       finishReason: outcome.finishReason,
       toolCallCount: outcome.toolCalls.length,
       textLength: outcome.text.length,
       ...(outcome.cacheHitRatio !== undefined ? { cacheHitRatio: Number(outcome.cacheHitRatio.toFixed(3)) } : {}),
     });
 
-    if (forceFinal || outcome.toolCalls.length === 0) {
+    if (outcome.toolCalls.length === 0) {
       // D17 (task 18): a reasoning model can spend its ENTIRE output budget
       // on the invisible reasoning channel and never reach a visible token —
       // finish_reason:"length" with zero text. Committing that as a
@@ -632,7 +720,6 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
           sessionId,
           turnId,
           iteration,
-          forceFinal,
           finishReason: outcome.finishReason,
           reason:
             "final completion produced no visible text — not committing an empty reply, regardless of finishReason",
@@ -647,7 +734,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
         text: outcome.text,
       });
       onTurnCommitting?.(turnId);
-      log.info("react-loop.completed", { sessionId, turnId, iterations: iteration, forceFinal });
+      log.info("react-loop.completed", { sessionId, turnId, iterations: iteration });
       return { completed: true, iterations: iteration, consumedThroughSeq };
     }
 
@@ -683,19 +770,20 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       });
     }
 
-    const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls, backgroundByKey);
+    const dispatchedAll = await dispatchToolCalls(
+      deps,
+      sessionId,
+      turnId,
+      signal,
+      outcome.toolCalls,
+      backgroundByKey,
+      visionRoute,
+      successfulInspectionCallSeqs,
+    );
     if (!dispatchedAll) {
       log.info("react-loop.aborted-mid-dispatch", { sessionId, turnId, iteration });
       return { completed: false, iterations: iteration, consumedThroughSeq };
     }
     // → goto 1: loop back to the top, re-reading the store fresh.
   }
-
-  // Unreachable in practice — the forceFinal branch above always fires (and
-  // returns) on iteration === maxIterations, and the config schema's
-  // `.min(1)` forbids maxIterations from ever being 0. Kept as a typed,
-  // logged fallback rather than an unprovable-to-the-compiler implicit
-  // `undefined` return.
-  log.warn("react-loop.exhausted-without-final", { sessionId, turnId, iterations: iteration });
-  return { completed: false, iterations: iteration, consumedThroughSeq };
 }

@@ -22,6 +22,31 @@ enum HistorySurfaceLayout {
     static let searchTextRole: DesignTextRole = .body
 }
 
+enum HistoryListPresentation: Equatable {
+    case loading, error, empty, content, staleContent
+}
+
+func historyListPresentation(
+    rowCount: Int,
+    loading: Bool,
+    hasLoaded: Bool,
+    hasError: Bool
+) -> HistoryListPresentation {
+    if rowCount > 0 { return hasError ? .staleContent : .content }
+    if hasError && !loading { return .error }
+    if loading || !hasLoaded { return .loading }
+    return .empty
+}
+
+func historyEntryIsSelected(
+    _ row: HistoryEntry,
+    activeSessionId: String?,
+    activeDraftId: String?
+) -> Bool {
+    (row.sessionId != nil && row.sessionId == activeSessionId)
+        || (row.draftId != nil && row.draftId == activeDraftId)
+}
+
 struct HistorySidePanel: View {
     /// The host (Task 8.2 parent view) owns the model via @StateObject and
     /// passes it here. @ObservedObject is correct: the panel is a consumer, not
@@ -32,12 +57,14 @@ struct HistorySidePanel: View {
     let userName: String
     let household: String
     let activeSessionId: String?
-    let onSelect: (String) -> Void
+    let activeDraftId: String?
+    let onSelect: (HistoryEntry) -> Void
     let onNewChat: () -> Void
     let onSettings: () -> Void
     /// Context-menu handlers wired by the host so Rename/Delete are functional.
-    let onAskRename: (SessionRow) -> Void
-    let onAskDelete: (SessionRow) -> Void
+    let onAskRename: (HistoryEntry) -> Void
+    let onAskDelete: (HistoryEntry) -> Void
+    let onAskDiscard: (HistoryEntry) -> Void
 
     var body: some View {
         HistorySidePanelContent(
@@ -51,19 +78,23 @@ struct HistorySidePanel: View {
             userName: userName,
             household: household,
             activeSessionId: activeSessionId,
+            activeDraftId: activeDraftId,
+            hasPermanentDeleteFailure: model.hasPermanentDeleteFailure,
             onSelect: onSelect,
             onNewChat: onNewChat,
             onSettings: onSettings,
             onRetry: { Task { await model.refresh() } },
+            onRetryDeletes: { Task { await model.retryDeletes() } },
             onAskRename: onAskRename,
-            onAskDelete: onAskDelete
+            onAskDelete: onAskDelete,
+            onAskDiscard: onAskDiscard
         )
     }
 }
 
 /// Stateless production composition shared by the ViewModel adapter and debug fixtures.
 struct HistorySidePanelContent: View {
-    let rows: [SessionRow]
+    let rows: [HistoryEntry]
     @Binding var query: String
     let loading: Bool
     let hasLoaded: Bool
@@ -73,17 +104,69 @@ struct HistorySidePanelContent: View {
     let userName: String
     let household: String
     let activeSessionId: String?
-    let onSelect: (String) -> Void
+    let activeDraftId: String?
+    let hasPermanentDeleteFailure: Bool
+    let onSelect: (HistoryEntry) -> Void
     let onNewChat: () -> Void
     let onSettings: () -> Void
     let onRetry: () -> Void
-    let onAskRename: (SessionRow) -> Void
-    let onAskDelete: (SessionRow) -> Void
+    let onRetryDeletes: () -> Void
+    let onAskRename: (HistoryEntry) -> Void
+    let onAskDelete: (HistoryEntry) -> Void
+    let onAskDiscard: (HistoryEntry) -> Void
 
-    private var showsErrorEmpty: Bool { hasError && rows.isEmpty && !loading }
-    private var showsStaleBanner: Bool { !rows.isEmpty && (hasError || loading) }
-    private var showsLoadingSpinner: Bool {
-        (loading || !hasLoaded) && rows.isEmpty && !showsErrorEmpty
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        rows: [HistoryEntry], query: Binding<String>, loading: Bool, hasLoaded: Bool,
+        hasError: Bool, isSearching: Bool, nowMs: Int64, userName: String,
+        household: String, activeSessionId: String?, activeDraftId: String?,
+        hasPermanentDeleteFailure: Bool, onSelect: @escaping (HistoryEntry) -> Void,
+        onNewChat: @escaping () -> Void, onSettings: @escaping () -> Void,
+        onRetry: @escaping () -> Void, onRetryDeletes: @escaping () -> Void,
+        onAskRename: @escaping (HistoryEntry) -> Void,
+        onAskDelete: @escaping (HistoryEntry) -> Void,
+        onAskDiscard: @escaping (HistoryEntry) -> Void
+    ) {
+        self.rows = rows; _query = query; self.loading = loading; self.hasLoaded = hasLoaded
+        self.hasError = hasError; self.isSearching = isSearching; self.nowMs = nowMs
+        self.userName = userName; self.household = household; self.activeSessionId = activeSessionId
+        self.activeDraftId = activeDraftId; self.hasPermanentDeleteFailure = hasPermanentDeleteFailure
+        self.onSelect = onSelect; self.onNewChat = onNewChat; self.onSettings = onSettings
+        self.onRetry = onRetry; self.onRetryDeletes = onRetryDeletes
+        self.onAskRename = onAskRename; self.onAskDelete = onAskDelete; self.onAskDiscard = onAskDiscard
+    }
+
+    /// Compatibility initializer for existing visual fixtures.
+    init(
+        rows: [SessionRow], query: Binding<String>, loading: Bool, hasLoaded: Bool,
+        hasError: Bool, isSearching: Bool, nowMs: Int64, userName: String,
+        household: String, activeSessionId: String?, onSelect: @escaping (String) -> Void,
+        onNewChat: @escaping () -> Void, onSettings: @escaping () -> Void,
+        onRetry: @escaping () -> Void, onAskRename: @escaping (SessionRow) -> Void,
+        onAskDelete: @escaping (SessionRow) -> Void
+    ) {
+        let byId = Dictionary(uniqueKeysWithValues: rows.map { ($0.sessionId, $0) })
+        self.init(
+            rows: rows.map { HistoryEntry(kind: .session(id: $0.sessionId, draftId: nil), title: $0.title, lastActiveAt: $0.lastActiveAt, hasDraft: false) },
+            query: query, loading: loading, hasLoaded: hasLoaded, hasError: hasError,
+            isSearching: isSearching, nowMs: nowMs, userName: userName, household: household,
+            activeSessionId: activeSessionId, activeDraftId: nil, hasPermanentDeleteFailure: false,
+            onSelect: { if let id = $0.sessionId { onSelect(id) } }, onNewChat: onNewChat,
+            onSettings: onSettings, onRetry: onRetry, onRetryDeletes: {},
+            onAskRename: { if let id = $0.sessionId, let row = byId[id] { onAskRename(row) } },
+            onAskDelete: { if let id = $0.sessionId, let row = byId[id] { onAskDelete(row) } },
+            onAskDiscard: { _ in }
+        )
+    }
+
+    private var presentation: HistoryListPresentation {
+        historyListPresentation(
+            rowCount: rows.count,
+            loading: loading,
+            hasLoaded: hasLoaded,
+            hasError: hasError
+        )
     }
 
     var body: some View {
@@ -92,21 +175,26 @@ struct HistorySidePanelContent: View {
                 HistoryAccountHeader(name: userName, household: household, onSettings: onSettings)
                 searchField
                 pastChatsTitle
-                if showsStaleBanner {
-                    SessionsStaleBanner(onRetry: onRetry, checking: loading)
+                if hasPermanentDeleteFailure {
+                    SessionsDeleteFailureBanner(onRetry: onRetryDeletes)
+                        .padding(.horizontal, Space.md)
+                        .padding(.bottom, Space.xs)
+                } else if presentation == .staleContent {
+                    SessionsStaleBanner(onRetry: onRetry)
                         .padding(.horizontal, Space.md)
                         .padding(.bottom, Space.xs)
                 }
-                if showsErrorEmpty {
+                switch presentation {
+                case .error:
                     SessionsErrorEmpty(onRetry: onRetry)
                     Spacer(minLength: 0)
-                } else if showsLoadingSpinner {
+                case .loading:
                     historyLoadingSpinner
                     Spacer(minLength: 0)
-                } else if rows.isEmpty {
+                case .empty:
                     historyEmptyState
                     Spacer(minLength: 0)
-                } else {
+                case .content, .staleContent:
                     sessionList
                 }
             }
@@ -146,19 +234,36 @@ struct HistorySidePanelContent: View {
     private var sessionList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Space.xs) {
-                ForEach(rows, id: \.sessionId) { row in
+                ForEach(rows) { row in
                     HistoryRow(
                         row: row,
                         nowMs: nowMs,
-                        isSelected: row.sessionId == activeSessionId,
-                        onSwitch: { onSelect(row.sessionId) },
+                        isSelected: historyEntryIsSelected(
+                            row,
+                            activeSessionId: activeSessionId,
+                            activeDraftId: activeDraftId
+                        ),
+                        onSwitch: { onSelect(row) },
                         onAskRename: { onAskRename(row) },
-                        onAskDelete: { onAskDelete(row) }
+                        onAskDelete: { onAskDelete(row) },
+                        onAskDiscard: { onAskDiscard(row) }
+                    )
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .asymmetric(
+                                insertion: .opacity.combined(with: .move(edge: .top)),
+                                removal: .identity
+                            )
                     )
                 }
             }
             .padding(.horizontal, Space.md)
             .padding(.bottom, fabSize + Space.lg * 2)
+            .animation(
+                DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+                value: rows.map(\.id)
+            )
         }
     }
 
@@ -336,11 +441,13 @@ private struct PanelPreviewHost: View {
             userName: "Kevin",
             household: "Ye Family",
             activeSessionId: "s1",
+            activeDraftId: nil,
             onSelect: { _ in },
             onNewChat: {},
             onSettings: {},
             onAskRename: { _ in },
-            onAskDelete: { _ in }
+            onAskDelete: { _ in },
+            onAskDiscard: { _ in }
         )
         .onAppear {
             if let errorMessage {

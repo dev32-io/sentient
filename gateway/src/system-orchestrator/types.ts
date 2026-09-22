@@ -85,7 +85,8 @@ export const DockerServiceConfigSchema = z.object({
   launch: z.literal("docker"),
   template: z.string().min(1),
   allowed_images: z.array(z.string().min(1)).nonempty(),
-  networks: z.array(z.string().min(1)).nonempty(),
+  // Empty only for templates using Docker's `network_mode: none`.
+  networks: z.array(z.string().min(1)),
   secrets: z.record(z.string(), z.string()).optional().default({}),
   /** Grants this service the §2.3 public-port exception. Default false, so the
    *  loopback rule holds for every entry that does not name it explicitly.
@@ -157,19 +158,43 @@ const PortMappingSchema = z
 /** Parsed YAML template body. `ports` are loopback-only by default, with the one
  *  narrow public exception above (see PUBLIC_PORT_RE). Any volume must be
  *  bind-mountable from a path the gateway controls. */
-export const ServiceTemplateSchema = z.object({
-  image: z.string().min(1),
-  container_name: z.string().min(1),
-  networks: z.array(z.string().min(1)).nonempty(),
-  env: z.record(z.string(), z.string()).optional().default({}),
-  volumes: z.array(z.string()).optional().default([]),
-  command: z.array(z.string()).optional(),
-  extra_hosts: z.array(z.string()).optional().default([]),
-  mem_limit_bytes: z.number().int().positive().optional(),
-  cpus: z.number().positive().optional(),
-  group_add: z.array(z.string()).optional().default([]),
-  ports: z.array(PortMappingSchema).optional().default([]),
-});
+export const ServiceTemplateSchema = z
+  .object({
+    image: z.string().min(1),
+    container_name: z.string().min(1),
+    networks: z.array(z.string().min(1)).default([]),
+    /** `none` is the only non-managed mode: parser traffic uses a mounted UDS. */
+    network_mode: z.literal("none").optional(),
+    env: z.record(z.string(), z.string()).optional().default({}),
+    volumes: z.array(z.string()).optional().default([]),
+    command: z.array(z.string()).optional(),
+    extra_hosts: z.array(z.string()).optional().default([]),
+    mem_limit_bytes: z.number().int().positive().optional(),
+    memswap_limit_bytes: z.number().int().positive().optional(),
+    cpus: z.number().positive().optional(),
+    group_add: z.array(z.string()).optional().default([]),
+    ports: z.array(PortMappingSchema).optional().default([]),
+    read_only: z.boolean().optional(),
+    tmpfs: z.record(z.string().startsWith("/"), z.string()).optional(),
+    pids_limit: z.number().int().positive().optional(),
+    cap_drop: z.array(z.string().min(1)).optional(),
+    security_opt: z.array(z.string().min(1)).optional(),
+    user: z
+      .string()
+      .regex(/^\d+(:\d+)?$/)
+      .optional(),
+  })
+  .superRefine((template, ctx) => {
+    if (template.network_mode === "none" && template.networks.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["networks"], message: "network_mode none forbids networks" });
+    }
+    if (template.network_mode === undefined && template.networks.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["networks"], message: "managed network required" });
+    }
+    if (template.network_mode === "none" && template.ports.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ports"], message: "network_mode none forbids ports" });
+    }
+  });
 export type ServiceTemplate = z.infer<typeof ServiceTemplateSchema>;
 
 /** State exposed for UI + apply-bar consumption. */
@@ -279,5 +304,6 @@ export interface ServiceDriver {
   start(name: ServiceName): Promise<Result<undefined, DriverError>>;
   stop(name: ServiceName): Promise<Result<undefined, DriverError>>;
   remove(name: ServiceName): Promise<Result<undefined, DriverError>>;
-  listManaged(): Promise<ManagedProcessInfo[]>;
+  /** Signal cancels underlying inspection work when supplied. */
+  listManaged(signal?: AbortSignal): Promise<ManagedProcessInfo[]>;
 }

@@ -13,6 +13,21 @@ const BASE = {
   advanced: { extraSystemPrompt: "", maxTokens: 1024 },
 };
 
+describe("profile auxiliary models", () => {
+  it("accepts optional workload refs and keeps old profiles compatible", () => {
+    const old = profileV1Schema.parse({ ...BASE, tools: {} });
+    expect(old.auxiliaryModels).toBeUndefined();
+
+    const refs = {
+      title: { provider: "openrouter", id: "vendor/title" },
+      dreamer: { provider: "ollama-cloud", id: "dreamer:cloud" },
+      attachmentVision: { provider: "custom", id: "vision-model" },
+    } as const;
+    const parsed = profileV1Schema.parse({ ...BASE, auxiliaryModels: refs, tools: {} });
+    expect(parsed.auxiliaryModels).toEqual(refs);
+  });
+});
+
 describe("profile tools.permissions", () => {
   it("migrates a legacy tools.enabled map into per-tool permissions", () => {
     const parsed = profileV1Schema.parse({

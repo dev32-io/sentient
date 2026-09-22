@@ -170,6 +170,25 @@ function buildOpLog(appliedOps: AppliedOpLog[]): string {
   return `${OP_LOG_HEADING}\n\n${body}`;
 }
 
+/** Merges today's existing canonical episodes with this run. Exact retries
+ * converge, while later partial windows from the same session remain distinct. */
+function mergeJournalEpisodes(existing: string | null, result: DreamResult): DreamResult {
+  const sessions: DreamResult["sessions"] = parseJournalEpisodes(existing ?? "").map((episode) => ({
+    sessionId: episode.sessionId,
+    episode: episode.text,
+    facts: [],
+    containsToolDerived: episode.provenance === TAINTED,
+  }));
+  for (const session of result.sessions) {
+    const duplicate = sessions.find(
+      (prior) => prior.sessionId === session.sessionId && prior.episode.trim() === session.episode.trim(),
+    );
+    if (duplicate) duplicate.containsToolDerived ||= session.containsToolDerived;
+    else sessions.push(session);
+  }
+  return { sessions };
+}
+
 /** Assembles the whole journal: H1 date, narrative, per-session episode sections
  *  (with taint markers), then the op-log section. Greppable and stable. */
 function buildJournal(date: string, result: DreamResult, narrative: string, appliedOps: AppliedOpLog[]): string {
@@ -191,6 +210,20 @@ const SESSION_HEADING_RE = /^## session (\S+)(?: \[tool-derived\])?\s*$/;
 /** Any other ATX heading closes the current episode block (`## memory updates`,
  *  a following `## session`, or the H1). */
 const ANY_HEADING_RE = /^#{1,6}\s+/;
+
+/** Recovers the canonical day narrative before the first episode/op-log block. */
+export function parseJournalNarrative(journalText: string): string {
+  const lines = journalText.split("\n");
+  const h1 = lines.findIndex((line) => /^#\s+/.test(line));
+  if (h1 < 0) return "";
+  const end = lines.findIndex(
+    (line, index) => index > h1 && (SESSION_HEADING_RE.test(line) || line === OP_LOG_HEADING),
+  );
+  return lines
+    .slice(h1 + 1, end < 0 ? undefined : end)
+    .join("\n")
+    .trim();
+}
 
 /**
  * Recovers the episode sections a `buildJournal` produced: for each
@@ -331,8 +364,9 @@ export function writeDreamOutputs(
   narrativeOverride?: string,
 ): WriteDreamOutputsResult {
   const ops = appliedOps ?? [];
-  const narrative = narrativeOverride ?? buildNarrative(result);
-  const journalText = buildJournal(date, result, narrative, ops);
+  const canonicalResult = mergeJournalEpisodes(store.readJournal(date), result);
+  const narrative = narrativeOverride ?? buildNarrative(canonicalResult);
+  const journalText = buildJournal(date, canonicalResult, narrative, ops);
 
   const written = store.writeJournal(date, journalText);
   if (!written.ok) {
@@ -341,8 +375,8 @@ export function writeDreamOutputs(
   }
 
   const entries: EnqueueEntry[] = [
-    ...episodeEntries(scopeId, date, result),
-    journalEntry(scopeId, date, result, narrative),
+    ...episodeEntries(scopeId, date, canonicalResult),
+    journalEntry(scopeId, date, canonicalResult, narrative),
     ...factEntries(scopeId, date, result, ops),
   ];
   sync.enqueueEntries(entries);
