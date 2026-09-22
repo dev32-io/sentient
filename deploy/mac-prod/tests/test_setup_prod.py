@@ -17,11 +17,14 @@ import stat
 import subprocess
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import setup_prod
 from setup_prod import (
     CERT_RELATIVE,
+    cleanup_attachment_parser_images,
+    DockerCommandFailed,
     DockerCommandTimeout,
     DockerCli,
     DockerImageIdentity,
@@ -178,6 +181,165 @@ class FakeParserDocker:
     def remove(self, image):
         self.removed.append(image)
         self.images.pop(image, None)
+
+    def list_parser_images(self):
+        return [
+            (identity.image_id, ref)
+            for ref, identity in self.images.items()
+            if ref.startswith("sentient/attachment-parser:")
+        ]
+
+
+def test_docker_cli_lists_tagged_and_dangling_parser_images_only():
+    active_id = "sha256:" + "1" * 64
+    old_id = "sha256:" + "2" * 64
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        if any(argument.startswith("reference=") for argument in argv):
+            output = f"{active_id}\tsentient/attachment-parser\tlocal\n"
+        else:
+            output = f"{old_id}\t<none>\t<none>\n"
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    assert DockerCli(runner).list_parser_images() == [
+        (active_id, PARSER_RUNTIME_IMAGE),
+        (old_id, None),
+    ]
+    assert all("--force" not in argv for argv in calls)
+
+
+def test_parser_cleanup_removes_old_owned_refs_and_dangling_images_but_keeps_active_and_unrelated():
+    active_id = "sha256:" + "1" * 64
+    old_id = "sha256:" + "2" * 64
+    dangling_id = "sha256:" + "3" * 64
+    unrelated_id = "sha256:" + "4" * 64
+
+    class CleanupDocker(FakeParserDocker):
+        def list_parser_images(self):
+            return [
+                (active_id, PARSER_RUNTIME_IMAGE),
+                (active_id, "sentient/attachment-parser:release-active"),
+                (old_id, "sentient/attachment-parser:release-old"),
+                (old_id, f"{PARSER_RETAINED_IMAGE_PREFIX}{old_id[7:]}"),
+                (dangling_id, None),
+                (unrelated_id, None),
+            ]
+
+    docker = CleanupDocker("sentient/attachment-parser:release-active", active_id)
+    docker.images[PARSER_RUNTIME_IMAGE] = DockerImageIdentity(
+        active_id, "active", "active", "attachment-parser", 2
+    )
+    docker.images["sentient/attachment-parser:release-old"] = DockerImageIdentity(
+        old_id, "old", "old", "attachment-parser", 2
+    )
+    docker.images[f"{PARSER_RETAINED_IMAGE_PREFIX}{old_id[7:]}"] = DockerImageIdentity(
+        old_id, "old", "old", "attachment-parser", 2
+    )
+    docker.images[dangling_id] = DockerImageIdentity(
+        dangling_id, "old", "old", "attachment-parser", 2
+    )
+    docker.images[unrelated_id] = DockerImageIdentity(unrelated_id, "other", "other", "other", 2)
+
+    cleanup_attachment_parser_images(docker)
+
+    assert "sentient/attachment-parser:release-old" in docker.removed
+    assert f"{PARSER_RETAINED_IMAGE_PREFIX}{old_id[7:]}" in docker.removed
+    assert dangling_id in docker.removed
+    assert PARSER_RUNTIME_IMAGE not in docker.removed
+    assert "sentient/attachment-parser:release-active" not in docker.removed
+    assert unrelated_id not in docker.removed
+
+
+def test_parser_cleanup_is_not_run_when_install_fails(monkeypatch, tmp_path):
+    events = []
+
+    class FakeLaunchd:
+        def __init__(self, *args, **kwargs):
+            self.installed_plist = "fake-plist"
+
+        def install_plist(self):
+            pass
+
+    class FakeFs:
+        current = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class FailingInstaller:
+        def __init__(self, **kwargs):
+            pass
+
+        def install(self, version, tarball):
+            events.append("install")
+            raise InstallError("health gate failed")
+
+    monkeypatch.setattr(setup_prod, "RealLaunchd", FakeLaunchd)
+    monkeypatch.setattr(setup_prod, "RealFs", FakeFs)
+    monkeypatch.setattr(setup_prod, "DockerCli", lambda: object())
+    monkeypatch.setattr(setup_prod, "Installer", FailingInstaller)
+    monkeypatch.setattr(
+        setup_prod,
+        "cleanup_attachment_parser_images",
+        lambda docker: events.append("cleanup"),
+    )
+
+    args = SimpleNamespace(
+        health_url="https://127.0.0.1:8888/api/v1/health",
+        health_attempts=1,
+        health_interval=0,
+        edge_url="https://localhost/",
+        edge_attempts=1,
+        edge_interval=0,
+        tarball=tmp_path / "release.tar.gz",
+        wheels=None,
+    )
+    with pytest.raises(InstallError, match="health gate failed"):
+        setup_prod._run_install_locked(
+            args,
+            "gui",
+            "operator",
+            tmp_path / "repo",
+            tmp_path / "plist",
+            tmp_path / "ca.pem",
+            object(),
+            tmp_path / "launchd",
+            tmp_path / "release-root",
+            "1.2.3",
+            tmp_path / "outward.pem",
+        )
+
+    assert events == ["install"]
+
+
+def test_parser_cleanup_reports_referenced_old_image_without_force(capsys):
+    active_id = "sha256:" + "1" * 64
+    old_id = "sha256:" + "2" * 64
+    old_ref = "sentient/attachment-parser:release-old"
+
+    class ReferencedDocker(FakeParserDocker):
+        def list_parser_images(self):
+            return [(active_id, PARSER_RUNTIME_IMAGE), (old_id, old_ref)]
+
+        def remove(self, image):
+            if image == old_ref:
+                raise DockerCommandFailed("image is referenced by a container")
+            super().remove(image)
+
+    docker = ReferencedDocker("sentient/attachment-parser:release-active", active_id)
+    docker.images[PARSER_RUNTIME_IMAGE] = DockerImageIdentity(
+        active_id, "active", "active", "attachment-parser", 2
+    )
+    docker.images[old_ref] = DockerImageIdentity(
+        old_id, "old", "old", "attachment-parser", 2
+    )
+
+    cleanup_attachment_parser_images(docker)
+
+    assert docker.removed == []
+    assert old_ref in capsys.readouterr().err
 
 
 def test_legacy_parser_directory_absence_skips_payload_but_partial_payload_fails_closed(tmp_path):

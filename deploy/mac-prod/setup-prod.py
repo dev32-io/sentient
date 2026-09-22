@@ -799,7 +799,7 @@ class DockerContainerIdentity:
 
 
 class DockerCli:
-    """Small injected Docker CLI seam used only for parser image activation."""
+    """Small injected Docker CLI seam for parser activation and cleanup."""
 
     def __init__(
         self,
@@ -905,6 +905,43 @@ class DockerCli:
     def remove(self, image: str) -> None:
         self._run_checked(["docker", "image", "rm", image], "image cleanup")
 
+    def list_parser_images(self) -> list[tuple[str, str | None]]:
+        """List tagged parser refs and dangling images for targeted cleanup."""
+        format_arg = "{{.ID}}\t{{.Repository}}\t{{.Tag}}"
+        commands = (
+            [
+                "docker", "image", "ls", "--all", "--no-trunc",
+                "--filter", f"reference={PARSER_IMAGE_REPOSITORY}:*",
+                "--format", format_arg,
+            ],
+            [
+                "docker", "image", "ls", "--all", "--no-trunc",
+                "--filter", f"label={PARSER_NAME_LABEL}={PARSER_NAME}",
+                "--filter", "dangling=true", "--format", format_arg,
+            ],
+        )
+        images: list[tuple[str, str | None]] = []
+        seen: set[tuple[str, str | None]] = set()
+        for command in commands:
+            output = self._run_checked(command, "image list").stdout or ""
+            for line in output.splitlines():
+                fields = line.split("\t")
+                if len(fields) != 3:
+                    raise InstallError("docker image list returned unusable parser metadata")
+                image_id, repository, tag = fields
+                if not IMAGE_ID_RE.fullmatch(image_id):
+                    raise InstallError("docker image list returned an invalid image ID")
+                if repository == PARSER_IMAGE_REPOSITORY and tag != "<none>":
+                    ref: str | None = f"{repository}:{tag}"
+                elif repository == "<none>" and tag == "<none>":
+                    ref = None
+                else:
+                    continue
+                if (image_id, ref) not in seen:
+                    seen.add((image_id, ref))
+                    images.append((image_id, ref))
+        return images
+
     def parser_health(
         self,
         container: str,
@@ -978,6 +1015,42 @@ def _retain_parser_image(docker: DockerCli, image_id: str | None) -> None:
         raise InstallError("cannot retain an invalid Docker image ID")
     retained = f"{PARSER_RETAINED_IMAGE_PREFIX}{image_id[len('sha256:'):]}"
     _ensure_parser_alias(docker, retained, image_id)
+
+
+def cleanup_attachment_parser_images(docker: DockerCli) -> None:
+    """Remove old parser images without touching active or unrelated images."""
+    try:
+        active = docker.inspect(PARSER_RUNTIME_IMAGE, missing_ok=True)
+        if active is None:
+            warn(
+                f"attachment-parser cleanup skipped: active image {PARSER_RUNTIME_IMAGE} is missing"
+            )
+            return
+        images = docker.list_parser_images()
+    except InstallError as error:
+        warn(f"attachment-parser cleanup could not inspect Docker state: {error}")
+        return
+
+    for image_id, ref in images:
+        if ref == PARSER_RUNTIME_IMAGE:
+            continue
+        target = ref or image_id
+        try:
+            image = docker.inspect(target, missing_ok=True)
+        except InstallError as error:
+            warn(f"attachment-parser cleanup could not inspect {target}: {error}")
+            continue
+        if image is None:
+            continue
+        if image.image_id != image_id:
+            warn(f"attachment-parser cleanup skipped {target}: image ID changed")
+            continue
+        if image.image_id == active.image_id or image.name != PARSER_NAME:
+            continue
+        try:
+            docker.remove(target)
+        except InstallError as error:
+            warn(f"attachment-parser cleanup could not remove {target}: {error}")
 
 
 class AttachmentParserPairing:
@@ -2518,6 +2591,7 @@ def _run_install_locked(
     )
     info(f"verifying and installing (previous: {previous or 'none'})")
     installer.install(version, args.tarball)
+    cleanup_attachment_parser_images(docker)
     ok(f"gateway {version} is live and healthy")
     fs.prune(keep=args.keep, protect=(previous,) if previous else ())
     ok(f"kept the {args.keep} most recent releases")

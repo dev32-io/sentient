@@ -94,7 +94,28 @@ log_path = Path(os.environ["SENTIENT_FAKE_DOCKER_LOG"])
 try:
     state = json.loads(state_path.read_text())
 except FileNotFoundError:
-    state = {"images": {}}
+    obsolete_id = "sha256:" + "e" * 64
+    unrelated_id = "sha256:" + "f" * 64
+    state = {
+        "images": {
+            "sentient/attachment-parser:obsolete": {
+                "id": obsolete_id,
+                "labels": {"io.sentient.addon.name": "attachment-parser"},
+            },
+            obsolete_id: {
+                "id": obsolete_id,
+                "labels": {"io.sentient.addon.name": "attachment-parser"},
+            },
+            "sentient/unrelated:keep": {
+                "id": unrelated_id,
+                "labels": {"io.sentient.addon.name": "unrelated"},
+            },
+            unrelated_id: {
+                "id": unrelated_id,
+                "labels": {"io.sentient.addon.name": "unrelated"},
+            },
+        }
+    }
 
 def save():
     state_path.write_text(json.dumps(state, sort_keys=True))
@@ -139,9 +160,39 @@ def tag(source, target):
     save()
 
 def remove(ref):
-    image_record(ref)
+    record = image_record(ref)
     del state["images"][ref]
+    image_id = record["id"]
+    if not any(
+        key != image_id and image["id"] == image_id
+        for key, image in state["images"].items()
+    ):
+        state["images"].pop(image_id, None)
     save()
+
+def list_images():
+    if any(argument.startswith("reference=") for argument in argv):
+        for ref, image in state["images"].items():
+            if ref.startswith("sha256:") or not ref.startswith("sentient/attachment-parser:"):
+                continue
+            repository, tag_name = ref.rsplit(":", 1)
+            print(f"{image['id']}\t{repository}\t{tag_name}")
+        return
+    if "dangling=true" in argv:
+        seen = set()
+        for ref, image in state["images"].items():
+            image_id = image["id"]
+            if not ref.startswith("sha256:") or image_id in seen:
+                continue
+            seen.add(image_id)
+            has_tag = any(
+                key != image_id and value["id"] == image_id
+                for key, value in state["images"].items()
+            )
+            if not has_tag and image["labels"].get("io.sentient.addon.name") == "attachment-parser":
+                print(f"{image_id}\t<none>\t<none>")
+        return
+    fail()
 
 def container_inspect():
     alias = state["images"].get("sentient/attachment-parser:local")
@@ -168,6 +219,8 @@ elif argv[:2] == ["image", "tag"] and len(argv) == 4:
     tag(argv[2], argv[3])
 elif argv[:2] == ["image", "rm"] and len(argv) == 3:
     remove(argv[2])
+elif argv[:2] == ["image", "ls"]:
+    list_images()
 elif argv[:2] == ["exec", "sentient-attachment-parser"]:
     health()
 else:
@@ -365,6 +418,24 @@ echo "plist OPERATOR left=$(grep -c OPERATOR "$WORK/launchd/io.sentient.gateway.
 echo "launchctl: $(tr '\n' '|' < "$WORK/log/launchctl.log")"
 echo "release chowned: $(grep -c "root:wheel.*opt/$VERSION\$" "$WORK/log/chown.log" 2>/dev/null || true)"
 echo "secrets mode=$(stat -f %Sp "$WORK/home/.sentient/secrets")"
+if grep -Eiq 'attachment-parser cleanup (could not|skipped)' "$WORK/log/c1.out"; then
+  fatal "successful install emitted attachment-parser cleanup warning"
+fi
+python3 - "$SENTIENT_FAKE_DOCKER_STATE" <<'PY' || fatal "parser cleanup state assertion failed"
+import json
+import sys
+
+images = json.loads(open(sys.argv[1]).read())["images"]
+obsolete_id = "sha256:" + "e" * 64
+unrelated_id = "sha256:" + "f" * 64
+assert "sentient/attachment-parser:obsolete" not in images
+assert obsolete_id not in images
+active = images["sentient/attachment-parser:local"]
+assert active["id"] in images
+assert "sentient/unrelated:keep" in images
+assert unrelated_id in images
+PY
+echo "parser cleanup: obsolete=removed active=kept unrelated=kept"
 
 echo; echo "=== CASE 2: reinstall the same healthy version (idempotent no-op) ==="
 : > "$WORK/log/launchctl.log"
