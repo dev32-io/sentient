@@ -1049,20 +1049,14 @@ idf_component_register(SRCS ${SOURCES}
                         # Phase 6a: SentientWsProtocol speaks the sentient
                         # gateway WS directly via esp_websocket_client.
                         espressif__esp_websocket_client
-                        # 78__esp-ml307: sentient_cube.cc calls EspSsl::SetCacert
-                        # for dev-cert pinning. The component is already in the
-                        # link graph (via wifi_board → esp_network → esp_ssl),
-                        # but we need an explicit PRIV_REQUIRES so CMake makes
-                        # its PRIV_INCLUDE_DIRS ("." = component root) visible
-                        # to main via target_include_directories below.
+                        # 78__esp-ml307 supplies network abstractions used by
+                        # board and assets code; expose its src/ headers below.
                         78__esp-ml307
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 
-# Expose the esp-ml307 src/ subtree to main so sentient_cube.cc can
-# #include "esp/esp_ssl.h". esp_ssl.h lives at src/esp/esp_ssl.h inside
-# the component; PRIV_INCLUDE_DIRS "." in that component's CMakeLists
-# is private-only and not propagated to dependents.
+# Expose esp-ml307 src/ headers used by board and assets code; the
+# component's private include directory is not propagated to main.
 idf_component_get_property(ML307_DIR 78__esp-ml307 COMPONENT_DIR)
 target_include_directories(${COMPONENT_LIB} PRIVATE "${ML307_DIR}/src")
 

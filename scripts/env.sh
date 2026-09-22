@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Project environment setup — source this before running bun commands.
-# Used by quality-gate.sh, lefthook hooks, CI, and Claude Code.
+# Used by quality-gate.sh, lefthook hooks, CI, and coding agents.
 
 # esp32-devtool: unified ESP32 dev CLI
 _DEVTOOL_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 if [ -n "$_DEVTOOL_REPO_ROOT" ]; then
   export PATH="$_DEVTOOL_REPO_ROOT/esp32/devtool/bin:$PATH"
+  export ESP32_DEVTOOL_BOARDS_DIR="${ESP32_DEVTOOL_BOARDS_DIR:-$_DEVTOOL_REPO_ROOT/esp32/cube/devtool/boards}"
 fi
 unset _DEVTOOL_REPO_ROOT
 

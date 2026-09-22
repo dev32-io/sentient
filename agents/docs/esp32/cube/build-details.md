@@ -1,31 +1,9 @@
-# ESP32 Cube Build — Details
+# ESP32 Cube build — details
 
-## Source and authority
+[`esp32/cube/firmware/`](../../../../esp32/cube/firmware/) is owned application firmware. [`esp32/devtool/`](../../../../esp32/devtool/) is an external submodule pinned by the repository gitlink; its companion is consumed through `firmware/main/idf_component.yml`. Project board manifest and `bake-creds` extension are under [`esp32/cube/devtool/boards/cube.yaml`](../../../../esp32/cube/devtool/boards/cube.yaml). Source [`scripts/env.sh`](../../../../scripts/env.sh) before CLI work; it exports `ESP32_DEVTOOL_BOARDS_DIR`. CLI global flags precede subcommands (e.g. `esp32-devtool --json info`). See [cube AGENTS](../../../../esp32/cube/AGENTS.md), [cube README](../../../../esp32/cube/docs/README.md), and [build profiles](../../../../esp32/cube/docs/build-profiles.md) for current safety and workflow.
 
-The firmware is a flat, owned tree at `esp32/cube/firmware/`. There is no
-upstream submodule, overlay, or numbered-patch chain. Edit the tree in place and
-keep unrelated firmware changes out of the build.
+Build from `esp32/cube/firmware/` with ESP-IDF >=5.5.2. For build-only profile selection, set `SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.debug'` or `SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.prod'` and use `idf.py -D SDKCONFIG="$PWD/build/sdkconfig.debug" reconfigure build` (substitute `prod` for both settings). Profile configs are separate but ELF is shared in `build/`: audit prod strip only immediately after prod build (`esp32-devtool audit-prod-strip`). Build and strip checks are not hardware or runtime validation. **Never flash placeholders; prod flash remains blocked by plaintext `ws://`.**
 
-Use these references narrowly:
+Provision debug only via explicit `esp32-devtool bake-creds --input /absolute/path/to/private.json`, then reconfigure/rebuild. Flash never bakes. No token mint/scrape, prod provisioning, or removed `.claude` build rules. Before any approved hardware action see [flash discipline](flash-discipline-details.md); debug HTTP is unauthenticated on LAN and requires explicit exposure approval. Runtime TLS hostname verification and token-preview logging also need resolution.
 
-- [`esp32/cube/docs/README.md`](../../../../esp32/cube/docs/README.md) for the
-  build commands and firmware layout only; its older command examples are not authority over the current devtool registries.
-- [`esp32/cube/docs/build-profiles.md`](../../../../esp32/cube/docs/build-profiles.md)
-  for debug/prod profile and companion stripping.
-- [`esp32/devtool/README.md`](../../../../esp32/devtool/README.md) plus current source/manifest for the host command surface.
-
-For verb and screenshot behavior, `agents/docs/esp32/cube/agent-console-details.md` and current firmware/devtool source take precedence: there is no `ui.snapshot` USB verb.
-
-Build from `esp32/cube/firmware` with the configured ESP-IDF toolchain. Use
-`esp32-devtool flash --profile debug|prod` for managed flashing; do not revive
-`monitor.sh`, `flash.sh`, patch application, or submodule bump workflows.
-
-## Registries and linking
-
-Devtool verbs are in `firmware/main/devtool_verbs/`; companion HTTP handlers and
-registries are in `esp32/devtool/firmware/`. Constructor-registered objects need
-`WHOLE_ARCHIVE` in their component linkage. If a verb disappears at runtime,
-inspect registration and link retention before changing the handler.
-
-The debug companion (USB verbs, HTTP, and `log_relay`) is removed from prod via
-the prod profile. Run the prod-strip audit after companion changes.
+Constructor-registered cube verbs live under `firmware/main/devtool_verbs/`; companion HTTP handlers and registries live under external `esp32/devtool/firmware/`. Keep `WHOLE_ARCHIVE` link retention. Prod disables companion implementation via stub; confirm strip via ELF audit instead of config alone. HTTP screenshot is not `ui.snapshot` USB verb; consult [agent console details](agent-console-details.md) and current manifest/source for supported verbs. Preserve PMIC initialization/shutdown guard, transient touch handling, and bounded audio/diagnostic buffers; see [cube AGENTS](../../../../esp32/cube/AGENTS.md).

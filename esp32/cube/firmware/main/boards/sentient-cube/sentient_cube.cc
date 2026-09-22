@@ -60,18 +60,6 @@
 #include <string>
 
 #include "sentient_creds.h"
-#include "esp/esp_ssl.h"
-
-#if SENTIENT_DEV_TLS_PIN
-// Symbols exposed by EMBED_TXTFILES on sentient_dev_gateway.crt
-// (esp32/cube/firmware/main/CMakeLists.txt). EMBED_TXTFILES null-terminates
-// the blob, so (_end - _start) includes the terminator byte; subtract 1 to
-// give esp_tls the cert length without the null. (esp_tls works either way,
-// but the bytecount-without-null matches the docs and stays compatible if
-// the upstream behavior changes.)
-extern const char _binary_sentient_dev_gateway_crt_start[] asm("_binary_sentient_dev_gateway_crt_start");
-extern const char _binary_sentient_dev_gateway_crt_end[]   asm("_binary_sentient_dev_gateway_crt_end");
-#endif
 
 #include "sentient_ui_controller.h"
 #include "test_screen.h"
@@ -454,13 +442,11 @@ int cube_audio_record_provider(int16_t* dst, size_t samples, int sample_rate) {
 }
 
 int cube_audio_inject_provider(const int16_t* src, size_t samples,
-                                int /*sample_rate*/) {
-    // sample_rate is ignored at push time. The pop side
-    // (agent_audio_inject_pop_samples) gates on rate==16000 — anything else
-    // degrades to "no injection at this rate" and the real codec path runs.
-    // Returning 0 unconditionally means "provider accepted the dispatch"; the
-    // HTTP handler's response body reports the sample count from the request.
-    audio_inject_ring_push(src, samples);
+                               int sample_rate, size_t* accepted) {
+    if (accepted == nullptr) return -1;
+    *accepted = 0;
+    if (sample_rate != 16000) return -1;
+    *accepted = audio_inject_ring_push(src, samples);
     return 0;
 }
 
@@ -1111,21 +1097,6 @@ public:
     SentientCubeBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         ESP_LOGI(TAG, "ctor begin device_id=" SENTIENT_DEVICE_ID);
 
-#if SENTIENT_DEV_TLS_PIN
-        {
-            // mbedtls_x509_crt_parse requires PEM length INCLUDING the null
-            // terminator (mbedtls docs). EMBED_TXTFILES exposes the null at
-            // position end-1, so (end - start) is the full count including
-            // null — pass it as-is.
-            const size_t cert_len =
-                _binary_sentient_dev_gateway_crt_end - _binary_sentient_dev_gateway_crt_start;
-            if (cert_len > 0) {
-                ESP_LOGI(TAG, "Pinning dev gateway TLS cert (%u bytes, incl null)", (unsigned)cert_len);
-                EspSsl::SetCacert(_binary_sentient_dev_gateway_crt_start, cert_len);
-            }
-        }
-#endif
-
         // Hardware bring-up (verbatim from waveshare init order).
         InitializePowerSaveTimer();
         InitializePowerSaveMonitor();
@@ -1154,7 +1125,7 @@ public:
         esp32_devtool_set_snapshot_provider(cube_snapshot_provider);
         esp32_devtool_set_touch_provider(cube_touch_inject);
         esp32_devtool_set_audio_record_provider(cube_audio_record_provider);
-        esp32_devtool_set_audio_inject_provider(cube_audio_inject_provider);
+        esp32_devtool_set_audio_inject_counted_provider(cube_audio_inject_provider);
         {
             esp32_devtool_companion_config_t devtool_cfg = {};
             devtool_cfg.enable_usb_cdc      = true;

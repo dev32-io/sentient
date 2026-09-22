@@ -19,7 +19,7 @@ CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE=n
 
 # INFO log level (warnings + errors visible; debug noise gone).
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
-CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
 
 # Release build — size optimize, assertions off (faster, smaller).
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y

@@ -1,176 +1,147 @@
 #!/usr/bin/env bash
-# bake-creds.sh — reads esp32/cube/.e2e-testing key=value block,
-# substitutes into an inlined sentient_creds.h template, writes the baked
-# header to firmware/main/sentient_creds.h (gitignored).
+# Offline, explicit provisioning only. Keep input values out of process arguments.
 set -euo pipefail
+CUBE_DIR="$(cd "$(dirname "$0")/.." && pwd)" python3 - "$@" <<'PY'
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+import time
 
-PROFILE="debug"
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --profile)
-      if [ "$#" -lt 2 ]; then
-        echo "[bake-creds] --profile requires a value (debug|prod)" >&2
-        exit 1
-      fi
-      PROFILE="$2"
-      shift 2
-      ;;
-    --profile=*)
-      PROFILE="${1#*=}"
-      shift
-      ;;
-    *)
-      echo "[bake-creds] unrecognized arg: $1" >&2
-      exit 1
-      ;;
-  esac
-done
-if [[ "$PROFILE" != "debug" && "$PROFILE" != "prod" ]]; then
-  echo "[bake-creds] invalid --profile '$PROFILE' (must be debug|prod)" >&2
-  exit 1
-fi
 
-CUBE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-E2E="$CUBE_DIR/.e2e-testing"
-OUT="$CUBE_DIR/firmware/main/sentient_creds.h"
+def fail(reason):
+    print(f"[bake-creds] {reason}", file=sys.stderr)
+    sys.exit(1)
 
-if [ ! -f "$E2E" ]; then
-  echo "ERROR: $E2E missing. Author it first per Task 0.4." >&2
-  exit 1
-fi
 
-# Extract key=value lines. Tolerant of comment lines + prose around them —
-# only lines starting with KEY= (uppercase + underscore) are treated as data.
-# Works with bash 3.2 (macOS default) — no associative arrays.
-get_val() {
-  local key="$1"
-  grep -E "^${key}=" "$E2E" | head -1 | cut -d= -f2-
-}
+# Never echo unknown arguments: caller may accidentally pass a secret.
+args = sys.argv[1:]
+if len(args) not in (2, 4) or args[:1] != ['--input']:
+    fail('usage: bake-creds.sh --input PRIVATE_JSON [--profile debug]')
+if len(args) == 4 and args[2:] != ['--profile', 'debug']:
+    fail('only debug profile supported (prod firmware selects plaintext ws://)')
 
-REQUIRED="WIFI_SSID WIFI_PSK GATEWAY_HOST GATEWAY_WS_PORT GATEWAY_WS_PATH GATEWAY_LOG_PORT PASETO_TOKEN DEVICE_ID"
-for k in $REQUIRED; do
-  v="$(get_val "$k")"
-  if [ -z "$v" ]; then
-    echo "ERROR: $E2E is missing required key: $k" >&2
-    exit 1
-  fi
-done
+try:
+    source = Path(args[1])
+    info = source.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        fail('input must be an owned, private regular file (mode 0600)')
 
-# Debug profile: mint a fresh PASETO token against the gateway's current
-# ~/.sentient/gateway/auth-secret.key + users.json. The PASETO_TOKEN value in
-# .e2e-testing is treated as a fallback only — gateway secrets rotate during
-# local dev and a stale token rejects with `signature-invalid`. Prod path is
-# unchanged.
-PASETO_TOKEN_OVERRIDE=""
-if [ "$PROFILE" = "debug" ]; then
-  REPO_ROOT="$(cd "$CUBE_DIR/../.." && pwd)"
-  MINT_SCRIPT="$REPO_ROOT/gateway/scripts/mint-cube-token.ts"
-  if [ -f "$MINT_SCRIPT" ]; then
-    echo "[bake-creds] debug: minting fresh PASETO token via $MINT_SCRIPT" >&2
-    if PASETO_TOKEN_OVERRIDE="$(cd "$REPO_ROOT" && bun run "$MINT_SCRIPT" 2>/dev/null)"; then
-      :
-    else
-      echo "[bake-creds] WARNING: mint failed; falling back to .e2e-testing PASETO_TOKEN" >&2
-      PASETO_TOKEN_OVERRIDE=""
-    fi
-  fi
-fi
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate key')
+            result[key] = value
+        return result
 
-# Debug profile: override GATEWAY_HOST with the Mac's current LAN IP. The
-# .e2e-testing value is treated as a fallback only — the host IP is not
-# static on a typical home network. Prod profile keeps the .e2e-testing
-# value untouched.
-GATEWAY_HOST_OVERRIDE=""
-if [ "$PROFILE" = "debug" ]; then
-  IFACE="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}')"
-  if [ -n "$IFACE" ]; then
-    GATEWAY_HOST_OVERRIDE="$(ipconfig getifaddr "$IFACE" 2>/dev/null || true)"
-  fi
-  if [ -n "$GATEWAY_HOST_OVERRIDE" ]; then
-    echo "[bake-creds] debug: GATEWAY_HOST resolved to ${GATEWAY_HOST_OVERRIDE} via ${IFACE}"
-  else
-    echo "[bake-creds] WARNING: could not resolve mac ip; falling back to .e2e-testing GATEWAY_HOST=$(get_val GATEWAY_HOST)"
-  fi
-fi
+    data = json.loads(source.read_text(encoding='utf-8'), object_pairs_hook=unique)
+    keys = {'WIFI_SSID', 'WIFI_PSK', 'PASETO_TOKEN', 'DEVICE_ID',
+            'GATEWAY_HOST', 'GATEWAY_WS_PORT', 'GATEWAY_WS_PATH', 'TRUSTED_CERT_PATH'}
+    if not isinstance(data, dict) or set(data) != keys:
+        fail('input fields missing or unknown')
+    if any(not isinstance(data[k], str) or not data[k] for k in keys - {'GATEWAY_WS_PORT'}):
+        fail('input fields must be nonempty strings')
+    ssid, psk = data['WIFI_SSID'], data['WIFI_PSK']
+    if not 1 <= len(ssid.encode()) <= 32 or '\x00' in ssid:
+        fail('invalid WiFi SSID')
+    if not (8 <= len(psk.encode()) <= 63 or re.fullmatch(r'[0-9a-fA-F]{64}', psk)) or '\x00' in psk:
+        fail('invalid WiFi PSK')
+    if not re.fullmatch(r'v4\.local\.[A-Za-z0-9_-]{40,}(?:\.[A-Za-z0-9_-]+)?', data['PASETO_TOKEN']):
+        fail('invalid PASETO token format')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', data['DEVICE_ID']):
+        fail('invalid device ID')
+    host = data['GATEWAY_HOST']
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if not isinstance(ip, ipaddress.IPv4Address) or not any(
+            ip in ipaddress.ip_network(net) for net in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
+        ):
+            fail('host must be a LAN IPv4 address or .local hostname')
+    elif not re.fullmatch(r'(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+local', host, re.I):
+        fail('host must be a LAN IPv4 address or .local hostname')
+    port = data['GATEWAY_WS_PORT']
+    if type(port) is not int or not 1 <= port <= 65535:
+        fail('invalid WSS port')
+    path = data['GATEWAY_WS_PATH']
+    if not re.fullmatch(r'/[A-Za-z0-9/_-]*', path) or path.startswith('//'):
+        fail('invalid WebSocket path')
 
-# Effective value resolver: returns the override for GATEWAY_HOST when set,
-# otherwise the .e2e-testing value.
-effective_val() {
-  local key="$1"
-  if [ "$key" = "GATEWAY_HOST" ] && [ -n "$GATEWAY_HOST_OVERRIDE" ]; then
-    printf '%s' "$GATEWAY_HOST_OVERRIDE"
-  elif [ "$key" = "PASETO_TOKEN" ] && [ -n "$PASETO_TOKEN_OVERRIDE" ]; then
-    printf '%s' "$PASETO_TOKEN_OVERRIDE"
-  else
-    get_val "$key"
-  fi
-}
+    cert = Path(data['TRUSTED_CERT_PATH'])
+    if not cert.is_absolute() or not cert.is_file():
+        fail('trusted certificate must be an existing absolute file path')
+    # Check certificate validity and SAN coverage offline. This is the supplied
+    # outward TLS leaf, not a certificate scraped from a live endpoint.
+    def openssl(*flags):
+        return subprocess.run(['openssl', 'x509', '-in', str(cert), '-noout', *flags],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
-# Emit the template (inlined for v2 — no separate .h.in file). Atomic mv at end.
-TMP=$(mktemp)
-cat >"$TMP" <<'TEMPLATE_EOF'
-// AUTO-GENERATED by scripts/bake-creds.sh. Do NOT edit by hand.
-// Source values come from esp32/cube/.e2e-testing (gitignored).
-#pragma once
+    details = ssl._ssl._test_decode_cert(str(cert))
+    # OpenSSL checks wildcard DNS SANs; reject its CN fallback when no DNS SAN exists.
+    # IP SANs must match literally; -checkip never grants CN-only coverage.
+    has_san = any(kind == ('IP Address' if ip else 'DNS') and (not ip or value == host)
+                  for kind, value in details.get('subjectAltName', ()))
+    if (ssl.cert_time_to_seconds(details['notBefore']) > time.time() or
+            not has_san or not openssl('-checkend', '0') or
+            not openssl('-checkip' if ip else '-checkhost', host)):
+        fail('trusted certificate not currently valid or does not cover host in SAN')
+    pem = subprocess.run(['openssl', 'x509', '-in', str(cert), '-outform', 'PEM'],
+                         capture_output=True, check=True).stdout
 
-#define SENTIENT_WIFI_SSID        "@WIFI_SSID@"
-#define SENTIENT_WIFI_PSK         "@WIFI_PSK@"
-#define SENTIENT_GATEWAY_HOST     "@GATEWAY_HOST@"
-#define SENTIENT_GATEWAY_WS_PORT  @GATEWAY_WS_PORT@
-#define SENTIENT_GATEWAY_WS_PATH  "@GATEWAY_WS_PATH@"
-#define SENTIENT_GATEWAY_LOG_PORT @GATEWAY_LOG_PORT@
-#define SENTIENT_PASETO_TOKEN     "@PASETO_TOKEN@"
-#define SENTIENT_DEVICE_ID        "@DEVICE_ID@"
-// Set to 1 when bake-creds was run with --profile debug AND the gateway TLS
-// cert was successfully embedded as sentient_dev_gateway.crt. Used by the
-// board ctor to pin the dev cert; prod path falls back to the ESP-IDF
-// system CA bundle (esp_crt_bundle_attach).
-#define SENTIENT_DEV_TLS_PIN      @SENTIENT_DEV_TLS_PIN@
-TEMPLATE_EOF
+    def c_string(value):
+        # Fixed-width octal escapes cannot consume following hex/decimal digits.
+        return '"' + ''.join(chr(b) if 32 <= b < 127 and b not in (34, 92)
+                             else '\\' + chr(b) if b in (34, 92)
+                             else f'\\{b:03o}' for b in value.encode('utf-8')) + '"'
 
-for k in $REQUIRED; do
-  v="$(effective_val "$k")"
-  # Escape backslash + ampersand + pipe for safe sed s|…|…|g.
-  v_esc=$(printf '%s' "$v" | sed -e 's/[\\&|]/\\&/g')
-  sed -i.bak "s|@${k}@|${v_esc}|g" "$TMP"
-  rm -f "$TMP.bak"
-done
-
-CERT_OUT="$CUBE_DIR/firmware/main/sentient_dev_gateway.crt"
-
-if [ "$PROFILE" = "debug" ]; then
-  HOST="$(effective_val GATEWAY_HOST)"
-  PORT="$(get_val GATEWAY_WS_PORT)"
-  echo "[bake-creds] extracting TLS cert from ${HOST}:${PORT}..."
-  CERT_TMP="$CERT_OUT.tmp"
-  if ! openssl s_client -servername "$HOST" -connect "${HOST}:${PORT}" \
-       </dev/null 2>/dev/null \
-       | openssl x509 -outform PEM > "$CERT_TMP"; then
-    echo "[bake-creds] ERROR: openssl pipeline failed reaching ${HOST}:${PORT}" >&2
-    rm -f "$CERT_TMP"
-    exit 1
-  fi
-  if [ ! -s "$CERT_TMP" ]; then
-    echo "[bake-creds] ERROR: extracted cert is empty (gateway TLS unreachable?)" >&2
-    rm -f "$CERT_TMP"
-    exit 1
-  fi
-  mv "$CERT_TMP" "$CERT_OUT"
-  chmod 0600 "$CERT_OUT"
-  echo "[bake-creds] baked $CERT_OUT"
-  PIN_VALUE=1
-else
-  echo "[bake-creds] PROD profile — no TLS cert embed; removing any stale dev cert."
-  rm -f "$CERT_OUT"
-  PIN_VALUE=0
-fi
-
-# Substitute the SENTIENT_DEV_TLS_PIN placeholder. Must happen AFTER the
-# REQUIRED loop's sed pass (so the @ marker survives that block).
-sed -i.bak "s|@SENTIENT_DEV_TLS_PIN@|${PIN_VALUE}|g" "$TMP"
-rm -f "$TMP.bak"
-
-mkdir -p "$(dirname "$OUT")"
-mv "$TMP" "$OUT"
-chmod 0600 "$OUT"
-echo "Baked $OUT"
+    header = ('// AUTO-GENERATED by scripts/bake-creds.sh. Do NOT edit.\n#pragma once\n\n' +
+              ''.join(f'#define SENTIENT_{key:<21} {c_string(data[key])}\n' for key in
+                      ('WIFI_SSID', 'WIFI_PSK', 'GATEWAY_HOST', 'GATEWAY_WS_PATH', 'PASETO_TOKEN', 'DEVICE_ID')) +
+              f'#define SENTIENT_GATEWAY_WS_PORT  {port}\n#define SENTIENT_DEV_TLS_PIN      1\n')
+    out_dir = Path(os.environ['CUBE_DIR']) / 'firmware/main'
+    if not out_dir.is_dir():
+        fail('firmware/main missing')
+    # Stage both private outputs; publish header last so successful provisioning
+    # replaces any compile-only placeholder and changes its build dependency.
+    staged = []
+    backup = None
+    try:
+        for name, content in (('sentient_dev_gateway.crt', pem),
+                              ('sentient_creds.h', header.encode())):
+            fd, temp = tempfile.mkstemp(prefix='.bake-', dir=out_dir)
+            staged.append((temp, out_dir / name))
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(content)
+        cert_destination = staged[0][1]
+        if cert_destination.exists():
+            fd, backup = tempfile.mkstemp(prefix='.bake-', dir=out_dir)
+            os.close(fd)
+            shutil.copyfile(cert_destination, backup)
+        os.replace(*staged[0])
+        try:
+            os.replace(*staged[1])
+        except OSError:
+            if backup is not None:
+                os.replace(backup, cert_destination)
+            else:
+                cert_destination.unlink()
+            raise
+    finally:
+        for temp, _ in staged:
+            if os.path.exists(temp):
+                os.unlink(temp)
+        if backup is not None and os.path.exists(backup):
+            os.unlink(backup)
+except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+    fail('provisioning failed; check inputs and generated files before building')
+PY
