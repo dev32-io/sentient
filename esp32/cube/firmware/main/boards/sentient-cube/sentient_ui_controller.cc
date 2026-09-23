@@ -78,7 +78,7 @@ static UiMapping map_device_state(DeviceState ds) {
         case kDeviceStateListening:
             return {SENTIENT_UI_LISTENING, ""};
         case kDeviceStateSpeaking:
-            return {SENTIENT_UI_DISABLED, ""};
+            return {SENTIENT_UI_READY, ""};
         case kDeviceStateAudioTesting:
             return {SENTIENT_UI_DISABLED, "Audio test"};
         case kDeviceStateWifiConfiguring:
@@ -293,14 +293,12 @@ void sentient_cube_set_state(sentient_ui_state_t state) {
 }
 
 void sentient_cube_set_status_hint(const char* text) {
-    ESP_LOGD(TAG, "set_status_hint device_id=" SENTIENT_DEVICE_ID
-             " text='%.80s'", text ? text : "");
+    ESP_LOGD(TAG, "set_status_hint device_id=" SENTIENT_DEVICE_ID);
     toggle_button_screen_set_status_hint(text ? text : "");
 }
 
 void sentient_cube_set_transcript(const char* text) {
-    ESP_LOGD(TAG, "set_transcript device_id=" SENTIENT_DEVICE_ID
-             " text='%.80s'", text ? text : "");
+    ESP_LOGD(TAG, "set_transcript device_id=" SENTIENT_DEVICE_ID);
     toggle_button_screen_set_transcript(text ? text : "");
 }
 

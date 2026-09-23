@@ -35,21 +35,13 @@ constexpr int kPreNetworkSettleMs = 800;
 // (Phase 6a pivot — locked in Task 1).
 constexpr int kServerFrameDurationMs = 20;
 
-// Build the sentient gateway WS URI from the baked creds. Uses the dev TLS
-// pin when available, falling back to plain ws://.
+// Build the sentient gateway WS URI from the baked creds. TLS is required.
 std::string build_gateway_uri() {
     char uri[160];
-#if SENTIENT_DEV_TLS_PIN
     std::snprintf(uri, sizeof(uri), "wss://%s:%d%s",
                   SENTIENT_GATEWAY_HOST,
                   SENTIENT_GATEWAY_WS_PORT,
                   SENTIENT_GATEWAY_WS_PATH);
-#else
-    std::snprintf(uri, sizeof(uri), "ws://%s:%d%s",
-                  SENTIENT_GATEWAY_HOST,
-                  SENTIENT_GATEWAY_WS_PORT,
-                  SENTIENT_GATEWAY_WS_PATH);
-#endif
     return std::string(uri);
 }
 
@@ -176,6 +168,9 @@ void Application::WireAudioServiceCallbacks() {
             sentient_ws_->notify_uplink_available();
         }
     };
+    callbacks.on_playback_drained = [this]() {
+        Schedule([this]() { OnPlaybackDrained(); });
+    };
     audio_service_.SetCallbacks(callbacks);
 }
 
@@ -220,12 +215,14 @@ void Application::Run() {
             HandleToggleChatEvent();
         }
 
-        if (bits & MAIN_EVENT_START_LISTENING) {
-            HandleStartListeningEvent();
-        }
-
+        // Event bits coalesce edges; release previous capture, then honor
+        // latest physical state (including release followed by another press).
         if (bits & MAIN_EVENT_STOP_LISTENING) {
             HandleStopListeningEvent();
+        }
+        if ((bits & (MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING)) &&
+            listening_button_held_.load()) {
+            HandleStartListeningEvent();
         }
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
@@ -287,9 +284,13 @@ void Application::HandleNetworkDisconnectedEvent() {
     // Sentient SDK owns its own reconnect ladder. Just bring the UI back to
     // a neutral state; the SDK will report SdkStatus::Reconnecting and
     // eventually Ready again.
-    auto state = GetDeviceState();
-    if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
-        ESP_LOGW(TAG, "net.dropped state=%d — SDK reconnect supervisor owns retry", state);
+    audio_service_.EnableVoiceProcessing(false);
+    audio_service_.ClearSendQueue();
+    audio_service_.ResetDecoder();
+    playback_active_ = false;
+    playback_waiting_for_drain_ = false;
+    processing_ = false;
+    if (GetDeviceState() != kDeviceStateFatalError) {
         SetDeviceState(kDeviceStateConnecting);
     }
 
@@ -309,12 +310,10 @@ void Application::InitializeSentientWs() {
     SentientWsProtocolConfig cfg;
     cfg.gateway_url = build_gateway_uri();
     cfg.token = SENTIENT_PASETO_TOKEN;
+    cfg.device_id = SENTIENT_DEVICE_ID;
 #if SENTIENT_DEV_TLS_PIN
     extern const char dev_cert_pem_start[] asm("_binary_sentient_dev_gateway_crt_start");
     cfg.cert_pem = dev_cert_pem_start;
-    // Dev cert SAN is localhost+127.0.0.1; cube dials the Mac's LAN IP, so
-    // SAN match will fail. Cert is still pinned — just skip the name check.
-    cfg.skip_tls_cn_check = true;
 #endif
     WireSentientWsCallbacks(cfg);
 
@@ -340,16 +339,22 @@ void Application::WireSentientWsCallbacks(SentientWsProtocolConfig& cfg) {
         Schedule([this, s]() { OnSdkCognitionStatus(s); });
     };
     cfg.on_playback_begin = [this](int sample_rate) {
-        Schedule([this, sample_rate]() { OnSdkPlaybackBegin(sample_rate); });
+        auto epoch = ++playback_epoch_;
+        Schedule([this, sample_rate, epoch]() {
+            if (epoch == playback_epoch_ && epoch != suppressed_playback_epoch_) OnSdkPlaybackBegin(sample_rate);
+        });
     };
     cfg.on_playback_end = [this](bool aborted) {
-        Schedule([this, aborted]() { OnSdkPlaybackEnd(aborted); });
+        auto epoch = playback_epoch_.load();
+        Schedule([this, aborted, epoch]() {
+            if (epoch == playback_epoch_ && epoch != suppressed_playback_epoch_) OnSdkPlaybackEnd(aborted);
+        });
     };
     cfg.on_playback_frame = [this](const uint8_t* data, size_t len, int sample_rate) {
         OnSdkPlaybackFrame(data, len, sample_rate);
     };
-    cfg.on_pop_uplink_frame = [this](uint8_t** out_data, size_t* out_len) {
-        return OnSdkPopUplinkFrame(out_data, out_len);
+    cfg.on_pop_uplink_frame = [this](std::vector<uint8_t>& payload) {
+        return OnSdkPopUplinkFrame(payload);
     };
     cfg.on_transcript = [this](const std::string& text) {
         // Copy out of std::string before scheduling — the SDK doesn't retain
@@ -361,121 +366,136 @@ void Application::WireSentientWsCallbacks(SentientWsProtocolConfig& cfg) {
     };
 }
 
-namespace {
-const char* sdk_status_label(SdkStatus s) {
-    switch (s) {
-        case SdkStatus::Disconnected:   return "disconnected";
-        case SdkStatus::Connecting:     return "connecting";
-        case SdkStatus::Authenticating: return "authenticating";
-        case SdkStatus::Ready:          return "ready";
-        case SdkStatus::Reconnecting:   return "reconnecting";
-        case SdkStatus::Error:          return "error";
-    }
-    return "?";
-}
-
-const char* cognition_label(CognitionState s) {
-    switch (s) {
-        case CognitionState::Idle:     return "idle";
-        case CognitionState::Thinking: return "thinking";
-        case CognitionState::Acting:   return "acting";
-    }
-    return "?";
-}
-}  // namespace
-
 void Application::OnSdkStatusChange(SdkStatus s) {
-    char hint[64];
-    snprintf(hint, sizeof(hint), "sdk: %s", sdk_status_label(s));
-    sentient_cube_set_status_hint(hint);
     switch (s) {
+        case SdkStatus::Disconnected:
         case SdkStatus::Connecting:
         case SdkStatus::Authenticating:
         case SdkStatus::Reconnecting:
-            SetDeviceState(kDeviceStateConnecting);
+        case SdkStatus::Error:
+            audio_service_.EnableVoiceProcessing(false);
+            audio_service_.ClearSendQueue();
+            audio_service_.ResetDecoder();
+            playback_active_ = false;
+            playback_waiting_for_drain_ = false;
+            processing_ = false;
+            sentient_cube_set_status_hint(s == SdkStatus::Error ? "Not ready" : "Connecting");
+            SetDeviceState(s == SdkStatus::Error ? kDeviceStateFatalError : kDeviceStateConnecting);
             break;
         case SdkStatus::Ready:
             if (GetDeviceState() == kDeviceStateConnecting) {
                 SetDeviceState(kDeviceStateIdle);
             }
+            sentient_cube_set_status_hint("Ready");
             DismissAlert();
             break;
-        case SdkStatus::Error:
-            SetDeviceState(kDeviceStateFatalError);
-            break;
-        case SdkStatus::Disconnected:
-            break;  // transient — next callback drives UI
     }
 }
 
 void Application::OnSdkCognitionStatus(CognitionState s) {
-    char hint[64];
-    snprintf(hint, sizeof(hint), "cognition: %s", cognition_label(s));
-    sentient_cube_set_status_hint(hint);
-    auto state = GetDeviceState();
-    if (s == CognitionState::Idle &&
-        state == kDeviceStateListening && !playback_active_) {
-        SetDeviceState(kDeviceStateIdle);
-    } else if (s == CognitionState::Acting &&
-               playback_active_ && state != kDeviceStateSpeaking) {
-        SetDeviceState(kDeviceStateSpeaking);
+    if (s == CognitionState::Thinking || s == CognitionState::Acting) {
+        if (GetDeviceState() == kDeviceStateIdle) {
+            processing_ = true;
+            sentient_cube_set_status_hint("Processing");
+        }
+    } else if (!playback_active_ && !playback_waiting_for_drain_ &&
+               GetDeviceState() == kDeviceStateIdle) {
+        processing_ = false;
+        sentient_cube_set_status_hint("Ready");
     }
-    // Thinking is transient — keep current state until playback frames flow.
 }
 
 void Application::OnSdkPlaybackBegin(int sample_rate) {
     ESP_LOGI(TAG, "playback.begin sample_rate=%d", sample_rate);
-    sentient_cube_set_status_hint("playback: begin");
+    if (!IsAudioChannelOpened()) {
+        return;
+    }
     playback_active_ = true;
-    audio_service_.ResetDecoder();
-    SetDeviceState(kDeviceStateSpeaking);
+    playback_waiting_for_drain_ = false;
+    if (GetDeviceState() != kDeviceStateListening) {
+        processing_ = false;
+        sentient_cube_set_status_hint("Speaking");
+        SetDeviceState(kDeviceStateSpeaking);
+    }
 }
 
 void Application::OnSdkPlaybackEnd(bool aborted) {
     ESP_LOGI(TAG, "playback.end aborted=%d", aborted ? 1 : 0);
-    sentient_cube_set_status_hint(aborted ? "playback: aborted" : "playback: end");
     playback_active_ = false;
     if (aborted) {
+        playback_waiting_for_drain_ = false;
         audio_service_.ResetDecoder();
+        if (GetDeviceState() == kDeviceStateSpeaking) {
+            SetDeviceState(kDeviceStateIdle);
+            sentient_cube_set_status_hint("Ready");
+        }
+    } else {
+        playback_waiting_for_drain_ = true;
+        OnPlaybackDrained();
     }
+}
+
+void Application::OnPlaybackDrained() {
+    if (!playback_waiting_for_drain_ || !audio_service_.IsPlaybackDrained()) {
+        return;
+    }
+    playback_waiting_for_drain_ = false;
     if (GetDeviceState() == kDeviceStateSpeaking) {
         SetDeviceState(kDeviceStateIdle);
+        sentient_cube_set_status_hint("Ready");
     }
 }
 
 void Application::OnSdkPlaybackFrame(const uint8_t* data, size_t len, int sample_rate) {
-    if (data == nullptr || len == 0) {
-        return;
-    }
+    auto epoch = playback_epoch_.load();
+    if (!IsAudioChannelOpened() || data == nullptr || len == 0 ||
+        epoch == suppressed_playback_epoch_) return;
+    // Snapshot before copying the payload; reset while waiting invalidates it.
+    auto generation = audio_service_.DecodeGeneration();
+    // Abort can run between initial epoch check and generation snapshot.
+    // After this check, a later reset invalidates generation at enqueue.
+    if (epoch != playback_epoch_ || epoch == suppressed_playback_epoch_) return;
     auto packet = std::make_unique<AudioStreamPacket>();
     packet->sample_rate = sample_rate;
     packet->frame_duration = kServerFrameDurationMs;
     packet->payload.assign(data, data + len);
-    audio_service_.PushPacketToDecodeQueue(std::move(packet));
+    auto result = audio_service_.PushPacketToDecodeQueue(std::move(packet), generation, true);
+    if (result == DecodeQueueResult::Queued) return;
+    // Reset cancelled this epoch intentionally. Drop remaining frames without
+    // reporting a failure or interrupting any subsequent turn.
+    suppressed_playback_epoch_ = epoch;
+    if (result == DecodeQueueResult::Stale) return;
+    // Mark before returning to SDK dispatch: subsequent frames must not
+    // refill the queue while the main task handles this failure.
+    ESP_LOGW(TAG, "playback.queue_failed: reason=%d", static_cast<int>(result));
+    Schedule([this, epoch, generation]() { OnPlaybackQueueFailure(epoch, generation); });
 }
 
-bool Application::OnSdkPopUplinkFrame(uint8_t** out_data, size_t* out_len) {
-    if (out_data == nullptr || out_len == nullptr) {
+void Application::OnPlaybackQueueFailure(uint32_t epoch, uint32_t generation) {
+    if (epoch != playback_epoch_ || epoch != suppressed_playback_epoch_ ||
+        generation != audio_service_.DecodeGeneration()) return;
+    // Abort local playback, not wire turn: interrupt could cancel a newer turn.
+    audio_service_.ResetDecoder();
+    playback_active_ = false;
+    playback_waiting_for_drain_ = false;
+    processing_ = false;
+    if (GetDeviceState() == kDeviceStateSpeaking) SetDeviceState(kDeviceStateIdle);
+    sentient_cube_set_status_hint("Audio incomplete - retry");
+    Board::GetInstance().GetDisplay()->ShowNotification("Audio playback incomplete - retry", 5000);
+}
+
+bool Application::OnSdkPopUplinkFrame(std::vector<uint8_t>& payload) {
+    if (!IsAudioChannelOpened() || GetDeviceState() != kDeviceStateListening) {
         return false;
     }
     auto packet = audio_service_.PopPacketFromSendQueue();
-    if (!packet) {
-        return false;
-    }
-    size_t n = packet->payload.size();
-    auto* buf = static_cast<uint8_t*>(std::malloc(n));
-    if (buf == nullptr) {
-        ESP_LOGW(TAG, "uplink.pop: malloc failed for %zu bytes, dropping frame", n);
-        return false;
-    }
-    std::memcpy(buf, packet->payload.data(), n);
-    *out_data = buf;
-    *out_len = n;
+    if (!packet) return false;
+    payload = std::move(packet->payload);
     return true;
 }
 
 void Application::Alert(const char* status, const char* message, const char* emotion, const std::string_view& sound) {
-    ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
+    ESP_LOGW(TAG, "Alert displayed");
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
     display->SetEmotion(emotion);
@@ -499,10 +519,12 @@ void Application::ToggleChatState() {
 }
 
 void Application::StartListening() {
+    listening_button_held_.store(true);
     xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
 }
 
 void Application::StopListening() {
+    listening_button_held_.store(false);
     xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
 }
 
@@ -528,9 +550,6 @@ void Application::HandleStartListeningEvent() {
         return;
     }
     auto state = GetDeviceState();
-    if (state == kDeviceStateSpeaking) {
-        AbortSpeaking();
-    }
     if (state == kDeviceStateIdle || state == kDeviceStateSpeaking) {
         BeginUplink();
     }
@@ -543,14 +562,45 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::BeginUplink() {
-    sentient_ws_->start_streaming();
-    audio_service_.EnableVoiceProcessing(true);
+    if (!IsAudioChannelOpened()) {
+        return;
+    }
+    if (GetDeviceState() == kDeviceStateSpeaking || processing_) {
+        AbortSpeaking();
+    }
+    audio_service_.ClearSendQueue();
+    if (!sentient_ws_->start_streaming()) {
+        return;
+    }
+    processing_ = false;
+    if (!audio_service_.EnableVoiceProcessing(true)) {
+        ESP_LOGW(TAG, "uplink.processor_start_failed: cancelling capture");
+        sentient_ws_->cancel_streaming();
+        audio_service_.ClearSendQueue();
+        SetDeviceState(kDeviceStateIdle);
+        sentient_cube_set_status_hint("Hold to retry");
+        Board::GetInstance().GetDisplay()->ShowNotification("Audio unavailable - hold to retry", 5000);
+        return;
+    }
+    sentient_cube_set_status_hint("Recording");
     SetDeviceState(kDeviceStateListening);
 }
 
 void Application::EndUplink() {
-    sentient_ws_->stop_streaming();
     audio_service_.EnableVoiceProcessing(false);
+    if (!audio_service_.WaitForSendEncoding()) {
+        ESP_LOGW(TAG, "uplink.tail_incomplete: cancelling capture");
+        sentient_ws_->cancel_streaming();
+        audio_service_.ClearSendQueue();
+        processing_ = false;
+        SetDeviceState(kDeviceStateIdle);
+        sentient_cube_set_status_hint("Hold to retry");
+        Board::GetInstance().GetDisplay()->ShowNotification("Audio incomplete - hold to retry", 5000);
+        return;
+    }
+    sentient_ws_->stop_streaming();
+    processing_ = true;
+    sentient_cube_set_status_hint("Processing");
     SetDeviceState(kDeviceStateIdle);
 }
 
@@ -601,11 +651,14 @@ void Application::Schedule(std::function<void()>&& callback) {
 
 void Application::AbortSpeaking() {
     ESP_LOGI(TAG, "AbortSpeaking");
+    // Reject old downlink before decoder reset; playback.stop can arrive later.
+    suppressed_playback_epoch_ = playback_epoch_.load();
     if (sentient_ws_) {
-        sentient_ws_->stop_streaming();
+        sentient_ws_->interrupt();
     }
     audio_service_.ResetDecoder();
     playback_active_ = false;
+    playback_waiting_for_drain_ = false;
     if (GetDeviceState() == kDeviceStateSpeaking) {
         SetDeviceState(kDeviceStateIdle);
     }

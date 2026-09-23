@@ -1,6 +1,6 @@
 # ESP32 Cube
 
-Waveshare ESP32-S3-Touch-AMOLED-2.16 voice client. Application firmware is owned in [`../firmware/`](../firmware/); board adaptation lives in `firmware/main/boards/sentient-cube/`. Gateway wire contract lives in [`shared/protocol/`](../../../shared/protocol/). Current firmware still uses older cube protocol and toggle-to-talk; hold-to-talk is not implemented, and end-to-end voice behavior is unverified. A successful build is not device smoke.
+Waveshare ESP32-S3-Touch-AMOLED-2.16 voice client. Application firmware is owned in [`../firmware/`](../firmware/); board adaptation lives in `firmware/main/boards/sentient-cube/`. Gateway wire contract lives in [`shared/protocol/`](../../../shared/protocol/). Firmware uses current gateway manual-capture protocol: hold touchscreen button to capture, release to submit; assistant playback uses Opus. WSS enforces certificate trust and hostname verification. End-to-end voice behavior remains device-unverified. A successful build is not device smoke.
 
 ## Host workflow
 

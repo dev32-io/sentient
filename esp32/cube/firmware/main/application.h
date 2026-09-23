@@ -10,6 +10,7 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <atomic>
 
 #include "audio_service.h"
 #include "device_state.h"
@@ -88,8 +89,7 @@ public:
 
     /**
      * Abort the current speaking cycle (barge-in / cancel TTS).
-     * Routed through the sentient WS protocol's stop_streaming + local
-     * decoder reset.
+     * Interrupts gateway playback and flushes queued local audio.
      */
     void AbortSpeaking();
 
@@ -146,7 +146,12 @@ private:
     AudioService audio_service_;
 
     int clock_ticks_ = 0;
-    bool playback_active_ = false;  // true between on_playback_begin and on_playback_end
+    bool playback_active_ = false;  // server audio ingress bracket
+    bool playback_waiting_for_drain_ = false;
+    std::atomic<uint32_t> playback_epoch_{0};
+    std::atomic<uint32_t> suppressed_playback_epoch_{0};
+    bool processing_ = false;
+    std::atomic<bool> listening_button_held_{false};
 
     // Event handlers
     void HandleStateChangedEvent();
@@ -167,8 +172,10 @@ private:
     void OnSdkCognitionStatus(sentient::cube::CognitionState state);
     void OnSdkPlaybackBegin(int sample_rate);
     void OnSdkPlaybackEnd(bool aborted);
+    void OnPlaybackDrained();
     void OnSdkPlaybackFrame(const uint8_t* data, size_t len, int sample_rate);
-    bool OnSdkPopUplinkFrame(uint8_t** out_data, size_t* out_len);
+    void OnPlaybackQueueFailure(uint32_t epoch, uint32_t generation);
+    bool OnSdkPopUplinkFrame(std::vector<uint8_t>& payload);
 };
 
 

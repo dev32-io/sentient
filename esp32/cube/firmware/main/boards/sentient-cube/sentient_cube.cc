@@ -15,10 +15,9 @@
 //      panel: AXP2101 PMIC, QSPI bus, CO5300 LCD driver, CST9217 touch, ES8311+
 //      ES7210 audio codec, boot button.
 //   2. Constructs a CustomLcdDisplay subclass whose SetupUI() override replaces
-//      xiaozhi's chat/status screen with our toggle-button screen.
-//   3. Seeds WiFi creds into SsidManager NVS + WS URL + PASETO token into
-//      Settings("websocket") NVS so the device boots straight into the gateway
-//      session without an OTA-config round-trip.
+//      xiaozhi's chat/status screen with our hold-to-talk screen.
+//   3. Seeds WiFi credentials into SsidManager. The application configures its
+//      native gateway protocol directly; no duplicate token is written to NVS.
 //   4. Exposes extern "C" `cube_*` shims so the esp32-devtool verb files
 //      under main/devtool_verbs/ can reach Application/SentientWsProtocol
 //      state without pulling main into the devtool component's REQUIRES.
@@ -38,7 +37,6 @@
 #include "power_save_timer.h"
 #include "axp2101.h"
 #include "i2c_device.h"
-#include "settings.h"
 #include <ssid_manager.h>
 
 #include <esp_heap_caps.h>
@@ -94,12 +92,7 @@ static const char* sentient_state_str_provider(void) {
 }
 
 static bool sentient_ws_connected_provider(void) {
-    // Truthful: only true while an active WS audio channel is open.
-    // xiaozhi opens WS lazily on OpenAudioChannel() and closes it at the
-    // end of each cycle. At IDLE we have no WS — return false even though
-    // WiFi is up. Tests that need a boot-time "gateway reachable" signal
-    // should rely on the wifi.connected event + a button.toggle smoke
-    // rather than expecting ws_connected=true at IDLE.
+    // Gateway protocol readiness, not WiFi connectivity or active mic capture.
     return Application::GetInstance().IsAudioChannelOpened();
 }
 
@@ -616,19 +609,6 @@ protected:
 };
 
 // ---------------------------------------------------------------------------
-// Helper: build WebSocket URL string from baked-in creds.
-// SENTIENT_GATEWAY_WS_PORT is an integer literal, so std::to_string is needed.
-// ---------------------------------------------------------------------------
-
-static std::string build_ws_url() {
-    return std::string("wss://")
-        + SENTIENT_GATEWAY_HOST
-        + ":"
-        + std::to_string(SENTIENT_GATEWAY_WS_PORT)
-        + SENTIENT_GATEWAY_WS_PATH;
-}
-
-// ---------------------------------------------------------------------------
 // SentientCubeBoard — single-class merged board.
 // ---------------------------------------------------------------------------
 
@@ -1073,24 +1053,9 @@ private:
     // user going through the BLE/hotspot config flow.
     // AddSsid is idempotent for the same SSID — safe to call every boot.
     void InjectWifiCredentials() {
-        ESP_LOGI(TAG, "inject_wifi ssid=%.32s device_id=" SENTIENT_DEVICE_ID,
-                 SENTIENT_WIFI_SSID);
+        ESP_LOGI(TAG, "inject_wifi device_id=" SENTIENT_DEVICE_ID);
         SsidManager::GetInstance().AddSsid(SENTIENT_WIFI_SSID, SENTIENT_WIFI_PSK);
         ESP_LOGI(TAG, "inject_wifi.done");
-    }
-
-    // Seed WS URL + PASETO token so WebsocketProtocol::OpenAudioChannel()
-    // picks them up without an OTA-config round-trip.
-    // Token is stored raw; WebsocketProtocol prepends "Bearer " automatically
-    // when no space is present in the token string.
-    void InjectWebsocketConfig() {
-        std::string url = build_ws_url();
-        ESP_LOGI(TAG, "inject_ws url=%.80s device_id=" SENTIENT_DEVICE_ID,
-                 url.c_str());
-        Settings ws("websocket", /*read_write=*/true);
-        ws.SetString("url", url);
-        ws.SetString("token", SENTIENT_PASETO_TOKEN);
-        ESP_LOGI(TAG, "inject_ws.done");
     }
 
 public:
@@ -1109,17 +1074,14 @@ public:
 
         // NVS bootstrap (sentient overlay — was inject_*_credentials() in v1).
         InjectWifiCredentials();
-        InjectWebsocketConfig();
 
         // esp32_devtool companion: USB-CDC verb reader + HTTP server on :8081
         // + UDP log relay. Registers info / snapshot / touch / audio providers
         // BEFORE companion_start so they are ready when the HTTP server starts
         // serving on IP_EVENT_STA_GOT_IP.
         //
-        // The legacy agent_console + net_logger components were deleted in
-        // Task 27. With net_logger gone, the UDP log relay is the only
-        // vprintf hook in the chain — flipping CONFIG_ESP32_DEVTOOL_LOG_RELAY_ENABLE
-        // back to y (its new default) is safe.
+        // Keep UDP relay disabled by default: it competes with media transfers
+        // for constrained network buffers. Enable only for a diagnosed need.
 #if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
         esp32_devtool_set_info_provider(cube_info_provider);
         esp32_devtool_set_snapshot_provider(cube_snapshot_provider);

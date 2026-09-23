@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -75,11 +76,14 @@
         .enable_vbr         = true,                                                                               \
     }
 
+enum class DecodeQueueResult { Queued, Stale, Timeout, Full, Stopped };
+
 struct AudioServiceCallbacks {
     std::function<void(void)> on_send_queue_available;
     std::function<void(const std::string&)> on_wake_word_detected;
     std::function<void(bool)> on_vad_change;
     std::function<void(void)> on_audio_testing_queue_full;
+    std::function<void(void)> on_playback_drained;
 };
 
 
@@ -92,7 +96,8 @@ enum AudioTaskType {
 struct AudioTask {
     AudioTaskType type;
     std::vector<int16_t> pcm;
-    uint32_t timestamp;
+    uint32_t timestamp = 0;
+    uint32_t send_generation = 0;
 };
 
 struct DebugStatistics {
@@ -121,14 +126,19 @@ public:
     bool IsAfeWakeWord();
 
     void EnableWakeWordDetection(bool enable);
-    void EnableVoiceProcessing(bool enable);
+    bool EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
-    bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    uint32_t DecodeGeneration();
+    DecodeQueueResult PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet,
+                                               uint32_t generation, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+    void ClearSendQueue();
+    bool WaitForSendEncoding();
+    bool IsPlaybackDrained();
     void PlaySound(const std::string_view& sound);
     // Phase 3: raw PCM16 mono playback. Resamples from sample_rate to the
     // codec's native rate and writes to the codec output. Returns false if
@@ -161,7 +171,8 @@ public:
     // it unless wake-word / processor / testing has been enabled.
     bool RecordPcm(int16_t* dst, size_t sample_count, int sample_rate);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
-    void ResetDecoder();
+    // False if popped output has not finished codec handoff within bound.
+    bool ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
 
 private:
@@ -201,13 +212,21 @@ private:
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
+    bool decoding_ = false;
+    bool output_in_flight_ = false;
+    uint32_t decode_generation_ = 0;
+    uint32_t send_generation_ = 0;
+    bool accepting_send_ = false;
+    size_t send_producers_ = 0;
+    bool encoding_to_send_ = false;
+    bool send_failed_ = false;
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 
     bool wake_word_initialized_ = false;
     bool audio_processor_initialized_ = false;
     bool voice_detected_ = false;
-    bool service_stopped_ = true;
+    std::atomic<bool> service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
@@ -217,7 +236,8 @@ private:
     void AudioInputTask();
     void AudioOutputTask();
     void OpusCodecTask();
-    void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
+    void HandleProcessorOutput(std::vector<int16_t>&& pcm, uint32_t capture_generation);
+    void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm, uint32_t capture_generation = 0);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     void CheckAndUpdateAudioPowerState();
 };

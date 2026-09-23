@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 typedef enum {
-    SENTIENT_UI_DISABLED = 0,  // startup / connecting / speaking — button inactive
+    SENTIENT_UI_DISABLED = 0,  // startup / connecting — button inactive
     SENTIENT_UI_READY,         // WS connected, mic off — button interactive
     SENTIENT_UI_LISTENING,     // mic live — button shows listening animation
 } sentient_ui_state_t;

@@ -48,13 +48,15 @@ static void start_breath(void);
 static void stop_breath(void);
 
 // ---------------------------------------------------------------------------
-// Button click handler
+// Hold-to-talk button
 // ---------------------------------------------------------------------------
 
-static void on_button_clicked(lv_event_t* /*e*/) {
-    ESP_LOGI(TAG, "click device_id=" SENTIENT_DEVICE_ID);
-    // VERIFY UPSTREAM: ToggleChatState() confirmed in application.h line 92.
-    Application::GetInstance().ToggleChatState();
+static void on_button_press(lv_event_t* /*e*/) {
+    Application::GetInstance().StartListening();
+}
+
+static void on_button_release(lv_event_t* /*e*/) {
+    Application::GetInstance().StopListening();
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +128,7 @@ extern "C" void toggle_button_screen_create(void) {
     lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(g_screen, 0, 0);
 
-    // --- Toggle button: circular, centered ---
+    // --- Hold button: circular, centered ---
     // VERIFY UPSTREAM: LVGL 9 renamed lv_btn_create → lv_button_create.
     // If build fails with "undefined reference to lv_button_create", try lv_btn_create.
     g_button = lv_button_create(g_screen);
@@ -135,11 +137,14 @@ extern "C" void toggle_button_screen_create(void) {
     lv_obj_set_style_radius(g_button, LV_RADIUS_CIRCLE, 0);
     // Remove default padding so label fills the full circle visually.
     lv_obj_set_style_pad_all(g_button, 0, 0);
-    lv_obj_add_event_cb(g_button, on_button_clicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(g_button, on_button_press, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(g_button, on_button_release, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(g_button, on_button_release, LV_EVENT_PRESS_LOST, nullptr);
 
-    // No button label — Phase 6a smoke aid uses graphic-only state cues
-    // (sage = mic off / terra = mic on). State + transcript live in the
-    // surrounding labels so the button itself stays clean.
+    auto* button_label = lv_label_create(g_button);
+    lv_label_set_text(button_label, "Hold to talk");
+    lv_obj_set_style_text_color(button_label, lv_color_hex(SENTIENT_BG_DARK), 0);
+    lv_obj_center(button_label);
 
     // --- Status hint label (event/state line above button) ---
     // Shows the most recent cube-sdk event for the operator. Empty hides it.
@@ -234,7 +239,7 @@ extern "C" void toggle_button_screen_set_transcript(const char* text) {
     }
     lv_label_set_text(g_transcript, text);
     lv_obj_remove_flag(g_transcript, LV_OBJ_FLAG_HIDDEN);
-    ESP_LOGD(TAG, "transcript_set device_id=" SENTIENT_DEVICE_ID " text='%.80s'", text);
+    ESP_LOGD(TAG, "transcript_set device_id=" SENTIENT_DEVICE_ID);
 }
 
 extern "C" void toggle_button_screen_set_status_hint(const char* text) {
@@ -248,5 +253,5 @@ extern "C" void toggle_button_screen_set_status_hint(const char* text) {
     }
     lv_label_set_text(g_status_hint, text);
     lv_obj_remove_flag(g_status_hint, LV_OBJ_FLAG_HIDDEN);
-    ESP_LOGD(TAG, "hint_set device_id=" SENTIENT_DEVICE_ID " text='%.80s'", text);
+    ESP_LOGD(TAG, "hint_set device_id=" SENTIENT_DEVICE_ID);
 }

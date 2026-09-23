@@ -1,5 +1,6 @@
 #include "afe_audio_processor.h"
 #include <esp_log.h>
+#include <chrono>
 
 #define PROCESSOR_RUNNING 0x01
 
@@ -88,43 +89,53 @@ size_t AfeAudioProcessor::GetFeedSize() {
     return afe_iface_->get_feed_chunksize(afe_data_);
 }
 
-void AfeAudioProcessor::Feed(std::vector<int16_t>&& data) {
+void AfeAudioProcessor::Feed(std::vector<int16_t>&& data, uint32_t capture_generation) {
     if (afe_data_ == nullptr) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(input_buffer_mutex_);
+    std::lock_guard<std::timed_mutex> lock(input_buffer_mutex_);
     // Check running state inside lock to avoid TOCTOU race with Stop()
-    if (!IsRunning()) {
+    if (!running_ || stop_requested_ || capture_generation != capture_generation_) {
         return;
     }
     input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
     size_t chunk_size = afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels();
-    while (input_buffer_.size() >= chunk_size) {
+    while (!stop_requested_ && input_buffer_.size() >= chunk_size) {
         afe_iface_->feed(afe_data_, input_buffer_.data());
         input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + chunk_size);
     }
 }
 
-void AfeAudioProcessor::Start() {
+bool AfeAudioProcessor::Start(uint32_t capture_generation) {
+    std::unique_lock<std::timed_mutex> lock(input_buffer_mutex_, std::defer_lock);
+    if (!lock.try_lock_for(std::chrono::seconds(5)) || !stopped_ || !reset_ok_) return false;
+    capture_generation_ = capture_generation;
+    stop_requested_ = false;
+    stopped_ = false;
+    running_ = true;
     xEventGroupSetBits(event_group_, PROCESSOR_RUNNING);
+    return true;
 }
 
-void AfeAudioProcessor::Stop() {
-    xEventGroupClearBits(event_group_, PROCESSOR_RUNNING);
-
-    std::lock_guard<std::mutex> lock(input_buffer_mutex_);
-    if (afe_data_ != nullptr) {
-        afe_iface_->reset_buffer(afe_data_);
-    }
-    input_buffer_.clear();
+bool AfeAudioProcessor::Stop() {
+    stop_requested_ = true;
+    std::unique_lock<std::timed_mutex> lock(input_buffer_mutex_, std::defer_lock);
+    if (!lock.try_lock_for(std::chrono::seconds(5))) return false;
+    if (stopped_) return reset_ok_;
+    running_ = false;
+    // Wake worker even if it has not entered fetch yet. Worker owns fetch and
+    // reset: never reset AFE storage concurrently with fetch_with_delay.
+    xEventGroupSetBits(event_group_, PROCESSOR_RUNNING);
+    return stopped_cv_.wait_for(lock, std::chrono::seconds(5), [this] { return stopped_; }) && reset_ok_;
 }
 
 bool AfeAudioProcessor::IsRunning() {
-    return xEventGroupGetBits(event_group_) & PROCESSOR_RUNNING;
+    std::lock_guard<std::timed_mutex> lock(input_buffer_mutex_);
+    return running_ && !stop_requested_;
 }
 
-void AfeAudioProcessor::OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) {
+void AfeAudioProcessor::OnOutput(std::function<void(std::vector<int16_t>&& data, uint32_t capture_generation)> callback) {
     output_callback_ = callback;
 }
 
@@ -141,10 +152,27 @@ void AfeAudioProcessor::AudioProcessorTask() {
     while (true) {
         xEventGroupWaitBits(event_group_, PROCESSOR_RUNNING, pdFALSE, pdTRUE, portMAX_DELAY);
 
-        auto res = afe_iface_->fetch_with_delay(afe_data_, portMAX_DELAY);
-        if ((xEventGroupGetBits(event_group_) & PROCESSOR_RUNNING) == 0) {
-            continue;
+        uint32_t generation;
+        {
+            std::lock_guard<std::timed_mutex> lock(input_buffer_mutex_);
+            if (!running_ || stop_requested_) {
+                // No in-flight fetch or callback remains. Drop staged PCM and
+                // AFE ring data before permitting another capture to start.
+                input_buffer_.clear();
+                output_buffer_.clear();
+                is_speaking_ = false;
+                reset_ok_ = afe_iface_->reset_buffer(afe_data_) == 1;
+                if (!reset_ok_) ESP_LOGE(TAG, "AFE reset_buffer failed");
+                stopped_ = true;
+                xEventGroupClearBits(event_group_, PROCESSOR_RUNNING);
+                stopped_cv_.notify_all();
+                continue;
+            }
+            generation = capture_generation_;
         }
+        // ESP-SR accepts a tick timeout, unlike fetch(portMAX_DELAY). Stop
+        // waits for this fetch and callback; no concurrent reset or feed.
+        auto res = afe_iface_->fetch_with_delay(afe_data_, pdMS_TO_TICKS(100));
         if (res == nullptr || res->ret_value == ESP_FAIL) {
             if (res != nullptr) {
                 ESP_LOGI(TAG, "Error code: %d", res->ret_value);
@@ -173,12 +201,12 @@ void AfeAudioProcessor::AudioProcessorTask() {
             while (output_buffer_.size() >= frame_samples_) {
                 if (output_buffer_.size() == frame_samples_) {
                     // If buffer size equals frame size, move the entire buffer
-                    output_callback_(std::move(output_buffer_));
+                    output_callback_(std::move(output_buffer_), generation);
                     output_buffer_.clear();
                     output_buffer_.reserve(frame_samples_);
                 } else {
                     // If buffer size exceeds frame size, copy one frame and remove it
-                    output_callback_(std::vector<int16_t>(output_buffer_.begin(), output_buffer_.begin() + frame_samples_));
+                    output_callback_(std::vector<int16_t>(output_buffer_.begin(), output_buffer_.begin() + frame_samples_), generation);
                     output_buffer_.erase(output_buffer_.begin(), output_buffer_.begin() + frame_samples_);
                 }
             }
