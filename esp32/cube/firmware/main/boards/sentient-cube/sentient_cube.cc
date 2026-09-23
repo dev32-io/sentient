@@ -16,8 +16,9 @@
 //      ES7210 audio codec, boot button.
 //   2. Constructs a CustomLcdDisplay subclass whose SetupUI() override replaces
 //      xiaozhi's chat/status screen with our hold-to-talk screen.
-//   3. Seeds WiFi credentials into SsidManager. The application configures its
-//      native gateway protocol directly; no duplicate token is written to NVS.
+//   3. Optionally seeds WiFi credentials into SsidManager. The application
+//      configures its native gateway protocol directly; no duplicate token
+//      is written to NVS.
 //   4. Exposes extern "C" `cube_*` shims so the esp32-devtool verb files
 //      under main/devtool_verbs/ can reach Application/SentientWsProtocol
 //      state without pulling main into the devtool component's REQUIRES.
@@ -1049,6 +1050,7 @@ private:
         ESP_LOGI(TAG, "Touch panel initialized successfully indev=%p", (void*)indev);
     }
 
+#if !SENTIENT_PRESERVE_WIFI
     // Seed WiFi credentials so TryWifiConnect() finds an SSID without the
     // user going through the BLE/hotspot config flow.
     // AddSsid is idempotent for the same SSID — safe to call every boot.
@@ -1057,6 +1059,7 @@ private:
         SsidManager::GetInstance().AddSsid(SENTIENT_WIFI_SSID, SENTIENT_WIFI_PSK);
         ESP_LOGI(TAG, "inject_wifi.done");
     }
+#endif
 
 public:
     SentientCubeBoard() : boot_button_(BOOT_BUTTON_GPIO) {
@@ -1072,8 +1075,10 @@ public:
         InitializeTouch();
         InitializeButtons();
 
-        // NVS bootstrap (sentient overlay — was inject_*_credentials() in v1).
+        // Without explicit WiFi, TryWifiConnect() uses stored SSIDs.
+#if !SENTIENT_PRESERVE_WIFI
         InjectWifiCredentials();
+#endif
 
         // esp32_devtool companion: USB-CDC verb reader + HTTP server on :8081
         // + UDP log relay. Registers info / snapshot / touch / audio providers

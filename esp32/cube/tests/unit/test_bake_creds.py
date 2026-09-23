@@ -85,6 +85,7 @@ subjectAltName = IP:192.168.12.5,DNS:cube.local
         header = (out / 'sentient_creds.h').read_text()
         self.assertNotIn('COMPILE_ONLY_PLACEHOLDER', header)
         self.assertIn('SENTIENT_DEV_TLS_PIN      1', header)
+        self.assertIn('SENTIENT_PRESERVE_WIFI    0', header)
         self.assertIn('SENTIENT_GATEWAY_WS_PORT  443', header)
         self.assertIn('Lab \\"Cube\\"', header)
         self.assertIn(r'back\\slash\012pass', header)
@@ -94,6 +95,58 @@ subjectAltName = IP:192.168.12.5,DNS:cube.local
         self.assertTrue((out / 'sentient_dev_gateway.crt').read_text().startswith('-----BEGIN CERTIFICATE-----'))
         self.assertNotIn(self.data['PASETO_TOKEN'], result.stdout + result.stderr)
         self.assertNotIn(self.data['WIFI_PSK'], result.stdout + result.stderr)
+
+    def test_preserve_wifi_emits_no_wifi_credentials(self):
+        wifi_values = (self.data.pop('WIFI_SSID'), self.data.pop('WIFI_PSK'))
+        self.data['PRESERVE_WIFI'] = True
+        self.write_input()
+        result = self.run_bake('--input', str(self.input))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        header = (self.root / 'firmware/main/sentient_creds.h').read_text()
+        self.assertIn('#define SENTIENT_PRESERVE_WIFI    1', header)
+        self.assertNotIn('SENTIENT_WIFI_SSID', header)
+        self.assertNotIn('SENTIENT_WIFI_PSK', header)
+        for value in wifi_values:
+            self.assertNotIn(value, header)
+        self.assertIn(self.data['PASETO_TOKEN'], header)
+        self.assertIn('SENTIENT_DEV_TLS_PIN      1', header)
+        self.assertTrue((self.root / 'firmware/main/sentient_dev_gateway.crt').exists())
+
+    def test_preserve_wifi_still_requires_token_and_trusted_cert(self):
+        self.data.pop('WIFI_SSID')
+        self.data.pop('WIFI_PSK')
+        self.data['PRESERVE_WIFI'] = True
+        out = self.root / 'firmware/main/sentient_creds.h'
+        for key, bad_value in (('PASETO_TOKEN', 'invalid'), ('TRUSTED_CERT_PATH', '/missing.pem')):
+            with self.subTest(key=key):
+                data = self.data.copy()
+                data[key] = bad_value
+                self.input.write_text(json.dumps(data))
+                self.assertNotEqual(self.run_bake('--input', str(self.input)).returncode, 0)
+                self.assertFalse(out.exists())
+
+    def test_rejects_ambiguous_or_missing_wifi_mode_without_overwrite(self):
+        out = self.root / 'firmware/main/sentient_creds.h'
+        out.write_text('COMPILE_ONLY_PLACEHOLDER')
+        original = self.data.copy()
+        for changes in ({'PRESERVE_WIFI': True}, {'PRESERVE_WIFI': False},
+                        {'PRESERVE_WIFI': 'true'}, {'WIFI_PSK': None},
+                        {'WIFI_SSID': None}, {'WIFI_SSID': None, 'WIFI_PSK': None},
+                        {'WIFI_SSID': None, 'WIFI_PSK': None, 'PRESERVE_WIFI': False},
+                        {'WIFI_SSID': None, 'WIFI_PSK': None, 'PRESERVE_WIFI': 1}):
+            with self.subTest(changes=changes):
+                data = original.copy()
+                for key, value in changes.items():
+                    if value is None:
+                        data.pop(key)
+                    else:
+                        data[key] = value
+                self.data = data
+                self.write_input()
+                result = self.run_bake('--input', str(self.input))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(out.read_text(), 'COMPILE_ONLY_PLACEHOLDER')
+                self.assertFalse((out.parent / 'sentient_dev_gateway.crt').exists())
 
     def test_rejects_missing_input_prod_and_insecure_input_without_overwrite(self):
         out = self.root / 'firmware/main/sentient_creds.h'

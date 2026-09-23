@@ -24,6 +24,15 @@ Create an operator-owned JSON file outside repo, mode `0600`, with exactly:
 }
 ```
 
+Alternatively, for a device already configured with WiFi in NVS, replace **both**
+`WIFI_SSID` and `WIFI_PSK` with `"PRESERVE_WIFI": true`. Exactly one mode is
+required: WiFi pair or literal `true`; mixed, missing, or false modes fail.
+Preserve mode emits `SENTIENT_PRESERVE_WIFI 1` and no WiFi strings in header;
+board does not call `AddSsid`, so existing WiFi settings remain untouched.
+Explicit WiFi mode emits `SENTIENT_PRESERVE_WIFI 0` and seeds WiFi as before.
+Preserve mode cannot supply WiFi if device lacks stored credentials; existing
+WiFi config flow applies then.
+
 Fields are examples, not usable credentials. Supply existing authorized local
 fixture-user token from approved provisioning flow; script never mints tokens,
 reads `.e2e-testing`, contacts services, or chooses an IP. Host must be LAN
