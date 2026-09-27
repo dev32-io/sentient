@@ -54,12 +54,14 @@
 #include <esp_lvgl_port.h>
 #include <lvgl.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
 #include "sentient_creds.h"
 
+#include "sentient_tokens.h"
 #include "sentient_ui_controller.h"
 #include "test_screen.h"
 #include "esp32_devtool/companion.h"
@@ -275,6 +277,14 @@ extern "C" const char* cube_device_state_str(void) {
 
 extern "C" bool cube_ws_connected(void) {
     return sentient_ws_connected_provider();
+}
+
+extern "C" bool cube_voice_processing(void) {
+    return Application::GetInstance().GetAudioService().IsAudioProcessorRunning();
+}
+
+extern "C" bool cube_playback_drained(void) {
+    return Application::GetInstance().GetAudioService().IsPlaybackDrained();
 }
 
 extern "C" void cube_button_toggle(void) {
@@ -582,6 +592,15 @@ public:
         // (sentient_cube_show_test_screen()) so HIL UI-snapshot smoke can
         // still exercise it via a verb if a future need arises.
         sentient_cube_create_toggle_button_screen();
+        lv_obj_set_parent(notification_label_, lv_screen_active());
+        lv_obj_set_width(notification_label_, LV_HOR_RES * 0.8);
+        lv_obj_set_style_text_font(notification_label_, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(notification_label_, lv_color_hex(SENTIENT_INK), 0);
+        lv_obj_set_style_bg_color(notification_label_, lv_color_hex(SENTIENT_BG_DARKER), 0);
+        lv_obj_set_style_bg_opa(notification_label_, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(notification_label_, 12, 0);
+        lv_obj_set_style_pad_all(notification_label_, 4, 0);
+        lv_obj_align(notification_label_, LV_ALIGN_TOP_MID, 0, 8);
     }
 };
 
@@ -617,6 +636,7 @@ class SentientCubeBoard : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
     Pmic* pmic_ = nullptr;
+    Button volume_up_button_;
     Button boot_button_;
     CustomLcdDisplay* display_;
     CustomBacklight* backlight_;
@@ -841,26 +861,26 @@ private:
     }
 
     void InitializeButtons() {
-        ESP_LOGI(TAG, "init.buttons.begin gpio=%d", BOOT_BUTTON_GPIO);
-        boot_button_.OnClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting) {
+        ESP_LOGI(TAG, "init.buttons.begin plus_gpio=%d minus_gpio=%d",
+                 VOLUME_UP_BUTTON_GPIO, BOOT_BUTTON_GPIO);
+        auto change_volume = [this](int delta) {
+            Application::GetInstance().Schedule([this, delta]() {
+                auto codec = GetAudioCodec();
+                int volume = std::clamp(codec->output_volume() + delta, 0, 100);
+                codec->SetOutputVolume(volume);
+                char notification[24];
+                std::snprintf(notification, sizeof(notification), "Volume %d%%", volume);
+                GetDisplay()->ShowNotification(notification, 1500);
+            });
+        };
+        volume_up_button_.OnPressDown([change_volume]() { change_volume(5); });
+        boot_button_.OnPressDown([this, change_volume]() {
+            if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
                 return;
             }
-            app.ToggleChatState();
+            change_volume(-5);
         });
-
-#if CONFIG_USE_DEVICE_AEC
-        boot_button_.OnDoubleClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateIdle) {
-                app.SetAecMode(app.GetAecMode() == kAecOff
-                                   ? kAecOnDeviceSide
-                                   : kAecOff);
-            }
-        });
-#endif
         ESP_LOGI(TAG, "init.buttons.done");
     }
 
@@ -1062,7 +1082,8 @@ private:
 #endif
 
 public:
-    SentientCubeBoard() : boot_button_(BOOT_BUTTON_GPIO) {
+    SentientCubeBoard()
+        : volume_up_button_(VOLUME_UP_BUTTON_GPIO), boot_button_(BOOT_BUTTON_GPIO) {
         ESP_LOGI(TAG, "ctor begin device_id=" SENTIENT_DEVICE_ID);
 
         // Hardware bring-up (verbatim from waveshare init order).

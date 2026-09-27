@@ -46,7 +46,7 @@
 // ---------------------------------------------------------------------------
 // Breath cycle period (full in-out period = 2× SENTIENT_BREATH_HALF_MS).
 #define SENTIENT_BREATH_HALF_MS   1700   // half-cycle; total = 3400ms
-// Breath scale range: 1000–1050 in LVGL transform units (1000 = 1.0×).
+// Breath scale range in per-1000 units (1000 = 1.0×).
 #define SENTIENT_BREATH_SCALE_LO  1000
 #define SENTIENT_BREATH_SCALE_HI  1050
 // Reset scale value (1.0×).

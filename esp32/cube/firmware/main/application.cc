@@ -3,6 +3,9 @@
 #include "display.h"
 #include "system_info.h"
 #include "audio_codec.h"
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+#include "assets.h"
+#endif
 #include "assets/lang_config.h"
 #include "settings.h"
 #include "sentient_creds.h"
@@ -96,6 +99,12 @@ void Application::Initialize() {
 
     auto display = board.GetDisplay();
     display->SetupUI();
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Only load the text font. Assets::Apply also installs SR models.
+    if (!Assets::GetInstance().ApplyTextFont()) {
+        ESP_LOGW(TAG, "CJK transcript font unavailable; using built-in font");
+    }
+#endif
     display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
 
     auto codec = board.GetAudioCodec();
@@ -393,15 +402,9 @@ void Application::OnSdkStatusChange(SdkStatus s) {
 }
 
 void Application::OnSdkCognitionStatus(CognitionState s) {
-    if (s == CognitionState::Thinking || s == CognitionState::Acting) {
-        if (GetDeviceState() == kDeviceStateIdle) {
-            processing_ = true;
-            sentient_cube_set_status_hint("Processing");
-        }
-    } else if (!playback_active_ && !playback_waiting_for_drain_ &&
-               GetDeviceState() == kDeviceStateIdle) {
-        processing_ = false;
-        sentient_cube_set_status_hint("Ready");
+    processing_ = s == CognitionState::Thinking || s == CognitionState::Acting;
+    if (GetDeviceState() == kDeviceStateIdle && !playback_active_ && !playback_waiting_for_drain_) {
+        sentient_cube_set_status_hint(processing_ ? "Processing" : "Ready");
     }
 }
 
@@ -413,7 +416,6 @@ void Application::OnSdkPlaybackBegin(int sample_rate) {
     playback_active_ = true;
     playback_waiting_for_drain_ = false;
     if (GetDeviceState() != kDeviceStateListening) {
-        processing_ = false;
         sentient_cube_set_status_hint("Speaking");
         SetDeviceState(kDeviceStateSpeaking);
     }
@@ -427,7 +429,7 @@ void Application::OnSdkPlaybackEnd(bool aborted) {
         audio_service_.ResetDecoder();
         if (GetDeviceState() == kDeviceStateSpeaking) {
             SetDeviceState(kDeviceStateIdle);
-            sentient_cube_set_status_hint("Ready");
+            sentient_cube_set_status_hint(processing_ ? "Processing" : "Ready");
         }
     } else {
         playback_waiting_for_drain_ = true;
@@ -442,7 +444,7 @@ void Application::OnPlaybackDrained() {
     playback_waiting_for_drain_ = false;
     if (GetDeviceState() == kDeviceStateSpeaking) {
         SetDeviceState(kDeviceStateIdle);
-        sentient_cube_set_status_hint("Ready");
+        sentient_cube_set_status_hint(processing_ ? "Processing" : "Ready");
     }
 }
 
@@ -599,9 +601,13 @@ void Application::EndUplink() {
         return;
     }
     sentient_ws_->stop_streaming();
-    processing_ = true;
-    sentient_cube_set_status_hint("Processing");
-    SetDeviceState(kDeviceStateIdle);
+    if (playback_active_ || playback_waiting_for_drain_) {
+        sentient_cube_set_status_hint("Speaking");
+        SetDeviceState(kDeviceStateSpeaking);
+    } else {
+        sentient_cube_set_status_hint(processing_ ? "Processing" : "Ready");
+        SetDeviceState(kDeviceStateIdle);
+    }
 }
 
 void Application::HandleStateChangedEvent() {
@@ -653,10 +659,12 @@ void Application::AbortSpeaking() {
     ESP_LOGI(TAG, "AbortSpeaking");
     // Reject old downlink before decoder reset; playback.stop can arrive later.
     suppressed_playback_epoch_ = playback_epoch_.load();
+    // Wake blocked downlink enqueue before control send waits for transport lock.
+    // Reset also waits up to 5s for software-owned output handoff.
+    audio_service_.ResetDecoder();
     if (sentient_ws_) {
         sentient_ws_->interrupt();
     }
-    audio_service_.ResetDecoder();
     playback_active_ = false;
     playback_waiting_for_drain_ = false;
     if (GetDeviceState() == kDeviceStateSpeaking) {

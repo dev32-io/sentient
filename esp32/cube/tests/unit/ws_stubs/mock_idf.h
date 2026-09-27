@@ -12,6 +12,8 @@ constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_INVALID_STATE = 1, ESP_ERR_INVA
 #define ESP_ERROR_CHECK(x) do { if ((x) != ESP_OK) abort(); } while (0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
+#define ESP_LOGE(...) ((void)0)
+#define ESP_LOGD(...) ((void)0)
 using TickType_t = uint32_t;
 #define pdMS_TO_TICKS(x) (x)
 #define pdTRUE 1
@@ -24,8 +26,22 @@ struct MockTask {};
 using TaskHandle_t = MockTask*;
 inline int xTaskCreate(void (*)(void*), const char*, int, void*, int, TaskHandle_t*) { return 0; }
 inline void vTaskDelete(void*) {}
-inline int xTaskNotify(TaskHandle_t, uint32_t, int) { return 1; }
-inline int xTaskNotifyWait(uint32_t, uint32_t, uint32_t*, TickType_t) { return 0; }
+extern std::mutex mock_notify_mutex;
+extern std::condition_variable mock_notify_cv;
+extern uint32_t mock_notifications;
+inline int xTaskNotify(TaskHandle_t, uint32_t bits, int) {
+    std::lock_guard<std::mutex> lock(mock_notify_mutex);
+    mock_notifications |= bits;
+    mock_notify_cv.notify_all();
+    return 1;
+}
+inline int xTaskNotifyWait(uint32_t, uint32_t, uint32_t* bits, TickType_t) {
+    std::unique_lock<std::mutex> lock(mock_notify_mutex);
+    mock_notify_cv.wait(lock, [] { return mock_notifications != 0; });
+    *bits = mock_notifications;
+    mock_notifications = 0;
+    return 1;
+}
 constexpr int eSetBits = 0;
 struct MockSemaphore { std::mutex mutex; std::condition_variable cv; bool ready = false; };
 using SemaphoreHandle_t = MockSemaphore*;
@@ -57,7 +73,8 @@ using EventHandler = void (*)(void*, esp_event_base_t, int32_t, void*);
 inline esp_websocket_client_handle_t esp_websocket_client_init(const esp_websocket_client_config_t*) { return new MockClient; }
 inline esp_err_t esp_websocket_register_events(esp_websocket_client_handle_t, int, EventHandler, void*) { return ESP_OK; }
 inline esp_err_t esp_websocket_client_start(esp_websocket_client_handle_t) { return ESP_OK; }
-inline esp_err_t esp_websocket_client_stop(esp_websocket_client_handle_t) { return ESP_OK; }
+extern std::atomic<int> mock_client_stops;
+inline esp_err_t esp_websocket_client_stop(esp_websocket_client_handle_t) { ++mock_client_stops; return ESP_OK; }
 inline esp_err_t esp_websocket_client_destroy(esp_websocket_client_handle_t c) { delete c; return ESP_OK; }
 inline bool esp_websocket_client_is_connected(esp_websocket_client_handle_t c) { return c != nullptr; }
 extern int mock_binary_result;
@@ -69,8 +86,10 @@ extern bool mock_inside_binary;
 extern bool mock_release_binary;
 extern std::string mock_text;
 extern int mock_end_result;
+extern int mock_start_result;
 inline int esp_websocket_client_send_text(esp_websocket_client_handle_t, const char* data, int len, TickType_t) {
     mock_text.append(data, len);
+    if (mock_start_result && std::string(data, len).find("audio.start") != std::string::npos) return -1;
     return mock_end_result && std::string(data, len).find("audio.end") != std::string::npos ? -1 : len;
 }
 inline int esp_websocket_client_send_bin(esp_websocket_client_handle_t, const char*, int len, TickType_t) {

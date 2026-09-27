@@ -1,6 +1,7 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
@@ -154,40 +155,55 @@ void AudioService::Start() {
 
 #if CONFIG_USE_AUDIO_PROCESSOR
     /* Start the audio input task */
-    xTaskCreatePinnedToCore([](void* arg) {
+    if (xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
         vTaskDelete(NULL);
-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
+    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0) != pdPASS) {
+        ESP_LOGE(TAG, "audio_input task allocation failed");
+        std::abort();
+    }
 
     /* Start the audio output task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "audio_output task allocation failed");
+        std::abort();
+    }
 #else
     /* Start the audio input task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
         vTaskDelete(NULL);
-    }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
+    }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "audio_input task allocation failed");
+        std::abort();
+    }
 
     /* Start the audio output task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048, this, 4, &audio_output_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "audio_output task allocation failed");
+        std::abort();
+    }
 #endif
 
-    /* Start the opus codec task */
-    xTaskCreate([](void* arg) {
+    /* Start the opus codec task on internal stack. */
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
         vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "opus_codec task allocation failed");
+        std::abort();
+    }
 }
 
 void AudioService::Stop() {
@@ -240,28 +256,35 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
         codec_->EnableInput(true);
     }
 
-    if (codec_->input_sample_rate() != sample_rate) {
-        data.resize(samples * codec_->input_sample_rate() / sample_rate * codec_->input_channels());
-        if (!codec_->InputData(data)) {
+    const bool needs_resampling = codec_->input_sample_rate() != sample_rate;
+    data.resize(needs_resampling ? samples * codec_->input_sample_rate() / sample_rate * codec_->input_channels()
+                                 : samples * codec_->input_channels());
+    if (!codec_->InputData(data)) return false;
+    if (needs_resampling && input_resampler_ != nullptr) {
+        std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+        const int channels = codec_->input_channels();
+        uint32_t in_sample_num = data.size() / channels;
+        uint32_t output_samples = 0;
+        auto max_ret = esp_ae_rate_cvt_get_max_out_sample_num(input_resampler_, in_sample_num, &output_samples);
+        if (max_ret != ESP_AE_ERR_OK || output_samples == 0 ||
+            output_samples > data.max_size() / channels) {
+            ESP_LOGE(TAG, "Input resampler max failed request=%d input=%u max_ret=%d max=%u",
+                     samples, (unsigned)in_sample_num, (int)max_ret, (unsigned)output_samples);
             return false;
         }
-        if (input_resampler_ != nullptr) {
-            std::lock_guard<std::mutex> lock(input_resampler_mutex_);
-            uint32_t in_sample_num = data.size() / codec_->input_channels();
-            uint32_t output_samples = 0;
-            esp_ae_rate_cvt_get_max_out_sample_num(input_resampler_, in_sample_num, &output_samples);
-            auto resampled = std::vector<int16_t>(output_samples * codec_->input_channels());
-            uint32_t actual_output = output_samples;
-            esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(), in_sample_num,
-                                   (esp_ae_sample_t)resampled.data(), &actual_output);
-            resampled.resize(actual_output * codec_->input_channels());
-            data = std::move(resampled);
-        }
-    } else {
-        data.resize(samples * codec_->input_channels());
-        if (!codec_->InputData(data)) {
+        std::vector<int16_t> resampled(static_cast<size_t>(output_samples) * channels);
+        uint32_t actual_output = output_samples;
+        auto process_ret = esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(), in_sample_num,
+                                                    (esp_ae_sample_t)resampled.data(), &actual_output);
+        if (process_ret != ESP_AE_ERR_OK || actual_output == 0 || actual_output > output_samples ||
+            static_cast<size_t>(actual_output) * channels > resampled.size()) {
+            ESP_LOGE(TAG, "Input resampler process failed request=%d input=%u max=%u process_ret=%d actual=%u allocated=%u",
+                     samples, (unsigned)in_sample_num, (unsigned)output_samples,
+                     (int)process_ret, (unsigned)actual_output, (unsigned)resampled.size());
             return false;
         }
+        resampled.resize(static_cast<size_t>(actual_output) * channels);
+        data = std::move(resampled);
     }
 
     /* Update the last input time */
@@ -269,7 +292,7 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     debug_statistics_.input_count++;
 
 #if CONFIG_USE_AUDIO_DEBUGGER
-    // 音频调试：发送原始音频数据
+    // Audio debugging: send raw audio data
     if (audio_debugger_ == nullptr) {
         audio_debugger_ = std::make_unique<AudioDebugger>();
     }
@@ -441,16 +464,32 @@ void AudioService::OpusCodecTask() {
                     task->pcm.resize(out_frame.decoded_size / sizeof(int16_t));
                     if (decoder_sample_rate_ != codec_->output_sample_rate() && output_resampler_ != nullptr) {
                         uint32_t target_size = 0;
-                        esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task->pcm.size(), &target_size);
-                        std::vector<int16_t> resampled(target_size);
-                        uint32_t actual_output = target_size;
-                        esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task->pcm.data(), task->pcm.size(),
-                                                (esp_ae_sample_t)resampled.data(), &actual_output);
-                        resampled.resize(actual_output);
-                        task->pcm = std::move(resampled);
+                        auto max_ret = esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task->pcm.size(), &target_size);
+                        if (max_ret != ESP_AE_ERR_OK || target_size == 0 ||
+                            target_size > task->pcm.max_size()) {
+                            ESP_LOGE(TAG, "Output resampler max failed ret=%d input=%u max=%u",
+                                     (int)max_ret, (unsigned)task->pcm.size(), (unsigned)target_size);
+                            task->pcm.clear();
+                        } else {
+                            std::vector<int16_t> resampled(target_size);
+                            uint32_t actual_output = target_size;
+                            auto process_ret = esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task->pcm.data(),
+                                                                        task->pcm.size(), (esp_ae_sample_t)resampled.data(),
+                                                                        &actual_output);
+                            if (process_ret != ESP_AE_ERR_OK || actual_output > target_size ||
+                                actual_output > resampled.size()) {
+                                ESP_LOGE(TAG, "Output resampler process failed ret=%d max=%u actual=%u allocated=%u",
+                                         (int)process_ret, (unsigned)target_size, (unsigned)actual_output,
+                                         (unsigned)resampled.size());
+                                task->pcm.clear();
+                            } else {
+                                resampled.resize(actual_output);
+                                task->pcm = std::move(resampled);
+                            }
+                        }
                     }
                     lock.lock();
-                    if (generation == decode_generation_) {
+                    if (generation == decode_generation_ && !task->pcm.empty()) {
                         audio_playback_queue_.push_back(std::move(task));
                     }
                     audio_queue_cv_.notify_all();
@@ -947,9 +986,9 @@ bool AudioService::RecordPcm(int16_t* dst, size_t sample_count, int sample_rate)
     size_t collected = 0;
     while (collected < sample_count) {
         std::vector<int16_t> chunk;
-        const int request = std::min<int>(frame_samples,
-                                          static_cast<int>(sample_count - collected));
-        if (!ReadAudioData(chunk, sample_rate, request)) {
+        // Short-tail resampler call preceded heap corruption in observed capture;
+        // read a full frame even at the tail, then copy only requested mono samples.
+        if (!ReadAudioData(chunk, sample_rate, frame_samples)) {
             ESP_LOGW(TAG, "RecordPcm ReadAudioData failed at collected=%u",
                      (unsigned)collected);
             return false;

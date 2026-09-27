@@ -1,13 +1,15 @@
 // audio_inject_ring.cc — see audio_inject_ring.h.
 //
 // Storage + mutex + push/pop_locked + strong override of
-// agent_audio_inject_pop_samples. Ported verbatim from the v1 inject path —
-// same buffer geometry, same drop-on-overflow semantics.
+// agent_audio_inject_pop_samples. Same buffer geometry and drop-on-overflow
+// semantics as the v1 inject path, with storage allocated only for injection.
 
 #include "audio_inject_ring.h"
 
+#include <cassert>
 #include <mutex>
 
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -27,7 +29,7 @@ constexpr size_t kInjectRingSamples = 32000;
 // real codec path runs as normal.
 constexpr int kSupportedSampleRate = 16000;
 
-int16_t g_ring[kInjectRingSamples];
+int16_t* g_ring = nullptr;  // lifetime allocation in PSRAM, on first push only
 size_t  g_head  = 0;   // next write index
 size_t  g_tail  = 0;   // next read index
 size_t  g_count = 0;   // samples currently buffered
@@ -55,6 +57,8 @@ size_t push_locked(const int16_t* src, size_t n) {
 }
 
 size_t pop_locked(int16_t* dst, size_t n) {
+    // Only push can raise g_count, after successful ring allocation.
+    assert(g_count == 0 || g_ring != nullptr);
     size_t popped = 0;
     while (popped < n && g_count > 0) {
         dst[popped++] = g_ring[g_tail];
@@ -72,7 +76,11 @@ extern "C" size_t audio_inject_ring_push(const int16_t* src, size_t n) {
     if (g_mutex == nullptr) return 0;
     size_t pushed = 0;
     if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        pushed = push_locked(src, n);
+        if (g_ring == nullptr) {
+            g_ring = static_cast<int16_t*>(heap_caps_malloc(
+                sizeof(int16_t) * kInjectRingSamples, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+        if (g_ring != nullptr) pushed = push_locked(src, n);
         xSemaphoreGive(g_mutex);
     } else {
         ESP_LOGW(TAG, "push mutex timeout n=%u", (unsigned)n);

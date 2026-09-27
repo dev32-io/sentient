@@ -14,6 +14,7 @@
 #include <esp_timer.h>
 #include <esp_heap_caps.h>
 #include <cbin_font.h>
+#include <cstring>
 
 
 #define TAG "Assets"
@@ -119,6 +120,155 @@ bool Assets::LoadSrmodelsFromIndex(Assets* assets, cJSON* root) {
 }
 
 #if HAVE_LVGL
+// Pinned xiaozhi cbin format: 32-bit LVGL 9 font, large glyph descriptors,
+// plain 4-bpp bitmaps, class kerning. Offsets are relative to their containing
+// structure (see cbin_font_create); reject unsupported layouts before loading.
+static bool ValidCubeCBinTextFont(const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    auto within = [size](size_t base, size_t offset, size_t length) {
+        return base <= size && offset <= size - base && length <= size - base - offset;
+    };
+    auto u16 = [bytes](size_t offset) -> uint16_t {
+        return uint16_t(bytes[offset]) | (uint16_t(bytes[offset + 1]) << 8);
+    };
+    auto u32 = [bytes](size_t offset) -> uint32_t {
+        return uint32_t(bytes[offset]) | (uint32_t(bytes[offset + 1]) << 8) |
+               (uint32_t(bytes[offset + 2]) << 16) | (uint32_t(bytes[offset + 3]) << 24);
+    };
+    if (!within(0, 0, 36)) return false;
+    // Loader replaces first two callbacks only. Other pointers must be null.
+    if (u32(8) || u32(28) || u32(32)) return false;
+    size_t dsc = u32(24);
+    if (!within(dsc, 0, 24)) return false;
+    uint16_t flags = u16(dsc + 18);
+    size_t count = flags & 0x1ff;
+    if (!count || ((flags >> 9) & 0xf) != 4 || !(flags & 0x2000) ||
+        (flags & 0xc000) || bytes[dsc + 20] != 0) return false;
+
+    size_t bitmap = dsc + u32(dsc);
+    size_t glyphs = dsc + u32(dsc + 4);
+    size_t cmaps = dsc + u32(dsc + 8);
+    size_t kern = dsc + u32(dsc + 12);
+    if (!within(dsc, u32(dsc), 1) || !within(dsc, u32(dsc + 4), 16) ||
+        !within(dsc, u32(dsc + 8), count * 20) ||
+        !within(dsc, u32(dsc + 12), 16) ||
+        bitmap >= glyphs || glyphs >= cmaps || (cmaps - glyphs) % 16) return false;
+    size_t glyph_count = (cmaps - glyphs) / 16;
+    if (glyph_count > 65536) return false;
+
+    // Each cbin cmap record is 20 bytes, not sizeof(lv_font_fmt_txt_cmap_t).
+    for (size_t i = 0; i < count; ++i) {
+        size_t record = cmaps + 20 * i;
+        size_t length = u16(record + 4);
+        size_t first_gid = u16(record + 6);
+        size_t unicode = u32(record + 8);
+        size_t ids = u32(record + 12);
+        size_t list_count = u16(record + 16);
+        uint8_t type = bytes[record + 18];
+        if (!length || first_gid >= glyph_count) return false;
+        size_t max_ofs = 0;
+        if (type == 2) { // FORMAT0_TINY
+            if (unicode || ids || list_count) return false;
+            max_ofs = length - 1;
+        } else if (type == 0) { // FORMAT0_FULL
+            if (unicode || !ids || !within(cmaps, ids, length)) return false;
+            for (size_t j = 0; j < length; ++j) {
+                if (bytes[cmaps + ids + j] > max_ofs) max_ofs = bytes[cmaps + ids + j];
+            }
+        } else if (type == 3 || type == 1) { // SPARSE_TINY / SPARSE_FULL
+            if (!unicode || !list_count || !within(cmaps, unicode, list_count * 2)) return false;
+            for (size_t j = 0; j < list_count; ++j) {
+                if (u16(cmaps + unicode + 2 * j) >= length) return false;
+            }
+            if (type == 3) {
+                if (ids) return false;
+                max_ofs = list_count - 1;
+            } else {
+                if (!ids || !within(cmaps, ids, list_count * 2)) return false;
+                for (size_t j = 0; j < list_count; ++j) {
+                    size_t ofs = u16(cmaps + ids + 2 * j);
+                    if (ofs > max_ofs) max_ofs = ofs;
+                }
+            }
+        } else return false;
+        if (max_ofs >= glyph_count - first_gid) return false;
+    }
+
+    // LV_FONT_FMT_TXT_LARGE=1: 16-byte descriptors with 4-bpp plain rows.
+    for (size_t i = 0; i < glyph_count; ++i) {
+        size_t glyph = glyphs + i * 16;
+        size_t pixels = ((size_t(u16(glyph + 8)) * 4 + 7) / 8) * u16(glyph + 10);
+        size_t offset = u32(glyph);
+        if (offset > glyphs - bitmap || pixels > glyphs - bitmap - offset) return false;
+    }
+
+    size_t pair_values = u32(kern);
+    size_t left = u32(kern + 4);
+    size_t right = u32(kern + 8);
+    size_t left_count = bytes[kern + 12];
+    size_t right_count = bytes[kern + 13];
+    if (!left_count || !right_count || !pair_values || !left || !right ||
+        !within(kern, pair_values, left_count * right_count) ||
+        !within(kern, left, glyph_count) || !within(kern, right, glyph_count)) return false;
+    for (size_t i = 0; i < glyph_count; ++i) {
+        if (bytes[kern + left + i] > left_count || bytes[kern + right + i] > right_count) return false;
+    }
+    return true;
+}
+
+bool Assets::LoadTextFont(void* data, size_t size) {
+    auto display = Board::GetInstance().GetDisplay();
+    DisplayLockGuard lock(display);
+    auto text_font = std::make_shared<LvglCBinFont>(data);
+    if (text_font->font() == nullptr) {
+        ESP_LOGE(TAG, "Failed to load text font");
+        return false;
+    }
+    auto& themes = LvglThemeManager::GetInstance();
+    if (auto light = themes.GetTheme("light")) light->set_text_font(text_font);
+    if (auto dark = themes.GetTheme("dark")) dark->set_text_font(text_font);
+    return true;
+}
+
+bool Assets::ApplyTextFont() {
+    void* data = nullptr;
+    size_t size = 0;
+    if (!GetAssetData("index.json", data, size)) {
+        ESP_LOGE(TAG, "Text font index is missing");
+        return false;
+    }
+    cJSON* root = cJSON_ParseWithLength(static_cast<char*>(data), size);
+    if (root == nullptr) {
+        ESP_LOGE(TAG, "Text font index is invalid");
+        return false;
+    }
+    auto font = cJSON_GetObjectItem(root, "text_font");
+    std::string name = cJSON_IsString(font) ? font->valuestring : "";
+    cJSON_Delete(root);
+    if (name.empty() || !GetAssetData(name, data, size)) {
+        ESP_LOGE(TAG, "Text font asset is missing");
+        return false;
+    }
+    if (sizeof(lv_font_t) != 36 || sizeof(lv_font_fmt_txt_dsc_t) != 24 ||
+        sizeof(lv_font_fmt_txt_glyph_dsc_t) != 16 ||
+        sizeof(lv_font_fmt_txt_kern_classes_t) != 16 ||
+        !LV_FONT_FMT_TXT_LARGE || !ValidCubeCBinTextFont(data, size)) {
+        ESP_LOGE(TAG, "Text font asset has invalid or unsupported cbin layout");
+        return false;
+    }
+    auto display = Board::GetInstance().GetDisplay();
+    DisplayLockGuard lock(display);
+    if (!LoadTextFont(data, size)) return false;
+
+    // SetupUI has finished, including the custom Cube screen. Set only its
+    // inherited font; SetTheme also changes colors and persists display config.
+    auto theme = static_cast<LvglTheme*>(display->GetTheme());
+    if (theme != nullptr) {
+        lv_obj_set_style_text_font(lv_screen_active(), theme->text_font()->font(), 0);
+    }
+    return theme != nullptr;
+}
+
 uint32_t Assets::LvglStrategy::CalculateChecksum(const char* data, uint32_t length) {
     uint32_t checksum = 0;
     for (uint32_t i = 0; i < length; i++) {
@@ -243,16 +393,9 @@ bool Assets::LvglStrategy::Apply(Assets* assets, bool refresh_display_theme) {
     if (cJSON_IsString(font)) {
         std::string fonts_text_file = font->valuestring;
         if (assets->GetAssetData(fonts_text_file, ptr, size)) {
-            auto text_font = std::make_shared<LvglCBinFont>(ptr);
-            if (text_font->font() == nullptr) {
-                ESP_LOGE(TAG, "Failed to load fonts.bin");
+            if (!assets->LoadTextFont(ptr, size)) {
+                cJSON_Delete(root);
                 return false;
-            }
-            if (light_theme != nullptr) {
-                light_theme->set_text_font(text_font);
-            }
-            if (dark_theme != nullptr) {
-                dark_theme->set_text_font(text_font);
             }
         } else {
             ESP_LOGE(TAG, "The font file %s is not found", fonts_text_file.c_str());
@@ -428,10 +571,10 @@ bool Assets::EmoteStrategy::Apply(Assets* assets, bool refresh_display_theme) {
 bool Assets::Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback) {
     ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
 
-    // 取消当前资源分区的内存映射
+    // Unmap the current assets partition
     UnApplyPartition();
 
-    // 下载新的资源文件
+    // Download the new assets file
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
     
@@ -456,17 +599,17 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
         return false;
     }
 
-    // 定义扇区大小为4KB（ESP32的标准扇区大小）
+    // Get the flash sector size (typically 4 KB on ESP32)
     const size_t SECTOR_SIZE = esp_partition_get_main_flash_sector_size();
     
-    // 计算需要擦除的扇区数量
-    size_t sectors_to_erase = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE; // 向上取整
+    // Calculate the number of sectors to erase
+    size_t sectors_to_erase = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE; // Round up
     size_t total_erase_size = sectors_to_erase * SECTOR_SIZE;
     
     ESP_LOGI(TAG, "Sector size: %u, content length: %u, sectors to erase: %u, total erase size: %u", 
              SECTOR_SIZE, content_length, sectors_to_erase, total_erase_size);
     
-    // 写入新的资源文件到分区，一边erase一边写入
+    // Erase sectors as the new assets file is written to the partition
     char* buffer = (char*)heap_caps_malloc(SECTOR_SIZE, MALLOC_CAP_INTERNAL);
     if (buffer == nullptr) {
         ESP_LOGE(TAG, "Failed to allocate buffer");
@@ -489,16 +632,16 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
             break;
         }
 
-        // 检查是否需要擦除新的扇区
+        // Check whether more sectors need erasing
         size_t write_end_offset = total_written + ret;
         size_t needed_sectors = (write_end_offset + SECTOR_SIZE - 1) / SECTOR_SIZE;
         
-        // 擦除需要的新扇区
+        // Erase required sectors
         while (current_sector < needed_sectors) {
             size_t sector_start = current_sector * SECTOR_SIZE;
             size_t sector_end = (current_sector + 1) * SECTOR_SIZE;
             
-            // 确保擦除范围不超过分区大小
+            // Keep the erase range within the partition
             if (sector_end > partition_->size) {
                 ESP_LOGE(TAG, "Sector end (%u) exceeds partition size (%lu)", sector_end, partition_->size);
                 heap_caps_free(buffer);
@@ -516,7 +659,7 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
             current_sector++;
         }
 
-        // 写入数据到分区
+        // Write data to the partition
         esp_err_t err = esp_partition_write(partition_, total_written, buffer, ret);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to write to assets partition at offset %u: %s", total_written, esp_err_to_name(err));
@@ -527,17 +670,17 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
         total_written += ret;
         recent_written += ret;
 
-        // 计算进度和速度
+        // Calculate progress and speed
         if (esp_timer_get_time() - last_calc_time >= 1000000 || total_written == content_length || ret == 0) {
             size_t progress = total_written * 100 / content_length;
-            size_t speed = recent_written; // 每秒的字节数
+            size_t speed = recent_written; // Bytes per second
             ESP_LOGI(TAG, "Progress: %u%% (%u/%u), Speed: %u B/s, Sectors erased: %u", 
                      progress, total_written, content_length, speed, current_sector);
             if (progress_callback) {
                 progress_callback(progress, speed);
             }
             last_calc_time = esp_timer_get_time();
-            recent_written = 0; // 重置最近写入的字节数
+            recent_written = 0; // Reset bytes written since the last update
         }
     }
     
@@ -552,7 +695,7 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
     ESP_LOGI(TAG, "Assets download completed, total written: %u bytes, total sectors erased: %u", 
              total_written, current_sector);
 
-    // 重新初始化资源分区
+    // Reinitialize the assets partition
     if (!InitializePartition()) {
         ESP_LOGE(TAG, "Failed to re-initialize assets partition");
         return false;

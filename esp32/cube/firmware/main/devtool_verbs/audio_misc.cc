@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // devtool_verbs/audio_misc.cc — audio.dump_state + audio.test_tone verbs.
 //
-// audio.dump_state: read-only counters snapshot (stub for v1; will source
-//   from AudioService stats once those counters land).
+// audio.dump_state: live processor/drain flags and bounded heap diagnostics.
+//   Software drain is not proof of physical codec DMA drain.
 // audio.test_tone: generate a sine wave on-device and push to speaker.
 //   Gated by CONFIG_AGENT_CONSOLE_DESTRUCTIVE (blocks the verb-dispatch
 //   task while I2S DMA drains).
@@ -23,7 +23,12 @@
 #include <vector>
 
 #include <esp_log.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
+extern "C" bool cube_voice_processing(void);
+extern "C" bool cube_playback_drained(void);
 extern "C" bool cube_play_pcm(const int16_t* samples, size_t count, int sample_rate);
 
 namespace {
@@ -32,12 +37,20 @@ constexpr const char* TAG = "sentient.cube.devtool.audio";
 
 int handle_audio_dump_state(const cJSON* /*params*/, cJSON* out_result,
                             int* /*ec*/, const char** /*em*/) {
-    // TODO: source from xiaozhi's AudioService stats once those counters land.
-    // For v1 return zeros so the verb is callable and the shape is stable.
-    cJSON_AddNumberToObject(out_result, "q_depth",            0);
-    cJSON_AddNumberToObject(out_result, "frames_sent",        0);
-    cJSON_AddNumberToObject(out_result, "frames_recv",        0);
-    cJSON_AddNumberToObject(out_result, "opus_decode_ms_avg", 0);
+    // Do not report invented frame counters: use observable live boundaries.
+    cJSON_AddBoolToObject(out_result, "voice_processing", cube_voice_processing());
+    cJSON_AddBoolToObject(out_result, "playback_drained", cube_playback_drained());
+    constexpr uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    cJSON_AddNumberToObject(out_result, "internal_free_bytes", heap_caps_get_free_size(internal));
+    cJSON_AddNumberToObject(out_result, "internal_min_free_bytes", heap_caps_get_minimum_free_size(internal));
+    cJSON_AddNumberToObject(out_result, "internal_largest_block_bytes", heap_caps_get_largest_free_block(internal));
+    cJSON_AddNumberToObject(out_result, "psram_free_bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    if (auto task = xTaskGetHandle("opus_codec")) {
+        cJSON_AddNumberToObject(out_result, "opus_stack_unused_bytes", uxTaskGetStackHighWaterMark(task));
+    }
+    if (auto task = xTaskGetHandle("sentient_ws")) {
+        cJSON_AddNumberToObject(out_result, "ws_worker_stack_unused_bytes", uxTaskGetStackHighWaterMark(task));
+    }
     return 0;
 }
 

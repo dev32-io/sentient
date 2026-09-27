@@ -1,6 +1,7 @@
 #include "box_audio_codec.h"
 
 #include <esp_log.h>
+#include <algorithm>
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
 
@@ -11,9 +12,9 @@
 BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
     gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference) {
-    duplex_ = true; // 是否双工
-    input_reference_ = input_reference; // 是否使用参考输入，实现回声消除
-    input_channels_ = input_reference_ ? 2 : 1; // 输入通道数
+    duplex_ = true; // duplex mode
+    input_reference_ = input_reference; // use reference input for echo cancellation
+    input_channels_ = input_reference_ ? 2 : 1; // input channel count
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
     input_gain_ = 30;
@@ -184,7 +185,11 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
 }
 
 void BoxAudioCodec::SetOutputVolume(int volume) {
-    ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    volume = std::clamp(volume, 0, 100);
+    if (output_enabled_) {
+        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
+    }
     AudioCodec::SetOutputVolume(volume);
 }
 

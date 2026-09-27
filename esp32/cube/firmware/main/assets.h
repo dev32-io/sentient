@@ -30,6 +30,7 @@ public:
 
     bool Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback);
     bool Apply(bool refresh_display_theme = true);
+    bool ApplyTextFont();
     bool GetAssetData(const std::string& name, void*& ptr, size_t& size);
 
     inline bool partition_valid() const { return partition_valid_; }
@@ -44,6 +45,7 @@ private:
     void UnApplyPartition();
     static bool FindPartition(Assets* assets);
     static bool LoadSrmodelsFromIndex(Assets* assets, cJSON* root = nullptr);
+    bool LoadTextFont(void* data, size_t size);
   
     class AssetStrategy {
     public:

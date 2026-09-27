@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -17,10 +18,17 @@ struct BoundedWsMessage {
     size_t size = 0;
     uint8_t opcode = 0;
     bool dropped = false;
+    std::array<uint8_t, 9> binary_header{};
+    size_t header_size = 0;
+    size_t frame_offset = 0;
+    bool binary_accepted = false;
 
-    void reset() { size = 0; opcode = 0; dropped = false; }
+    void reset() { size = 0; opcode = 0; dropped = false; header_size = 0; frame_offset = 0; binary_accepted = false; }
     // Returns true at message end, including dropped oversized messages.
-    bool append(uint8_t op, bool fin, int offset, int total, const char* part, int len) {
+    bool append(uint8_t op, bool fin, int offset, int total, const char* part, int len,
+                const uint8_t*& binary, size_t& binary_len) {
+        binary = nullptr;
+        binary_len = 0;
         if (offset < 0 || total < 0 || len < 0 || offset > total || len > total - offset ||
             (len && !part)) { reset(); return false; }
         // Pinned esp_websocket_client dispatches control frames as DATA events.
@@ -31,12 +39,26 @@ struct BoundedWsMessage {
             opcode = op;
         }
         if (opcode != 1 && opcode != 2) return false;
-        if (static_cast<size_t>(total) > kLimit || static_cast<size_t>(len) > kLimit - size)
-            dropped = true;
-        if (!dropped && len) {
-            std::memcpy(bytes.data() + size, part, len);
-            size += len;
+        if (opcode == 2) {
+            // IDF offsets refer to each WS frame, not the whole fragmented message.
+            if (static_cast<size_t>(offset) != frame_offset) dropped = true;
+            frame_offset = static_cast<size_t>(offset) + len;
+            if (!dropped && len) {
+                size_t prefix = std::min(static_cast<size_t>(len), binary_header.size() - header_size);
+                std::memcpy(binary_header.data() + header_size, part, prefix);
+                header_size += prefix;
+                binary = reinterpret_cast<const uint8_t*>(part + prefix);
+                binary_len = len - prefix;
+            }
+        } else {
+            if (static_cast<size_t>(total) > kLimit || static_cast<size_t>(len) > kLimit - size)
+                dropped = true;
+            if (!dropped && len) {
+                std::memcpy(bytes.data() + size, part, len);
+                size += len;
+            }
         }
+        if (offset + len == total) frame_offset = 0;
         return offset + len == total && fin;
     }
 };
@@ -108,16 +130,14 @@ struct SentientWireState {
         done_turn.clear();
         return true;
     }
-    // Gateway binary frames: big-endian seq (8), type (1), Opus bytes.
-    bool audio_payload(const uint8_t* data, size_t len, const uint8_t*& payload, size_t& size) {
-        if (audio_turn.empty() || !data || len <= 9 || data[8] != 1) return false;
+    // Gateway binary frames: big-endian seq (8), type (1), Ogg stream bytes.
+    bool audio_sequence(const uint8_t* header) {
+        if (audio_turn.empty() || !header || header[8] != 1) return false;
         uint64_t seq = 0;
-        for (int i = 0; i < 8; ++i) seq = (seq << 8) | data[i];
+        for (int i = 0; i < 8; ++i) seq = (seq << 8) | header[i];
         if (has_audio_seq && seq <= last_audio_seq) return false;
         has_audio_seq = true;
         last_audio_seq = seq;
-        payload = data + 9;
-        size = len - 9;
         return true;
     }
 };

@@ -7,7 +7,7 @@
 //     - Terra fill when LISTENING (+ breath animation)
 //     - Transparent outline when DISABLED
 //   - Status hint label above the button (montserrat-14, hidden when empty)
-//   - Breath animation: scale 1.00→1.05→1.00 over 3400 ms (LVGL transform units)
+//   - Breath animation: scale 1.00→1.05→1.00 over 3400 ms
 //
 // Forward-declared in sentient_ui_controller.cc and called from there.
 //
@@ -62,18 +62,13 @@ static void on_button_release(lv_event_t* /*e*/) {
 // ---------------------------------------------------------------------------
 // Breath animation callback
 //
-// v ∈ [SENTIENT_BREATH_SCALE_LO, SENTIENT_BREATH_SCALE_HI] (integer units,
-// 1000 = 1.0× in LVGL 9 transform scale).
-//
-// VERIFY UPSTREAM: lv_obj_set_style_transform_scale_x / _y are LVGL 9 APIs.
-// If the upstream pins an LVGL 9.x release prior to 9.0.0-rc.1 the API may be
-// lv_obj_set_style_transform_zoom (scalar, applies to both axes). Adjust if the
-// build errors with "undefined reference".
+// Shared breath tokens use per-1000 units; LVGL 9 uses LV_SCALE_NONE = 1.0×.
 // ---------------------------------------------------------------------------
 
 static void breath_scale_cb(void* obj, int32_t v) {
-    lv_obj_set_style_transform_scale_x((lv_obj_t*)obj, (int16_t)v, 0);
-    lv_obj_set_style_transform_scale_y((lv_obj_t*)obj, (int16_t)v, 0);
+    const int32_t scale = v * LV_SCALE_NONE / SENTIENT_SCALE_NORMAL;
+    lv_obj_set_style_transform_scale_x((lv_obj_t*)obj, scale, 0);
+    lv_obj_set_style_transform_scale_y((lv_obj_t*)obj, scale, 0);
 }
 
 static void start_breath(void) {
@@ -100,12 +95,10 @@ static void stop_breath(void) {
         return;
     }
     g_breath_running = false;
-    // VERIFY UPSTREAM: lv_anim_del signature in LVGL 9 is
-    // lv_anim_del(obj, exec_cb) — same as LVGL 8.
     lv_anim_del(g_button, breath_scale_cb);
     // Reset to 1.0× so button doesn't freeze at a mid-scale value.
-    lv_obj_set_style_transform_scale_x(g_button, SENTIENT_SCALE_NORMAL, 0);
-    lv_obj_set_style_transform_scale_y(g_button, SENTIENT_SCALE_NORMAL, 0);
+    lv_obj_set_style_transform_scale_x(g_button, LV_SCALE_NONE, 0);
+    lv_obj_set_style_transform_scale_y(g_button, LV_SCALE_NONE, 0);
     ESP_LOGD(TAG, "breath_stop device_id=" SENTIENT_DEVICE_ID);
 }
 
@@ -134,6 +127,8 @@ extern "C" void toggle_button_screen_create(void) {
     g_button = lv_button_create(g_screen);
     lv_obj_set_size(g_button, SENTIENT_BTN_SIZE, SENTIENT_BTN_SIZE);
     lv_obj_align(g_button, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_transform_pivot_x(g_button, lv_pct(50), 0);
+    lv_obj_set_style_transform_pivot_y(g_button, lv_pct(50), 0);
     lv_obj_set_style_radius(g_button, LV_RADIUS_CIRCLE, 0);
     // Remove default padding so label fills the full circle visually.
     lv_obj_set_style_pad_all(g_button, 0, 0);
@@ -143,6 +138,7 @@ extern "C" void toggle_button_screen_create(void) {
 
     auto* button_label = lv_label_create(g_button);
     lv_label_set_text(button_label, "Hold to talk");
+    lv_obj_set_style_text_font(button_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(button_label, lv_color_hex(SENTIENT_BG_DARK), 0);
     lv_obj_center(button_label);
 
@@ -172,11 +168,7 @@ extern "C" void toggle_button_screen_create(void) {
     lv_label_set_long_mode(g_transcript, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(g_transcript, lv_color_hex(SENTIENT_INK), 0);
     lv_obj_set_style_text_align(g_transcript, LV_TEXT_ALIGN_CENTER, 0);
-#if LV_FONT_MONTSERRAT_28
-    lv_obj_set_style_text_font(g_transcript, &lv_font_montserrat_28, 0);
-#else
-    lv_obj_set_style_text_font(g_transcript, &lv_font_montserrat_14, 0);
-#endif
+    // Inherit screen font: asset-backed Puhui includes CJK glyphs.
     lv_obj_add_flag(g_transcript, LV_OBJ_FLAG_HIDDEN);
 
     // Activate this screen.

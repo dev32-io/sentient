@@ -66,11 +66,11 @@ struct Protocol {
     void stop_streaming() { ++stopped; }
     void cancel_streaming() { ++cancelled; }
 };
-constexpr int kDeviceStateIdle = 1;
+constexpr int kDeviceStateIdle = 1, kDeviceStateSpeaking = 2;
 struct Application {
     AudioService audio_service_;
     std::unique_ptr<Protocol> sentient_ws_ = std::make_unique<Protocol>();
-    bool processing_ = false;
+    bool processing_ = false, playback_active_ = false, playback_waiting_for_drain_ = false;
     int state = 0;
     const char* hint = nullptr;
     void SetDeviceState(int s) { state = s; }

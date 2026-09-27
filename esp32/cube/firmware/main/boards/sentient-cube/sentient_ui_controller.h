@@ -22,8 +22,8 @@ typedef enum {
 // Also starts the background device-state polling task (once only).
 void sentient_cube_create_toggle_button_screen(void);
 
-// Updates the visual state of the toggle button. Safe to call from any task
-// (internally schedules the LVGL update on the LVGL task).
+// Updates the visual state of the toggle button. Safe from tasks after
+// LVGL port initialization; mutations hold the recursive LVGL port lock.
 void sentient_cube_set_state(sentient_ui_state_t state);
 
 // Sets the small status hint label above the button. Empty string hides it.

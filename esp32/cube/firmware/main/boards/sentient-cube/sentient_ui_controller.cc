@@ -34,6 +34,7 @@
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <esp_log.h>
+#include <esp_lvgl_port.h>
 #include <string.h>
 #include <cstdio>     // std::printf / std::fflush for `>>> READY` boot marker
 
@@ -254,8 +255,12 @@ extern "C" {
 
 void sentient_cube_create_toggle_button_screen(void) {
     ESP_LOGI(TAG, "create_screen device_id=" SENTIENT_DEVICE_ID);
+    // SetupUI already holds this recursive port mutex; do not look up Board
+    // here (its display is still being constructed).
+    if (!lvgl_port_lock(0)) return;
     toggle_button_screen_create();
     toggle_button_screen_apply_state(g_state);
+    lvgl_port_unlock();
 
     if (!g_poll_started) {
         g_poll_started = true;
@@ -283,28 +288,35 @@ void sentient_cube_create_toggle_button_screen(void) {
 }
 
 void sentient_cube_set_state(sentient_ui_state_t state) {
-    if (state == g_state) {
-        return;
+    if (!lvgl_port_lock(0)) return;
+    if (state != g_state) {
+        ESP_LOGI(TAG, "set_state device_id=" SENTIENT_DEVICE_ID
+                 " prev=%d next=%d", (int)g_state, (int)state);
+        g_state = state;
+        toggle_button_screen_apply_state(state);
     }
-    ESP_LOGI(TAG, "set_state device_id=" SENTIENT_DEVICE_ID
-             " prev=%d next=%d", (int)g_state, (int)state);
-    g_state = state;
-    toggle_button_screen_apply_state(state);
+    lvgl_port_unlock();
 }
 
 void sentient_cube_set_status_hint(const char* text) {
+    if (!lvgl_port_lock(0)) return;
     ESP_LOGD(TAG, "set_status_hint device_id=" SENTIENT_DEVICE_ID);
     toggle_button_screen_set_status_hint(text ? text : "");
+    lvgl_port_unlock();
 }
 
 void sentient_cube_set_transcript(const char* text) {
+    if (!lvgl_port_lock(0)) return;
     ESP_LOGD(TAG, "set_transcript device_id=" SENTIENT_DEVICE_ID);
     toggle_button_screen_set_transcript(text ? text : "");
+    lvgl_port_unlock();
 }
 
 void sentient_cube_show_test_screen(void) {
+    if (!lvgl_port_lock(0)) return;
     ESP_LOGI(TAG, "show_test_screen device_id=" SENTIENT_DEVICE_ID);
     sentient_test_screen_build();
+    lvgl_port_unlock();
 }
 
 }  // extern "C"

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "sentient_wire_state.h"
+#include "audio/demuxer/ogg_demuxer.h"
 
 #include <cJSON.h>
 #include <esp_err.h>
@@ -15,13 +16,13 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace sentient::cube {
 
 inline constexpr int kSentientUplinkSampleRateHz = 16000;
-inline constexpr int kSentientDownlinkSampleRateHz = 24000;
 
 enum class SdkStatus { Disconnected, Connecting, Authenticating, Ready, Reconnecting, Error };
 enum class CognitionState { Idle, Thinking, Acting };
@@ -64,7 +65,6 @@ private:
     bool send_text(const std::string& text);
     bool send_binary(const uint8_t* data, size_t len);
     void handle_text(const char* data, size_t len);
-    void handle_binary(const uint8_t* data, size_t len);
     void handle_data(const esp_websocket_event_data_t* data);
     void handle_disconnect();
     void pump_uplink();
@@ -88,7 +88,7 @@ private:
     SdkStatus status_ = SdkStatus::Disconnected;
     SentientWireState wire_;
     std::string last_transcript_;
-    int output_sample_rate_ = kSentientDownlinkSampleRateHz;
+    int output_sample_rate_ = 0;
     bool streaming_ = false;
     bool ending_ = false;
     bool discard_uplink_ = false;
@@ -103,9 +103,10 @@ private:
     std::atomic<int> reconnect_attempts_{0};
     esp_timer_handle_t reconnect_timer_ = nullptr;
     esp_timer_handle_t ready_timeout_timer_ = nullptr;
-    // ESP client reports payload_offset/data_len portions of each WS frame;
-    // continuation frames finish a fragmented WS message. Drop oversize whole message.
+    // WebSocket task owns assembler and demuxer. Text remains bounded;
+    // binary streams into demuxer after the 9-byte envelope is validated.
     BoundedWsMessage inbound_;
+    std::unique_ptr<OggDemuxer> demuxer_;
     std::atomic<bool> stopping_{false};
     std::mutex timer_mutex_;
     TaskHandle_t worker_ = nullptr;

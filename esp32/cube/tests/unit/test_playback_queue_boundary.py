@@ -99,7 +99,7 @@ struct AudioService {
     void* opus_decoder_ = nullptr;
     int audio_power_timer_ = 0, event_group_ = 0;
     int clears = 0, resets = 0;
-    std::function<void()> before_generation;
+    std::function<void()> before_generation, before_decode_wait;
     uint32_t ReadDecodeGeneration();
     uint32_t DecodeGeneration() {
         if (before_generation) before_generation();
@@ -113,15 +113,18 @@ struct AudioService {
     bool EnableVoiceProcessing(bool);
 };
 ''' + '\n'.join(method(audio, 'AudioService', name).replace(
-            'AudioService::DecodeGeneration(', 'AudioService::ReadDecodeGeneration(') for name in (
+            'AudioService::DecodeGeneration(', 'AudioService::ReadDecodeGeneration(').replace(
+            'if (!audio_queue_cv_.wait_for(lock, std::chrono::seconds(5),',
+            'if (before_decode_wait) before_decode_wait();\n        if (!audio_queue_cv_.wait_for(lock, std::chrono::seconds(5),') for name in (
             'DecodeGeneration', 'PushPacketToDecodeQueue', 'AudioOutputTask', 'Stop', 'EnableVoiceProcessing')) + r'''
 // Production ResetDecoder with host decoder stub, including queue notification.
 ''' + method(audio, 'AudioService', 'ResetDecoder') + r'''
 struct Protocol {
     int started = 0, cancelled = 0, interrupted = 0;
+    std::function<void()> on_interrupt;
     bool start_streaming() { ++started; return true; }
     void cancel_streaming() { ++cancelled; }
-    void interrupt() { ++interrupted; }
+    void interrupt() { ++interrupted; if (on_interrupt) on_interrupt(); }
 };
 constexpr int kDeviceStateIdle = 1, kDeviceStateListening = 2, kDeviceStateSpeaking = 3;
 constexpr int kServerFrameDurationMs = 20;
@@ -196,6 +199,41 @@ int main() {
         assert(overlap.sentient_ws_->interrupted == 1);
         assert(overlap.audio_service_.audio_decode_queue_.empty());
         assert(overlap.tasks.empty());
+        current_app = &app;
+    }
+
+    // DATA callback holds transport lock while its decode enqueue is blocked.
+    // Abort must invalidate that enqueue before trying the control send.
+    {
+        Application congested;
+        current_app = &congested;
+        auto& decode = congested.audio_service_;
+        fill(decode);
+        congested.state = kDeviceStateSpeaking;
+        const auto old_generation = decode.DecodeGeneration();
+        std::timed_mutex transport;
+        std::atomic<bool> entered = false, completed = false;
+        decode.before_decode_wait = [&] { entered = true; };
+        congested.sentient_ws_->on_interrupt = [&] {
+            assert(congested.suppressed_playback_epoch_ == congested.playback_epoch_);
+            assert(decode.DecodeGeneration() != old_generation);
+            // Fake control send cannot take transport until DATA callback exits.
+            assert(transport.try_lock_for(std::chrono::milliseconds(300)));
+            assert(completed && congested.tasks.empty());
+            transport.unlock();
+        };
+        std::thread callback([&] {
+            std::lock_guard<std::timed_mutex> lock(transport);
+            congested.OnSdkPlaybackFrame(old_bytes, sizeof(old_bytes), 16000);
+            completed = true;
+        });
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!entered && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        assert(entered && !completed);
+        congested.AbortSpeaking();
+        callback.join();
+        assert(congested.sentient_ws_->interrupted == 1);
+        assert(decode.audio_decode_queue_.empty() && congested.tasks.empty());
         current_app = &app;
     }
 
