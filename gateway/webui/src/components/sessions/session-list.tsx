@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import type { SessionRow as Row } from "@sentient/protocol";
+import type { HistorySessionRow } from "@sentient/web-sdk";
 import type { DraftRecord } from "@sentient/web-sdk";
 import { dateGroupLabel, DateGroupHeader } from "./date-group-header.tsx";
 import { SessionRow } from "./session-row.tsx";
@@ -45,7 +46,8 @@ export function SessionList({
     messageCount: 0,
     isActive: false,
   }));
-  const allRows = [...draftRows, ...rows].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  const allRows: HistorySessionRow[] = [...draftRows, ...rows];
+  allRows.sort((a, b) => Number(Boolean(b.currentPin)) - Number(Boolean(a.currentPin)) || b.lastActiveAt - a.lastActiveAt);
   if (allRows.length === 0) {
     return <div class="session-list session-list--empty">{emptyMessage}</div>;
   }

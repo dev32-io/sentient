@@ -26,6 +26,8 @@ export interface STTAdapterConfig {
   readonly inputSampleRate: number;
   readonly ttsEchoCooldownMs: number;
   readonly connectTimeoutMs: number;
+  /** Maximum End-to-terminal wait before dropping and fencing the uplink. */
+  readonly finalizeTimeoutMs?: number;
   /** Wire-format for the binary path. Required — caller picks per session
    * source. See SttAudioFormat for the encoding contract. */
   readonly audioFormat: SttAudioFormat;

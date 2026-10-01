@@ -62,6 +62,7 @@ final class AppConfig: ObservableObject {
 
     /// True when token, display name, and authenticated userId are persisted.
     /// Cold startup requires server validation or explicit typed-network offline state.
+    @Published var cubeCleanupWarning: String?
     @Published private(set) var hasToken: Bool
     @Published private(set) var startupAuthentication: StartupAuthenticationState = .login
 
@@ -138,6 +139,7 @@ final class AppConfig: ObservableObject {
     /// session is torn down by ChatView's disappear path, not here.
     func reconfigure(_ config: BackendConfig) {
         log.info("reconfigure hostLength=\(config.host.count) port=\(config.port)")
+        clearCubeCredentials()
         configStore.save(config)
         tokenStore.clear()
         displayNameStore.clear()
@@ -209,7 +211,10 @@ final class AppConfig: ObservableObject {
                 startupAuthentication = .retry
                 return .retry
             }
-            if response.user.userId != userId { beforeAccountChange() }
+            if response.user.userId != userId {
+                clearCubeCredentials()
+                beforeAccountChange()
+            }
             tokenStore.save(token: response.token)
             displayNameStore.save(response.user.displayName)
             identityStore.save(response.user.userId)
@@ -240,6 +245,7 @@ final class AppConfig: ObservableObject {
 
     /// Clear token and display name (nav to login is event-driven in RootView).
     func logout() {
+        clearCubeCredentials()
         log.info("logout")
         authGeneration &+= 1
         tokenStore.clear()
@@ -247,6 +253,16 @@ final class AppConfig: ObservableObject {
         identityStore.clear()
         hasToken = false
         startupAuthentication = .login
+    }
+
+    private func clearCubeCredentials() {
+        guard let account = authenticatedUserId, let gateway = try? CubeGateway(wsURL: gatewayWsUrl) else { return }
+        do {
+            try CubeManagerStore(gatewayOrigin: gateway.origin, accountId: account).removeAccount()
+        } catch {
+            // Authentication still fails closed on expiry; never silently claim local authority was erased.
+            cubeCleanupWarning = "Cube phone access could not be removed. Unlock iPhone, sign in to the same account and gateway, then retry logout. Offline Bluetooth authority may remain on this phone."
+        }
     }
 
     // ── Display name ──────────────────────────────────────────────────────────

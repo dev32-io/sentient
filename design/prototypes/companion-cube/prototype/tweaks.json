@@ -1,0 +1,192 @@
+{
+  "controls": [
+    {
+      "key": "state",
+      "label": "Cube state",
+      "type": "choice",
+      "options": [
+        {
+          "value": "ready",
+          "label": "Ready"
+        },
+        {
+          "value": "sleep",
+          "label": "Screen asleep"
+        },
+        {
+          "value": "setup",
+          "label": "First setup"
+        },
+        {
+          "value": "pairing",
+          "label": "Setup in progress"
+        },
+        {
+          "value": "listening",
+          "label": "Listening"
+        },
+        {
+          "value": "thinking",
+          "label": "Thinking"
+        },
+        {
+          "value": "speaking",
+          "label": "Speaking"
+        },
+        {
+          "value": "offline",
+          "label": "No Wi-Fi"
+        },
+        {
+          "value": "service",
+          "label": "Gateway unavailable"
+        },
+        {
+          "value": "recovery",
+          "label": "Account attention"
+        },
+        {
+          "value": "volume",
+          "label": "Volume"
+        },
+        {
+          "value": "low",
+          "label": "Low battery"
+        },
+        {
+          "value": "charging",
+          "label": "Charging"
+        }
+      ],
+      "default": "ready"
+    },
+    {
+      "key": "guides",
+      "label": "Corner-safe content guides",
+      "type": "toggle",
+      "default": false
+    },
+    {
+      "key": "setup",
+      "label": "iOS setup scenario",
+      "type": "choice",
+      "options": [
+        {
+          "value": "welcome",
+          "label": "Welcome"
+        },
+        {
+          "value": "scan",
+          "label": "Scan Cube"
+        },
+        {
+          "value": "wifi",
+          "label": "Wi-Fi entry"
+        },
+        {
+          "value": "joining",
+          "label": "Finishing setup"
+        },
+        {
+          "value": "done",
+          "label": "Setup complete"
+        },
+        {
+          "value": "interrupted",
+          "label": "Interrupted setup"
+        },
+        {
+          "value": "failed",
+          "label": "Connection failed"
+        },
+        {
+          "value": "denied",
+          "label": "Bluetooth denied"
+        },
+        {
+          "value": "camera-denied",
+          "label": "Camera denied"
+        }
+      ],
+      "default": "welcome"
+    },
+    {
+      "key": "hub",
+      "label": "Hardware hub scenario",
+      "type": "choice",
+      "options": [
+        {
+          "value": "hub",
+          "label": "Nearby and connected"
+        },
+        {
+          "value": "offline",
+          "label": "Cube offline \u00b7 Bluetooth available"
+        },
+        {
+          "value": "far",
+          "label": "Away \u00b7 stale readings"
+        },
+        {
+          "value": "change-wifi",
+          "label": "Change Wi-Fi"
+        },
+        {
+          "value": "wifi-error",
+          "label": "Wi-Fi change failed"
+        },
+        {
+          "value": "recover",
+          "label": "Replacement phone"
+        },
+        {
+          "value": "disabled",
+          "label": "Agent access disabled"
+        }
+      ],
+      "default": "hub"
+    },
+    {
+      "key": "characterState",
+      "label": "Character state",
+      "type": "choice",
+      "options": [
+        {
+          "value": "ready",
+          "label": "Ready"
+        },
+        {
+          "value": "listening",
+          "label": "Listening"
+        },
+        {
+          "value": "thinking",
+          "label": "Thinking"
+        },
+        {
+          "value": "speaking",
+          "label": "Speaking"
+        },
+        {
+          "value": "offline",
+          "label": "Unavailable"
+        },
+        {
+          "value": "low",
+          "label": "Low battery"
+        },
+        {
+          "value": "sleep",
+          "label": "Display asleep"
+        }
+      ],
+      "default": "ready"
+    },
+    {
+      "key": "characterMotion",
+      "label": "Character motion",
+      "type": "toggle",
+      "default": true
+    }
+  ]
+}

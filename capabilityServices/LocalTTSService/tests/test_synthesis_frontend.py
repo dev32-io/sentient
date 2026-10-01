@@ -95,3 +95,37 @@ def test_flush_skips_enqueue_when_frontend_returns_empty():
         assert runner._queue.empty()
 
     asyncio.run(run())
+
+
+def test_cancel_drops_queued_empty_end_and_close_fences_worker():
+    import json
+
+    class Socket:
+        def __init__(self):
+            self.frames = []
+
+        async def send(self, frame):
+            self.frames.append(json.loads(frame))
+
+    async def run():
+        runner = _make_runner(_FakeFrontend())
+        ws = Socket()
+        runner._ws = ws
+        # Real frontend ensures empty input stays empty.
+        runner._frontend = build_frontend(
+            normalize_enabled=False, normalize_languages=(),
+            policy=SpeechPolicy(table_max_cells=24, code_span_max_chars=32,
+                                speak_dropped_spans=True), script_confidence=0.9,
+        )
+        runner.flush(end=True)
+        runner.cancel_current()
+        await asyncio.sleep(0)
+        assert ws.frames == []
+        runner.flush(end=True)
+        await asyncio.sleep(0)
+        assert [f["type"] for f in ws.frames] == ["done"]
+        runner.flush(end=True)
+        await runner.close()
+        assert len(ws.frames) == 1
+
+    asyncio.run(run())

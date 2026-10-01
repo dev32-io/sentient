@@ -229,11 +229,11 @@ async function deleteUserFlow(deps: UserProvisionerDeps, userId: string): Promis
     return { ok: false, error: "last-admin" };
   }
 
-  const archiveResult = await deps.archiveUserDir(userId);
-  if (!archiveResult.ok) return { ok: false, error: "io-error" };
-
-  const removeResult = await deps.userStore.remove(userId);
-  if (!removeResult.ok) log.warn("deleteUser.remove-failed", { userId, error: removeResult.error });
+  const removeResult = await deps.userStore.remove(userId, () => deps.archiveUserDir(userId));
+  if (!removeResult.ok) {
+    log.warn("deleteUser.remove-failed", { userId, error: removeResult.error });
+    return { ok: false, error: "io-error" };
+  }
 
   await deps.userLifecycle.emitDeleted(userId);
 

@@ -36,6 +36,8 @@ export interface UserRecord {
    * — see `user-record-migration.ts`.
    */
   credentialsValidFrom: string; // ISO-8601 UTC
+  /** Changes only with role, not PIN. Paired devices require explicit re-enrollment. */
+  deviceAuthorityRevision?: string;
 }
 
 export type UserStoreError = "not-found" | "already-exists" | "io-error" | "corrupt-file" | "last-admin-demotion";

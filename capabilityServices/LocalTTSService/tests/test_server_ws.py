@@ -181,7 +181,10 @@ def test_real_synthesis_roundtrip(tmp_path):
 
     async def run() -> None:
         config = _make_config(tmp_path)
-        engine = QwenEngine("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", default_lang="auto")
+        engine = QwenEngine(
+            "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+            default_lang=config.default_lang, generation=config.generation,
+        )
         voice_store = VoiceStore(engine, Path(config.voice_dir))
         server = _make_server(config, engine, voice_store)
         ws_server, port = await _serve(server)
@@ -244,7 +247,10 @@ def test_real_synthesis_pcm_negotiation_roundtrip(tmp_path):
 
     async def run() -> None:
         config = _make_config(tmp_path)
-        engine = QwenEngine("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", default_lang="auto")
+        engine = QwenEngine(
+            "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+            default_lang=config.default_lang, generation=config.generation,
+        )
         voice_store = VoiceStore(engine, Path(config.voice_dir))
         server = _make_server(config, engine, voice_store)
         ws_server, port = await _serve(server)

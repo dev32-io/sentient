@@ -519,3 +519,57 @@ describe("open() close-before-ready rejection (I4)", () => {
     await adapter.close();
   });
 });
+
+it("bounds an OPEN socket that never sends ready and ignores late ready", async () => {
+  vi.useFakeTimers();
+  const adapter = createLocalSttAdapter({ ...BASE_CONFIG, connectTimeoutMs: 100 });
+  const opened = adapter.open(new AbortController().signal).catch((error) => error);
+  currentWs?._openHandshake();
+  vi.advanceTimersByTime(101);
+  expect(await opened).toBeInstanceOf(Error);
+  currentWs?._receiveText({ type: "ready" });
+  expect(currentWs?.close).toHaveBeenCalledTimes(1);
+});
+
+it("drains a queued final on remote close, but discards it on explicit retirement", async () => {
+  for (const retire of [false, true]) {
+    const adapter = createLocalSttAdapter(BASE_CONFIG);
+    const opened = adapter.open(new AbortController().signal);
+    currentWs?._openHandshake();
+    currentWs?._receiveText({ type: "ready" });
+    await opened;
+    currentWs?._receiveText({ type: "transcript_ready", turnIdx: 1, text: "synthetic" });
+    if (retire) await adapter.close();
+    else currentWs?._closeRemotely();
+    const event = await adapter.events(new AbortController().signal).next();
+    expect(event.done).toBe(retire);
+    if (!retire) expect(event.value).toEqual({ type: "transcript", turnIdx: 1, text: "synthetic" });
+    await adapter.close();
+  }
+});
+
+it("echo suppression follows monotonic elapsed time, not wall-clock jumps", async () => {
+  let now = 1000;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  const wall = vi.spyOn(Date, "now").mockReturnValue(1000);
+  const adapter = createLocalSttAdapter(BASE_CONFIG);
+  try {
+    const opened = adapter.open(new AbortController().signal);
+    currentWs?._openHandshake();
+    currentWs?._receiveText({ type: "ready" });
+    await opened;
+    adapter.suppressInputFor(2500);
+    wall.mockReturnValue(1_000_000);
+    now = 3499;
+    adapter.send(pcm16Loud(48));
+    expect(currentWs?.send).not.toHaveBeenCalled();
+    wall.mockReturnValue(0);
+    now = 3500;
+    adapter.send(pcm16Loud(48));
+    expect(currentWs?.send).toHaveBeenCalledTimes(1);
+  } finally {
+    await adapter.close();
+    clock.mockRestore();
+    wall.mockRestore();
+  }
+});

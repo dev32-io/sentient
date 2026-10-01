@@ -22,6 +22,7 @@ import {
   streamResumedSchema,
   textInputSchema,
   turnAbortedSchema,
+  turnAudioDoneSchema,
   turnAudioStartSchema,
   turnStartedSchema,
   turnTextDeltaSchema,
@@ -935,5 +936,13 @@ describe("gatewayMessageSchema — the 2.0 union", () => {
 
   it("rejects transcript.partial — no partial-transcript frame exists in 2.0", () => {
     expect(gatewayMessageSchema.safeParse({ type: "transcript.partial", text: "hi" }).success).toBe(false);
+  });
+});
+
+describe("turn.audio.done terminal", () => {
+  it("closes receipt without a playback cancellation flag", () => {
+    const done = { type: "turn.audio.done", turnId: "t1" };
+    expect(turnAudioDoneSchema.parse(done)).toEqual(done);
+    expect(turnAudioDoneSchema.parse({ ...done, aborted: true })).toEqual(done);
   });
 });

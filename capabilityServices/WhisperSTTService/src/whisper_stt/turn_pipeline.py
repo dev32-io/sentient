@@ -53,6 +53,7 @@ from .pipeline_events import (
     PipelineEvent,
     SmartTurnEval,
     TurnContinuing,
+    TurnRejected,
     VadEnd,
     VadStart,
 )
@@ -190,7 +191,7 @@ class TurnPipeline:
         self._vad_iter.reset_states()
 
     def flush(self) -> list[PipelineEvent]:
-        """Force-finalize any open turn immediately. No-op when idle.
+        """Force-finalize an open turn, or acknowledge idle input with a rejection.
 
         Driven by the client's explicit end-of-stream control message
         (``{"type": "flush"}`` — sent by the gateway on ``audio.end``,
@@ -203,6 +204,14 @@ class TurnPipeline:
         """
         events: list[PipelineEvent] = []
         if not self._turn_active:
+            self._turn_idx += 1
+            self._rechunk_buf.clear()
+            self._reset_turn_state()
+            events.append(TurnRejected(
+                t_mono_ns=time.monotonic_ns(), turn_idx=self._turn_idx,
+                reason="no_speech", text="", audio_event="",
+                decode_ms=0.0, audio_seconds=0.0,
+            ))
             return events
         # Drop the <one-Silero-chunk remainder (≤32 ms) — not worth a
         # zero-padded decode, and _force_finalize resets the buffer state.

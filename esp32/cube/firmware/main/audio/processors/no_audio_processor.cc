@@ -1,5 +1,6 @@
 #include "no_audio_processor.h"
 #include <esp_log.h>
+#include <chrono>
 
 #define TAG "NoAudioProcessor"
 
@@ -9,8 +10,9 @@ void NoAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srmo
     output_buffer_.reserve(frame_samples_);
 }
 
-void NoAudioProcessor::Feed(std::vector<int16_t>&& data) {
-    if (!is_running_ || !output_callback_) {
+void NoAudioProcessor::Feed(std::vector<int16_t>&& data, uint32_t capture_generation) {
+    std::lock_guard<std::timed_mutex> lock(feed_mutex_);
+    if (!is_running_ || capture_generation != capture_generation_ || !output_callback_) {
         return;
     }
 
@@ -26,30 +28,46 @@ void NoAudioProcessor::Feed(std::vector<int16_t>&& data) {
     // Output complete frames when buffer has enough data
     while (output_buffer_.size() >= (size_t)frame_samples_) {
         if (output_buffer_.size() == (size_t)frame_samples_) {
-            output_callback_(std::move(output_buffer_));
+            output_callback_(std::move(output_buffer_), capture_generation_);
             output_buffer_.clear();
             output_buffer_.reserve(frame_samples_);
         } else {
-            output_callback_(std::vector<int16_t>(output_buffer_.begin(), output_buffer_.begin() + frame_samples_));
+            output_callback_(std::vector<int16_t>(output_buffer_.begin(), output_buffer_.begin() + frame_samples_), capture_generation_);
             output_buffer_.erase(output_buffer_.begin(), output_buffer_.begin() + frame_samples_);
         }
     }
 }
 
-void NoAudioProcessor::Start() {
+bool NoAudioProcessor::Start(uint32_t capture_generation) {
+    std::unique_lock<std::timed_mutex> lock(feed_mutex_, std::defer_lock);
+    if (!lock.try_lock_for(std::chrono::seconds(5))) return false;
+    if (is_running_ || !stopped_cleanly_) return false;
+    capture_generation_ = capture_generation;
     is_running_ = true;
+    return true;
 }
 
-void NoAudioProcessor::Stop() {
+bool NoAudioProcessor::Stop(bool drain) {
     is_running_ = false;
+    std::unique_lock<std::timed_mutex> lock(feed_mutex_, std::defer_lock);
+    if (!lock.try_lock_for(std::chrono::seconds(5))) {
+        stopped_cleanly_ = false;
+        return false;
+    }
+    if (drain && !output_buffer_.empty() && output_callback_) {
+        output_buffer_.resize(frame_samples_, 0);
+        output_callback_(std::move(output_buffer_), capture_generation_);
+    }
     output_buffer_.clear();
+    stopped_cleanly_ = true;
+    return true;
 }
 
 bool NoAudioProcessor::IsRunning() {
     return is_running_;
 }
 
-void NoAudioProcessor::OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) {
+void NoAudioProcessor::OnOutput(std::function<void(std::vector<int16_t>&& data, uint32_t capture_generation)> callback) {
     output_callback_ = callback;
 }
 

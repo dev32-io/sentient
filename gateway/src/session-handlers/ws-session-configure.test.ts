@@ -24,7 +24,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import type { OrchestratorConfig } from "@sentient/config";
+import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
+import { createResumeCursor } from "../../../shared/web-sdk/src/resume-cursor.ts";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
@@ -32,13 +34,14 @@ import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../pr
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { createSessionRuntime } from "../runtime/session-runtime.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
-import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
+import { EMPTY_TURN_STATE, type TurnStateSnapshot } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
 import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import { createAuthenticatedSockets } from "./authenticated-sockets.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
+import { detachSession } from "./session-binding.js";
 import { mintSessionId } from "./session-id.js";
 import { createSessionRegistry } from "./session-registry.js";
 import { handleConversationActivate } from "./ws-conversation-activate.js";
@@ -87,7 +90,8 @@ const WS_CLOSED = 3;
 interface FakeWs {
   data: SessionData;
   sent: Record<string, unknown>[];
-  send: (payload: string) => void;
+  binary: Uint8Array[];
+  send: (payload: string | Uint8Array) => void;
   readyState: number;
   /** Bun's transport backlog. The fan-out reads it after every write to
    *  enforce `session.max_window_lag_bytes`, so a double that omits it is not
@@ -106,11 +110,13 @@ function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
   const ws: FakeWs = {
     data,
     sent: [],
+    binary: [],
     readyState: WS_OPEN,
     /** Bun's transport backlog. 0 — these doubles never apply backpressure. */
     getBufferedAmount: () => 0,
     send(payload) {
-      ws.sent.push(JSON.parse(payload) as Record<string, unknown>);
+      if (typeof payload === "string") ws.sent.push(JSON.parse(payload) as Record<string, unknown>);
+      else ws.binary.push(payload);
     },
   };
   return ws;
@@ -206,7 +212,12 @@ interface SnapshotSpy {
  *  same validated send path the production feed uses — so the ORDER relative
  *  to session.ready is observable, not just the call count. Voice composition
  *  is short-circuited by `createSynthesizerFor: () => null`. */
-function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessManager: AccessManager): SnapshotSpy {
+function servicesWithRuntime(
+  replayRegistry: ReplayRegistry,
+  ws: FakeWs,
+  accessManager: AccessManager,
+  turnState: TurnStateSnapshot = EMPTY_TURN_STATE,
+): SnapshotSpy {
   const spy: SnapshotSpy = { snapshotCalls: 0, taskListCalls: 0, services: {} as GatewayServices };
   const runtime = {
     emitConversationSnapshot: () => {
@@ -217,7 +228,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
       spy.taskListCalls += 1;
     },
     dispose: () => {},
-    turnState: EMPTY_TURN_STATE,
+    turnState,
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
@@ -259,6 +270,72 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
     expect(firstJournal).not.toBeNull();
     expect(ws.data.journal).toBe(firstJournal);
     expect(ws.data.epoch).toBe(firstEpoch);
+  });
+
+  it("announces a rebuilt journal before reconstruction and low-seq binary, even when generation repeats", async () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const sessionId = seedSession(accessManager, USER_ID, "prior entry");
+    const old = fakeAuthedWs("conn-old");
+    const first = servicesWithRuntime(registry, old, accessManager);
+    await configure(old, first.services, SURFACE_A, sessionId);
+    const oldEpoch = old.data.epoch;
+    const oldGeneration = old.data.attachment?.generation;
+    for (let i = 0; i < 100; i++) {
+      old.data.journal?.allocateText("turn.text.delta", (seq) =>
+        JSON.stringify({ type: "turn.text.delta", turnId: "prior", text: "", seq, epoch: oldEpoch }),
+      );
+    }
+    const cursor = createResumeCursor();
+    expect(cursor.tryApply(old.data.journal?.newestSeq ?? 0, oldEpoch)).toBe(true);
+    detachSession(asWs(old), first.services);
+    registry.invalidate(sessionId); // same durable session, new journal incarnation
+
+    const current = fakeAuthedWs("conn-new");
+    const second = servicesWithRuntime(registry, current, accessManager, {
+      ...EMPTY_TURN_STATE,
+      audio: { turnId: "t-new", encoding: "opus", sampleRate: 48000 },
+    });
+    await handleSessionConfigure(
+      asWs(current),
+      [],
+      "en",
+      second.services,
+      "webui",
+      DEVICE_ID,
+      SURFACE_A,
+      { epoch: oldEpoch, lastSeq: 100 },
+      sessionId,
+    );
+    expect(current.data.attachment?.generation).toBe(oldGeneration);
+    expect(current.data.epoch).not.toBe(oldEpoch);
+    expect(frameTypes(current)).toEqual([
+      "session.attached",
+      "stream.resumed",
+      "session.ready",
+      "conversation.snapshot",
+      "turn.audio.start",
+    ]);
+    expect(current.sent[0]).toMatchObject({ sessionId, generation: oldGeneration, epoch: current.data.epoch });
+    expect(current.sent[1]).toMatchObject({ recovered: false, epoch: current.data.epoch });
+    expect(current.sent[2]).toMatchObject({ epoch: current.data.epoch });
+    for (const frame of current.sent) {
+      expect(gatewayMessageSchema.safeParse(frame).success).toBe(true);
+      if (frame.type === "stream.resumed" && frame.recovered === false) cursor.reset();
+      else
+        expect(cursor.tryApply((frame.seq as number | undefined) ?? 0, frame.epoch as number | undefined)).toBe(true);
+    }
+    expect(cursor.cursor).toEqual({ epoch: current.data.epoch, lastSeq: 0 });
+    expect(current.sent[4]).toMatchObject({ type: "turn.audio.start", turnId: "t-new" });
+    expect(current.sent[4]).not.toHaveProperty("seq");
+    second.services.sessionRegistry.handlesFor(sessionId)?.fanOut.audioFrame("t-new", new Uint8Array([1]));
+    expect(current.binary).toHaveLength(1);
+    const packet = current.binary[0];
+    if (!packet) throw new Error("missing binary frame");
+    const seq = Number(new DataView(packet.buffer, packet.byteOffset).getBigUint64(0));
+    expect(seq).toBe(1);
+    expect(cursor.tryApply(seq)).toBe(true);
+    expect(cursor.cursor).toEqual({ epoch: current.data.epoch, lastSeq: 1 });
   });
 
   it("gives two SURFACES of one user on one session the SAME journal", async () => {
@@ -327,6 +404,12 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     await configure(ws, spy.services, SURFACE_A, sessionId);
 
     expect(frameTypes(ws)).toEqual(["session.attached", "session.ready", "conversation.snapshot"]);
+    expect(ws.sent[0]).toMatchObject({ epoch: ws.data.epoch });
+    expect(ws.sent.find((frame) => frame.type === "session.ready")).toMatchObject({
+      epoch: ws.data.epoch,
+      audioEncoding: "opus",
+      inputSampleRate: 16000,
+    });
     expect(spy.snapshotCalls).toBe(1);
   });
 
@@ -343,6 +426,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     await configure(ws, spy.services, SURFACE_A);
 
     expect(frameTypes(ws)).toEqual(["session.ready", "conversation.snapshot", "session.draft"]);
+    expect(ws.sent[0]).not.toHaveProperty("epoch");
     expect(spy.snapshotCalls).toBe(0); // no runtime was built — there is no session
     expect(ws.data.conversationId).toBeNull();
     expect(ws.data.draftKey).toBe(ws.sent[2]?.draftKey as string);

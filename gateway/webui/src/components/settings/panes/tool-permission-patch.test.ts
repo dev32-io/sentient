@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { McpToolView } from "../../../services/profile-api.js";
 import {
+  cubeToolPermission,
   effectiveToolPermission,
   effectiveWildcardPermission,
   withServerMasterPermission,
@@ -17,6 +18,17 @@ function tool(overrides?: Partial<McpToolView>): McpToolView {
     ...overrides,
   };
 }
+
+describe("cubeToolPermission", () => {
+  it("does not inherit ordinary catalog permissions; named overrides beat wildcard and clear falls through", () => {
+    expect(cubeToolPermission({ skills: { skill_list: "allow" } }, "skill_list")).toBe("off");
+    expect(cubeToolPermission({ cube: { "*": "ask", skill_list: "off" } }, "skill_list")).toBe("off");
+    expect(cubeToolPermission({ cube: { "*": "ask", skill_list: null } }, "skill_list")).toBe("off");
+    expect(cubeToolPermission({ cube: { "*": "deny", skill_list: "allow" } }, "skill_list")).toBe("allow");
+    expect(cubeToolPermission({ cube: { "*": "deny" } }, "skill_list")).toBe("off");
+    expect(cubeToolPermission({ cube: { "*": null } }, "skill_list")).toBe("off");
+  });
+});
 
 describe("withToolPermission", () => {
   it("sets the target (server, tool) key without touching other servers", () => {

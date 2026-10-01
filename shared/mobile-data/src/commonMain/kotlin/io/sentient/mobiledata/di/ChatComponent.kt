@@ -415,6 +415,14 @@ open class ChatComponent(
      * READY → liveness probe; not-READY → forceReconnect (re-establishes anchored
      * conversation via conversation.activate on the next READY rising edge).
      */
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTransportException::class,
+        IllegalStateException::class,
+        CancellationException::class,
+    )
+    suspend fun cubeHistory(sessionId: String) = sdk.cubeHistory(sessionId)
+
     fun ensureConnected() = sdk.ensureConnected()
 
     /** Foreground presence — one-shot liveness probe; reconnect only if the socket is dead. */

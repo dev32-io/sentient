@@ -5,6 +5,7 @@ import type {
   AttachmentsConfig,
   AuthConfig as AuthYaml,
   CompanionsConfig as CompanionsYaml,
+  DevicesConfig,
   DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
@@ -174,6 +175,7 @@ export interface StartupConfig {
   webui: WebuiYaml;
   hermes: HermesYaml | undefined;
   auth: AuthYaml;
+  devices: DevicesConfig;
   providers: ProvidersYaml;
   companions: CompanionsYaml;
   mcpCatalog: McpCatalog;
@@ -334,6 +336,7 @@ export function loadStartupConfig(): StartupConfig {
     webui: cfg.webui,
     hermes: cfg.hermes,
     auth: cfg.auth,
+    devices: cfg.devices,
     providers: cfg.providers,
     companions: cfg.companions,
     mcpCatalog: cfg.mcp_catalog,

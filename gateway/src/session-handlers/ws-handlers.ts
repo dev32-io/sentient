@@ -12,6 +12,7 @@ import { AttachmentAdmissionError, DeletedSessionError, publishAdmittedAttachmen
 import { captureDiagnosticRef } from "./capture-diagnostics.js";
 import { type CommandKind, mediateCommand, reserveInputFloor } from "./command-mediator.js";
 import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
+import { admitCubeMessage, cubeCredentialLive } from "./cube-input.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import {
   type BindOutcome,
@@ -139,6 +140,7 @@ export async function handleWebSocketMessage(
       });
       return;
     }
+    if (ws.data.principal?.origin?.kind === "cube" && !cubeCredentialLive(ws, services)) return;
     const capture = ws.data.audioCapture;
     if (capture === null) {
       log.debug("audio.frame-dropped", {
@@ -162,7 +164,14 @@ export async function handleWebSocketMessage(
   }
 
   if (ws.data.authState !== "authed") {
-    await handleAuthMessage(ws, parsed, services.auth, services.sessionManager, services.authenticatedSockets);
+    await handleAuthMessage(
+      ws,
+      parsed,
+      services.auth,
+      services.sessionManager,
+      services.authenticatedSockets,
+      services.devices,
+    );
     return;
   }
 
@@ -172,6 +181,14 @@ export async function handleWebSocketMessage(
     return;
   }
   const msg = msgResult.data;
+  if (ws.data.principal?.origin?.kind === "cube") {
+    // Text captures the durable fence before its own async authorization.
+    if (msg.type !== "text.input" && !cubeCredentialLive(ws, services)) return;
+    if (msg.type === "conversation.activate" || msg.type === "user.preferences.patch") {
+      sendError(ws, "permission_denied", "Cube sessions are selected by device input");
+      return;
+    }
+  }
 
   if (msg.type !== "ping") {
     // THE COMMAND LINE (session-model spec §7.3). With N windows on one
@@ -226,6 +243,15 @@ export async function handleWebSocketMessage(
 
     case "text.input": {
       if (!mediate(ws, services, msg, "text.input", msg.pendingId)) return;
+      if (ws.data.principal?.origin?.kind === "cube") {
+        if (msg.attachmentIds?.length) {
+          sendError(ws, "permission_denied", "Cube attachments are not supported");
+          return;
+        }
+        const admitted = await admitCubeMessage(ws, services, msg.text, msg.pendingId);
+        if (admitted) admitted.runtime.submit(admitted.stimulus);
+        return;
+      }
       let binding = captureCommandBinding(ws);
       if (!binding) {
         sendError(ws, "orchestrator_unavailable", "Session is not configured");
@@ -304,7 +330,10 @@ export async function handleWebSocketMessage(
 
     case "interrupt":
       if (!mediate(ws, services, msg, "interrupt")) return;
-      // No-op (not an error) if idle or the orchestrator is unconfigured —
+      // Explicit input intent clears this window's guard even after voice drain
+      // finished. Do not discard its active/committing capture or clear peers.
+      ws.data.stt?.suppressInputFor(0);
+      // Runtime cancellation is a no-op if idle or the orchestrator is unconfigured —
       // interrupt is idempotent and there is nothing to cancel.
       //
       // Its own INFO because Stop is the cancellation §7.3 names: it aborts the
@@ -324,6 +353,14 @@ export async function handleWebSocketMessage(
     case "audio.start": {
       if (!mediate(ws, services, msg, "audio.start")) return;
       if (ws.data.audioCapture !== null) {
+        // A repeated start for the same capture is idempotent; it must not
+        // reset the binary gate or the STT capture already in progress.
+        if (
+          msg.captureId !== ws.data.audioCapture.id &&
+          !(msg.captureId === undefined && ws.data.audioCapture.legacy)
+        ) {
+          sendConnectionFrame(ws, { type: "command.rejected", command: "audio.start", reason: "session_busy" });
+        }
         log.info("audio.transition-ignored", {
           connectionId: ws.data.sessionId,
           captureRef: captureDiagnosticRef(msg.captureId),
@@ -345,6 +382,7 @@ export async function handleWebSocketMessage(
           transition: "closed->closed",
           reason: "the prior capture finalization is not safe yet",
         });
+        sendConnectionFrame(ws, { type: "command.rejected", command: "audio.start", reason: "session_busy" });
         return;
       }
       const diagnosticRef = captureDiagnosticRef(captureId);
@@ -1008,6 +1046,8 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
     // (session-binding.ts); it is not this call, and it cannot be.
     getRuntimeForInput: async (text, captureIsCurrent) => {
       if (!mediate(ws, services, {}, "transcript")) return null;
+      if (ws.data.principal?.origin?.kind === "cube")
+        return admitCubeMessage(ws, services, text, undefined, captureIsCurrent);
       let binding = captureCommandBinding(ws);
       if (!binding) return null;
       binding = await bindExistingDraftForInput(ws, services, binding, captureIsCurrent);

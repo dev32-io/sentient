@@ -1,6 +1,7 @@
 #include "box_audio_codec.h"
 
 #include <esp_log.h>
+#include <algorithm>
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
 
@@ -10,13 +11,14 @@
 
 BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference) {
-    duplex_ = true; // 是否双工
-    input_reference_ = input_reference; // 是否使用参考输入，实现回声消除
-    input_channels_ = input_reference_ ? 2 : 1; // 输入通道数
+    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference,
+    int mic1_gain_db) {
+    duplex_ = true; // duplex mode
+    input_reference_ = input_reference; // use reference input for echo cancellation
+    input_channels_ = input_reference_ ? 2 : 1; // input channel count
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
-    input_gain_ = 30;
+    input_gain_ = mic1_gain_db;
 
     CreateDuplexChannels(mclk, bclk, ws, dout, din);
 
@@ -76,6 +78,15 @@ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int
     input_dev_ = esp_codec_dev_new(&dev_cfg);
     assert(input_dev_ != NULL);
 
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Establish the real RX/TX capture format before BLE/Wi-Fi/AFE consume
+    // internal DMA RAM. This leaves the codec powered down, not recording.
+    // Fixed 64-BCLK bus slots retain these descriptors through speaker/capture cycles.
+    EnableInput(true);
+    ESP_ERROR_CHECK(input_enabled_ ? ESP_OK : ESP_FAIL);
+    EnableInput(false);
+    ESP_ERROR_CHECK(!input_enabled_ ? ESP_OK : ESP_FAIL);
+#endif
     ESP_LOGI(TAG, "BoxAudioDevice initialized");
 }
 
@@ -178,23 +189,41 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
 
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
     ESP_ERROR_CHECK(i2s_channel_init_tdm_mode(rx_handle_, &tdm_cfg));
+#if !CONFIG_BOARD_TYPE_SENTIENT_CUBE
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
+#endif
     ESP_LOGI(TAG, "Duplex channels created");
 }
 
 void BoxAudioCodec::SetOutputVolume(int volume) {
-    ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
+    std::lock_guard<std::shared_mutex> lock(data_if_mutex_);
+    volume = std::clamp(volume, 0, 100);
+    if (output_enabled_) {
+        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
+    }
     AudioCodec::SetOutputVolume(volume);
 }
 
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE && CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+bool BoxAudioCodec::GetMic1GainRegister(int& value) {
+    std::shared_lock<std::shared_mutex> lock(data_if_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || mic1_gain_reg43_ < 0) return false;
+    value = mic1_gain_reg43_;
+    return true;
+}
+#endif
+
 void BoxAudioCodec::EnableInput(bool enable) {
-    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    std::lock_guard<std::shared_mutex> lock(data_if_mutex_);
     if (enable == input_enabled_) {
         return;
     }
     SystemInfo::LogHeap(enable ? "audio.in.pre_open" : "audio.in.pre_close");
     if (enable) {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE && CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+        mic1_gain_reg43_ = -1;
+#endif
         esp_codec_dev_sample_info_t fs = {
             .bits_per_sample = 16,
             .channel = 4,
@@ -205,17 +234,36 @@ void BoxAudioCodec::EnableInput(bool enable) {
         if (input_reference_) {
             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
         }
-        ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
+        int err = esp_codec_dev_open(input_dev_, &fs);
+        if (err == ESP_CODEC_DEV_OK)
+            err = esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_);
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE && CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+        // Read via codec driver while open. Never infer applied gain from request;
+        // keep last readback across close for post-capture diagnostics.
+        if (err == ESP_CODEC_DEV_OK) {
+            int reg = 0;
+            if (esp_codec_dev_read_reg(input_dev_, 0x43, &reg) == ESP_CODEC_DEV_OK)
+                mic1_gain_reg43_ = reg;
+        }
+#endif
+        if (err != ESP_CODEC_DEV_OK) {
+            int cleanup = esp_codec_dev_close(input_dev_);
+            ESP_LOGE(TAG, "audio.input_open_failed code=%d cleanup=%d", err, cleanup);
+            return;
+        }
     } else {
-        ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        int err = esp_codec_dev_close(input_dev_);
+        if (err != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "audio.input_close_failed code=%d", err);
+            return;
+        }
     }
     AudioCodec::EnableInput(enable);
     SystemInfo::LogHeap(enable ? "audio.in.post_open" : "audio.in.post_close");
 }
 
 void BoxAudioCodec::EnableOutput(bool enable) {
-    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    std::lock_guard<std::shared_mutex> lock(data_if_mutex_);
     if (enable == output_enabled_) {
         return;
     }
@@ -229,25 +277,42 @@ void BoxAudioCodec::EnableOutput(bool enable) {
             .sample_rate = (uint32_t)output_sample_rate_,
             .mclk_multiple = 0,
         };
-        ESP_ERROR_CHECK(esp_codec_dev_open(output_dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
+        int err = esp_codec_dev_open(output_dev_, &fs);
+        if (err == ESP_CODEC_DEV_OK) err = esp_codec_dev_set_out_vol(output_dev_, output_volume_);
+        if (err != ESP_CODEC_DEV_OK) {
+            int cleanup = esp_codec_dev_close(output_dev_);
+            ESP_LOGE(TAG, "audio.output_open_failed code=%d cleanup=%d", err, cleanup);
+            return;
+        }
     } else {
-        ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+        int err = esp_codec_dev_close(output_dev_);
+        if (err != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "audio.output_close_failed code=%d", err);
+            return;
+        }
     }
     AudioCodec::EnableOutput(enable);
     SystemInfo::LogHeap(enable ? "audio.out.post_open" : "audio.out.post_close");
 }
 
 int BoxAudioCodec::Read(int16_t* dest, int samples) {
-    if (input_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+    std::shared_lock<std::shared_mutex> lock(data_if_mutex_);
+    if (!input_enabled_) return 0;
+    int err = esp_codec_dev_read(input_dev_, dest, samples * sizeof(int16_t));
+    if (err != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "audio.read_failed code=%d", err);
+        return 0;
     }
     return samples;
 }
 
 int BoxAudioCodec::Write(const int16_t* data, int samples) {
-    if (output_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
+    std::shared_lock<std::shared_mutex> lock(data_if_mutex_);
+    if (!output_enabled_) return 0;
+    int err = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+    if (err != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "audio.write_failed code=%d", err);
+        return 0;
     }
     return samples;
 }

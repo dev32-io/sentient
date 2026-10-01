@@ -3,6 +3,7 @@
 # without --profile prod).
 #
 # Wide-surface verbosity + remote debug surface. NOT FOR PROD.
+CONFIG_SENTIENT_PROD_BUILD=n
 
 # Devtool verbs: destructive (audio play/record/test_tone) + LVGL inspector.
 # Names preserved from the retired agent_console Kconfig; symbols now live in

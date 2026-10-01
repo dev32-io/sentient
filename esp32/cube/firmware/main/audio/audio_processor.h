@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <cstdint>
 
 #include <model_path.h>
 #include "audio_codec.h"
@@ -13,11 +14,18 @@ public:
     virtual ~AudioProcessor() = default;
     
     virtual void Initialize(AudioCodec* codec, int frame_duration_ms, srmodel_list_t* models_list) = 0;
-    virtual void Feed(std::vector<int16_t>&& data) = 0;
-    virtual void Start() = 0;
-    virtual void Stop() = 0;
+    // Feed/read and output retain the immutable capture token. Stop acknowledges
+    // completion of in-flight callbacks and buffer reset; false means no safe
+    // capture transition (caller must cancel, never commit a partial tail).
+    virtual void Feed(std::vector<int16_t>&& data, uint32_t capture_generation) = 0;
+    virtual bool Start(uint32_t capture_generation) = 0;
+    virtual bool Stop(bool drain = false) = 0;
     virtual bool IsRunning() = 0;
-    virtual void OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) = 0;
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    // Finalized native AFE sample counts only; other processors are unavailable.
+    virtual bool GetCaptureSampleCounts(uint32_t, size_t&, size_t&) { return false; }
+#endif
+    virtual void OnOutput(std::function<void(std::vector<int16_t>&& data, uint32_t capture_generation)> callback) = 0;
     virtual void OnVadStateChange(std::function<void(bool speaking)> callback) = 0;
     virtual size_t GetFeedSize() = 0;
     virtual void EnableDeviceAec(bool enable) = 0;

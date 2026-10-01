@@ -93,7 +93,7 @@ import { renderSkillIndex } from "../skills/skill-index.js";
 import { createSkillStore } from "../skills/skill-store.js";
 import type { SkillMeta } from "../skills/skill-store.js";
 import type { SessionEntry } from "../store/entry-types.js";
-import { type AttachmentSessionStore, type SessionStore, openSessionStore } from "../store/session-store.js";
+import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { ATTACHMENT_TOOL_NAME, createAttachmentTools } from "../tools/attachment-tools.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
@@ -1662,6 +1662,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
 
   return ({
     principal,
+    deviceCredential,
     conversationId,
     connectionId,
     emitter: rawEmitter,
@@ -1829,10 +1830,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     const nativeTools = new Map(skillTools);
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
     for (const runner of sessionCalendar?.tools ?? []) nativeTools.set(runner.definition.name, runner);
-    const attachmentStore: AttachmentSessionStore = openSessionStore(
-      accessManager.grant(principal, "session-store"),
-      dbFileName,
-    );
+    const attachmentStore = openSessionStore(accessManager.grant(principal, "session-store"), dbFileName);
     const grantedAttachmentCapability = accessManager.grant(principal, "attachment-store");
     if (grantedAttachmentCapability.resource !== "attachment-store") throw new Error("invalid attachment capability");
     const attachmentCapability = grantedAttachmentCapability as AttachmentCapability;
@@ -2056,6 +2054,16 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     let runtimeRef: SessionRuntime | null = null;
 
     const broker = createToolBroker({
+      authorizeExecution: async () =>
+        principal.origin?.kind !== "cube" || (deviceCredential !== undefined && (await deviceCredential.current())),
+      executionAllowed: () => {
+        const status = attachmentStore.getSessionExecutionStatus(conversationId);
+        return (
+          status !== "closed" &&
+          status !== "deleted" &&
+          (principal.origin?.kind !== "cube" || deviceCredential?.live() === true)
+        );
+      },
       mcp: mcpClient,
       store: brokerStore,
       capability,
@@ -2097,6 +2105,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // reaching the client; dropping the runtime call is the bug this round
       // fixes (a background row that never leaves the strip).
       onDelegationProgress: (p) => {
+        if (runtimeRef?.executionAvailable === false) return;
         runtimeRef?.noteDelegationProgress(p);
         emitter.delegationProgress(p);
       },
@@ -2133,6 +2142,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     const sessionSystemPrompt = sessionCalendar?.nudge ? `${memoryPrompt}\n\n${sessionCalendar.nudge}` : memoryPrompt;
 
     const runtime = buildSessionRuntime({
+      ...(deviceCredential ? { deviceCredential } : {}),
       principal,
       // The store's own vocabulary for a partition is `sessionId`; the value
       // is the DURABLE conversation, never this socket. See that field's doc

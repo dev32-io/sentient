@@ -1,8 +1,8 @@
 import { type Signal, signal } from "@preact/signals";
-import type { SessionRow } from "@sentient/protocol";
 import {
   type DraftRecord,
   type DraftStore,
+  type HistorySessionRow,
   type SessionsChangeEvent,
   type SessionsConnector,
   SessionsRestError,
@@ -29,13 +29,14 @@ function readStoredSessionId(): string | null {
 }
 
 export interface UseSessions {
-  readonly items: Signal<SessionRow[]>;
+  readonly items: Signal<HistorySessionRow[]>;
   readonly drafts: Signal<readonly DraftRecord[]>;
-  readonly searchHits: Signal<SessionRow[] | null>;
+  readonly searchHits: Signal<HistorySessionRow[] | null>;
   readonly loading: Signal<boolean>;
   readonly error: Signal<string | null>;
   readonly deleteFailureCount: Signal<number>;
   readonly currentId: Signal<string | null>;
+  readonly viewerId: Signal<string | null>;
   load(): Promise<void>;
   search(q: string): Promise<void>;
   switchTo(id: string): Promise<boolean>;
@@ -63,9 +64,10 @@ interface DeletionRecovery {
 }
 
 export function createUseSessions(connector: SessionsConnector, config: UseSessionsConfig = {}): UseSessions {
-  const items = signal<SessionRow[]>([]);
+  const items = signal<HistorySessionRow[]>([]);
+  const viewerId = signal<string | null>(null);
   const drafts = config.drafts ?? signal<readonly DraftRecord[]>([]);
-  const searchHits = signal<SessionRow[] | null>(null);
+  const searchHits = signal<HistorySessionRow[] | null>(null);
   const loading = signal(false);
   const err = signal<string | null>(null);
   const deleteFailureCount = signal(0);
@@ -85,6 +87,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
     try {
       await connector.delete(sessionId);
       await config.draftStore.removeDeleteIntent(sessionId);
+      await load();
     } catch (cause) {
       const transient =
         !(cause instanceof SessionsRestError) ||
@@ -108,13 +111,34 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
     }
   };
 
-  const filterPendingDeletes = async (rows: SessionRow[]): Promise<SessionRow[]> => {
+  const filterPendingDeletes = async (rows: HistorySessionRow[]): Promise<HistorySessionRow[]> => {
     if (!config.draftStore) return rows;
     const snapshot = await config.draftStore.list();
     const hidden = new Set(snapshot.deleteIntents.map((intent) => intent.sessionId));
     deleteFailureCount.value = snapshot.deleteIntents.filter((intent) => intent.failureCode !== null).length;
     for (const intent of snapshot.deleteIntents) if (intent.failureCode === null) void retryDelete(intent.sessionId);
     return rows.filter((row) => !hidden.has(row.sessionId));
+  };
+
+  const load = async (): Promise<void> => {
+    loading.value = true;
+    err.value = null;
+    try {
+      const { items: rows } = await connector.list({ limit: LIST_PAGE_LIMIT, offset: 0 });
+      items.value = await filterPendingDeletes(rows);
+      if (searchHits.value) {
+        searchHits.value = searchHits.value.map(
+          (hit) => items.value.find((row) => row.sessionId === hit.sessionId) ?? hit,
+        );
+      }
+      if (viewerId.value && !items.value.some((row) => row.sessionId === viewerId.value)) viewerId.value = null;
+    } catch (e: unknown) {
+      const message = (e as Error).message;
+      log.warn("sessions.load.failed", { reason: message });
+      err.value = message;
+    } finally {
+      loading.value = false;
+    }
   };
 
   const onOnline = () => {
@@ -214,7 +238,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
     }
     // created
     currentId.value = e.sessionId;
-    const next: SessionRow = {
+    const next: HistorySessionRow = {
       sessionId: e.sessionId,
       rootId: e.sessionId,
       title: e.title ?? DEFAULT_NEW_CHAT_TITLE,
@@ -222,6 +246,10 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
       lastActiveAt: e.ts,
       messageCount: 0,
       isActive: true,
+      provenance: "human",
+      readOnly: false,
+      currentPin: false,
+      executionClosed: false,
     };
     items.value = [next, ...items.value.filter((r) => r.sessionId !== e.sessionId)];
   });
@@ -234,20 +262,8 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
     error: err,
     deleteFailureCount,
     currentId,
-    async load() {
-      loading.value = true;
-      err.value = null;
-      try {
-        const { items: rows } = await connector.list({ limit: LIST_PAGE_LIMIT, offset: 0 });
-        items.value = await filterPendingDeletes(rows);
-      } catch (e: unknown) {
-        const message = (e as Error).message;
-        log.warn("sessions.load.failed", { reason: message });
-        err.value = message;
-      } finally {
-        loading.value = false;
-      }
-    },
+    viewerId,
+    load,
     async search(q) {
       if (!q.trim()) {
         searchHits.value = null;
@@ -264,8 +280,28 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
     },
     async switchTo(id) {
       err.value = null;
+      let row =
+        items.peek().find((item) => item.sessionId === id) ?? searchHits.peek()?.find((item) => item.sessionId === id);
+      if (!row) {
+        try {
+          row = (await connector.list({ limit: LIST_PAGE_LIMIT, offset: 0 })).items.find(
+            (item) => item.sessionId === id,
+          );
+        } catch {
+          /* Failed lookup cannot grant interactive access. */
+        }
+      }
+      if (row?.provenance === "cube" || row?.readOnly) {
+        viewerId.value = id;
+        return true;
+      }
+      if (!row) {
+        err.value = "Conversation unavailable. Refresh history and try again.";
+        return false;
+      }
       try {
         await connector.switchTo(id);
+        viewerId.value = null;
         currentId.value = id;
         return true;
       } catch (e: unknown) {
@@ -281,6 +317,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
       if (draft.sessionId !== null) {
         try {
           await connector.switchTo(draft.sessionId);
+          viewerId.value = null;
           currentId.value = draft.sessionId;
           return true;
         } catch (e: unknown) {
@@ -288,6 +325,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
           return false;
         }
       }
+      viewerId.value = null;
       currentId.value = draft.id;
       config.onOpenNewDraft?.(draft.id);
       return true;
@@ -298,6 +336,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
         await config.onBeforeNewDraft?.();
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
           const draftKey = mintLocalDraftId();
+          viewerId.value = null;
           currentId.value = draftKey;
           config.onOpenNewDraft?.(draftKey);
           return true;
@@ -306,6 +345,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
         const answer = await connector.newChat();
         const draftKey = answer.draftKey === previousId ? mintLocalDraftId() : answer.draftKey;
         setCurrentSessionId(draftKey);
+        viewerId.value = null;
         currentId.value = draftKey;
         if (draftKey !== answer.draftKey) config.onOpenNewDraft?.(draftKey);
         return true;
@@ -320,6 +360,8 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
       if (!config.draftStore) {
         try {
           await connector.delete(id);
+          if (viewerId.value === id) viewerId.value = null;
+          await load();
         } catch (e: unknown) {
           const message = (e as Error).message;
           log.warn("sessions.delete.failed", { sessionId: id, reason: message });
@@ -334,6 +376,7 @@ export function createUseSessions(connector: SessionsConnector, config: UseSessi
         return;
       }
       items.value = items.value.filter((row) => row.sessionId !== id);
+      if (viewerId.value === id) viewerId.value = null;
       if (searchHits.value) searchHits.value = searchHits.value.filter((row) => row.sessionId !== id);
       await config.onDraftsChanged?.();
       if (currentId.value === id) {

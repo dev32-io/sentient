@@ -33,7 +33,7 @@ export function appendAudioFormatQuery(baseUrl: string, audioFormat: SttAudioFor
 interface EventQueue {
   enqueue(event: STTEvent): void;
   waitForEvent(signal: AbortSignal): Promise<STTEvent | null>;
-  close(): void;
+  close(discardPending?: boolean): void;
 }
 
 function createEventQueue(): EventQueue {
@@ -72,8 +72,9 @@ function createEventQueue(): EventQueue {
         removeAbortListener = () => signal.removeEventListener("abort", onAbort);
       });
     },
-    close() {
+    close(discardPending = false) {
       closed = true;
+      if (discardPending) pending.length = 0;
       if (waitResolve) {
         const r = waitResolve;
         waitResolve = null;
@@ -157,7 +158,9 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
         let timeout: ReturnType<typeof setTimeout>;
 
         const abortHandler = () => {
-          clearTimeout(timeout);
+          if (isSettled) return;
+          isSettled = true;
+          finishOpen();
           try {
             socket.close();
           } catch {
@@ -172,7 +175,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
         };
 
         timeout = setTimeout(() => {
-          if (socket.readyState !== WebSocket.OPEN) {
+          if (!isSettled) {
             isSettled = true;
             finishOpen();
             try {
@@ -185,12 +188,17 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
         }, config.connectTimeoutMs);
 
         signal.addEventListener("abort", abortHandler, { once: true });
+        if (signal.aborted) {
+          abortHandler();
+          return;
+        }
 
         socket.onopen = () => {
           log.info("ws-opening", { url: connectUrl });
         };
 
         socket.onmessage = (event) => {
+          if (isSettled || disposed) return;
           if (typeof event.data === "string") {
             // During open(), peek for {type:'ready'}. After open() resolves,
             // the onmessage handler is swapped to handleTextFrame.
@@ -201,7 +209,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
                 finishOpen();
                 log.info("ws-ready", { url: connectUrl });
                 socket.onmessage = (e) => {
-                  if (typeof e.data === "string") handleTextFrame(e.data);
+                  if (!disposed && typeof e.data === "string") handleTextFrame(e.data);
                   // binary frames (WAV payloads) are discarded silently
                 };
                 resolve();
@@ -217,6 +225,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
           log.info("ws-closed", { url: config.url });
           queue.close();
           if (!isSettled) {
+            isSettled = true;
             finishOpen();
             reject(new Error("localSTT closed before ready"));
           }
@@ -224,15 +233,21 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
 
         socket.onerror = () => {
           log.error("ws-error", { url: config.url });
+          queue.close();
           isSettled = true;
           finishOpen();
+          try {
+            socket.close();
+          } catch {
+            /* ignore */
+          }
           reject(new Error("localSTT websocket error"));
         };
       });
     },
 
     send(bytes: Uint8Array): void {
-      if (suppressUntil !== 0 && Date.now() < suppressUntil) return;
+      if (suppressUntil !== 0 && performance.now() < suppressUntil) return;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       // Opus path: forward raw — server decodes opus → PCM16 internally.
       // The resampler would corrupt compressed bytes.
@@ -280,7 +295,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
     async close(): Promise<void> {
       if (disposed) return;
       disposed = true;
-      queue.close();
+      queue.close(true);
       if (ws) {
         try {
           ws.close(1000, "client-close");
@@ -292,7 +307,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
     },
 
     suppressInputFor(ms: number): void {
-      suppressUntil = ms <= 0 ? 0 : Date.now() + ms;
+      suppressUntil = ms <= 0 ? 0 : performance.now() + ms;
     },
   };
 }

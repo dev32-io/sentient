@@ -149,8 +149,9 @@ export interface SentientSDKConfig {
    * waiting on a reply that is never coming. The four reasons and what a
    * consumer should do with each:
    *
-   *  - `session_busy` — another window won a simultaneous input race. The
-   *    message was NOT sent. Retryable immediately.
+   *  - `session_busy` — input contention or a prior audio capture is still
+   *    active/finalizing. The command was not applied. Retry after contention
+   *    clears; audio finalization may require waiting, not an immediate loop.
    *  - `stale_generation` — the command was issued against a session this tab
    *    has since left. Do not retry it; it belongs to the old conversation.
    *  - `not_attached` — the command needed a session and this tab is in none.

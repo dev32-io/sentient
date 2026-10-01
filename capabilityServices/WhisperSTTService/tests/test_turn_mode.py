@@ -357,3 +357,70 @@ def test_set_turn_mode_noop_when_unchanged(monkeypatch, tmp_path) -> None:
     # Already manual: re-asserting manual is a no-op (no force-finalize, no log).
     assert pipe.set_turn_mode(False) == []
     assert logger.events == []
+
+
+def test_idle_flush_terminal_then_speech(monkeypatch, tmp_path) -> None:
+    from whisper_stt.wire_protocol import event_to_wire
+
+    pipe = _make_pipeline(
+        monkeypatch, tmp_path,
+        smart_turn=_SpySmartTurn(), stt=_FakeStt(["synthetic speech"]),
+        logger=_RecordingLogger(),
+    )
+    pipe.set_turn_mode(False)
+    for index, audio in enumerate((b"", bytes(4098)), 1):
+        assert pipe.process(audio) == []
+        events = pipe.flush()
+        assert len(events) == 1
+        wire, binary = event_to_wire(events[0])
+        assert wire == dict(type="turn_rejected", turnIdx=index,
+                           reason="no_speech", text="", audioEvent="",
+                           decodeMs=0.0, audioSeconds=0.0)
+        assert binary is None
+        assert not pipe._rechunk_buf
+        assert not pipe._pre_speech_buffer
+    pipe._vad_iter.script([{"start": 0}, None, None])
+    _feed(pipe, 3)
+    transcripts = [e for e in pipe.flush() if isinstance(e, TranscriptReady)]
+    assert len(transcripts) == 1
+    assert transcripts[0].turn_idx == 3
+    assert transcripts[0].text == "synthetic speech"
+
+
+def test_server_flush_wire_terminal_then_speech(monkeypatch, tmp_path) -> None:
+    """Real receive loop + pipeline + wire serializer, only inference scripted."""
+    import asyncio
+    import json
+    from whisper_stt.server import Server
+
+    pipe = _make_pipeline(
+        monkeypatch, tmp_path,
+        smart_turn=_SpySmartTurn(), stt=_FakeStt(["synthetic speech"]),
+        logger=_RecordingLogger(),
+    )
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, message):
+            if isinstance(message, str):
+                self.sent.append(json.loads(message))
+
+        async def __aiter__(self):
+            yield '{"type":"turn_mode","semantic":false}'
+            yield '{"type":"flush"}'
+            yield bytes(4098)
+            yield '{"type":"flush"}'
+            pipe._vad_iter.script([{"start": 0}, None, None])
+            yield _CHUNK * 3
+            yield '{"type":"flush"}'
+
+    ws = Socket()
+    server = Server.__new__(Server)
+    asyncio.run(server._receive_loop(ws, pipe, _RecordingLogger(), None))
+    terminal = [m for m in ws.sent if m["type"] in ("turn_rejected", "transcript_ready")]
+    assert [m["type"] for m in terminal] == ["turn_rejected", "turn_rejected", "transcript_ready"]
+    assert [m["turnIdx"] for m in terminal] == [1, 2, 3]
+    assert [m["reason"] for m in terminal[:2]] == ["no_speech", "no_speech"]
+    assert terminal[2]["text"] == "synthetic speech"

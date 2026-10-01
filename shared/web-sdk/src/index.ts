@@ -80,7 +80,7 @@ export type {
 } from "./connectors/sessions-connector.ts";
 
 export { createSessionsRest, deriveRestBaseUrl, SessionsRestError } from "./sessions-rest.ts";
-export type { SessionsRest, SessionsRestConfig, SessionsListResult } from "./sessions-rest.ts";
+export type { SessionsRest, SessionsRestConfig, SessionsListResult, HistorySessionRow } from "./sessions-rest.ts";
 export { AttachmentsRestError, createAttachmentsRest } from "./attachments-rest.ts";
 export type { AttachmentUploadRequest, AttachmentsRest, AttachmentsRestConfig } from "./attachments-rest.ts";
 

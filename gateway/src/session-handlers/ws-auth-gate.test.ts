@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthConfig } from "@sentient/config";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
+import { encrypt } from "paseto-ts/v4";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type SessionManager, createSessionManager } from "../auth/session-manager.js";
+import { loadOrCreateAuthSecret } from "../user-auth/auth-secret.js";
 import type { AuthService } from "../user-auth/auth-service.js";
 import { createAuthService } from "../user-auth/auth-service.js";
 import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
@@ -37,6 +40,7 @@ function fakeWs(): FakeWs {
     draftKey: null,
     authState: "pending",
     principal: null,
+    deviceCredential: null,
     tokenExpiresAtMs: null,
     tokenIssuedAtMs: null,
     surfaceId: null,
@@ -132,6 +136,24 @@ describe("ws auth gate", () => {
     delete process.env.SENTIENT_GATEWAY_ROOT;
   });
 
+  it("rejects device-purpose credentials when no registry validator is supplied", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    const key = await loadOrCreateAuthSecret();
+    const token = encrypt(`k4.local.${Buffer.from(key).toString("base64url")}`, {
+      purpose: "sentient.device-session.v1",
+      sub: randomUUID(),
+      generation: 1,
+    });
+    const ws = fakeWs();
+    await handleAuthMessage(asSocket(ws), { type: "auth", token, clientType: "cube" }, auth, sessionManager, sockets);
+    expect(ws.data.authState).toBe("rejected");
+    expect(ws.data.principal).toBeNull();
+    expect(ws.data.grantedCapabilities.size).toBe(0);
+    expect(sockets.size).toBe(0);
+    expect(ws.sent).toContainEqual(expect.objectContaining({ type: "auth.error", code: "wrong-purpose" }));
+    expect(ws.closeCode).not.toBeNull();
+  });
+
   it("authes the WS on a valid token, mints a frozen principal, sends auth.ok", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
     await auth.createUser({
@@ -145,8 +167,20 @@ describe("ws auth gate", () => {
     if (!r.ok) throw new Error("seed failed");
 
     const ws = fakeWs();
-    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager, sockets);
+    await handleAuthMessage(
+      asSocket(ws),
+      {
+        type: "auth",
+        token: r.value.token,
+        clientType: "cube",
+        origin: { kind: "cube", deviceId: randomUUID(), generation: 1 },
+      },
+      auth,
+      sessionManager,
+      sockets,
+    );
     expect(ws.data.authState).toBe("authed");
+    expect(ws.data.principal?.origin).toBeUndefined();
     expect(ws.data.principal?.userId).toBe("u_a1b2c3d4");
     expect(ws.data.principal?.role).toBe("admin");
     expect(ws.data.principal?.householdId).toBe("home");

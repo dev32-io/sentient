@@ -29,6 +29,8 @@ export function openUserDatabaseAtPath(
   mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath, { create: true });
   try {
+    // Bound cross-handle writer contention; IMMEDIATE admissions must wait, not race.
+    db.exec("PRAGMA busy_timeout = 1000");
     db.exec(STORE_DDL);
     db.exec("PRAGMA foreign_keys = ON");
     return { db, path: dbPath, schemaVersion: migrateStore(db, ownerId) };

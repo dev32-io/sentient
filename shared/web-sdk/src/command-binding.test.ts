@@ -20,6 +20,21 @@ describe("command binding — the stamp every command carries", () => {
     });
   });
 
+  it("stamps every acting command including capture cancel with the full current attachment", () => {
+    const state = createCommandBindingState();
+    state.attached({ sessionId: "s_1", generation: 3 });
+    for (const frame of [
+      { type: "text.input", text: "hi" },
+      { type: "interrupt" },
+      { type: "permission.response", requestId: "r", approved: false },
+      { type: "audio.start", captureId: "c", turnMode: "manual" },
+      { type: "audio.end", captureId: "c" },
+      { type: "audio.cancel", captureId: "c" },
+    ]) {
+      expect(state.stamp(frame)).toEqual({ ...frame, sessionId: "s_1", attachmentGeneration: 3 });
+    }
+  });
+
   it("CONTRACT: session.configure / session.new / conversation.activate are NEVER stamped", () => {
     // These are how a connection LEAVES a session. Binding them to the session
     // being left would make the gateway refuse the very frames that switch,
@@ -27,7 +42,14 @@ describe("command binding — the stamp every command carries", () => {
     const state = createCommandBindingState();
     state.attached({ sessionId: "s_1", generation: 1 });
 
-    for (const type of ["session.configure", "session.new", "conversation.activate", "ping", "auth"]) {
+    for (const type of [
+      "session.configure",
+      "session.new",
+      "conversation.activate",
+      "ping",
+      "auth",
+      "user.preferences.patch",
+    ]) {
       expect(state.stamp({ type })).toEqual({ type });
     }
   });
@@ -41,6 +63,7 @@ describe("command binding — the stamp every command carries", () => {
     state.clear("session.draft");
 
     expect(state.stamp({ type: "text.input", text: "hi" })).toEqual({ type: "text.input", text: "hi" });
+    expect(state.stamp({ type: "audio.cancel", captureId: "c" })).toEqual({ type: "audio.cancel", captureId: "c" });
   });
 
   it("INVARIANT: a re-attach replaces the pair rather than accumulating one", () => {
@@ -50,6 +73,12 @@ describe("command binding — the stamp every command carries", () => {
 
     expect(state.stamp({ type: "interrupt" })).toEqual({
       type: "interrupt",
+      sessionId: "s_2",
+      attachmentGeneration: 1,
+    });
+    expect(state.stamp({ type: "audio.cancel", captureId: "old-capture" })).toEqual({
+      type: "audio.cancel",
+      captureId: "old-capture",
       sessionId: "s_2",
       attachmentGeneration: 1,
     });

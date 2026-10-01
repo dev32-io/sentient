@@ -22,6 +22,7 @@ import type { AttachmentRef } from "@sentient/protocol";
 import type { Capability } from "../access/capability.js";
 import type { AttachmentStorage, StagedAttachment } from "../attachments/storage.js";
 import { getLog } from "../logging/logger.js";
+import { type CubeSessionOps, createCubeSessionOps } from "./cube-sessions.js";
 import type { NewSessionEntry, SessionEntry } from "./entry-types.js";
 import {
   type ScheduledSessionExecution,
@@ -38,6 +39,13 @@ import { DEFAULT_USER_DB_FILENAME, openConfiguredUserDatabase } from "./user-dat
 // session-metadata.js submodule.
 export { DeletedSessionError, MintKeyConflictError } from "./session-metadata.js";
 import { DeletedSessionError, MintKeyConflictError } from "./session-metadata.js";
+
+export class ClosedSessionExecutionError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`session execution is closed: ${sessionId}`);
+    this.name = "ClosedSessionExecutionError";
+  }
+}
 
 const log = getLog(["sentient", "store", "session-store"]);
 
@@ -274,7 +282,7 @@ export async function reconcileCommittedAttachments(
 export function openSessionStore(
   cap: Capability,
   dbFileName: string = DEFAULT_USER_DB_FILENAME,
-): AttachmentSessionStore {
+): AttachmentSessionStore & CubeSessionOps {
   // Checked BEFORE the path check, deliberately: a wrong-class capability and
   // an escaping path are different faults and must say so. Without this, a
   // `file-scope` capability for the same user has an IDENTICAL rootPath, so
@@ -473,7 +481,14 @@ export function openSessionStore(
     return toEntry(row, selectEntryAttachments.all(row.seq).map(toAttachmentRef));
   }
 
+  function assertExecutionWritable(sessionId: string): void {
+    if (selectTombstone.get(sessionId)) throw new DeletedSessionError(sessionId);
+    if (db.query("SELECT 1 FROM closed_session_executions WHERE session_id=?").get(sessionId))
+      throw new ClosedSessionExecutionError(sessionId);
+  }
+
   const appendTransaction = db.transaction((entry: NewSessionEntry): EntryRow => {
+    assertExecutionWritable(entry.sessionId);
     const row = insert.get(
       entry.sessionId,
       entry.turnId,
@@ -502,6 +517,7 @@ export function openSessionStore(
       maxAttachments: number,
       mintKey: string | undefined,
     ): { row: EntryRow; attachments: AttachmentRow[] } => {
+      assertExecutionWritable(entry.sessionId);
       if (entry.kind !== "user") throw new AttachmentAdmissionError("attachment_conflict");
       if (!Number.isSafeInteger(maxAttachments) || maxAttachments < 0 || attachmentIds.length > maxAttachments)
         throw new AttachmentAdmissionError("attachment_count");
@@ -573,6 +589,7 @@ export function openSessionStore(
         return { status: "active", lastActivityAt: row.last_activity_at };
 
       const deletedAt = Date.now();
+      cube.closeCubeSessionExecution(sessionId, "deleted");
       insertTombstone.run(sessionId, row.mint_key, deletedAt);
       insertCleanupIntent.run(sessionId, deletedAt);
       deleteCards.run(sessionId);
@@ -581,6 +598,19 @@ export function openSessionStore(
       deleteEntries.run(sessionId);
       deleteMetadata.run(sessionId);
       return { status: "deleted", alreadyDeleted: false, deletedAt };
+    },
+  );
+
+  const cube = createCubeSessionOps(
+    db,
+    metadata,
+    (entry) => {
+      const admitted = admitTransaction(entry, [], 0, undefined);
+      return entryWithAttachments(admitted.row);
+    },
+    (sessionId, pendingId) => {
+      const row = selectByPendingId.get(sessionId, pendingId);
+      return row ? entryWithAttachments(row) : null;
     },
   );
 
@@ -594,9 +624,33 @@ export function openSessionStore(
   }
 
   return {
+    getCurrentCubeSessionId() {
+      assertOpen("getCurrentCubeSessionId");
+      return cube.getCurrentCubeSessionId();
+    },
+    getCubeAdmissionFence() {
+      assertOpen("getCubeAdmissionFence");
+      return cube.getCubeAdmissionFence();
+    },
+    admitCubeInput(input) {
+      assertOpen("admitCubeInput");
+      return cube.admitCubeInput(input);
+    },
+    getSessionExecutionStatus(sessionId) {
+      assertOpen("getSessionExecutionStatus");
+      return cube.getSessionExecutionStatus(sessionId);
+    },
+    closeCubeSessionExecution(sessionId, reason) {
+      assertOpen("closeCubeSessionExecution");
+      return cube.closeCubeSessionExecution(sessionId, reason);
+    },
+    closeCubeExecutions(reason) {
+      assertOpen("closeCubeExecutions");
+      return cube.closeCubeExecutions(reason);
+    },
     append(entry) {
       assertOpen("append");
-      const row = appendTransaction(entry);
+      const row = appendTransaction.immediate(entry);
       log.debug("entry.appended", {
         userId: cap.ownerUserId,
         sessionId: entry.sessionId,

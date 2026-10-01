@@ -151,6 +151,7 @@ export const sttConfigSchema = z.object({
   input_sample_rate: z.number().int().min(8000).default(48000),
   silence_idle_gap_ms: z.number().int().min(0).max(10000).default(200),
   tts_echo_cooldown_ms: z.number().int().min(0).max(5000).default(2500),
+  finalize_timeout_ms: z.number().int().min(1).default(30000),
   connect_timeout_ms: z.number().int().min(1000).default(10000),
 });
 
@@ -314,6 +315,17 @@ export const authConfigSchema = z.object({
 });
 
 export type AuthConfig = z.output<typeof authConfigSchema>;
+
+/** Device lifecycle only; this does not enable device agent admission. */
+export const devicesConfigSchema = z.object({
+  access_ttl_seconds: z.number().int().min(1).max(604800).default(604800),
+  attempt_ttl_seconds: z.number().int().min(1).max(604800).default(600),
+  max_body_bytes: z.number().int().min(512).max(65536).default(4096),
+  body_timeout_ms: z.number().int().min(1).max(60000).default(5000),
+  requests_per_minute: z.number().int().min(1).max(10000).default(120),
+  max_concurrent_requests: z.number().int().min(1).max(128).default(8),
+});
+export type DevicesConfig = z.output<typeof devicesConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // Providers — external catalog endpoints + cache TTLs
@@ -479,6 +491,7 @@ export const gatewayConfigSchema = z.object({
   webui: webuiConfigSchema.default({}),
   hermes: hermesConfigSchema.optional(),
   auth: authConfigSchema.default({}),
+  devices: devicesConfigSchema.default({}),
   providers: providersConfigSchema.default({}),
   // Co-deployed companion service configuration: version resolution URLs,
   // file paths, and cache knobs. Defaults work for the standard docker compose.

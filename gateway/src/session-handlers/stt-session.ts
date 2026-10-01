@@ -10,10 +10,10 @@
 // Connection policy — deliberately lean, no reconnect supervisor:
 //   - Nothing is dialed until the client's first `audio.start`, so a
 //     text-only browser tab never opens a socket to the STT service.
-//   - `open()` failure is logged and left; the next `audio.start` (or the
-//     next mic frame while the mic is open) retries. Frames arrive every
-//     ~20-60ms, so a mid-session STT drop self-heals within one frame plus
-//     connect time — no timers, no backoff constants, no new config.
+//   - `open()` failure retires the capture; the next `audio.start` retries.
+//     An active semantic capture may retry a stream drop on its next frame.
+//     Pre-ready frames stay capture-owned and byte-bounded until READY; a
+//     pending End drains them before flushing. No reconnect supervisor.
 //   - `setTurnMode` is replayed after every successful connect: a fresh STT
 //     socket is implicitly "semantic" server-side. The adapter dedups
 //     internally (local-stt-adapter.ts, tuned — never modify).
@@ -50,12 +50,12 @@ export interface SttSession {
   /** Echo-suppression window (ms). `0` clears it. See mic-echo-guard.ts. */
   suppressInputFor(ms: number): void;
   /**
-   * Bytes forwarded to STT since the current utterance began — reset by
+   * Bytes queued or forwarded to STT since the current utterance began — reset by
    * `start`, `end` and `discard`.
    *
    * It is the OBSERVABLE that makes "the buffer was dropped, not flushed"
    * checkable from outside. Approximate by construction: the authoritative
-   * buffer lives in the STT service, and this counts what was handed to it.
+   * buffer lives in the STT service, and this also counts pre-ready audio.
    */
   readonly buffered: number;
   /**
@@ -103,13 +103,19 @@ export interface SttSessionDeps {
 export function createSttSession(deps: SttSessionDeps): SttSession {
   const { sessionId, factory, config, getRuntime, getRuntimeForInput } = deps;
   const lifetime = new AbortController();
+  // One connect deadline's worth of PCM16 input; Opus shares this conservative
+  // ceiling. Reuse existing audio rate/deadline rather than add a queue policy.
+  const preReadyMaxBytes = Math.ceil((config.inputSampleRate * 2 * config.connectTimeoutMs) / 1000);
 
   let adapter: STTAdapter | null = null;
-  let connecting = false;
+  let connecting: AbortController | null = null;
+  let commitTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let micOpen = false;
   let desiredTurnMode: TurnMode = INITIAL_TURN_MODE;
   let bufferedBytes = 0;
+  // Echo cooldown belongs to the connection, not a replaceable STT socket.
+  let suppressUntil = 0;
   interface CaptureContext {
     readonly id: string;
     readonly diagnosticRef: string;
@@ -117,12 +123,61 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     readonly epoch: number;
     status: "active" | "committing";
     submitted: boolean;
+    readonly preReadyFrames: Uint8Array[];
+    preReadyBytes: number;
   }
   let capture: CaptureContext | null = null;
   // Bumped by `discard()`. A connect started before the discard must not
   // install its adapter afterwards — that would resurrect the very socket the
   // discard abandoned, complete with the open turn it was abandoning.
   let uplinkEpoch = 0;
+
+  function releasePreReadyAudio(): void {
+    if (!capture) return;
+    capture.preReadyFrames.length = 0;
+    capture.preReadyBytes = 0;
+  }
+
+  function failCapture(reason: string): void {
+    log.warn("stt.capture.discarded", {
+      sessionId,
+      captureRef: capture?.diagnosticRef ?? null,
+      bufferedBytes,
+      reason,
+    });
+    retireCapture();
+  }
+
+  function flushCapture(active: STTAdapter): void {
+    try {
+      active.endUtterance();
+    } catch (err: unknown) {
+      log.warn("stt.audio-end.failed", {
+        sessionId,
+        captureRef: capture?.diagnosticRef ?? null,
+        mode: capture?.mode ?? null,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      retireCapture();
+    }
+  }
+
+  // A socket has no capture IDs on its wire callbacks. Retire it at every
+  // terminal capture boundary; queued callbacks cannot own the next capture.
+  function retireCapture(): void {
+    clearTimeout(commitTimer);
+    commitTimer = undefined;
+    uplinkEpoch += 1;
+    connecting?.abort();
+    connecting = null;
+    const active = adapter;
+    adapter = null;
+    releasePreReadyAudio();
+    capture = null;
+    micOpen = false;
+    bufferedBytes = 0;
+    if (active) detach("capture-terminal", () => active.close());
+  }
 
   /**
    * Start detached background work with a rejection handler already attached.
@@ -151,7 +206,6 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   async function dispatch(event: STTEvent, active: STTAdapter, eventCapture: CaptureContext): Promise<void> {
     if (event.type === "turn_dropped") {
       log.debug("stt.turn-dropped", { sessionId, captureRef: eventCapture.diagnosticRef, turnIdx: event.turnIdx });
-      if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
       return;
     }
     if (event.type === "turn_started") {
@@ -179,7 +233,6 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         turnIdx: event.turnIdx,
         reason: "empty after trim",
       });
-      if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
       return;
     }
     if (eventCapture.mode === "manual") {
@@ -240,7 +293,6 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     });
     if ("runtime" in resolved) resolved.runtime.submit(resolved.stimulus);
     else resolved.submit({ kind: "conversational", text: submittedText });
-    if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
   }
 
   async function consumeEvents(active: STTAdapter): Promise<void> {
@@ -298,9 +350,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
             eventCapture.status === "committing" &&
             capture === eventCapture
           ) {
-            capture = null;
-            micOpen = false;
-            bufferedBytes = 0;
+            retireCapture();
           }
         }
       }
@@ -315,6 +365,8 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       });
     } finally {
       if (adapter === active) {
+        clearTimeout(commitTimer);
+        detach("stream-ended", () => active.close());
         adapter = null;
         // Active semantic capture may recover on its next frame. Manual input
         // cannot be reconstructed across adapters, and any capture already
@@ -339,15 +391,16 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
 
   function connect(): void {
     if (closed || connecting || adapter !== null) return;
-    connecting = true;
+    const connection = new AbortController();
+    connecting = connection;
     const startedAtEpoch = uplinkEpoch;
     const candidate = factory(config);
     log.info("stt.connecting", { sessionId, url: config.url, audioFormat: config.audioFormat });
     candidate
-      .open(lifetime.signal)
+      .open(AbortSignal.any([lifetime.signal, connection.signal]))
       .then(() => {
-        connecting = false;
-        if (closed) {
+        if (connecting === connection) connecting = null;
+        if (closed || connection.signal.aborted) {
           detach("close-after-session-closed", () => candidate.close());
           return;
         }
@@ -362,15 +415,29 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         adapter = candidate;
         candidate.setTurnMode(desiredTurnMode);
         log.info("stt.connected", { sessionId, turnMode: desiredTurnMode });
-        detach("consume-events", () => consumeEvents(candidate));
+        const current = capture;
+        if (current) {
+          // Echo gating already ran at frame arrival. A later cooldown must
+          // not erase accepted speech that preceded TTS while READY was pending.
+          for (const bytes of current.preReadyFrames) candidate.send(bytes);
+          releasePreReadyAudio();
+        }
+        candidate.suppressInputFor(Math.max(0, suppressUntil - performance.now()));
+        if (current?.status === "committing") flushCapture(candidate);
+        if (adapter === candidate) detach("consume-events", () => consumeEvents(candidate));
       })
       .catch((err: unknown) => {
-        connecting = false;
+        if (connecting === connection) connecting = null;
+        detach("connect-failed", () => candidate.close());
         log.warn("stt.connect-failed", {
           sessionId,
           url: config.url,
           reason: err instanceof Error ? err.message : String(err),
         });
+        if (!closed && !connection.signal.aborted && startedAtEpoch === uplinkEpoch) {
+          connection.abort();
+          failCapture("connect_failed");
+        }
       });
   }
 
@@ -390,6 +457,8 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         epoch: uplinkEpoch,
         status: "active",
         submitted: false,
+        preReadyFrames: [],
+        preReadyBytes: 0,
       };
       log.info("stt.audio-start", {
         sessionId,
@@ -421,43 +490,25 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         transition: "active->committing",
       });
       bufferedBytes = 0;
-      const active = adapter;
-      if (!active) {
-        log.info("stt.capture.discarded", {
-          sessionId,
-          captureRef: current.diagnosticRef,
-          mode: current.mode,
-          bufferedBytes,
-          transition: "committing->closed",
-          reason: "no adapter was available to flush",
-        });
-        capture = null;
-        return;
-      }
-      try {
-        // This only requests finalization. The committing capture remains
-        // latched until its final transcript/drop callback arrives; no
-        // provisional pre-End transcript is submitted here.
-        active.endUtterance();
-      } catch (err: unknown) {
-        log.warn("stt.audio-end.failed", {
-          sessionId,
-          captureRef: current.diagnosticRef,
-          mode: current.mode,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-        uplinkEpoch += 1;
-        if (capture === current) capture = null;
-        if (adapter === active) adapter = null;
-        detach("close-after-flush-failure", () => active.close());
-      }
+      commitTimer = setTimeout(() => {
+        if (capture !== current) return;
+        log.warn("stt.commit-timeout", { sessionId, reason: "finalize_timeout" });
+        retireCapture();
+      }, config.finalizeTimeoutMs ?? 30000);
+      // Pending End stays latched through READY: drain first, then flush.
+      // Deadline starts at End, not at READY, so a stalled connect cannot wedge.
+      if (adapter) flushCapture(adapter);
+      else connect();
     },
 
     cancel(captureId) {
       if (capture?.id !== captureId || capture.status !== "active") return;
       uplinkEpoch += 1;
+      connecting?.abort();
+      connecting = null;
       const current = capture;
       const active = adapter;
+      releasePreReadyAudio();
       capture = null;
       adapter = null;
       micOpen = false;
@@ -483,14 +534,16 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         });
         return;
       }
+      if (!adapter) connect();
+      if (performance.now() < suppressUntil || bytes.byteLength === 0) return;
       if (!adapter) {
-        connect();
-        log.debug("stt.frame-dropped", {
-          sessionId,
-          captureRef: capture.diagnosticRef,
-          byteSize: bytes.byteLength,
-          reason: "no live STT socket",
-        });
+        if (bytes.byteLength > preReadyMaxBytes - capture.preReadyBytes) {
+          failCapture("pre_ready_audio_overflow");
+          return;
+        }
+        capture.preReadyFrames.push(new Uint8Array(bytes));
+        capture.preReadyBytes += bytes.byteLength;
+        bufferedBytes += bytes.byteLength;
         return;
       }
       bufferedBytes += bytes.byteLength;
@@ -498,6 +551,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     },
 
     suppressInputFor(ms) {
+      suppressUntil = ms <= 0 ? 0 : performance.now() + ms;
       adapter?.suppressInputFor(ms);
     },
 
@@ -507,9 +561,13 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
 
     discard() {
       if (closed) return;
+      clearTimeout(commitTimer);
       uplinkEpoch += 1;
+      connecting?.abort();
+      connecting = null;
       const active = adapter;
       const discarded = capture;
+      releasePreReadyAudio();
       adapter = null;
       capture = null;
       micOpen = false;
@@ -528,9 +586,11 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
 
     close() {
       if (closed) return;
+      clearTimeout(commitTimer);
       closed = true;
       micOpen = false;
       const closingCapture = capture;
+      releasePreReadyAudio();
       capture = null;
       log.info("stt.close", {
         sessionId,

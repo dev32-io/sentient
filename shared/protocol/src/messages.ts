@@ -408,8 +408,9 @@ export type SessionAttachedMessage = z.infer<typeof sessionAttachedSchema>;
  * - `stale_generation` — the command named a session/generation this connection
  *   is no longer on. It was issued before a switch and landed after it.
  * - `not_attached` — the command needs a session and this connection is in none.
- * - `session_busy` — another window won the input race (spec §8.3: the first
- *   window to talk wins simultaneous contention). Retryable immediately.
+ * - `session_busy` — another window won the input race (spec §8.3), or a
+ *   prior audio capture is still active/finalizing. Retry after contention
+ *   clears; capture finalization may require waiting rather than immediate retry.
  * - `credential_expired` — this connection's token has expired; the attachment
  *   was dropped. The client must re-authenticate.
  */

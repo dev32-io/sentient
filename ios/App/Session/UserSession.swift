@@ -107,6 +107,9 @@ final class UserSession: ObservableObject {
     /// The KMP User-scope holder: SDK + ChatComponent + session scope.
     private let inner: IosUserSession
     private let log = AppLog("user-session")
+    let cube: CubeViewModel?
+    @Published var cubeCleanupError: String?
+
     /// Persistent network-path observer: a path change (VPN→WiFi, etc.) re-checks the
     /// socket so a queued send is never stranded on a dead-but-"READY" connection.
     private var networkMonitor: (any NetworkPathMonitoring)?
@@ -170,6 +173,13 @@ final class UserSession: ObservableObject {
             _ = $0.onConnectivityRecovered()
         }
     ) {
+        if let gateway = try? CubeGateway(wsURL: gatewayWsUrl),
+           let store = try? CubeManagerStore(gatewayOrigin: gateway.origin, accountId: authenticatedUserId) {
+            let tokens = createTokenStore()
+            cube = CubeViewModel(registry: CubeRegistry(gateway: gateway,
+                allowSelfSignedDevHost: allowSelfSignedDevHost, token: { tokens.load() }),
+                store: store, ble: CubeBLESession())
+        } else { cube = nil }
         // AccountUseCases may invoke this off-main. Route it through the same
         // serialized session-owned boundary as root and auth-expiry logout.
         var beginSettingsLogout: (() -> Void)?
@@ -271,6 +281,7 @@ final class UserSession: ObservableObject {
 
     /// App background → drop the socket but stay in session.
     func pause() {
+        cube?.pause()
         log.info("pause")
         inner.pause()
     }
@@ -292,6 +303,11 @@ final class UserSession: ObservableObject {
 
     /// Explicit root/settings logout production entry point.
     func explicitLogout() {
+        do { try cube?.clearForLogout() }
+        catch {
+            cubeCleanupError = "Couldn’t remove Cube phone access. Unlock iPhone and retry logout. Agent ownership is unchanged."
+            return
+        }
         calendarRecoveryFence.close()
         networkMonitor?.cancel()
         networkMonitor = nil
@@ -303,6 +319,7 @@ final class UserSession: ObservableObject {
 
     /// Terminal authentication failure production entry point.
     func authenticationExpired() {
+        cube?.pause()
         calendarRecoveryFence.close()
         networkMonitor?.cancel()
         networkMonitor = nil
@@ -319,6 +336,7 @@ final class UserSession: ObservableObject {
     func backendReplaced() { closeCalendarBoundary(using: inner.backendReplaced) }
 
     private func closeCalendarBoundary(using close: () -> Void) {
+        cube?.pause()
         log.info("shutdown")
         calendarLifecycleTask?.cancel()
         calendarLifecycleTask = nil

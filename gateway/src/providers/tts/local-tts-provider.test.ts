@@ -241,7 +241,7 @@ describe("createLocalTtsProvider — sad paths", () => {
     await expect(readyRejection).rejects.toThrow("synth-engine-unavailable");
   });
 
-  it("ends audioFrames cleanly (no throw) when the server sends an error frame mid-stream", async () => {
+  it("rejects audioFrames when the server sends an error frame mid-stream", async () => {
     const { provider, getWs } = await readyProvider();
     const controller = new AbortController();
     const gen = provider.audioFrames(controller.signal);
@@ -250,7 +250,19 @@ describe("createLocalTtsProvider — sad paths", () => {
     const nextPromise = gen.next();
     getWs()?._receiveText({ type: "error", reason: "synth-failed" });
 
-    await expect(nextPromise).resolves.toEqual({ done: true, value: undefined });
+    await expect(nextPromise).rejects.toThrow("synth-failed");
+  });
+
+  it("throws instead of draining buffered audio after generation exhaustion", async () => {
+    const { provider, getWs } = await readyProvider();
+    const gen = provider.audioFrames(new AbortController().signal);
+    getWs()?._receiveBinary(new Uint8Array([1]).buffer);
+    getWs()?._receiveBinary(new Uint8Array([2]).buffer);
+    expect((await gen.next()).done).toBe(false);
+    getWs()?._receiveText({ type: "error", reason: "generation_token_limit: tokens=75 max_tokens=75" });
+    await expect(gen.next()).rejects.toThrow("generation_token_limit");
+    provider.dispose();
+    expect(getWs()?.close).toHaveBeenCalledTimes(1);
   });
 
   it("degrades without an unhandled crash when the WS fires onerror", async () => {
@@ -281,5 +293,164 @@ describe("createLocalTtsProvider — sad paths", () => {
     controller.abort();
 
     await expect(provider.ready(controller.signal)).rejects.toThrow("aborted");
+  });
+});
+
+describe("empty completion across provider, synthesizer and turn drain", () => {
+  it.each([undefined, "```\ncode\n```"])("releases %s turn before next speech without barge-in", async (text) => {
+    const { createStreamingTtsSynthesizer } = await import("../../tts/streaming-tts-synthesizer.ts");
+    const { createTurnVoice } = await import("../../runtime/turn-voice.ts");
+    const sockets: FakeWebSocket[] = [];
+    const synthesizer = createStreamingTtsSynthesizer({
+      sessionFactory: {
+        createSession: async () =>
+          createLocalTtsProvider({
+            url: "ws://127.0.0.1:8770",
+            format: "opus",
+            sampleRate: 48000,
+            socketFactory: (url) => {
+              const ws = makeFakeWebSocket(url);
+              const index = sockets.push(ws) - 1;
+              ws.send.mockImplementation((payload: string) => {
+                if (JSON.parse(payload).type !== "end") return;
+                if (index > 0) ws._receiveBinary(new Uint8Array([1, 2]).buffer);
+                ws._receiveText({
+                  type: "done",
+                  requestId: `req-${index}`,
+                  ttfa_ms: 0,
+                  rtf: 0,
+                  audio_seconds: index > 0 ? 1 : 0,
+                });
+              });
+              // No-text case deliberately never becomes ready: old End was lost.
+              if (text !== undefined || index > 0)
+                queueMicrotask(() => {
+                  ws._openHandshake();
+                  ws._receiveText({ type: "ready", format: "opus", sample_rate: 48000, voice: null });
+                });
+              return ws as unknown as WebSocket;
+            },
+          }),
+      },
+    });
+    const events: string[] = [];
+    const voice = createTurnVoice({
+      synthesizer,
+      sessionId: "test",
+      shouldSpeak: async () => true,
+      hasAudience: () => true,
+      echoGuard: { onTtsStart() {}, onTtsCancel() {} },
+      sink: {
+        audioStart: (id) => events.push(`start:${id}`),
+        audioFrame: (id) => events.push(`frame:${id}`),
+        audioDone: (id) => events.push(`done:${id}`),
+      },
+    });
+    const first = voice.begin("empty", new AbortController().signal);
+    if (text !== undefined) first.pushText(text);
+    first.end();
+    const next = voice.begin("spoken", new AbortController().signal);
+    next.pushText("Hello.");
+    next.end();
+    for (let n = 0; n < 100 && events.length < 3; n++) await new Promise((r) => setTimeout(r, 1));
+    expect(events).toEqual(["start:spoken", "frame:spoken", "done:spoken"]);
+    expect(sockets).toHaveLength(2);
+    expect(sockets.every((ws) => ws.close.mock.calls.length === 1)).toBe(true);
+    // Late frames on retired socket must not affect following turn.
+    sockets[0]?._receiveBinary(new Uint8Array([9]).buffer);
+    sockets[0]?._receiveText({ type: "done", requestId: "late", ttfa_ms: 0, rtf: 0, audio_seconds: 0 });
+    expect(events).toHaveLength(3);
+    expect(voice.cancelAudio()).toEqual([]);
+  });
+});
+
+describe("generation failure through provider, runtime and wire sink", () => {
+  it("closes partial audio normally, releases tail, and completes next turn without barge-in", async () => {
+    const { gatewayMessageSchema } = await import("@sentient/protocol");
+    const { createStreamingTtsSynthesizer } = await import("../../tts/streaming-tts-synthesizer.ts");
+    const { createTurnVoice } = await import("../../runtime/turn-voice.ts");
+    const { createTurnStateTracker } = await import("../../runtime/turn-state-snapshot.ts");
+    const { createWsTurnEmitter } = await import("../../session-handlers/ws-turn-emitter.ts");
+    const sockets: FakeWebSocket[] = [];
+    const events: unknown[] = [];
+    const cleared: string[] = [];
+    const tracker = createTurnStateTracker("test");
+    const sink = tracker.wrap(
+      createWsTurnEmitter(
+        {
+          size: 1,
+          broadcast: (frame) => {
+            events.push(gatewayMessageSchema.parse(frame));
+            return 1;
+          },
+          directed: () => 0,
+          broadcastAudio: () => {
+            events.push("frame");
+          },
+        },
+        "test",
+      ),
+    );
+    const voice = createTurnVoice({
+      synthesizer: createStreamingTtsSynthesizer({
+        sessionFactory: {
+          createSession: async () =>
+            createLocalTtsProvider({
+              url: "ws://127.0.0.1:8770",
+              format: "opus",
+              sampleRate: 48000,
+              socketFactory: (url) => {
+                const ws = makeFakeWebSocket(url);
+                sockets.push(ws);
+                queueMicrotask(() => {
+                  ws._openHandshake();
+                  ws._receiveText({ type: "ready", format: "opus", sample_rate: 48000, voice: null });
+                });
+                return ws as unknown as WebSocket;
+              },
+            }),
+        },
+      }),
+      sessionId: "test",
+      sink,
+      shouldSpeak: async () => true,
+      hasAudience: () => true,
+      echoGuard: { onTtsStart() {}, onTtsCancel: (id) => cleared.push(id) },
+    });
+    const waitFor = async (condition: () => boolean) => {
+      for (let n = 0; n < 100 && !condition(); n++) await new Promise((r) => setTimeout(r, 1));
+      expect(condition()).toBe(true);
+    };
+    for (const id of ["failed", "normal"]) {
+      const turn = voice.begin(id, new AbortController().signal);
+      turn.pushText("Synthetic test.");
+      turn.end();
+    }
+    await waitFor(() => sockets.length === 1);
+    sockets[0]?._receiveBinary(new Uint8Array([1]).buffer);
+    await waitFor(() => events.length === 2);
+    sockets[0]?._receiveText({ type: "error", reason: "generation_token_limit: tokens=75 max_tokens=75" });
+    await waitFor(() => sockets.length === 2);
+    expect(tracker.snapshot().audio).toBeNull();
+    // Already-delivered audio still drains; keep its echo-suppression window.
+    expect(cleared).toEqual([]);
+    sockets[1]?._receiveBinary(new Uint8Array([2]).buffer);
+    await waitFor(() => events.length === 5);
+    // Retired provider's late error cannot end the active next turn.
+    sockets[0]?._receiveText({ type: "error", reason: "generation_token_limit" });
+    expect(tracker.snapshot().audio?.turnId).toBe("normal");
+    sockets[1]?._receiveText({ type: "done", requestId: "normal", ttfa_ms: 1, rtf: 1, audio_seconds: 1 });
+    await waitFor(() => events.length === 6);
+    expect(events).toEqual([
+      { type: "turn.audio.start", turnId: "failed", encoding: "opus", sampleRate: 48000 },
+      "frame",
+      { type: "turn.audio.done", turnId: "failed" },
+      { type: "turn.audio.start", turnId: "normal", encoding: "opus", sampleRate: 48000 },
+      "frame",
+      { type: "turn.audio.done", turnId: "normal" },
+    ]);
+    expect(tracker.snapshot().audio).toBeNull();
+    expect(sockets.every((ws) => ws.close.mock.calls.length === 1)).toBe(true);
+    expect(voice.cancelAudio()).toEqual([]);
   });
 });

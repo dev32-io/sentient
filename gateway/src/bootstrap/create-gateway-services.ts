@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type {
   AttachmentsConfig,
   AuthConfig,
+  DevicesConfig,
   HermesBuiltinTools,
   HermesConfig,
   HistoryConfig,
@@ -26,6 +27,7 @@ import type { SessionManager } from "../auth/session-manager.ts";
 import type { CalendarConfig } from "../calendar/types.js";
 import type { StartupConfig } from "../config/startup-config.ts";
 import type { ExternalToolSlot } from "../external-tools/external-tool-slot.js";
+import { createUserPrincipal } from "../identity/user-principal.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.ts";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
@@ -36,6 +38,7 @@ import { createSessionRetentionPolicy } from "../runtime/session-retention-polic
 import { type ScheduleService, createScheduleService } from "../scheduling/service.ts";
 import type { InboundGate } from "../security/inbound-gate.js";
 import { type AuthenticatedSockets, createAuthenticatedSockets } from "../session-handlers/authenticated-sockets.js";
+import { retireCubeExecutions } from "../session-handlers/cube-lifecycle.js";
 import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import { type SessionRegistry, createSessionRegistry } from "../session-handlers/session-registry.js";
@@ -45,8 +48,11 @@ import type { OrchestratorStatus } from "../system-orchestrator/types.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import type { NativeToolRunner } from "../tools/tool-broker.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
+import { loadOrCreateAuthSecret } from "../user-auth/auth-secret.js";
 import { type AuthService, createAuthService } from "../user-auth/auth-service.ts";
-import { getHermesProfileDir } from "../user-auth/paths.js";
+import { loadDeviceEscrowKey } from "../user-auth/device-escrow-key.js";
+import { type DeviceRegistry, createDeviceRegistry } from "../user-auth/device-registry.js";
+import { getGatewayRoot, getHermesProfileDir } from "../user-auth/paths.js";
 import { runPhaseOrchestrator } from "./phase-orchestrator.ts";
 import { runPhaseRoutes } from "./phase-routes.ts";
 import { runPhaseServices } from "./phase-services.ts";
@@ -139,6 +145,9 @@ export interface GatewayServices {
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
+  readonly devices: DeviceRegistry;
+  readonly cubeDreamerHour: number;
+  readonly devicesConfig: DevicesConfig;
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
   readonly applyDeps: ApplyDeps;
@@ -235,6 +244,10 @@ function resolveLostTaskThresholdMs(cfg: StartupConfig): number {
 }
 
 export async function createGatewayServices(cfg: StartupConfig): Promise<GatewayServices> {
+  // Resolve escrow before starting supervisors or background work. Missing
+  // established recovery authority is a startup error, not a fresh installation.
+  const devicePath = join(getGatewayRoot(), "devices.db");
+  const escrowKey = await loadDeviceEscrowKey(join(getGatewayRoot(), "device-escrow.key"), devicePath);
   const [auth, state] = await Promise.all([createAuthService(cfg.auth), runPhaseState(cfg)]);
   const schedules = cfg.scheduling
     ? createScheduleService({
@@ -300,6 +313,39 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
   // No-op when the dreamer is not wired (memory/dreamer off, or no provider).
   services.startDreamScheduler?.(sessionRegistry);
 
+  const authenticatedSockets = createAuthenticatedSockets();
+  const retire = (principal: UserPrincipal) =>
+    retireCubeExecutions(
+      {
+        accessManager: services.accessManager,
+        dbFileName: cfg.store.db_filename,
+        sessionRegistry,
+        authenticatedSockets,
+      },
+      principal,
+    );
+  const devices = createDeviceRegistry({
+    onRetire: retire,
+    path: devicePath,
+    users: auth.users,
+    accessKey: await loadOrCreateAuthSecret(),
+    escrowKey,
+    accessTtlSeconds: cfg.devices.access_ttl_seconds,
+    attemptTtlSeconds: cfg.devices.attempt_ttl_seconds,
+  });
+  if (!auth.users.onAuthorityChanging) throw new Error("device authority mutation hook is unavailable");
+  auth.users.onAuthorityChanging((user) => devices.retireOwner(createUserPrincipal(user.userId, user.role, "home")));
+  try {
+    await devices.purgeDeletedOwners();
+  } catch (error) {
+    devices.close();
+    throw error;
+  }
+  services.userLifecycle.onDeleted(async (userId) => {
+    const result = await devices.purgeDeletedOwner(userId);
+    if (!result.ok) throw new Error("device owner purge unavailable");
+  });
+
   log.info("services-composed", {
     stt: services.stt !== null,
     tts: services.tts !== null,
@@ -352,10 +398,13 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     // No config at all, and no dependency on the registry above: the two answer
     // different questions about the same fleet, and this one has to stay
     // answerable for a connection no session has ever heard of.
-    authenticatedSockets: createAuthenticatedSockets(),
+    authenticatedSockets,
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,
+    devices,
+    devicesConfig: cfg.devices,
+    cubeDreamerHour: cfg.orchestrator?.memory.dreamer.hour ?? 3,
     profileStore: services.profileStore,
     templateLoader: services.templateLoader,
     applyDeps: services.applyDeps,

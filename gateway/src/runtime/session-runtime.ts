@@ -107,9 +107,9 @@ import type { SessionSpark } from "../memory/deep-memory-wiring.js";
 import { ProviderFailure } from "../provider/openai-provider.js";
 import type { ProviderClient } from "../provider/provider-client.js";
 import type { CutoffKind, NewSessionEntry, SessionEntry } from "../store/entry-types.js";
-import { openSessionStore } from "../store/session-store.js";
-import type { SessionStore } from "../store/session-store.js";
+import { ClosedSessionExecutionError, DeletedSessionError, openSessionStore } from "../store/session-store.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
+import type { DeviceCredential } from "../user-auth/device-registry.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { CancellableTurn } from "./cancellation.js";
 import { createCancellationControllers } from "./cancellation.js";
@@ -172,8 +172,12 @@ export interface SessionRuntime {
   /**
    * This account's credentials were revoked (a role change or a deletion —
    * `session-handlers/credential-revocation.ts`). NO FURTHER TURN STARTS on
-   * this runtime; a stimulus arriving after this is appended to the store and
-   * nothing more. Idempotent.
+   * this runtime. Cube sessions also durably close execution, request cooperative
+   * turn/voice abort, and discard late stimuli without writing. External work
+   * already started is not claimed cancelled. Idempotent.
+   *
+   * For ordinary sessions, a late stimulus still appends; the following describes
+   * their unchanged retention and running-turn behavior.
    *
    * WHY THIS IS NOT `dispose()`. Revocation closes every socket, but the
    * session survives its windows: `session-retention.ts` keeps it resident
@@ -281,6 +285,8 @@ export interface SessionRuntime {
    * session forever; an early `false` drops it mid-work).
    */
   readonly hasAuxiliaryTaskInFlight: boolean;
+  /** Synchronous check also retires a Cube runtime whose initial credential expired. */
+  readonly executionAvailable?: boolean;
   /**
    * The in-flight turn as a window that was not there needs to see it (spec
    * §7.2) — active turn, text so far, running tools, open prompts, audio
@@ -294,6 +300,7 @@ export interface SessionRuntime {
 }
 
 export interface SessionRuntimeDeps {
+  deviceCredential?: DeviceCredential;
   principal: UserPrincipal;
   /**
    * The DURABLE session id — this runtime's partition of the session store
@@ -456,7 +463,34 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const userId = principal.userId;
 
   const cap = accessManager.grant(principal, "session-store");
-  const store: SessionStore = openSessionStore(cap, deps.dbFileName);
+  const durableStore = openSessionStore(cap, deps.dbFileName);
+  const metadata = durableStore.getSession(sessionId);
+  const cube = metadata?.provenance === "cube";
+  const executionStatus = durableStore.getSessionExecutionStatus(sessionId);
+  if (
+    executionStatus === "closed" ||
+    executionStatus === "deleted" ||
+    cube !== (principal.origin?.kind === "cube") ||
+    (cube && (deps.deviceCredential?.principal !== principal || !deps.deviceCredential.live()))
+  ) {
+    durableStore.close();
+    throw new Error("session execution is not authorized");
+  }
+
+  // Expiration retires this runtime without deleting daily continuity. Its old
+  // asynchronous writers must stay fenced even after a fresh credential resumes
+  // the same OPEN store. Durable disable/deletion remain enforced by the store.
+  const store: typeof durableStore = {
+    ...durableStore,
+    append(entry) {
+      if (cube && executionRetired()) throw new ClosedSessionExecutionError(sessionId);
+      return durableStore.append(entry);
+    },
+    setTitle(...args) {
+      if (cube && executionRetired()) return false;
+      return durableStore.setTitle(...args);
+    },
+  };
 
   let inFlight: InFlightTurn | null = null;
   const terminalObservers = new Map<string, Array<(record: TurnTerminalRecord) => void>>();
@@ -769,6 +803,12 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       return;
     }
 
+    if (executionRetired()) {
+      inFlight = null;
+      deps.onWorkSettled?.();
+      return;
+    }
+
     // No more deltas for this turn — let the synthesizer finalize its tail.
     // Deliberately BEFORE the compaction await below: holding the turn's last
     // spoken words behind a summarizer round trip would stall the reply the
@@ -1007,6 +1047,12 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
    */
   function settle(turnId: string, result: TurnOutcome, signal: AbortSignal): void {
     onTurnSettled(turnId, result, signal).catch((err: unknown) => {
+      if (err instanceof ClosedSessionExecutionError || err instanceof DeletedSessionError) {
+        executionRetired();
+        inFlight = null;
+        deps.onWorkSettled?.();
+        return;
+      }
       log.error("session-runtime.turn.settle-threw", {
         userId,
         sessionId,
@@ -1024,7 +1070,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // account is revoked, would start a headless follow-up turn dispatching
     // tools under the pre-revocation capability. This closes that second entry
     // point — see `revokeAuthority`.
-    if (revokedReason !== null) return;
+    if (revokedReason !== null || executionRetired()) return;
     // Re-entrancy guard: a future TurnEmitter.turnCompleted callback could call
     // submit() synchronously from inside onTurnSettled's clear-and-decide window;
     // without this, that re-entrant start plus onTurnSettled's own next-turn start
@@ -1079,6 +1125,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     controller: AbortController,
     speech: TurnVoiceStream | null,
   ): void {
+    if (executionRetired()) {
+      inFlight = null;
+      deps.onWorkSettled?.();
+      return;
+    }
     // Bound automatic media to this admitted trigger window. New input normally
     // carries this turnId; later preadmitted steering may carry another, so only
     // window start uses identity and all subsequent inclusion uses sequence.
@@ -1090,6 +1141,16 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     log.info("session-runtime.turn.start", { userId, sessionId, turnId, trigger, lastProcessedSeq });
 
     const loopDeps: ReactLoopDeps = {
+      authorizeExecution: async () => {
+        if (!cube) return true;
+        if (!deps.deviceCredential || !(await deps.deviceCredential.current())) {
+          if (!disposed && Date.now() < (deps.deviceCredential?.expiresAt ?? 0) * 1000) {
+            store.closeCubeSessionExecution(sessionId, "revoked");
+          }
+        }
+        return !executionRetired();
+      },
+      executionAllowed: () => !executionRetired(),
       provider,
       ...(deps.resolveMainModel ? { resolveMainModel: deps.resolveMainModel } : {}),
       ...(deps.directVision ? { directVision: deps.directVision } : {}),
@@ -1131,7 +1192,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         // Provider adapters are asked to honor abort, but disposal is the
         // terminal authority boundary even when one delivers a buffered chunk
         // late. Never emit or feed speech after the session was deleted.
-        if (disposed) return;
+        if (executionRetired()) return;
         turnText += text;
         // The reply id rides every delta, so the client never has to
         // reverse-engineer which reply a chunk belongs to.
@@ -1139,7 +1200,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         speech?.pushText(text);
       },
       onToolUpdate: (id, u) => {
-        if (disposed) return;
+        if (executionRetired()) return;
         // Any onToolUpdate call is preceded by the loop committing this
         // iteration's narration (if it had any) to the store directly — see
         // react-loop.ts's `dispatchToolCalls`. That text is durable now, so
@@ -1160,7 +1221,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         speech?.flush(u.toolCallId);
       },
       onTurnCommitting: (id) => {
-        if (disposed) return;
+        if (executionRetired()) return;
         // Fires synchronously right after react-loop.ts appends the terminal
         // assistant entry for a natural completion — BEFORE `runTurn`'s
         // promise resolves and long before the async `onTurnSettled`
@@ -1178,6 +1239,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     runTurn(loopDeps, { turnId, signal: controller.signal, inputAfterSeq }).then(
       (result) => settle(turnId, result, controller.signal),
       (err: unknown) => {
+        if (err instanceof ClosedSessionExecutionError || err instanceof DeletedSessionError) {
+          executionRetired();
+          settle(turnId, { completed: false, iterations: 0, consumedThroughSeq: lastProcessedSeq }, controller.signal);
+          return;
+        }
         // react-loop.ts's contract is "never throw" — this is a defensive
         // backstop only, so a bug elsewhere can never wedge the one-turn
         // guard open forever.
@@ -1347,12 +1413,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   }
 
   function submit(stimulus: Stimulus): void {
-    submitInternal(stimulus);
+    if (executionRetired()) return;
+    try {
+      submitInternal(stimulus);
+    } catch (error) {
+      // Another store handle can retire execution between the status read and append.
+      if (!(error instanceof ClosedSessionExecutionError || error instanceof DeletedSessionError)) throw error;
+      executionRetired();
+    }
   }
 
   function submitAndObserve(stimulus: Stimulus): Promise<TurnTerminalRecord> {
     return new Promise((resolve, reject) => {
-      if (disposed || revokedReason !== null) {
+      if (executionRetired() || revokedReason !== null) {
         reject(new Error("session runtime cannot start an observed turn"));
         return;
       }
@@ -1403,12 +1476,34 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         });
         return;
       }
+      if (executionRetired()) return;
       gesture(...args);
     };
   }
 
+  function executionRetired(): boolean {
+    if (disposed) return true;
+    if (cube && Date.now() >= (deps.deviceCredential?.expiresAt ?? 0) * 1000) revokedReason ??= "credential-expired";
+    const expired = revokedReason === "credential-expired";
+    if (cube && !expired && !deps.deviceCredential?.live()) store.closeCubeSessionExecution(sessionId, "revoked");
+    const status = store.getSessionExecutionStatus(sessionId);
+    if (!expired && status !== "closed" && status !== "deleted") return false;
+    revokedReason ??= "execution-retired";
+    // No cutoff append: retirement forbids every late write. This abort requests
+    // local turn/voice cancellation, not cancellation of external delegate work.
+    inFlight?.controller.abort();
+    voice?.cancelAudio();
+    auxiliaryController.abort();
+    return true;
+  }
+
   function revokeAuthority(reason: string): void {
-    if (revokedReason !== null) return;
+    if (disposed || revokedReason !== null) return;
+    if (cube) {
+      store.closeCubeSessionExecution(sessionId, "revoked");
+      executionRetired();
+      return;
+    }
     revokedReason = reason;
     log.warn("session-runtime.authority-revoked", {
       userId,
@@ -1423,6 +1518,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    if (expiryTimer) clearTimeout(expiryTimer);
     // Aborting the in-flight turn is NOT enough, and is a no-op in exactly the
     // state that matters: a turn that completed naturally never aborted its own
     // controller and has already cleared `inFlight`, while its speech is still
@@ -1454,7 +1550,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     deps.onDispose?.();
   }
 
+  const expiryTimer = deps.deviceCredential
+    ? setTimeout(() => executionRetired(), Math.max(0, deps.deviceCredential.expiresAt * 1000 - Date.now()))
+    : null;
+  expiryTimer?.unref();
   return {
+    get executionAvailable() {
+      return !executionRetired();
+    },
     userId,
     submit,
     submitAndObserve,

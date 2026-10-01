@@ -20,7 +20,9 @@ const log = getLog(["sentient", "ws", "session-configure"]);
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 48000;
-const AUDIO_ENCODING = "pcm16";
+// Inbound microphone binary is raw Opus (stt-factory.ts); downlink declares
+// its own encoding on each turn.audio.start.
+const AUDIO_ENCODING = "opus";
 
 // ---------------------------------------------------------------------------
 // Session configure — post-purge minimal form.
@@ -233,6 +235,9 @@ export async function handleSessionConfigure(
   const readyFrame: GatewayMessage = {
     type: "session.ready",
     sessionId,
+    // recovered:false resets client cursors after session.attached; re-announce
+    // the current journal before unsequenced reconstruction or low-seq audio.
+    ...(ws.data.journal === null ? {} : { epoch: ws.data.epoch }),
     audioEncoding: AUDIO_ENCODING,
     inputSampleRate: INPUT_SAMPLE_RATE,
     outputSampleRate: OUTPUT_SAMPLE_RATE,
@@ -314,7 +319,7 @@ function resolveConnectionSession(
   if (principal === null) return { sessionId: null, draftKey: mintDraftKey() };
   const userId = principal.userId;
 
-  if (presented === undefined) {
+  if (principal.origin?.kind === "cube" || presented === undefined) {
     const draftKey = mintDraftKey();
     log.info("session-configure.draft.fresh", { sessionId: connectionId, userId, draftKey });
     return { sessionId: null, draftKey };

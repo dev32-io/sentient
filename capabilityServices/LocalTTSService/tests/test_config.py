@@ -1,6 +1,6 @@
 """Unit tests for the local-tts config loader.
 
-Fail-loud contract: every key in ``config.example.yaml`` is required.
+Fail-loud explicit config; retained configs may omit the generation section.
 Mirrors ``WhisperSTTService/tests/test_config.py`` in spirit — this is a
 plain unit test, no ``@live`` marker, no network/model access.
 """
@@ -141,3 +141,36 @@ def test_invalid_default_lang_raises(tmp_path):
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="default_lang"):
         load_config(str(p))
+
+
+@pytest.mark.parametrize('key,value', [
+    ('max_tokens', 0), ('min_tokens', -1), ('tokens_per_text_token', True),
+    ('tokens_per_text_token', 1.5), ('min_tokens', 4097),
+])
+def test_invalid_generation_budget(tmp_path, key, value):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text())
+    raw['generation'][key] = value
+    path = tmp_path / 'config.yaml'
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(ConfigError, match='generation'):
+        load_config(str(path))
+
+
+def test_retained_config_gets_visible_generation_defaults(tmp_path, caplog):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text())
+    del raw['generation']
+    path = tmp_path / 'retained.yaml'
+    path.write_text(yaml.safe_dump(raw))
+    cfg = load_config(str(path))
+    assert cfg.generation == load_config(_EXAMPLE_PATH).generation
+    assert 'config.generation_defaulted max_tokens=4096 min_tokens=75 tokens_per_text_token=12' in caplog.text
+
+
+@pytest.mark.parametrize('section', [None, False, [], {}, {'max_tokens': 4096}])
+def test_explicit_invalid_generation_section_never_defaults(tmp_path, section):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text())
+    raw['generation'] = section
+    path = tmp_path / 'invalid.yaml'
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(ConfigError, match='generation'):
+        load_config(str(path))

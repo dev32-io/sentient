@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     iOS: "18.0"
 packages:
+  ESPProvision:
+    # Pinned source plus terminal BLE teardown; see Vendor/esp-idf-provisioning-ios/README.sentient.md.
+    path: Vendor/esp-idf-provisioning-ios
   # Pinned 2.4.1 with streaming identity fix; see Vendor/swift-markdown-ui/README.sentient.md.
   MarkdownUI:
     path: Vendor/swift-markdown-ui
@@ -27,8 +30,8 @@ targets:
         # This spec owns the app version; xcodegen regenerates Info.plist.
         # App releases use their own track, separate from mobile-sdk/data source
         # versions. An iOS-only release does not bump the deprecated Android app.
-        CFBundleShortVersionString: 1.7.0
-        CFBundleVersion: "14"
+        CFBundleShortVersionString: 1.8.0
+        CFBundleVersion: "15"
         # Register bundled custom fonts so UIKit can load them by family name.
         # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
         UIAppFonts:
@@ -42,7 +45,8 @@ targets:
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
-        NSCameraUsageDescription: Sentient uses the camera when you choose to take a photo attachment.
+        NSCameraUsageDescription: Sentient uses the camera for photo attachments and scanning your Cube setup code.
+        NSBluetoothAlwaysUsageDescription: Sentient uses Bluetooth to securely set up your Cube and manage its Wi-Fi.
         CFBundleURLTypes:
           - CFBundleTypeRole: Viewer
             CFBundleURLName: io.dev32.sentient.session
@@ -93,6 +97,8 @@ targets:
         product: MarkdownUI
       - package: RiveRuntime
         product: RiveRuntime
+      - package: ESPProvision
+        product: ESPProvision
 
   SentientAppTests:
     type: bundle.unit-test

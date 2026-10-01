@@ -166,6 +166,27 @@ class EffectiveWildcardPermissionTest {
     }
 }
 
+class CubeToolPermissionTest {
+    @Test
+    fun `cube defaults off and does not inherit ordinary tool choices`() {
+        val base = mapOf("skills" to mapOf("skill_list" to ToolPermission.ALLOW))
+        assertEquals(ToolPermission.OFF, cubeToolPermission(base, null, "skill_list"))
+        assertEquals(ToolPermission.OFF, cubeToolPermission(null, null, "delegateTask"))
+    }
+
+    @Test
+    fun `named override wins wildcard and pending clear falls through to wildcard`() {
+        val base = mapOf("cube" to mapOf("*" to ToolPermission.ASK, "delegateTask" to ToolPermission.ALLOW))
+        assertEquals(ToolPermission.ALLOW, cubeToolPermission(base, null, "delegateTask"))
+        assertEquals(ToolPermission.OFF, cubeToolPermission(base, mapOf("cube" to mapOf("delegateTask" to ToolPermission.OFF)), "delegateTask"))
+        assertEquals(ToolPermission.OFF, cubeToolPermission(base, mapOf("cube" to mapOf("delegateTask" to null)), "delegateTask"))
+        assertEquals(ToolPermission.OFF, cubeToolPermission(base, mapOf("cube" to mapOf("*" to null, "delegateTask" to null)), "delegateTask"))
+        assertEquals(ToolPermission.OFF, cubeToolPermission(mapOf("cube" to mapOf("*" to ToolPermission.DENY)), null, "delegateTask"))
+        // Projection does not mutate legacy values; unrelated saves retain them.
+        assertEquals(ToolPermission.ASK, base["cube"]?.get("*"))
+    }
+}
+
 class MergeToolPermissionPatchTest {
     @Test
     fun `carries forward a server the overlay never touched`() {

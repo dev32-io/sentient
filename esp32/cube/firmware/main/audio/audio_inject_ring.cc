@@ -1,13 +1,16 @@
 // audio_inject_ring.cc — see audio_inject_ring.h.
 //
 // Storage + mutex + push/pop_locked + strong override of
-// agent_audio_inject_pop_samples. Ported verbatim from the v1 inject path —
-// same buffer geometry, same drop-on-overflow semantics.
+// agent_audio_inject_pop_samples. Same buffer geometry and drop-on-overflow
+// semantics as the v1 inject path, with storage allocated only for injection.
 
 #include "audio_inject_ring.h"
 
+#include <cassert>
+#include <atomic>
 #include <mutex>
 
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -27,9 +30,11 @@ constexpr size_t kInjectRingSamples = 32000;
 // real codec path runs as normal.
 constexpr int kSupportedSampleRate = 16000;
 
-int16_t g_ring[kInjectRingSamples];
+int16_t* g_ring = nullptr;  // lifetime allocation in PSRAM, on first push only
 size_t  g_head  = 0;   // next write index
 size_t  g_tail  = 0;   // next read index
+std::atomic<bool> g_armed{false}, g_test_capture{false};
+size_t g_consumed = 0;
 size_t  g_count = 0;   // samples currently buffered
 
 SemaphoreHandle_t g_mutex = nullptr;
@@ -55,6 +60,8 @@ size_t push_locked(const int16_t* src, size_t n) {
 }
 
 size_t pop_locked(int16_t* dst, size_t n) {
+    // Only push can raise g_count, after successful ring allocation.
+    assert(g_count == 0 || g_ring != nullptr);
     size_t popped = 0;
     while (popped < n && g_count > 0) {
         dst[popped++] = g_ring[g_tail];
@@ -72,13 +79,17 @@ extern "C" size_t audio_inject_ring_push(const int16_t* src, size_t n) {
     if (g_mutex == nullptr) return 0;
     size_t pushed = 0;
     if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        pushed = push_locked(src, n);
+        if (!g_armed && !g_test_capture) { xSemaphoreGive(g_mutex); return 0; }
+        if (g_ring == nullptr) {
+            g_ring = static_cast<int16_t*>(heap_caps_malloc(
+                sizeof(int16_t) * kInjectRingSamples, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+        if (g_ring != nullptr) pushed = push_locked(src, n);
         xSemaphoreGive(g_mutex);
     } else {
         ESP_LOGW(TAG, "push mutex timeout n=%u", (unsigned)n);
     }
-    ESP_LOGD(TAG, "push n=%u pushed=%u count=%u",
-             (unsigned)n, (unsigned)pushed, (unsigned)g_count);
+
     return pushed;
 }
 
@@ -93,7 +104,8 @@ extern "C" int audio_inject_ring_pop(int16_t* dst, int target_samples,
     // side is holding the mutex briefly, return 0 and the real codec path
     // takes over for this read. Keeps the audio loop deterministic.
     if (xSemaphoreTake(g_mutex, 0) == pdTRUE) {
-        got = static_cast<int>(pop_locked(dst, static_cast<size_t>(target_samples)));
+        if (g_test_capture) got = static_cast<int>(pop_locked(dst, static_cast<size_t>(target_samples)));
+        g_consumed += got;
         xSemaphoreGive(g_mutex);
     }
     return got;
@@ -102,7 +114,7 @@ extern "C" int audio_inject_ring_pop(int16_t* dst, int target_samples,
 extern "C" size_t audio_inject_ring_available(void) {
     ensure_mutex_once();
     if (g_mutex == nullptr) return 0;
-    size_t count = 0;
+    size_t count = SIZE_MAX; // Unknown is never a false "FIFO empty" diagnostic.
     if (xSemaphoreTake(g_mutex, 0) == pdTRUE) {
         count = g_count;
         xSemaphoreGive(g_mutex);
@@ -121,3 +133,37 @@ extern "C" int agent_audio_inject_pop_samples(int16_t* buf,
                                               int sample_rate) {
     return audio_inject_ring_pop(buf, target_samples, sample_rate);
 }
+
+extern "C" void audio_inject_ring_arm(void) {
+    ensure_mutex_once();
+    if (!g_mutex || xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    if (!g_test_capture) { g_head = g_tail = g_count = 0; g_armed = true; }
+    xSemaphoreGive(g_mutex);
+}
+extern "C" void audio_inject_ring_begin_capture(void) {
+    ensure_mutex_once();
+    if (!g_mutex || xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    g_test_capture = g_armed.load();
+    g_armed = false;
+    g_consumed = 0;
+    if (!g_test_capture) g_head = g_tail = g_count = 0;
+    xSemaphoreGive(g_mutex);
+}
+extern "C" void audio_inject_ring_end_capture(void) {
+    g_test_capture = false;
+    g_armed = false;
+    ensure_mutex_once();
+    if (!g_mutex || xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    g_test_capture = g_armed = false;
+    g_head = g_tail = g_count = 0;
+    xSemaphoreGive(g_mutex);
+}
+extern "C" size_t audio_inject_ring_consumed(void) {
+    ensure_mutex_once();
+    if (!g_mutex || xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return SIZE_MAX;
+    const auto count = g_consumed;
+    xSemaphoreGive(g_mutex);
+    return count;
+}
+extern "C" void agent_audio_inject_begin_capture(void) { audio_inject_ring_begin_capture(); }
+extern "C" void agent_audio_inject_end_capture(void) { audio_inject_ring_end_capture(); }

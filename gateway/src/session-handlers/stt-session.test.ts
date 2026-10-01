@@ -10,7 +10,7 @@
 // `unhandledRejection` would take the whole gateway process down over one
 // session's STT socket.
 
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
 import { captureDiagnosticRef } from "./capture-diagnostics.js";
+import { createMicEchoGuard } from "./mic-echo-guard.js";
 import { admitFirstUserMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
 
@@ -833,4 +834,361 @@ describe("createSttSession", () => {
     expect(second.sent).toHaveLength(1);
     session.close();
   });
+});
+
+it("deadline fences delayed admission and late callbacks while next capture is active", async () => {
+  const old = lingeringAdapter();
+  const next = fakeAdapter();
+  const stub = stubRuntime();
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const adapters = [old, next];
+  const session = createSttSession({
+    sessionId: "deadline",
+    factory: () => (adapters.shift() ?? next).adapter,
+    config: { ...TEST_CONFIG, finalizeTimeoutMs: 20 },
+    getRuntime: () => stub.runtime,
+    getRuntimeForInput: async () => {
+      if (++calls === 1) await blocked;
+      return stub.runtime;
+    },
+  });
+  session.start("old", "manual");
+  await settle();
+  session.end("old");
+  old.emit({ type: "transcript", turnIdx: 1, text: "stale" });
+  await Bun.sleep(40);
+  expect(session.start("next", "manual")).toBe(true);
+  await settle();
+  release();
+  old.emit({ type: "turn_started", turnIdx: 2 });
+  old.emit({ type: "transcript", turnIdx: 2, text: "stale again" });
+  await settle();
+  expect(stub.submitted).toEqual([]);
+  expect(stub.bargeIns).toEqual([]);
+  session.end("next");
+  next.emit({ type: "transcript", turnIdx: 1, text: "fresh" });
+  await settle();
+  expect(stub.submitted).toEqual([{ kind: "conversational", text: "fresh" }]);
+  session.close();
+});
+
+it.each(["manual", "semantic"] as const)(
+  "%s rotation preserves B's pre-ready bytes and End after A commits",
+  async (mode) => {
+    const first = fakeAdapter();
+    const second = fakeAdapter();
+    const stub = stubRuntime();
+    let ready = () => {};
+    second.adapter.open = () =>
+      new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+    const operations: unknown[] = [];
+    second.adapter.send = (bytes) => operations.push([...bytes]);
+    second.adapter.endUtterance = () => operations.push("flush");
+    const adapters = [first, second];
+    const session = createSttSession({
+      sessionId: "rotation",
+      config: TEST_CONFIG,
+      factory: () => (adapters.shift() ?? second).adapter,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+    try {
+      expect(session.start("A", mode)).toBe(true);
+      await settle();
+      session.end("A");
+      first.emit({ type: "transcript", turnIdx: 1, text: "first" });
+      await settle();
+      expect(session.start("B", mode)).toBe(true);
+      const frame = new Uint8Array([1, 2]);
+      session.pushFrame("B", frame);
+      frame.fill(9); // caller cannot mutate queued audio
+      session.pushFrame("B", new Uint8Array([3, 4]));
+      expect(session.buffered).toBe(4);
+      session.end("B");
+      session.cancel("B"); // End still wins
+      session.pushFrame("B", new Uint8Array([5]));
+      expect(session.start("overlap", mode)).toBe(false);
+      expect(operations).toEqual([]);
+      ready();
+      await settle();
+      expect(second.turnModes).toEqual([mode]);
+      expect(operations).toEqual([[1, 2], [3, 4], "flush"]);
+      second.emit({ type: "transcript", turnIdx: 1, text: "second" });
+      second.emit({ type: "transcript", turnIdx: 1, text: "duplicate" });
+      await settle();
+      expect(stub.submitted).toEqual([
+        { kind: "conversational", text: "first" },
+        { kind: "conversational", text: "second" },
+      ]);
+    } finally {
+      session.close();
+    }
+  },
+);
+
+it.each(["cancel", "discard", "close"] as const)(
+  "%s releases pre-ready audio and fences late ready",
+  async (terminal) => {
+    const first = lingeringAdapter();
+    const second = fakeAdapter();
+    const stub = stubRuntime();
+    let releaseFirst = () => {};
+    let releaseSecond = () => {};
+    let oldSignal: AbortSignal | undefined;
+    first.adapter.open = (signal) => {
+      oldSignal = signal;
+      return new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    };
+    second.adapter.open = () =>
+      new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+    let dialled = 0;
+    const session = createSttSession({
+      sessionId: "pending",
+      config: TEST_CONFIG,
+      factory: () => (++dialled === 1 ? first : second).adapter,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+    try {
+      session.start("old", "manual");
+      session.pushFrame("old", new Uint8Array([1, 2]));
+      expect(session.buffered).toBe(2);
+      if (terminal === "cancel") session.cancel("old");
+      else session[terminal]();
+      expect(session.buffered).toBe(0);
+      expect(oldSignal?.aborted).toBe(true);
+      expect(session.start("new", "manual")).toBe(terminal !== "close");
+      releaseFirst();
+      first.emit({ type: "transcript", turnIdx: 1, text: "stale" });
+      await settle();
+      expect(first.sent).toEqual([]);
+      expect(first.flushes).toBe(0);
+      expect(first.closes).toBe(1);
+      expect(stub.submitted).toEqual([]);
+      if (terminal === "close") return;
+      session.pushFrame("new", new Uint8Array([3, 4]));
+      session.end("new");
+      expect(dialled).toBe(2); // old ready did not clear newer connect ownership
+      releaseSecond();
+      await settle();
+      expect(second.sent.map((bytes) => [...bytes])).toEqual([[3, 4]]);
+      expect(second.flushes).toBe(1);
+      second.emit({ type: "transcript", turnIdx: 1, text: "fresh" });
+      await settle();
+      expect(stub.submitted).toEqual([{ kind: "conversational", text: "fresh" }]);
+    } finally {
+      session.close();
+    }
+  },
+);
+
+it.each(["overflow", "timeout", "connect-failure"] as const)(
+  "pre-ready %s fails closed and next capture recovers",
+  async (failure) => {
+    const first = lingeringAdapter();
+    const second = fakeAdapter();
+    const stub = stubRuntime();
+    let ready = () => {};
+    let reject = (_err: Error) => {};
+    let signal: AbortSignal | undefined;
+    first.adapter.open = (s) => {
+      signal = s;
+      return new Promise<void>((resolve, fail) => {
+        ready = resolve;
+        reject = fail;
+      });
+    };
+    const adapters = [first, second];
+    const config = { ...TEST_CONFIG, finalizeTimeoutMs: 20 };
+    const session = createSttSession({
+      sessionId: "bounded",
+      config,
+      factory: () => (adapters.shift() ?? second).adapter,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+    try {
+      session.start("old", "manual");
+      const bound = Math.ceil((config.inputSampleRate * 2 * config.connectTimeoutMs) / 1000);
+      session.pushFrame("old", new Uint8Array(bound));
+      expect(session.buffered).toBe(bound);
+      if (failure === "overflow") session.pushFrame("old", new Uint8Array(1));
+      else if (failure === "timeout") {
+        session.end("old");
+        await Bun.sleep(40);
+      } else {
+        reject(new Error("synthetic connect failure"));
+        await settle();
+      }
+      expect(session.buffered).toBe(0);
+      expect(signal?.aborted).toBe(true);
+      expect(session.start("new", "manual")).toBe(true);
+      ready();
+      first.emit({ type: "transcript", turnIdx: 1, text: "stale" });
+      await settle();
+      expect(first.sent).toEqual([]);
+      expect(first.flushes).toBe(0);
+      expect(stub.submitted).toEqual([]);
+      session.pushFrame("new", new Uint8Array([1, 2]));
+      session.end("new");
+      second.emit({ type: "transcript", turnIdx: 1, text: "fresh" });
+      await settle();
+      expect(second.sent).toHaveLength(1);
+      expect(stub.submitted).toEqual([{ kind: "conversational", text: "fresh" }]);
+    } finally {
+      session.close();
+    }
+  },
+);
+
+it("echo cooldown survives terminal rotation and delayed ready without extending on retries", async () => {
+  let now = 1000;
+  const clock = spyOn(performance, "now").mockImplementation(() => now);
+  const first = fakeAdapter();
+  const second = fakeAdapter();
+  const third = fakeAdapter();
+  let ready = () => {};
+  second.adapter.open = () =>
+    new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+  const adapters = [first, second, third];
+  const session = createSttSession({
+    sessionId: "echo-rotation",
+    config: TEST_CONFIG,
+    factory: () => (adapters.shift() ?? third).adapter,
+    getRuntime: () => null,
+    getRuntimeForInput: async () => null,
+  });
+  const guard = createMicEchoGuard(() => [session], 2500, "echo-rotation");
+  try {
+    session.start("first", "manual");
+    await settle();
+    session.end("first");
+    first.emit({ type: "turn_dropped", turnIdx: 1 });
+    await settle();
+    expect(first.closes).toBe(1);
+    guard.onTtsStart("tts"); // no adapter: expiry is 3500
+    now = 1500;
+    expect(session.start("second", "semantic")).toBe(true);
+    now = 2000;
+    ready();
+    await settle();
+    expect(second.suppressions).toEqual([1500]);
+    session.pushFrame("second", new Uint8Array(2));
+    expect(second.sent).toHaveLength(0);
+    expect(session.buffered).toBe(0);
+    // Semantic reconnect within the same cooldown must not restart 2500 ms.
+    second.fail(new Error("synthetic_disconnect"));
+    await settle();
+    now = 3000;
+    session.pushFrame("second", new Uint8Array(2));
+    await settle();
+    expect(third.suppressions).toEqual([500]);
+    now = 3499;
+    session.pushFrame("second", new Uint8Array(2));
+    expect(third.sent).toHaveLength(0);
+    now = 3500;
+    session.pushFrame("second", new Uint8Array(2));
+    expect(third.sent).toHaveLength(1);
+    guard.onTtsStart("tts-next");
+    session.pushFrame("second", new Uint8Array(2));
+    expect(third.sent).toHaveLength(1);
+    guard.onTtsCancel("tts-next");
+    session.pushFrame("second", new Uint8Array(2));
+    expect(third.suppressions.at(-1)).toBe(0);
+    expect(third.sent).toHaveLength(2);
+  } finally {
+    session.close();
+    clock.mockRestore();
+  }
+});
+
+it("TTS cancel clears cooldown while ready is pending", async () => {
+  const fake = fakeAdapter();
+  let ready = () => {};
+  fake.adapter.open = () =>
+    new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+  const session = createSttSession({
+    sessionId: "echo-cancel",
+    config: TEST_CONFIG,
+    factory: () => fake.adapter,
+    getRuntime: () => null,
+    getRuntimeForInput: async () => null,
+  });
+  const guard = createMicEchoGuard(() => [session], 2500, "echo-cancel");
+  try {
+    session.start("capture", "manual");
+    guard.onTtsStart("tts");
+    guard.onTtsCancel("tts");
+    ready();
+    await settle();
+    expect(fake.suppressions).toEqual([0]);
+    session.pushFrame("capture", new Uint8Array(2));
+    expect(fake.sent).toHaveLength(1);
+  } finally {
+    session.close();
+  }
+});
+
+it("pending READY preserves pre-TTS speech without replaying suppressed echo after expiry", async () => {
+  let now = 1000;
+  const clock = spyOn(performance, "now").mockImplementation(() => now);
+  const fake = fakeAdapter();
+  let ready = () => {};
+  fake.adapter.open = () =>
+    new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+  let adapterSuppressedUntil = 0;
+  fake.adapter.suppressInputFor = (ms) => {
+    fake.suppressions.push(ms);
+    adapterSuppressedUntil = now + ms;
+  };
+  fake.adapter.send = (bytes) => {
+    if (now >= adapterSuppressedUntil) fake.sent.push(bytes);
+  };
+  const session = createSttSession({
+    sessionId: "echo-buffer",
+    config: TEST_CONFIG,
+    factory: () => fake.adapter,
+    getRuntime: () => null,
+    getRuntimeForInput: async () => null,
+  });
+  try {
+    session.start("capture", "semantic");
+    session.pushFrame("capture", new Uint8Array([1, 2]));
+    now = 1500;
+    session.suppressInputFor(2500);
+    session.pushFrame("capture", new Uint8Array([9, 9]));
+    expect(session.buffered).toBe(2);
+    now = 2000;
+    ready();
+    await settle();
+    expect(fake.sent.map((bytes) => [...bytes])).toEqual([[1, 2]]);
+    expect(fake.suppressions).toEqual([2000]);
+    now = 3999;
+    session.pushFrame("capture", new Uint8Array([9, 9]));
+    now = 4000;
+    session.pushFrame("capture", new Uint8Array([3, 4]));
+    expect(fake.sent.map((bytes) => [...bytes])).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  } finally {
+    session.close();
+    clock.mockRestore();
+  }
 });

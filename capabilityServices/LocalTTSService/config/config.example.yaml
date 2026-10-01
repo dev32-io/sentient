@@ -6,8 +6,8 @@
 # loads it ONCE at startup. To change a value, edit and restart the
 # LaunchAgent.
 #
-# Every key below is required — the service fails loud at startup if
-# anything is missing or the wrong type. There are no silent defaults.
+# Keys are required except generation: retained configs without that section
+# receive its documented defaults with a warning. Explicit invalid values fail.
 #
 # Host paths (model cache, voice reference clips, logs) come from
 # LOCAL_TTS_* environment variables — see README.md — except
@@ -67,6 +67,19 @@ default_sample_rate: 48000
 # keeps time-to-first-audio low while staying safely realtime; lower
 # values are fine too if you want smaller/more-frequent chunks.
 streaming_interval: 2.0
+
+# Codec frames at 12.5 Hz, per newline-delimited segment. Bound model work
+# using min(max_tokens, max(min_tokens, tokenizer_length * tokens_per_text_token)).
+# Short-input floor = 6 seconds; long speech retains up to 327.68 seconds.
+# Heuristic follows mlx-audio's ICL batch budget, with twice its 6x ratio
+# to leave room for slower speech. Tune for supported languages/voices.
+# Hitting this budget emits error (partial audio may already have streamed),
+# never done. No retries or silent truncation. An absent generation section
+# uses these same defaults with a startup warning (retained-config upgrades).
+generation:
+  max_tokens: 4096
+  min_tokens: 75
+  tokens_per_text_token: 12
 
 # Language code passed to Qwen3-TTS on every synthesis call. "auto" lets
 # the model auto-detect the spoken language per request (en/zh/... — see

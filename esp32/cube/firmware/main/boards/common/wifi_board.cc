@@ -1,4 +1,7 @@
 #include "wifi_board.h"
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+#include "boards/sentient-cube/cube_hardware.h"
+#endif
 
 #include "display.h"
 #include "application.h"
@@ -50,6 +53,16 @@ std::string WifiBoard::GetBoardType() {
 }
 
 void WifiBoard::StartNetwork() {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    auto err = sentient::cube::CubeHardware::Get().Start([this](bool connected) {
+        OnNetworkEvent(connected ? NetworkEvent::Connected : NetworkEvent::Disconnected);
+    });
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "hardware.start_failed code=%d", err);
+        Application::GetInstance().SetDeviceState(kDeviceStateFatalError);
+    }
+    return;
+#endif
     ESP_LOGI(TAG, "start_network.begin");
     auto& wifi_manager = WifiManager::GetInstance();
 
@@ -201,6 +214,11 @@ void WifiBoard::StartWifiConfigMode() {
 }
 
 void WifiBoard::EnterWifiConfigMode() {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Local button / network timeout is never authorization to reopen bootstrap.
+    GetDisplay()->ShowNotification("Manage Wi-Fi in Sentient");
+    return;
+#endif
     ESP_LOGI(TAG, "EnterWifiConfigMode called");
     GetDisplay()->ShowNotification(Lang::Strings::ENTERING_WIFI_CONFIG_MODE);
 
@@ -251,6 +269,9 @@ NetworkInterface* WifiBoard::GetNetwork() {
 }
 
 const char* WifiBoard::GetNetworkStateIcon() {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    return sentient::cube::CubeHardware::Get().WifiConnected() ? FONT_AWESOME_WIFI : FONT_AWESOME_WIFI_SLASH;
+#endif
     auto& wifi = WifiManager::GetInstance();
 
     if (wifi.IsConfigMode()) {
@@ -286,6 +307,10 @@ std::string WifiBoard::GetBoardJson() {
 }
 
 void WifiBoard::SetPowerSaveLevel(PowerSaveLevel level) {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    esp_wifi_set_ps(level == PowerSaveLevel::PERFORMANCE ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
+    return;
+#endif
     WifiPowerSaveLevel wifi_level;
     switch (level) {
         case PowerSaveLevel::LOW_POWER:

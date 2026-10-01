@@ -1,0 +1,3 @@
+# Preserve upstream bytes; vendor hashes/provenance are checked separately.
+esp32/cube/firmware/components/cube_envelope/vendor/** -whitespace linguist-vendored
+ios/Vendor/esp-idf-provisioning-ios/** -whitespace linguist-vendored

@@ -93,6 +93,10 @@ struct ChatView: View {
 
     // ── Drawer state ────────────────────────────────────────────────────────────
 
+    @State private var cubeViewer: HistoryEntry?
+    @State private var cubeMessages: [ChatMessage] = []
+    @State private var cubeLoading = false
+    @State private var cubeError = false
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
     @State private var messageMeasurementLoading = false
@@ -170,7 +174,7 @@ struct ChatView: View {
 
     /// True while an existing-session switch is fetching history (snapshot pending).
     /// Drives the message-list spinner ONLY — the composer stays live regardless.
-    private var historyLoading: Bool { vm.state.historyLoading }
+    private var historyLoading: Bool { cubeViewer == nil ? vm.state.historyLoading : cubeLoading }
 
     private var connectionBanner: ConnectionBannerState? {
         ConnectionBannerState.derive(status: connection.status, connectionLost: connection.connectionLost)
@@ -192,7 +196,7 @@ struct ChatView: View {
     // ── Root body ─────────────────────────────────────────────────────────────────
 
     var body: some View {
-        let messages = displayMessages
+        let messages = cubeViewer == nil ? displayMessages : cubeMessages
         let assistantActivity = vm.state.model.assistantActivity
 
         return SideDrawer(
@@ -203,13 +207,13 @@ struct ChatView: View {
             }
         ) {
             mainColumn(messages: messages, assistantActivity: assistantActivity)
-                .environment(\.sentientIdentityPlaybackEnabled, !drawerOpen)
+                .environment(\.sentientIdentityPlaybackEnabled, !drawerOpen && cubeViewer == nil)
         } drawer: {
             historySidePanel
                 .background(DuskColors.bg.ignoresSafeArea())
         }
         .connectionState(
-            banner: connectionBanner,
+            banner: cubeViewer == nil ? connectionBanner : nil,
             onReconnect: { vm.reconnect() }
         )
         .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
@@ -219,7 +223,10 @@ struct ChatView: View {
             Task {
                 switch action {
                 case .deleteConversation(let sessionId):
-                    if await historyModel.deleteSession(sessionId), sessionId == activeSessionId { onNewChat() }
+                    if await historyModel.deleteSession(sessionId) {
+                        if cubeViewer?.sessionId == sessionId { cubeViewer = nil; cubeMessages = [] }
+                        if sessionId == activeSessionId { onNewChat() }
+                    }
                 case .discardDraft(let draftId):
                     let succeeded = await historyModel.discardDraft(draftId)
                     if shouldNavigateAfterDiscard(succeeded: succeeded, draftId: draftId, activeDraftId: activeDraftId) {
@@ -230,10 +237,10 @@ struct ChatView: View {
         }
         .permissionPrompt(
             Binding(
-                get: { vm.pendingPermission },
-                set: { if $0 == nil { vm.dismissPermissionPrompt() } }
+                get: { cubeViewer == nil ? vm.pendingPermission : nil },
+                set: { if cubeViewer == nil && $0 == nil { vm.dismissPermissionPrompt() } }
             ),
-            onRespond: { requestId, approved in vm.respondPermission(requestId, approved: approved) }
+            onRespond: { requestId, approved in if cubeViewer == nil { vm.respondPermission(requestId, approved: approved) } }
         )
         .alert(item: Binding<AttachmentImportAlert?>(
             get: { presentedAttachmentImportAlert },
@@ -262,14 +269,14 @@ struct ChatView: View {
         // that state exclusively so the two paths never fight over the same flag.
         .onChange(of: vm.keepScreenOn) { _, on in
             guard scenePhase != .background else { return }
-            applyIdleTimer(on: on)
+            applyIdleTimer(on: on && cubeViewer == nil)
         }
         // Resync on reappear: covers both initial appear and returning from a sibling
         // destination (e.g. Settings, pushed on the SAME app-global UIApplication — see
         // the file header). onDisappear force-cleared the flag on the way out, so a
         // still-true condition needs re-applying on the way back in.
         .onAppear {
-            applyIdleTimer(on: vm.keepScreenOn)
+            applyIdleTimer(on: vm.keepScreenOn && cubeViewer == nil)
             syncAttachmentImportAlert()
         }
         .onChange(of: vm.attachmentImportAlert) { _, _ in
@@ -292,7 +299,7 @@ struct ChatView: View {
             case .background:
                 forceIdleTimerOff(reason: "background")
             case .active:
-                applyIdleTimer(on: vm.keepScreenOn)
+                applyIdleTimer(on: vm.keepScreenOn && cubeViewer == nil)
                 Task { await historyModel.retryDeletes(includePermanent: false) }
             default:
                 break
@@ -371,9 +378,9 @@ struct ChatView: View {
                 titleBar
                 MessageList(
                     messages: messages,
-                    assistantActivity: assistantActivity,
+                    assistantActivity: cubeViewer == nil ? assistantActivity : AssistantActivityState(phase: .idle, turnId: nil, replyId: nil),
                     userName: userName,
-                    pending: pending,
+                    pending: cubeViewer == nil ? pending : [],
                     pendingAttachments: vm.pendingAttachments,
                     pendingAttachmentPreviews: vm.draftAttachmentPreviews,
                     pendingAttachmentTransfers: vm.attachmentTransfers,
@@ -383,31 +390,34 @@ struct ChatView: View {
                     attachmentPreviewFailures: vm.attachmentPreviewFailures,
                     onPreviewAttachment: { openAttachmentPreview($0) },
                     onVisibleAttachmentPreviewIdsChange: { vm.setVisibleAttachmentPreviewIds($0) },
-                    onRetry: { vm.retry($0) },
+                    onRetry: { if cubeViewer == nil { vm.retry($0) } },
                     historyLoading: historyLoading,
-                    bottomOcclusion: composerHeight,
-                    initialExistingHistory: activeSessionId != nil,
+                    bottomOcclusion: cubeViewer == nil ? composerHeight : 0,
+                    initialExistingHistory: cubeViewer != nil || activeSessionId != nil,
                     onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay {
                     if historyLoading || messageMeasurementLoading {
                         HistoryLoadingOverlay()
-                    } else if messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
+                    } else if cubeViewer == nil && messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
                         ChatLoadingView(state: chatLoadingState)
                     }
                 }
-                if let banner = vm.state.banner {
+                if cubeViewer != nil && cubeError {
+                    ContentErrorBanner(text: "Cube history unavailable. Refresh and try again.", canRetry: false, onRetry: nil)
+                }
+                if cubeViewer == nil, let banner = vm.state.banner {
                     ContentErrorBanner(
                         text: banner.text,
                         canRetry: banner.canRetry,
                         onRetry: banner.canRetry ? { vm.reconnect() } : nil
                     )
                 }
-                if let draftError = vm.draftSaveError {
+                if cubeViewer == nil, let draftError = vm.draftSaveError {
                     ContentErrorBanner(text: draftError, canRetry: false, onRetry: nil)
                 }
-                if !vm.receiptAcknowledgmentFailures.isEmpty {
+                if cubeViewer == nil, !vm.receiptAcknowledgmentFailures.isEmpty {
                     ContentErrorBanner(
                         text: "Message sent, but local draft cleanup failed.",
                         canRetry: true,
@@ -415,7 +425,7 @@ struct ChatView: View {
                     )
                     .accessibilityIdentifier("receipt-cleanup-retry-banner")
                 }
-                if let notice = vm.state.reopenFailedNotice {
+                if cubeViewer == nil, let notice = vm.state.reopenFailedNotice {
                     ReopenFailedNoticeBanner(
                         noticeText: notice,
                         onDismiss: { vm.dismissReopenFailedNotice() }
@@ -424,7 +434,7 @@ struct ChatView: View {
             }
             .ignoresSafeArea(.keyboard, edges: .bottom)
 
-            composerDock
+            if cubeViewer == nil { composerDock }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .duskTheme()
@@ -484,10 +494,30 @@ struct ChatView: View {
             nowMs: panelNowMs,
             userName: userName,
             household: "",
-            activeSessionId: activeSessionId,
+            activeSessionId: cubeViewer?.sessionId ?? activeSessionId,
             activeDraftId: activeDraftId,
             onSelect: { row in
                 drawerOpen = false
+                if historyEntryOpensReadOnlyViewer(row), let sessionId = row.sessionId {
+                    cubeViewer = row
+                    cubeMessages = []
+                    cubeLoading = true
+                    cubeError = false
+                    applyIdleTimer(on: false)
+                    Task {
+                        do {
+                            let loaded = try await historyModel.cubeHistory(sessionId)
+                            guard cubeViewer?.sessionId == sessionId else { return }
+                            cubeMessages = loaded
+                        } catch {
+                            guard cubeViewer?.sessionId == sessionId else { return }
+                            cubeError = true
+                        }
+                        cubeLoading = false
+                    }
+                    return
+                }
+                cubeViewer = nil
                 navigateAfterSaving {
                     if let draftId = row.draftId {
                         onSelectDraft(draftId, row.sessionId)
@@ -498,6 +528,7 @@ struct ChatView: View {
             },
             onNewChat: {
                 drawerOpen = false
+                cubeViewer = nil
                 navigateAfterSaving(onNewChat)
             },
             onSettings: {
@@ -528,7 +559,7 @@ struct ChatView: View {
         ChatTitleBar(
             onOpenPanel: { drawerOpen = true },
             onOpenInbox: onOpenInbox,
-            onNewChat: { navigateAfterSaving(onNewChat) }
+            onNewChat: { cubeViewer = nil; navigateAfterSaving(onNewChat) }
         )
     }
 

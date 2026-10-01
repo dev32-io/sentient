@@ -32,6 +32,7 @@ Plugin notes (verified against the installed mistune 3.3.x):
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 import mistune
@@ -92,6 +93,10 @@ def strip_markdown(doc: str, policy: SpeechPolicy, lang: str, confidence: float)
     masks = MaskTable(doc=doc)
     if not doc.strip():
         return StrippedDoc(text="", masks=masks)
+    # A whole numeric answer with sentence punctuation is not an empty list.
+    # Keep normal list parsing for documents containing actual list content.
+    if re.fullmatch(r"[0-9]+\.", doc.strip()):
+        return StrippedDoc(text=doc.strip(), masks=masks)
     # Resolve ONCE for the whole document -- unlike TN's per-block gate in
     # frontend.py, every phrase() call downstream (dropped-span
     # placeholders, table summaries) needs one concrete language. Without

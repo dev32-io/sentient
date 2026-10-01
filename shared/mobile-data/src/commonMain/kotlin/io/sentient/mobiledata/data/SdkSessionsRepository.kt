@@ -9,7 +9,8 @@ import kotlinx.coroutines.CancellationException
 class SdkSessionsRepository(private val sdk: SentientSdk) : SessionsRepository {
     override suspend fun list(limit: Int, offset: Int): List<SessionSummary> =
         sdk.listSessions(limit = limit, offset = offset).items.map {
-            SessionSummary(id = it.sessionId, title = it.title, updatedAtMs = it.lastActiveAt)
+            SessionSummary(id = it.sessionId, title = it.title, updatedAtMs = it.lastActiveAt, provenance = it.provenance,
+                readOnly = it.readOnly, currentPin = it.currentPin, executionClosed = it.executionClosed)
         }
 
     override fun newChatFireAndForget() = sdk.sendNewChat()

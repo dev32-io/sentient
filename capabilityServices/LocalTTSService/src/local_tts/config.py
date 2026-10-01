@@ -6,12 +6,10 @@ constructor argument. That rule is the whole reason the service has no
 "magic numbers" — constants live in YAML, get parsed here, and flow
 through the codebase as regular Python values.
 
-Mirrors the sibling ``whisper_stt/config.py`` pattern (frozen dataclass
-tree + fail-loud ``require`` helpers), with one deliberate difference:
-every key here is required, full stop. ``whisper_stt/config.py`` keeps
-two keys defaulted for backward compatibility with pre-existing
-deployments; this is a brand-new service with no legacy config.yaml to
-support, so "loud-and-early" applies with no exceptions.
+Mirrors the sibling ``whisper_stt/config.py`` pattern: frozen dataclasses,
+fail-loud explicit values, and documented defaults for newly introduced
+settings so retained operational configs survive upgrades. Only an absent
+``generation`` section defaults; malformed/partial sections fail closed.
 
 The generic "pull a required key of a given type/shape, raise
 ``ConfigError`` with a breadcrumb path on failure" helpers live in
@@ -26,6 +24,7 @@ __future__ import annotations``, and why we raise instead of default.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +37,7 @@ __all__ = [
     "Config",
     "ConfigError",
     "HealthConfig",
+    "GenerationConfig",
     "ServerConfig",
     "TextFrontendConfig",
     "load_config",
@@ -83,8 +83,25 @@ class TextFrontendConfig:
 
 
 @dataclass(frozen=True)
+class GenerationConfig:
+    """Per-segment codec-token limits; exhaustion is failure, never success."""
+
+    max_tokens: int
+    min_tokens: int
+    tokens_per_text_token: int
+
+    def __post_init__(self) -> None:
+        for name in ("max_tokens", "min_tokens", "tokens_per_text_token"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ConfigError(f"generation.{name} must be a positive integer")
+        if self.min_tokens > self.max_tokens:
+            raise ConfigError("generation.min_tokens must not exceed generation.max_tokens")
+
+
+@dataclass(frozen=True)
 class Config:
-    """Root configuration — every field is required; no silent defaults.
+    """Root configuration — explicit values validated; upgrade defaults logged.
 
     Unlike the STT service, host paths that make sense to override per-
     deployment (``voice_dir``, ``log_dir``, ``builtin_voice_dir``) are
@@ -98,6 +115,7 @@ class Config:
 
     schema_version: int
     model: str
+    generation: GenerationConfig
     server: ServerConfig
     health: HealthConfig
     default_format: str
@@ -179,6 +197,7 @@ def _parse(raw: dict[str, Any]) -> Config:
     return Config(
         schema_version=require(raw, "schema_version", int),
         model=require(raw, "model", str),
+        generation=_parse_generation(raw),
         server=ServerConfig(
             host=require(server_raw, "server.host", str),
             port=require(server_raw, "server.port", int),
@@ -222,3 +241,19 @@ def _parse_text_frontend(text_frontend_raw: dict[str, Any]) -> TextFrontendConfi
         ),
         script_confidence=require(text_frontend_raw, "text_frontend.script_confidence", float),
     )
+
+
+def _parse_generation(raw: dict[str, Any]) -> GenerationConfig:
+    # Same upgrade convention as WhisperSTT's newly introduced config fields:
+    # absence defaults, explicit invalid input never does.
+    if "generation" not in raw:
+        logging.getLogger("local_tts.config").warning(
+            "config.generation_defaulted max_tokens=4096 min_tokens=75 tokens_per_text_token=12; "
+            "set generation in config.yaml to tune"
+        )
+        return GenerationConfig(4096, 75, 12)
+    section = require_section(raw, "generation")
+    return GenerationConfig(**{
+        key: require(section, f"generation.{key}", int)
+        for key in ("max_tokens", "min_tokens", "tokens_per_text_token")
+    })

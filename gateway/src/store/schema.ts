@@ -206,6 +206,31 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "CREATE INDEX idx_attachments_entry ON attachments(entry_seq, entry_ordinal)",
     ],
   },
+  {
+    version: 12,
+    name: "cube-session-lifecycle",
+    statements: [
+      "ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'human' CHECK (origin IN ('human','cube'))",
+      "ALTER TABLE sessions ADD COLUMN cube_period_start INTEGER",
+      `CREATE TABLE cube_session_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+        admission_fence INTEGER NOT NULL DEFAULT 0,
+        session_id TEXT REFERENCES sessions(session_id) ON DELETE SET NULL,
+        period_start INTEGER
+      )`,
+      "INSERT INTO cube_session_state(singleton) VALUES (1)",
+      `CREATE TABLE closed_session_executions (
+        session_id TEXT PRIMARY KEY,
+        closed_at INTEGER NOT NULL,
+        reason TEXT NOT NULL CHECK (reason IN ('revoked','owner-changed','deleted'))
+      )`,
+      // Keep retry identities after deletion: a delayed input must not mint a replacement.
+      `CREATE TABLE cube_input_receipts (
+        input_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL
+      )`,
+    ],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */

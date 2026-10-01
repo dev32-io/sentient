@@ -6,6 +6,7 @@
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
 #include <mutex>
+#include <shared_mutex>
 
 
 class BoxAudioCodec : public AudioCodec {
@@ -19,7 +20,10 @@ private:
 
     esp_codec_dev_handle_t output_dev_ = nullptr;
     esp_codec_dev_handle_t input_dev_ = nullptr;
-    std::mutex data_if_mutex_;
+    std::shared_mutex data_if_mutex_;
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE && CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    int mic1_gain_reg43_ = -1; // Last successful open; -1 if unavailable.
+#endif
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
 
@@ -29,9 +33,13 @@ private:
 public:
     BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
         gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-        gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference);
+        gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference,
+        int mic1_gain_db = 30);
     virtual ~BoxAudioCodec();
 
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE && CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    bool GetMic1GainRegister(int& value);
+#endif
     virtual void SetOutputVolume(int volume) override;
     virtual void EnableInput(bool enable) override;
     virtual void EnableOutput(bool enable) override;

@@ -1,6 +1,7 @@
 # Sentient cube — PROD profile.
 # Hardened build for family / shared deployment. No remote debug surface.
 # No HIL verbs. Compiler optimized for size + speed.
+CONFIG_SENTIENT_PROD_BUILD=y
 
 # Devtool verb gates off — prod has no HIL/debug verb surface. Names
 # preserved from the retired agent_console Kconfig; symbols now live in
@@ -19,7 +20,7 @@ CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE=n
 
 # INFO log level (warnings + errors visible; debug noise gone).
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
-CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
 
 # Release build — size optimize, assertions off (faster, smaller).
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y

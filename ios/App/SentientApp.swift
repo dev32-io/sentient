@@ -13,7 +13,9 @@ struct SentientApp: App {
         let modified = attributes?[.modificationDate] as? Date
         visualCaptureMode = (modified?.timeIntervalSinceNow ?? -.infinity) > -1800
         let catalogMode = ProcessInfo.processInfo.arguments.contains("--qa-foundation-catalog") ||
-            ProcessInfo.processInfo.arguments.contains("--qa-visual-review")
+            ProcessInfo.processInfo.arguments.contains("--qa-visual-review") ||
+            ProcessInfo.processInfo.arguments.contains("--qa-cube-physical") ||
+            ProcessInfo.processInfo.arguments.contains("--qa-cube-setup")
         #else
         visualCaptureMode = false
         let catalogMode = false
@@ -40,7 +42,11 @@ struct SentientApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if visualCaptureMode {
+            if ProcessInfo.processInfo.arguments.contains("--qa-cube-setup") {
+                CubePhysicalSetup()
+            } else if ProcessInfo.processInfo.arguments.contains("--qa-cube-physical") {
+                CubePhysicalSmoke()
+            } else if visualCaptureMode {
                 Color.clear
             } else if ProcessInfo.processInfo.arguments.contains("--qa-foundation-catalog") {
                 QAFoundationCatalog()

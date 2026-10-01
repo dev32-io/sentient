@@ -14,6 +14,7 @@ struct HistoryRow: View {
     private var titleColor: Color { isSelected ? DuskColors.accent : DuskColors.ink }
     private var secondaryLine: String {
         let time = RelativeTime.relative(nowMs: nowMs, lastActiveMs: row.lastActiveAt)
+        if row.provenance == "cube" { return "\(row.currentPin ? "Pinned · " : "")Cube · \(time)" }
         return row.hasDraft ? "Draft · \(time)" : time
     }
 

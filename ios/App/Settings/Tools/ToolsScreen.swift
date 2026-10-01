@@ -46,6 +46,7 @@ struct ToolsScreen: View {
             case .ready:
                 capabilityOverview
                 groupsSection
+                cubeCard
                 builtInCard
             }
         }
@@ -155,6 +156,42 @@ struct ToolsScreen: View {
             onToggleServer: { turnOn in vm.setGroupMaster(id, entry.tools.map { $0.name }, turnOn) },
             onToolChange: { toolName, permission in vm.setToolPermission(id, toolName, permission) }
         )
+    }
+
+    private var cubeCard: some View {
+        DesignCard {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Text("Cube")
+                    .designText(.label)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DuskColors.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Separate from other Tools settings. Enabled tools run without asking on Cube. Unset tools default Off unless a Cube-wide choice exists; role and risk limits still apply. Changes apply after you save settings.")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.ink2)
+                if vm.cubeTools.isEmpty {
+                    Text("No available Cube tools for this account.")
+                        .designText(.supporting)
+                        .foregroundStyle(DuskColors.ink2)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(vm.cubeTools, id: \.name) { tool in
+                            ToolPermissionRow(
+                                row: ToolPermissionRowModel(
+                                    id: tool.name, name: tool.name,
+                                    description: tool.name == "delegateTask"
+                                        ? "Delegated tasks run with broader per-user access, not Cube's tool limits. Turning this Off does not cancel work already started."
+                                        : tool.description,
+                                    permission: vm.cubePermission(tool.name), settable: tool.settable, cubeOnly: true
+                                ),
+                                accessibilityId: "settings-tools-cube-\(tool.name)",
+                                onChange: { vm.setCubePermission(tool.name, $0) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder

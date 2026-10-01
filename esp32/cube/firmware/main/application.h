@@ -10,6 +10,7 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <atomic>
 
 #include "audio_service.h"
 #include "device_state.h"
@@ -34,6 +35,10 @@ enum AecMode {
     kAecOnDeviceSide,
     kAecOnServerSide,
 };
+
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+extern "C" bool cube_playback_drained(void);
+#endif
 
 class Application {
 public:
@@ -88,8 +93,8 @@ public:
 
     /**
      * Abort the current speaking cycle (barge-in / cancel TTS).
-     * Routed through the sentient WS protocol's stop_streaming + local
-     * decoder reset.
+     * Interrupts gateway playback and flushes queued local audio.
+     * Owner task only; cross-task callers must Schedule this operation.
      */
     void AbortSpeaking();
 
@@ -121,23 +126,20 @@ public:
      */
     void ResetProtocol();
 
-    /**
-     * Non-owning accessor for the sentient WS protocol. Returns nullptr
-     * before WiFi-up (protocol is constructed on first network-connected
-     * event). Callers MUST treat the pointer as transient — `ResetProtocol`
-     * may null it out at any time. Used by HIL provider callbacks in
-     * `boards/sentient-cube/sentient_cube.cc` to expose status / reconnect /
-     * last_transcript to devtool verbs without pulling main into the
-     * devtool component's REQUIRES.
-     */
-    sentient::cube::SentientWsProtocol* sentient_ws() { return sentient_ws_.get(); }
+    // Cross-task readers never borrow the owner-task protocol. -1 means uninitialized.
+    int GetSdkStatus() const { return sdk_status_.load(); }
+    void ForceProtocolReconnect();
 
 private:
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    friend bool cube_playback_drained(void);
+#endif
     Application();
     ~Application();
 
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
+    // Main task owns all protocol access and destruction; callbacks publish snapshots/events.
     std::unique_ptr<sentient::cube::SentientWsProtocol> sentient_ws_;
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
@@ -146,7 +148,12 @@ private:
     AudioService audio_service_;
 
     int clock_ticks_ = 0;
-    bool playback_active_ = false;  // true between on_playback_begin and on_playback_end
+    bool playback_active_ = false;  // server audio ingress bracket
+    bool playback_waiting_for_drain_ = false;
+    std::atomic<uint32_t> playback_epoch_{0};
+    std::atomic<uint32_t> suppressed_playback_epoch_{0};
+    bool processing_ = false;
+    std::atomic<bool> listening_button_held_{false};
 
     // Event handlers
     void HandleStateChangedEvent();
@@ -160,15 +167,25 @@ private:
 
     // Helper methods
     void InitializeSentientWs();
+    void RefreshCubeConnection();
+    void RetireProtocolStatus();
+    std::atomic<int> sdk_status_{-1};
+    uint32_t cube_token_revision_ = 0;
+    std::atomic<uint32_t> protocol_epoch_{0};
+    std::atomic<uint32_t> sdk_status_epoch_{0};
+    bool cube_auth_refresh_attempted_ = false;
     void WireAudioServiceCallbacks();
     void WireNetworkEventCallback();
     void WireSentientWsCallbacks(sentient::cube::SentientWsProtocolConfig& cfg);
+    void RetireConnectionAudio();
     void OnSdkStatusChange(sentient::cube::SdkStatus status);
     void OnSdkCognitionStatus(sentient::cube::CognitionState state);
     void OnSdkPlaybackBegin(int sample_rate);
     void OnSdkPlaybackEnd(bool aborted);
-    void OnSdkPlaybackFrame(const uint8_t* data, size_t len, int sample_rate);
-    bool OnSdkPopUplinkFrame(uint8_t** out_data, size_t* out_len);
+    void OnPlaybackDrained();
+    void OnSdkPlaybackFrame(const uint8_t* data, size_t len, int sample_rate, bool pcm = false);
+    void OnPlaybackQueueFailure(uint32_t epoch, uint32_t generation);
+    bool OnSdkPopUplinkFrame(std::vector<uint8_t>& payload);
 };
 
 

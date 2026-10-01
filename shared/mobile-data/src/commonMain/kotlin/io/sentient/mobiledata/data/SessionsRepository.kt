@@ -9,6 +9,10 @@ data class SessionSummary(
     val id: String,
     val title: String,
     val updatedAtMs: Long,
+    val provenance: String = "human",
+    val readOnly: Boolean = false,
+    val currentPin: Boolean = false,
+    val executionClosed: Boolean = false,
 )
 
 /** Stateless session-management surface. Pure delegation to the SDK. */

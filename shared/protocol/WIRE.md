@@ -82,9 +82,9 @@ This is the first client frame after authentication. Relevant fields are:
 
 After a successful durable-session attach, the gateway sends
 `session.attached { sessionId, generation }`. Current clients stamp that pair on
-bound commands (`text.input`, `audio.start`, `audio.end`, `interrupt`, and
-`permission.response`). Both fields are optional so a draft's first message and
-older clients can bind implicitly to the connection's current attachment; a
+bound commands (`text.input`, `audio.start`, `audio.end`, `audio.cancel`,
+`interrupt`, and `permission.response`). Both fields are optional so a draft's
+first message and older clients can bind implicitly to the connection's current attachment; a
 half-present or stale pair is answered explicitly with `command.rejected`, never
 silently dropped.
 
@@ -167,7 +167,14 @@ Gateway → client journaled audio prepends a fixed 9-byte header:
 `epoch` is carried on JSON coordination frames, not in this header. The client
 uses `seq` for ordering/deduplication and routes the payload to the currently
 open `turn.audio.start` bracket. Client → gateway microphone binary frames do
-not use this outbound journal header.
+not use this outbound journal header. Uplink binary payloads are raw Opus
+packets (16 kHz, 20 ms frames) between `audio.start` and matching `audio.end`
+or `audio.cancel`; cancellation discards that capture without finalization.
+Neither terminal acknowledges capture admission. No Ogg container or binary
+journal header is used. `session.ready`
+currently declares uplink `audioEncoding: "opus"` and `inputSampleRate: 16000`.
+Downlink uses the separate `turn.audio.start { encoding, sampleRate }`
+declaration (`opus` or `pcm`); ready does not select downlink format.
 
 ## Native turn model
 
@@ -198,6 +205,10 @@ turn starts a back-to-back turn.
 
 A new turn never flushes or preempts earlier TTS. Clients queue complete audio
 brackets in order. Only user barge-in or interrupt produces `playback.stop`.
+Synthesis failure after partial audio also closes the bracket with ordinary
+`turn.audio.done`: no more frames will arrive, and the already-produced prefix
+drains normally. It does not cancel this or earlier queued playback. Text
+completion remains independent.
 
 ## `replyId` and conversation entries
 
@@ -259,7 +270,7 @@ barge-in stop the turn and TTS but do not cancel background work.
 After authentication, client JSON frames are:
 
 - `session.configure`
-- `audio.start`, `audio.end`, and binary microphone audio
+- `audio.start`, `audio.end`, `audio.cancel`, and binary microphone audio
 - `text.input`
 - `permission.response`
 - `interrupt`

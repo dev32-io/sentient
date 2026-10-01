@@ -111,6 +111,10 @@ async function findStaleAuthority(
   const principal = ws.data.principal;
   if (principal === null) return null;
 
+  if (principal.origin?.kind === "cube") {
+    const credential = ws.data.deviceCredential;
+    return credential && (await credential.current()) ? null : "credentials-revoked";
+  }
   const stored = await users.get(principal.userId);
   // FAIL CLOSED on an unreadable store as well as a missing row: neither can
   // establish that this socket's authority is still granted.

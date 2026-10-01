@@ -89,7 +89,7 @@ describe("loadStartupConfig — access root expansion", () => {
   });
 });
 
-describe("loadStartupConfig — scheduling/push carry-through", () => {
+describe("loadStartupConfig — scheduling/push/devices carry-through", () => {
   it("maps explicit YAML policy without inventing provider credentials", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentient-startup-scheduling-"));
     const path = join(dir, "config.yaml");
@@ -119,6 +119,13 @@ push:
   payload_max_bytes: 4096
   content_preview_max_chars: 280
   revocation_ttl_ms: 2592000000
+devices:
+  access_ttl_seconds: 120
+  attempt_ttl_seconds: 90
+  max_body_bytes: 2048
+  body_timeout_ms: 1000
+  requests_per_minute: 30
+  max_concurrent_requests: 2
 `,
     );
     const previousPath = process.env.GATEWAY_CONFIG_PATH;
@@ -147,6 +154,14 @@ push:
         apnsSandbox: false,
       });
       expect(cfg.push).not.toHaveProperty("apnsKey");
+      expect(cfg.devices).toEqual({
+        access_ttl_seconds: 120,
+        attempt_ttl_seconds: 90,
+        max_body_bytes: 2048,
+        body_timeout_ms: 1000,
+        requests_per_minute: 30,
+        max_concurrent_requests: 2,
+      });
     } finally {
       if (previousPath === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
       else process.env.GATEWAY_CONFIG_PATH = previousPath;

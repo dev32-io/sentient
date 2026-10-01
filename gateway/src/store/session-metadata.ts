@@ -9,6 +9,7 @@
 // a compare-and-set version).
 
 import { type Database, SQLiteError } from "bun:sqlite";
+import type { SessionHistoryFields } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 
 const log = getLog(["sentient", "store", "session-metadata"]);
@@ -28,7 +29,7 @@ export interface ScheduledSessionExecution {
   entryId: string | null;
 }
 
-export interface SessionMetadata {
+export interface SessionMetadata extends SessionHistoryFields {
   sessionId: string;
   createdAt: number;
   updatedAt: number;
@@ -98,6 +99,9 @@ export interface SessionMetadataOps {
 }
 
 interface SessionRow {
+  origin: "human" | "cube";
+  execution_closed?: number;
+  current_pin?: number;
   session_id: string;
   created_at: number;
   updated_at: number;
@@ -117,6 +121,10 @@ interface SessionRow {
 
 function toMetadata(row: SessionRow): SessionMetadata {
   return {
+    provenance: row.origin,
+    readOnly: row.origin === "cube",
+    currentPin: row.current_pin === 1,
+    executionClosed: row.execution_closed === 1,
     sessionId: row.session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -150,19 +158,24 @@ function toMetadata(row: SessionRow): SessionMetadata {
 const SQLITE_CONSTRAINT_UNIQUE = "SQLITE_CONSTRAINT_UNIQUE";
 
 export function createSessionMetadataOps(db: Database, userId: string): SessionMetadataOps {
+  const projection = `SELECT s.*,
+    EXISTS(SELECT 1 FROM closed_session_executions c WHERE c.session_id=s.session_id) AS execution_closed,
+    (s.origin='cube' AND s.rowid=(SELECT MAX(rowid) FROM sessions WHERE origin='cube')) AS current_pin
+    FROM sessions s`;
+
   const insertSession = db.query<SessionRow, [string, string, number, number, string, string]>(`
     INSERT INTO sessions (session_id, mint_key, created_at, updated_at, title, title_provenance, version)
     SELECT ?, ?, ?, ?, NULL, NULL, 1
     WHERE NOT EXISTS (SELECT 1 FROM deleted_sessions WHERE session_id = ? OR mint_key = ?)
     RETURNING *
   `);
-  const selectByMintKey = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE mint_key = ?");
-  const selectBySessionId = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE session_id = ?");
-  const selectByOccurrence = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE scheduled_occurrence_id = ?");
-  const selectAllByUpdatedAt = db.query<SessionRow, []>("SELECT * FROM sessions ORDER BY updated_at DESC");
+  const selectByMintKey = db.query<SessionRow, [string]>(`${projection} WHERE mint_key = ?`);
+  const selectBySessionId = db.query<SessionRow, [string]>(`${projection} WHERE session_id = ?`);
+  const selectByOccurrence = db.query<SessionRow, [string]>(`${projection} WHERE scheduled_occurrence_id = ?`);
+  const selectAllByUpdatedAt = db.query<SessionRow, []>(`${projection} ORDER BY updated_at DESC`);
   const setScheduled = db.query<SessionRow, [string, string, string, string, string, string, string]>(`
     UPDATE sessions SET scheduled_schedule_id=?, scheduled_occurrence_id=?, scheduled_intended_at=?, scheduled_actual_at=?
-    WHERE session_id=? AND (scheduled_occurrence_id IS NULL OR (scheduled_schedule_id=? AND scheduled_occurrence_id=?))
+    WHERE origin='human' AND session_id=? AND (scheduled_occurrence_id IS NULL OR (scheduled_schedule_id=? AND scheduled_occurrence_id=?))
     RETURNING *
   `);
   const setScheduledTurn = db.query<SessionRow, [string, string, string]>(`

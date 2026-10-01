@@ -18,6 +18,10 @@ struct HistoryEntry: Identifiable, Equatable {
     let title: String
     let lastActiveAt: Int64
     let hasDraft: Bool
+    var provenance: String = "human"
+    var readOnly: Bool = false
+    var currentPin: Bool = false
+    var executionClosed: Bool = false
 
     var id: String {
         switch kind {
@@ -42,6 +46,10 @@ struct HistoryEntry: Identifiable, Equatable {
         if let draftId { actions.append(.discardDraft(draftId: draftId)) }
         return actions
     }
+}
+
+func historyEntryOpensReadOnlyViewer(_ entry: HistoryEntry) -> Bool {
+    entry.sessionId != nil && (entry.provenance == "cube" || entry.readOnly)
 }
 
 @MainActor
@@ -112,6 +120,10 @@ final class HistoryViewModel: ObservableObject {
             self.error = "Can't load conversation history."
             log.warn("load-failed code=transport")
         }
+    }
+
+    func cubeHistory(_ sessionId: String) async throws -> [ChatMessage] {
+        try await component.cubeHistory(sessionId: sessionId)
     }
 
     func renameSession(_ sessionId: String, title: String) async {
@@ -196,7 +208,11 @@ func historyEntries(
             kind: .session(id: row.sessionId, draftId: draftsBySession[row.sessionId]?.id),
             title: row.title,
             lastActiveAt: row.lastActiveAt,
-            hasDraft: draftsBySession[row.sessionId] != nil
+            hasDraft: draftsBySession[row.sessionId] != nil,
+            provenance: row.provenance,
+            readOnly: row.readOnly,
+            currentPin: row.currentPin,
+            executionClosed: row.executionClosed
         )
     }
     let listedSessions = Set(sessions.map(\.sessionId))
@@ -212,7 +228,8 @@ func historyEntries(
             hasDraft: true
         )
     }
-    entries.sort { $0.lastActiveAt > $1.lastActiveAt }
+    entries.sort { ($0.currentPin ? 1 : 0) > ($1.currentPin ? 1 : 0) ||
+        ($0.currentPin == $1.currentPin && $0.lastActiveAt > $1.lastActiveAt) }
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? entries : entries.filter {
         $0.title.range(of: trimmed, options: .caseInsensitive) != nil
@@ -228,7 +245,8 @@ func historySessions(_ sessions: [SessionRow], matching query: String) -> [Sessi
 private extension SessionSummary {
     func toSessionRow() -> SessionRow {
         SessionRow(sessionId: id, rootId: nil, title: title, startedAt: 0,
-                   lastActiveAt: updatedAtMs, messageCount: 0, isActive: false)
+                   lastActiveAt: updatedAtMs, messageCount: 0, isActive: false,
+                   provenance: provenance, readOnly: readOnly, currentPin: currentPin, executionClosed: executionClosed)
     }
 }
 

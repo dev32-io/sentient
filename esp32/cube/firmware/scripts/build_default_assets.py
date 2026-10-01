@@ -84,12 +84,12 @@ def pack_models(model_path, out_file="srmodels.bin"):
     file_num = 0
     model_num = 0
     for root, dirs, _ in os.walk(model_path):
-        for model_name in dirs:
+        for model_name in sorted(dirs):
             models[model_name] = {}
             model_dir = os.path.join(root, model_name)
             model_num += 1
             for _, _, files in os.walk(model_dir):
-                for file_name in files:
+                for file_name in sorted(files):
                     file_num += 1
                     file_path = os.path.join(model_dir, file_name)
                     models[model_name][file_name] = read_data(file_path)
@@ -810,6 +810,7 @@ def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font
 
 def main():
     parser = argparse.ArgumentParser(description='Build default assets based on configuration')
+    parser.add_argument('--cube-board', help='Cook the bundled Cube namespace instead of a flash partition')
     parser.add_argument('--sdkconfig', required=True, help='Path to sdkconfig file')
     parser.add_argument('--builtin_text_font', help='Builtin text font name (e.g., font_puhui_basic_16_4)')
     parser.add_argument('--emoji_collection', help='Default emoji collection name (e.g., emojis_32)')
@@ -880,7 +881,7 @@ def main():
     # Calculate project root from script location for otto-gif support
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    emoji_collection_path = get_emoji_collection_path(args.emoji_collection, args.xiaozhi_fonts_path, project_root)
+    emoji_collection_path = None if args.cube_board else get_emoji_collection_path(args.emoji_collection, args.xiaozhi_fonts_path, project_root)
     
     # Get extra files path if provided
     extra_files_path = args.extra_files
@@ -910,6 +911,24 @@ def main():
         print(f"  wake word language: {language}")
         print(f"  wake word threshold: {custom_wake_word_config['threshold']}")
     
+    if args.cube_board:
+        from cook_cube_assets import cook
+        import tempfile
+        if not text_font_path:
+            raise ValueError("Cube requires the configured full text font")
+        if ((wake_word_config['use_esp_wake_word'] or wake_word_config['use_afe_wake_word'])
+                and len(wakenet_model_paths) != len(wakenet_model_names)):
+            raise ValueError("Selected wake models are missing")
+        if wake_word_config['use_custom_wake_word'] and len(multinet_model_paths) != len(multinet_model_names):
+            raise ValueError("Selected command models are missing")
+        with tempfile.TemporaryDirectory(prefix="cube-models-") as temp:
+            srmodels = process_sr_models(wakenet_model_paths, multinet_model_paths, temp, temp)
+            if (wakenet_model_paths or multinet_model_paths) and not srmodels:
+                raise ValueError("Selected speech models failed to cook")
+            cook(args.cube_board, text_font_path, args.output,
+                 os.path.join(temp, srmodels) if srmodels else None, multinet_model_info)
+        return
+
     # Check if we have anything to build
     if not wakenet_model_paths and not multinet_model_paths and not text_font_path and not emoji_collection_path and not extra_files_path and not multinet_model_info:
         print("Warning: No assets to build (no SR models, text font, emoji collection, extra files, or custom wake word)")

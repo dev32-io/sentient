@@ -121,7 +121,7 @@ class SentientSdk(
     private val captureTeardownTimeoutMs: Long = DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS,
     private val transportTeardownTimeoutMs: Long = DEFAULT_TRANSPORT_TEARDOWN_TIMEOUT_MS,
     /** REST client for session queries. Null in tests that don't exercise REST. */
-    sessionsHttpClient: SessionsHttpClient? = null,
+    private val sessionsHttpClient: SessionsHttpClient? = null,
     /**
      * Durable resume-cursor persistence. Dependency-inverted: the SDK defines the
      * interface so a higher layer COULD supply a durable backing. None does today —
@@ -800,7 +800,18 @@ class SentientSdk(
     }
 
     /** Page the session list via REST GET /api/v1/sessions. */
-    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTransportException::class,
+        IllegalStateException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
+    suspend fun cubeHistory(sessionId: String): List<ChatMessage> {
+        val history = sessionsHttpClient?.getHistory(sessionId) ?: error("History unavailable")
+        if (history.provenance != "cube" || !history.readOnly) error("History unavailable")
+        return deriveMessages(history.items, null, 0L)
+    }
+
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
         connectors.sessions.list(limit, offset)
 

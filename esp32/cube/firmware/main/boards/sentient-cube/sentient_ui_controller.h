@@ -1,44 +1,36 @@
 // SPDX-License-Identifier: MIT
 // sentient_ui_controller.h
 //
-// Cube UI state machine, exposed as a C-callable API so sentient_cube.cc and
-// other xiaozhi C/C++ code can drive it without including LVGL headers
-// directly. Real widget creation is delegated to toggle_button_screen.cc
-// (Task 3.2) via forward-declared C linkage functions.
+// Cube presentation input boundary; shared views live in ui-shared/cube_views.
+// No LVGL headers leak into application and touch/board callers.
 #pragma once
+#include <stdbool.h>
 
 #ifdef __cplusplus
+#include "cube_presentation.h"
+inline constexpr char kCubeUiTaskName[] = "cube-ui-poll";
 extern "C" {
 #endif
 
-typedef enum {
-    SENTIENT_UI_DISABLED = 0,  // startup / connecting / speaking — button inactive
-    SENTIENT_UI_READY,         // WS connected, mic off — button interactive
-    SENTIENT_UI_LISTENING,     // mic live — button shows listening animation
-} sentient_ui_state_t;
-
-// Creates the toggle-button screen and sets it as the active LVGL screen.
-// Idempotent: subsequent calls re-bind the same widgets.
+// Creates asset-independent BootView and sets it as active LVGL screen.
+// Idempotent: subsequent calls retain the same widgets.
 // Also starts the background device-state polling task (once only).
 void sentient_cube_create_toggle_button_screen(void);
+// Call after platform pack/font readiness. False stays in controlled BootView.
+void sentient_cube_finish_boot(bool assets_ready);
 
-// Updates the visual state of the toggle button. Safe to call from any task
-// (internally schedules the LVGL update on the LVGL task).
-void sentient_cube_set_state(sentient_ui_state_t state);
+// Project real events onto the character screen under LVGL port lock.
+void sentient_cube_set_wifi(bool connected);
+void sentient_cube_set_processing(bool processing);
+void sentient_cube_set_playback(bool playing);
+void sentient_cube_set_sleep(bool asleep);
+void sentient_cube_show_volume(int percent);
+void sentient_cube_set_battery(bool charging, bool low);
+void sentient_cube_set_battery_level(int percent);
 
-// Sets the small status hint label above the button. Empty string hides it.
-void sentient_cube_set_status_hint(const char* text);
 
-// Sets the transcript label below the button. Empty string hides it.
-// Phase 6a smoke aid — surfaces the latest STT transcript so the operator can
-// see what the gateway heard while iterating on toggle-to-talk turns.
-void sentient_cube_set_transcript(const char* text);
-
-// Builds the Phase 2 test screen on the active LVGL screen. Idempotent:
-// repeat calls clean and rebuild. Caller must hold the LVGL mutex.
-//
-// Used as the boot UI for Phase 2..5. Phase 6 restores
-// sentient_cube_create_toggle_button_screen as the boot UI.
+// Optional diagnostic screen. Cancels shipping view input and animation;
+// projector restores shipping view on its next poll. Acquires LVGL mutex.
 void sentient_cube_show_test_screen(void);
 
 #ifdef __cplusplus

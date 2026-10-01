@@ -1007,20 +1007,20 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT)
     )
 endif()
 
-# Embed the dev gateway's TLS leaf certificate when present. bake-creds.sh
-# --profile debug emits sentient_dev_gateway.crt by running openssl s_client
-# against the gateway; prod profile removes the file. CMake configures off
-# the file's presence, so re-running idf.py reconfigure picks up the
-# profile flip automatically. EMBED_TXTFILES null-terminates the blob and
-# exposes:
-#   extern const char _binary_sentient_dev_gateway_crt_start[];
-#   extern const char _binary_sentient_dev_gateway_crt_end[];
+# Explicit, operator-supplied development trust. Never embed it in release,
+# even when the private file remains present. EMBED_TXTFILES null-terminates it.
 set(SENTIENT_EMBED_TXTFILES "")
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/sentient_dev_gateway.crt")
+set(SENTIENT_DEV_TLS_CERT 0)
+if(CONFIG_BOARD_TYPE_SENTIENT_CUBE AND NOT CONFIG_SENTIENT_PROD_BUILD AND
+   EXISTS "${CMAKE_CURRENT_LIST_DIR}/sentient_dev_gateway.crt")
     list(APPEND SENTIENT_EMBED_TXTFILES "sentient_dev_gateway.crt")
-    message(STATUS "sentient-cube: embedding dev gateway TLS cert (sentient_dev_gateway.crt)")
-else()
-    message(STATUS "sentient-cube: no dev gateway TLS cert found (prod or pre-bake state)")
+    set(SENTIENT_DEV_TLS_CERT 1)
+    message(STATUS "sentient-cube: embedding supplied development TLS certificate")
+endif()
+
+if(CONFIG_BOARD_TYPE_SENTIENT_CUBE)
+    list(APPEND SOURCES "asset_archive.cc" "../ui-shared/companion.cc" "../ui-shared/cube_views.cc")
+    list(APPEND INCLUDE_DIRS "boards/sentient-cube")
 endif()
 
 idf_component_register(SRCS ${SOURCES}
@@ -1029,6 +1029,10 @@ idf_component_register(SRCS ${SOURCES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
+                        cube_envelope
+                        protocomm
+                        esp_http_client
+                        nvs_flash
                         esp_pm
                         esp_psram
                         esp_netif
@@ -1049,20 +1053,111 @@ idf_component_register(SRCS ${SOURCES}
                         # Phase 6a: SentientWsProtocol speaks the sentient
                         # gateway WS directly via esp_websocket_client.
                         espressif__esp_websocket_client
-                        # 78__esp-ml307: sentient_cube.cc calls EspSsl::SetCacert
-                        # for dev-cert pinning. The component is already in the
-                        # link graph (via wifi_board → esp_network → esp_ssl),
-                        # but we need an explicit PRIV_REQUIRES so CMake makes
-                        # its PRIV_INCLUDE_DIRS ("." = component root) visible
-                        # to main via target_include_directories below.
+                        # 78__esp-ml307 supplies network abstractions used by
+                        # board and assets code; expose its src/ headers below.
                         78__esp-ml307
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 
-# Expose the esp-ml307 src/ subtree to main so sentient_cube.cc can
-# #include "esp/esp_ssl.h". esp_ssl.h lives at src/esp/esp_ssl.h inside
-# the component; PRIV_INCLUDE_DIRS "." in that component's CMakeLists
-# is private-only and not propagated to dependents.
+if(CONFIG_BOARD_TYPE_SENTIENT_CUBE)
+    if(NOT CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+       OR NOT CONFIG_MBEDTLS_HAVE_TIME_DATE OR NOT CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS
+       OR NOT CONFIG_ESP_HTTP_CLIENT_ENABLE_CUSTOM_TRANSPORT
+       OR NOT CONFIG_BT_NIMBLE_ENABLED OR NOT CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL
+       OR NOT CONFIG_BT_NIMBLE_MAX_CONNECTIONS EQUAL 1 OR CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE LESS 8192
+       OR CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_0 OR CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1)
+        message(FATAL_ERROR "Cube requires PSRAM-capable task stacks, TLS date verification, HTTPS/custom transport, Security2-only NimBLE, external allocation, one connection, and host stack >=8192. Apply current sdkconfig.defaults to the selected build profile.")
+    endif()
+    # Upstream SRP/Security2 DEBUG hexdumps contain session/private keys. Compile
+    # them out even when an operator enables verbose diagnostics at runtime.
+    idf_component_get_property(PROTOCOMM_LIB protocomm COMPONENT_LIB)
+    target_compile_definitions(${PROTOCOMM_LIB} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_NONE)
+    idf_component_get_property(HTTP_CLIENT_LIB esp_http_client COMPONENT_LIB)
+    target_compile_definitions(${HTTP_CLIENT_LIB} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_WARN)
+    # IDF 5.5.2: salt width, SRP input/error handling, and Security2 ownership.
+    # Hash-pinned build-local corrections; never mutate the installed SDK.
+    idf_component_get_property(PROTOCOMM_DIR protocomm COMPONENT_DIR)
+    set(SRP_SOURCE "${PROTOCOMM_DIR}/src/crypto/srp6a/esp_srp.c")
+    set(SRP_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/cube_esp_srp.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${SRP_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_srp_security.py")
+    execute_process(COMMAND ${PYTHON} "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_srp_security.py"
+                    "${SRP_SOURCE}" "${SRP_PATCHED}" COMMAND_ERROR_IS_FATAL ANY)
+    set(SEC2_SOURCE "${PROTOCOMM_DIR}/src/security/security2.c")
+    set(SEC2_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/cube_security2.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${SEC2_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_security2.py"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_srp_salt.py")
+    execute_process(COMMAND ${PYTHON} "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_security2.py"
+                    "${SEC2_SOURCE}" "${SEC2_PATCHED}" COMMAND_ERROR_IS_FATAL ANY)
+    set(MPI_SOURCE "${PROTOCOMM_DIR}/src/crypto/srp6a/esp_srp_mpi.c")
+    set(MPI_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/cube_esp_srp_mpi.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${MPI_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_srp_mpi.py")
+    execute_process(COMMAND ${PYTHON} "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_srp_mpi.py"
+                    "${MPI_SOURCE}" "${MPI_PATCHED}" COMMAND_ERROR_IS_FATAL ANY)
+    get_target_property(PROTOCOMM_SOURCES ${PROTOCOMM_LIB} SOURCES)
+    list(FILTER PROTOCOMM_SOURCES EXCLUDE REGEX "(^|/)(esp_srp|esp_srp_mpi|security2)\\.c$")
+    set_property(TARGET ${PROTOCOMM_LIB} PROPERTY SOURCES "${PROTOCOMM_SOURCES}")
+    target_sources(${PROTOCOMM_LIB} PRIVATE "${SRP_PATCHED}" "${SEC2_PATCHED}" "${MPI_PATCHED}")
+    target_include_directories(${PROTOCOMM_LIB} PRIVATE "${PROTOCOMM_DIR}/src/crypto/srp6a")
+    # Async select must rebuild fd sets after timeout; preserve TLS error codes.
+    foreach(TLS_COMPONENT esp-tls tcp_transport)
+        if(TLS_COMPONENT STREQUAL "esp-tls")
+            set(TLS_FILE esp_tls.c)
+        else()
+            set(TLS_FILE transport_ssl.c)
+        endif()
+        idf_component_get_property(TLS_DIR ${TLS_COMPONENT} COMPONENT_DIR)
+        idf_component_get_property(TLS_LIB ${TLS_COMPONENT} COMPONENT_LIB)
+        set(TLS_SOURCE "${TLS_DIR}/${TLS_FILE}")
+        set(TLS_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/cube_${TLS_FILE}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${TLS_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_tls_async.py")
+        execute_process(COMMAND ${PYTHON} "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_tls_async.py"
+                        "${TLS_SOURCE}" "${TLS_PATCHED}" COMMAND_ERROR_IS_FATAL ANY)
+        get_target_property(TLS_SOURCES ${TLS_LIB} SOURCES)
+        list(FILTER TLS_SOURCES EXCLUDE REGEX "(^|/)${TLS_FILE}$")
+        set_property(TARGET ${TLS_LIB} PROPERTY SOURCES "${TLS_SOURCES}")
+        target_sources(${TLS_LIB} PRIVATE "${TLS_PATCHED}")
+    endforeach()
+    # SDK exposes stack size but not memory caps. Cube WS callbacks do not write
+    # flash; use supported caps creation/deletion without changing the dependency.
+    idf_component_get_property(WS_DIR espressif__esp_websocket_client COMPONENT_DIR)
+    idf_component_get_property(WS_LIB espressif__esp_websocket_client COMPONENT_LIB)
+    set(WS_SOURCE "${WS_DIR}/esp_websocket_client.c")
+    set(WS_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/cube_esp_websocket_client.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${WS_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_websocket_stack.py")
+    execute_process(COMMAND ${PYTHON} "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_websocket_stack.py"
+                    "${WS_SOURCE}" "${WS_PATCHED}" COMMAND_ERROR_IS_FATAL ANY)
+    get_target_property(WS_SOURCES ${WS_LIB} SOURCES)
+    list(FILTER WS_SOURCES EXCLUDE REGEX "(^|/)esp_websocket_client\\.c$")
+    set_property(TARGET ${WS_LIB} PROPERTY SOURCES "${WS_SOURCES}")
+    target_sources(${WS_LIB} PRIVATE "${WS_PATCHED}")
+    # Propagate failed I2S/DMA format setup before enabling either channel.
+    idf_component_get_property(CODEC_DIR espressif__esp_codec_dev COMPONENT_DIR)
+    idf_component_get_property(CODEC_LIB espressif__esp_codec_dev COMPONENT_LIB)
+    target_include_directories(${CODEC_LIB} PRIVATE "${CODEC_DIR}")
+    foreach(CODEC_FILE esp_codec_dev.c platform/audio_codec_data_i2s.c)
+        get_filename_component(CODEC_NAME "${CODEC_FILE}" NAME)
+        set(CODEC_SOURCE "${CODEC_DIR}/${CODEC_FILE}")
+        set(CODEC_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/cube_${CODEC_NAME}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CODEC_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_codec_errors.py")
+        execute_process(COMMAND ${PYTHON} "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/patch_codec_errors.py"
+                        "${CODEC_SOURCE}" "${CODEC_PATCHED}" COMMAND_ERROR_IS_FATAL ANY)
+        get_target_property(CODEC_SOURCES ${CODEC_LIB} SOURCES)
+        list(FILTER CODEC_SOURCES EXCLUDE REGEX "(^|/)${CODEC_NAME}$")
+        set_property(TARGET ${CODEC_LIB} PROPERTY SOURCES "${CODEC_SOURCES}")
+        target_sources(${CODEC_LIB} PRIVATE "${CODEC_PATCHED}")
+    endforeach()
+    idf_component_get_property(EMOTE_GFX_DIR espressif2022__esp_emote_gfx COMPONENT_DIR)
+    target_include_directories(${COMPONENT_LIB} PRIVATE "${EMOTE_GFX_DIR}/src/lib/qrcode")
+endif()
+
+# Expose esp-ml307 src/ headers used by board and assets code; the
+# component's private include directory is not propagated to main.
 idf_component_get_property(ML307_DIR 78__esp-ml307 COMPONENT_DIR)
 target_include_directories(${COMPONENT_LIB} PRIVATE "${ML307_DIR}/src")
 
@@ -1072,6 +1167,7 @@ if(NOT BOARD_NAME)
     set(BOARD_NAME ${BOARD_TYPE})
 endif()
 target_compile_definitions(${COMPONENT_LIB}
+                    PRIVATE SENTIENT_DEV_TLS_CERT=${SENTIENT_DEV_TLS_CERT}
                     PRIVATE BOARD_TYPE=\"${BOARD_TYPE}\" BOARD_NAME=\"${BOARD_NAME}\"
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
                     )
@@ -1251,6 +1347,35 @@ function(get_assets_local_file assets_source assets_local_file_var)
 endfunction()
 
 
+if(CONFIG_BOARD_TYPE_SENTIENT_CUBE)
+    if(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
+        message(FATAL_ERROR "Cube is USB-only: disable CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE")
+    endif()
+    set(CUBE_ASSETS_BIN "${CMAKE_BINARY_DIR}/cube_assets.bin")
+    file(GLOB CUBE_ASSET_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/sentient-cube/character/*.i1"
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/sentient-cube/character/*.rgb565")
+    # Reuse full-font selection and configured SR model cooking. Cube does not
+    # consume the upstream emoji collection; do not cook that unused payload.
+    file(GLOB_RECURSE CUBE_MODEL_INPUTS CONFIGURE_DEPENDS "${ESP_SR_MODEL_PATH}/*")
+    file(GLOB CUBE_FONT_INPUTS CONFIGURE_DEPENDS "${XIAOZHI_FONTS_PATH}/cbin/*.bin")
+    add_custom_command(OUTPUT "${CUBE_ASSETS_BIN}"
+        COMMAND ${PYTHON} "${PROJECT_DIR}/scripts/build_default_assets.py"
+            --sdkconfig "${SDKCONFIG}"
+            --builtin_text_font "${BUILTIN_TEXT_FONT}"
+            --esp_sr_model_path "${ESP_SR_MODEL_PATH}"
+            --xiaozhi_fonts_path "${XIAOZHI_FONTS_PATH}"
+            --cube-board "${CMAKE_CURRENT_SOURCE_DIR}/boards/sentient-cube"
+            --output "${CUBE_ASSETS_BIN}"
+        DEPENDS ${SDKCONFIG} ${CUBE_ASSET_INPUTS} ${CUBE_MODEL_INPUTS} ${CUBE_FONT_INPUTS}
+            "${CMAKE_CURRENT_SOURCE_DIR}/boards/sentient-cube/companion.json"
+            "${PROJECT_DIR}/scripts/build_default_assets.py"
+            "${PROJECT_DIR}/scripts/cook_cube_assets.py"
+        VERBATIM)
+    add_custom_target(cube_bundled_assets DEPENDS "${CUBE_ASSETS_BIN}")
+    add_dependencies(${COMPONENT_LIB} cube_bundled_assets)
+    target_add_binary_data(${COMPONENT_LIB} "${CUBE_ASSETS_BIN}" BINARY)
+else()
 partition_table_get_partition_info(size "--partition-name assets" "size")
 partition_table_get_partition_info(offset "--partition-name assets" "offset")
 if ("${size}" AND "${offset}")
@@ -1278,4 +1403,6 @@ if ("${size}" AND "${offset}")
     endif()
 else()
     message(STATUS "Assets partition not found, using v1 partition table")
+endif()
+
 endif()

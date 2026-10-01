@@ -146,3 +146,14 @@ export type SessionNewMessage = z.infer<typeof sessionNewSchema>;
 export type SessionCreatedEvent = z.infer<typeof sessionCreatedEventSchema>;
 export type SessionSwitchedEvent = z.infer<typeof sessionSwitchedEventSchema>;
 export type SessionsErrorEvent = z.infer<typeof sessionsErrorSchema>;
+
+/** Authoritative REST history flags. Never infer origin from clientType or IDs.
+ * currentPin marks latest surviving actual Cube session, even before today's first input.
+ * readOnly describes human interaction, not permission to delete owned history. */
+export const sessionHistoryFieldsSchema = z.object({
+  provenance: z.enum(["human", "cube"]),
+  readOnly: z.boolean(),
+  currentPin: z.boolean(),
+  executionClosed: z.boolean(),
+});
+export type SessionHistoryFields = z.infer<typeof sessionHistoryFieldsSchema>;

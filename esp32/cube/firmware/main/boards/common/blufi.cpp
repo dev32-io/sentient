@@ -1,4 +1,5 @@
 #include "blufi.h"
+#include "wifi_credential_field.h"
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -636,10 +637,6 @@ void Blufi::_wifi_scan_event_handler(void* arg, esp_event_base_t event_base, int
                 esp_wifi_scan_get_ap_records(&ap_num, self->m_ap_records.data());
 
                 ESP_LOGI(BLUFI_TAG, "Found %d APs", ap_num);
-                for (const auto& ap : self->m_ap_records) {
-                    ESP_LOGI(BLUFI_TAG, "  SSID: %s, RSSI: %d, Authmode: %d", (char*)ap.ssid,
-                             ap.rssi, ap.authmode);
-                }
             }
         }
         self->m_scan_in_progress = false;
@@ -707,8 +704,10 @@ void Blufi::_handle_event(esp_blufi_cb_event_t event, esp_blufi_cb_param_t* para
         }
         case ESP_BLUFI_EVENT_REQ_CONNECT_TO_AP: {
             ESP_LOGI(BLUFI_TAG, "BLUFI request wifi connect to AP via esp-wifi-connect");
-            std::string ssid(reinterpret_cast<const char*>(m_sta_config.sta.ssid));
-            std::string password(reinterpret_cast<const char*>(m_sta_config.sta.password));
+            std::string ssid(reinterpret_cast<const char*>(m_sta_config.sta.ssid),
+                             strnlen(reinterpret_cast<const char*>(m_sta_config.sta.ssid), sizeof(m_sta_config.sta.ssid)));
+            std::string password(reinterpret_cast<const char*>(m_sta_config.sta.password),
+                                 strnlen(reinterpret_cast<const char*>(m_sta_config.sta.password), sizeof(m_sta_config.sta.password)));
 
             SsidManager::GetInstance().AddSsid(ssid, password);
             m_scan_should_save_ssid = false;
@@ -852,16 +851,18 @@ void Blufi::_handle_event(esp_blufi_cb_event_t event, esp_blufi_cb_param_t* para
             ESP_LOGI(BLUFI_TAG, "Recv STA BSSID");
             break;
         case ESP_BLUFI_EVENT_RECV_STA_SSID:
-            strncpy((char*)m_sta_config.sta.ssid, (char*)param->sta_ssid.ssid,
-                    param->sta_ssid.ssid_len);
-            m_sta_config.sta.ssid[param->sta_ssid.ssid_len] = '\0';
-            ESP_LOGI(BLUFI_TAG, "Recv STA SSID: %s", m_sta_config.sta.ssid);
+            if (!copy_wifi_credential_field(m_sta_config.sta.ssid, param->sta_ssid.ssid,
+                                            param->sta_ssid.ssid_len)) {
+                btc_blufi_report_error(ESP_BLUFI_DATA_FORMAT_ERROR);
+                break;
+            }
             break;
         case ESP_BLUFI_EVENT_RECV_STA_PASSWD:
-            strncpy((char*)m_sta_config.sta.password, (char*)param->sta_passwd.passwd,
-                    param->sta_passwd.passwd_len);
-            m_sta_config.sta.password[param->sta_passwd.passwd_len] = '\0';
-            ESP_LOGI(BLUFI_TAG, "Recv STA PASSWORD : %s", m_sta_config.sta.password);
+            if (!copy_wifi_credential_field(m_sta_config.sta.password, param->sta_passwd.passwd,
+                                            param->sta_passwd.passwd_len)) {
+                btc_blufi_report_error(ESP_BLUFI_DATA_FORMAT_ERROR);
+                break;
+            }
             break;
         case ESP_BLUFI_EVENT_GET_WIFI_LIST: {
             ESP_LOGI(BLUFI_TAG, "BLUFI get wifi list");

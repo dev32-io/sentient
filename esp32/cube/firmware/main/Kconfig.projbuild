@@ -1,6 +1,7 @@
 menu "Xiaozhi Assistant"
 
 config OTA_URL
+    depends on !BOARD_TYPE_SENTIENT_CUBE
     string "Default OTA URL"
     default "https://api.tenclass.net/xiaozhi/ota/"
     help
@@ -8,6 +9,7 @@ config OTA_URL
 
 choice
     prompt "Flash Assets"
+    depends on !BOARD_TYPE_SENTIENT_CUBE
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
     default FLASH_EXPRESSION_ASSETS if USE_EMOTE_MESSAGE_STYLE
     help
@@ -121,30 +123,35 @@ choice BOARD_TYPE
     prompt "Board Type"
     default BOARD_TYPE_SENTIENT_CUBE
     help
-        Board type. 开发板类型
+        Board type.
     config BOARD_TYPE_SENTIENT_CUBE
         bool "Sentient Cube (Waveshare ESP32-S3-Touch-AMOLED-2.16 base)"
         depends on IDF_TARGET_ESP32S3
+        select BT_ENABLED
+        select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
+        select MBEDTLS_HAVE_TIME
+        select MBEDTLS_HAVE_TIME_DATE
+        select ESP_HTTP_CLIENT_ENABLE_CUSTOM_TRANSPORT
     config BOARD_TYPE_BREAD_COMPACT_WIFI
-        bool "Bread Compact WiFi (面包板)"
+        bool "Bread Compact WiFi (breadboard)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_BREAD_COMPACT_WIFI_LCD
-        bool "Bread Compact WiFi + LCD (面包板)"
+        bool "Bread Compact WiFi + LCD (breadboard)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_BREAD_COMPACT_WIFI_CAM
-        bool "Bread Compact WiFi + LCD + Camera (面包板)"
+        bool "Bread Compact WiFi + LCD + Camera (breadboard)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_BREAD_COMPACT_ML307
-        bool "Bread Compact ML307/EC801E (面包板 4G)"
+        bool "Bread Compact ML307/EC801E (4G breadboard)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_BREAD_COMPACT_NT26
-        bool "Bread Compact NT26 (面包板 4G)"
+        bool "Bread Compact NT26 (4G breadboard)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_BREAD_COMPACT_ESP32
-        bool "Bread Compact ESP32 DevKit (面包板)"
+        bool "Bread Compact ESP32 DevKit (breadboard)"
         depends on IDF_TARGET_ESP32
     config BOARD_TYPE_BREAD_COMPACT_ESP32_LCD
-        bool "Bread Compact ESP32 DevKit + LCD (面包板)"
+        bool "Bread Compact ESP32 DevKit + LCD (breadboard)"
         depends on IDF_TARGET_ESP32
     config BOARD_TYPE_XMINI_C3_V3
         bool "Xmini C3 V3"
@@ -219,19 +226,19 @@ choice BOARD_TYPE
         bool "立创·实战派 ESP32-C3"
         depends on IDF_TARGET_ESP32C3
     config BOARD_TYPE_EDA_TV_PRO
-        bool "EDA课程案例 EDA-TV-Pro"
+        bool "EDA course example EDA-TV-Pro"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_EDA_ROBOT_PRO
-        bool "EDA课程案例 EDA-Robot-Pro"
+        bool "EDA course example EDA-Robot-Pro"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_EDA_SUPER_BEAR
-        bool "EDA课程案例 EDA-Super-Bear"
+        bool "EDA course example EDA-Super-Bear"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_DF_K10
         bool "DFRobot 行空板 k10"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_DF_S3_AI_CAM
-        bool "DFRobot ESP32-S3 AI智能摄像头模块"
+        bool "DFRobot ESP32-S3 AI smart camera module"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_MAGICLICK_S3_2P4
         bool "神奇按钮 Magiclick_2.4"
@@ -417,16 +424,16 @@ choice BOARD_TYPE
         bool "LILYGO T-Display-P4"
         depends on IDF_TARGET_ESP32P4
     config BOARD_TYPE_MOVECALL_MOJI_ESP32S3
-        bool "Movecall Moji 小智AI衍生版"
+        bool "Movecall Moji Xiaozhi AI variant"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_MOVECALL_MOJI2_ESP32C5
-        bool "Movecall Moji2.0 小智AI衍生版"
+        bool "Movecall Moji2.0 Xiaozhi AI variant"
         depends on IDF_TARGET_ESP32C5
     config BOARD_TYPE_MOVECALL_CUICAN_ESP32S3
-        bool "Movecall CuiCan 璀璨·AI吊坠"
+        bool "Movecall CuiCan 璀璨·AI pendant"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_ATK_DNESP32S3
-        bool "正点原子DNESP32S3开发板"
+        bool "正点原子 DNESP32S3 development board"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_ATK_DNESP32S3_BOX
         bool "正点原子DNESP32S3-BOX"
@@ -450,7 +457,7 @@ choice BOARD_TYPE
         bool "正点原子DNESP32S3-BOX3"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_DU_CHATX
-        bool "嘟嘟开发板CHATX(wifi)"
+        bool "嘟嘟 CHATX development board (WiFi)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_TAIJI_PI_S3
         bool "太极小派esp32s3"
@@ -483,7 +490,7 @@ choice BOARD_TYPE
         bool "Seeed Studio SenseCAP Watcher"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_DOIT_S3_AIBOX
-        bool "四博智联AI陪伴盒子"
+        bool "四博智联 AI companion box"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_MIXGO_NOVA
         bool "元控·青春"
@@ -492,10 +499,10 @@ choice BOARD_TYPE
         bool "亘具科技1.54(s3)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_ESP_S3_LCD_EV_Board
-        bool "乐鑫ESP S3 LCD EV Board开发板"
+        bool "乐鑫 ESP S3 LCD EV Board development board"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_ESP_S3_LCD_EV_Board_2
-        bool "乐鑫ESP S3 LCD EV Board 2开发板"
+        bool "乐鑫 ESP S3 LCD EV Board 2 development board"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_ZHENGCHEN_1_54TFT_WIFI
         bool "征辰科技1.54(WIFI)"
@@ -637,7 +644,7 @@ choice DISPLAY_LCD_TYPE
     config LCD_GC9A01_240X240
         bool "GC9A01 240*240 Circle"
     config LCD_CUSTOM
-        bool "Custom LCD (自定义屏幕参数)"
+        bool "Custom LCD (custom display parameters)"
 endchoice
 
 choice DISPLAY_ESP32S3_KORVO2_V3
@@ -742,7 +749,7 @@ choice WAKE_WORD_TYPE
         bool "Wakenet model without AFE"
         depends on IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C5 || IDF_TARGET_ESP32C6 || (IDF_TARGET_ESP32 && SPIRAM)
         help
-            Support ESP32 C3、ESP32 C5 与 ESP32 C6, and (ESP32 with PSRAM)
+            Supports ESP32 C3, ESP32 C5, ESP32 C6, and ESP32 with PSRAM
 
     config USE_AFE_WAKE_WORD
         bool "Wakenet model with AFE"
@@ -951,7 +958,7 @@ menu "TAIJIPAI_S3_CONFIG"
         prompt "taiji-pi-S3 I2S Type"
         default TAIJIPAI_I2S_TYPE_STD
         help
-            I2S 类型选择
+            Select the I2S type
         config TAIJIPAI_I2S_TYPE_STD
             bool "I2S Type STD"
         config TAIJIPAI_I2S_TYPE_PDM
@@ -962,10 +969,37 @@ menu "TAIJIPAI_S3_CONFIG"
     bool "Enable I2S 2 Slot"
     default y
     help
-        启动双声道
+        Enable two-channel audio
 endmenu
 
 menu "Sentient cube SDK"
+
+config SENTIENT_PROD_BUILD
+    bool "Production build (exclude development TLS trust)"
+    default n
+    help
+        Set by sdkconfig.defaults.prod; debug profile leaves this disabled.
+        Production uses the ESP certificate bundle, never the supplied local
+        development certificate, even when that private file is present.
+
+config CUBE_MIC1_GAIN_DB
+    int "Physical MIC1 gain (dB)"
+    depends on BOARD_TYPE_SENTIENT_CUBE
+    range 0 37
+    default 36
+    help
+        Board-local ES7210 MIC1 gain trial. Reference MIC3 remains unchanged.
+        Set to 30 to restore original gain; verify register readback and clipping.
+
+config CUBE_AFE_GAIN_PERCENT
+    int "AFE output gain (%)"
+    depends on BOARD_TYPE_SENTIENT_CUBE && USE_AUDIO_PROCESSOR
+    range 10 1000
+    default 200
+    help
+        Native ESP-SR fixed output amplitude multiplier: 200 means x2, 100
+        restores unity gain. Also amplifies noise; check clipping with louder
+        speech. Does not enable AGC or change microphone/reference gain.
 
 config CUBE_SDK_TRACE_AUDIO_FRAMES
     bool "Trace every audio frame at DEBUG level"
@@ -1026,4 +1060,25 @@ config AGENT_CONSOLE_LAYOUT_INSPECTOR
 
 endmenu
 
+endmenu
+
+menu "Cube hardware lifecycle"
+    depends on BOARD_TYPE_SENTIENT_CUBE
+    config CUBE_BLE_SESSION_SECONDS
+        int "Authenticated management connection lifetime (seconds)"
+        range 60 900
+        default 300
+        help
+            Unauthenticated connections have a separate 20-second handshake
+            budget. Reconnect and re-read status after this session expires.
+    config CUBE_NTP_SERVER
+        string "Network time server for verified TLS"
+        default "pool.ntp.org"
+    config CUBE_RENEW_INTERVAL_SECONDS
+        int "Proactive device credential renewal interval (seconds)"
+        range 60 86400
+        default 3600
+        help
+            Set below gateway devices.access_ttl_seconds. Expired authentication
+            also permits one bounded renewal before requiring explicit recovery.
 endmenu

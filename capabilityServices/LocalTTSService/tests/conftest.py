@@ -19,7 +19,7 @@ import soundfile as sf
 from websockets.asyncio.server import Server as WsServer
 from websockets.asyncio.server import serve
 
-from local_tts.config import Config, HealthConfig, ServerConfig, TextFrontendConfig
+from local_tts.config import GenerationConfig, Config, HealthConfig, ServerConfig, TextFrontendConfig
 from local_tts.server import Server
 from local_tts.synth_executor import SynthExecutor
 
@@ -90,6 +90,7 @@ def _make_config(tmp_path: Path) -> Config:
     return Config(
         schema_version=1,
         model="stub-model",
+        generation=GenerationConfig(4096, 75, 12),
         server=ServerConfig(host="127.0.0.1", port=0, max_message_bytes=16_000_000),
         health=HealthConfig(port=0),
         default_format="opus",

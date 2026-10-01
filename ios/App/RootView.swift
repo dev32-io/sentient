@@ -139,16 +139,21 @@ struct RootView: View {
             if !covering { log.info("startup.reveal") }
         }
         .alert(
-            "Notifications may continue",
+            appConfig.cubeCleanupWarning == nil ? "Notifications may continue" : "Cube phone access remains",
             isPresented: Binding(
-                get: { push.lifecycleWarning != nil && !appConfig.hasToken },
-                set: { if !$0 { push.dismissLifecycleWarning() } }
+                get: { !appConfig.hasToken && (push.lifecycleWarning != nil || appConfig.cubeCleanupWarning != nil) },
+                set: { if !$0 { dismissCleanupWarnings() } }
             )
         ) {
-            Button("OK") { push.dismissLifecycleWarning() }
+            Button("OK", action: dismissCleanupWarnings)
         } message: {
-            Text(push.lifecycleWarning ?? "This device could not be unlinked yet.")
+            Text([appConfig.cubeCleanupWarning, push.lifecycleWarning].compactMap { $0 }.joined(separator: "\n\n"))
         }
+    }
+
+    private func dismissCleanupWarnings() {
+        appConfig.cubeCleanupWarning = nil
+        push.dismissLifecycleWarning()
     }
 
     private func validateStoredAuthentication() async {

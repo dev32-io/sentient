@@ -64,6 +64,7 @@ describe("persistent optimistic deletion", () => {
         .fn()
         .mockRejectedValueOnce(new SessionsRestError(503, "unavailable", "unavailable"))
         .mockResolvedValue(undefined),
+      list: vi.fn(async () => ({ items: [] })),
     };
     const sessions = createUseSessions(connector as unknown as SessionsConnector, { draftStore: store });
 
@@ -138,6 +139,7 @@ describe("persistent optimistic deletion", () => {
         .fn()
         .mockRejectedValueOnce(new SessionsRestError(403, "forbidden", "forbidden"))
         .mockResolvedValue(undefined),
+      list: vi.fn(async () => ({ items: [] })),
       newChat: vi.fn().mockResolvedValue({ draftKey: "d_next" }),
     };
     const sessions = createUseSessions(connector as unknown as SessionsConnector, { draftStore: store });
@@ -390,6 +392,7 @@ describe("session action outcomes", () => {
     async (action) => {
       const connector = {
         onSessionsChanged: vi.fn(() => vi.fn()),
+        list: vi.fn(async () => ({ items: [{ sessionId: "session-2", provenance: "human", readOnly: false }] })),
         switchTo: vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValueOnce(undefined),
         newChat: vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValueOnce({ draftKey: "draft-2" }),
       };
@@ -411,4 +414,113 @@ describe("session action outcomes", () => {
       sessions.dispose();
     },
   );
+});
+
+describe("Cube history selection", () => {
+  it("refreshes the server pin immediately after deleting the latest Cube session", async () => {
+    const cube = (sessionId: string, currentPin: boolean) => ({
+      sessionId,
+      rootId: sessionId,
+      title: sessionId,
+      startedAt: 1,
+      lastActiveAt: 1,
+      messageCount: 1,
+      isActive: false,
+      provenance: "cube" as const,
+      readOnly: true,
+      currentPin,
+    });
+    const human = { ...cube("human", false), provenance: "human" as const, readOnly: false };
+    let rows = [cube("latest", true), cube("earlier", false), human];
+    let intent: string | null = null;
+    const store = {
+      saveDeleteIntent: vi.fn(async (id: string) => {
+        intent = id;
+      }),
+      removeDeleteIntent: vi.fn(async () => {
+        intent = null;
+      }),
+      list: vi.fn(async () => ({
+        drafts: [],
+        pendingSends: [],
+        deleteIntents: intent ? [{ sessionId: intent, failureCode: null }] : [],
+      })),
+    } as unknown as DraftStore;
+    const connector = {
+      onSessionsChanged: vi.fn(() => vi.fn()),
+      list: vi.fn(async () => ({ items: rows })),
+      delete: vi.fn(async () => {
+        rows = [cube("earlier", true), human];
+      }),
+      switchTo: vi.fn(async () => undefined),
+      newChat: vi.fn(),
+    };
+    const sessions = createUseSessions(connector as unknown as SessionsConnector, { draftStore: store });
+    sessions.currentId.value = "human";
+    await sessions.load();
+    sessions.searchHits.value = [cube("latest", true), cube("earlier", false)];
+    await sessions.delete("latest");
+
+    await vi.waitFor(() => expect(sessions.items.value).toEqual([cube("earlier", true), human]));
+    expect(sessions.searchHits.value).toEqual([cube("earlier", true)]);
+    expect(connector.list).toHaveBeenCalledTimes(2);
+    expect(sessions.currentId.value).toBe("human");
+    expect(await sessions.switchTo("earlier")).toBe(true);
+    expect(sessions.viewerId.value).toBe("earlier");
+    expect(connector.switchTo).not.toHaveBeenCalled();
+    expect(await sessions.switchTo("human")).toBe(true);
+    expect(connector.switchTo).toHaveBeenCalledWith("human");
+    expect(connector.newChat).not.toHaveBeenCalled();
+    sessions.dispose();
+  });
+
+  it("keeps live ordinary route and WS binding untouched; refresh and deletion update viewer", async () => {
+    const human = {
+      sessionId: "h",
+      rootId: "h",
+      title: "Human",
+      startedAt: 1,
+      lastActiveAt: 1,
+      messageCount: 1,
+      isActive: true,
+    };
+    const cube = {
+      ...human,
+      sessionId: "c",
+      rootId: "c",
+      title: "Cube",
+      provenance: "cube" as const,
+      readOnly: true,
+      currentPin: true,
+      executionClosed: false,
+    };
+    let rows = [cube, human];
+    const connector = {
+      onSessionsChanged: vi.fn(() => vi.fn()),
+      list: vi.fn(async () => ({ items: rows })),
+      switchTo: vi.fn(async () => undefined),
+      newChat: vi.fn(async () => ({ draftKey: "d" })),
+      delete: vi.fn(async () => {
+        rows = rows.filter((row) => row.sessionId !== "c");
+      }),
+    };
+    const sessions = createUseSessions(connector as unknown as SessionsConnector);
+    sessions.currentId.value = "h";
+    await sessions.load();
+    expect(await sessions.switchTo("c")).toBe(true);
+    expect(sessions.viewerId.value).toBe("c");
+    expect(sessions.currentId.value).toBe("h");
+    expect(connector.switchTo).not.toHaveBeenCalled();
+    expect(connector.newChat).not.toHaveBeenCalled();
+    rows = [{ ...cube, sessionId: "c2", rootId: "c2" }, { ...cube, currentPin: false }, human];
+    await sessions.load();
+    expect(sessions.items.value.map((row) => row.currentPin)).toEqual([true, false, undefined]);
+    await sessions.delete("c");
+    expect(connector.delete).toHaveBeenCalledWith("c");
+    expect(sessions.viewerId.value).toBeNull();
+    expect(sessions.currentId.value).toBe("h");
+    expect(await sessions.switchTo("h")).toBe(true);
+    expect(connector.switchTo).toHaveBeenCalledWith("h");
+    sessions.dispose();
+  });
 });

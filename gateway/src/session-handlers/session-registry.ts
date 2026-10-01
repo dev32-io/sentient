@@ -234,6 +234,8 @@ export interface SessionRegistry {
    * a divergence would leave a revoked account authoritative.
    */
   orphanSessionsForUser(userId: string): readonly SessionRuntime[];
+  /** Remove a retired credential's runtime, without retiring its still-open durable session. */
+  orphanSession(userId: string, sessionId: string): void;
   /**
    * Remove and terminally dispose every resident incarnation of one durably
    * deleted session owned by [userId], including credential-orphaned handles.
@@ -486,6 +488,11 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
         }
       }
       return owned;
+    },
+
+    orphanSession(userId, sessionId) {
+      const resident = sessions.get(sessionId);
+      if (resident?.handles.runtime.userId === userId) orphanResident(sessionId, resident);
     },
 
     orphanSessionsForUser(userId) {

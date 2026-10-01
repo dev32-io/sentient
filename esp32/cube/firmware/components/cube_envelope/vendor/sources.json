@@ -1,0 +1,79 @@
+{
+  "assert": {
+    "url": "https://github.com/boostorg/assert.git",
+    "tag": "boost-1.91.0",
+    "commit": "af15ced8d04907345a0211dab46557e085960eb7",
+    "archive_sha256": "057ad9ba1ea84a57b714785a695bade49d44b6152db52c33ab6d29c2723169b5",
+    "archive_bytes": 21019
+  },
+  "config": {
+    "url": "https://github.com/boostorg/config.git",
+    "tag": "boost-1.91.0",
+    "commit": "423423e6b88b22171a6677d599f2fc58a666091f",
+    "archive_sha256": "4fba7a291de5db5b017a5b4ebfc06194c496d3bba10383af96a2a218731dd6a0",
+    "archive_bytes": 399398
+  },
+  "container": {
+    "url": "https://github.com/boostorg/container.git",
+    "tag": "boost-1.91.0",
+    "commit": "6807b47c2e4d58cbb1d044c578582fdde37456b8",
+    "archive_sha256": "6de9bd48a8f3232f3b22f093838d5691b282b6b0aeef826d7773e3aa51786440",
+    "archive_bytes": 1458680
+  },
+  "core": {
+    "url": "https://github.com/boostorg/core.git",
+    "tag": "boost-1.91.0",
+    "commit": "a90a31934fe8bcb6e6be6dfea77b80492c7b6c81",
+    "archive_sha256": "b97dc44751676e2119e9300370747181a8dca0629841954ee59c3d1801cb7f64",
+    "archive_bytes": 177326
+  },
+  "endian": {
+    "url": "https://github.com/boostorg/endian.git",
+    "tag": "boost-1.91.0",
+    "commit": "4bffdf3defc2836409e72622066a40d8396088ae",
+    "archive_sha256": "685218bf6c4a29771e36ad5885bd2dd2109d6a56abf843baa6ae4193c0997b58",
+    "archive_bytes": 81943
+  },
+  "intrusive": {
+    "url": "https://github.com/boostorg/intrusive.git",
+    "tag": "boost-1.91.0",
+    "commit": "1b4af0df680654d8abd1d48066f493b06238a36d",
+    "archive_sha256": "9a8e43f678a7ec0ed3d56dedf60cbff2614759b7f846c1d26abfeb8c34a0cbca",
+    "archive_bytes": 346874
+  },
+  "json": {
+    "url": "https://github.com/boostorg/json.git",
+    "tag": "boost-1.91.0",
+    "commit": "70efd4b032b7f3e718bb4ca4ae144c3171b21568",
+    "archive_sha256": "ad7311cf731b6ca5e4d2c5eb55999f86b903b33ea876afac3123316d74e1d1d9",
+    "archive_bytes": 4547648
+  },
+  "move": {
+    "url": "https://github.com/boostorg/move.git",
+    "tag": "boost-1.91.0",
+    "commit": "ae8cf4075f6f6c8ca590d8743d9cf1a5f6cc83c2",
+    "archive_sha256": "7a30078d54bf040c3e8af350c060ffc8c17101e059ca06e1365f07195232c8f4",
+    "archive_bytes": 135814
+  },
+  "mp11": {
+    "url": "https://github.com/boostorg/mp11.git",
+    "tag": "boost-1.91.0",
+    "commit": "b94b089d4ec83cd397f20958f34edf25bc3e06f4",
+    "archive_sha256": "529af836eebc82876f8da6e3500cadf9a083caf04222e65acebe773cf45821ce",
+    "archive_bytes": 130965
+  },
+  "system": {
+    "url": "https://github.com/boostorg/system.git",
+    "tag": "boost-1.91.0",
+    "commit": "f80b9ccbf170faaa27799c11d2f41178f7d17bfe",
+    "archive_sha256": "dba392c6adc6cb50d2b95fe2c8c24a278abc517b1fbb29dcf7d3b41ff68d52b8",
+    "archive_bytes": 104727
+  },
+  "throw_exception": {
+    "url": "https://github.com/boostorg/throw_exception.git",
+    "tag": "boost-1.91.0",
+    "commit": "0924b53b40d1da33301f94fb97518f5a7df31e9b",
+    "archive_sha256": "dfa37d6bcf54f583b84d369ec935d6aa6e54a06656d9ed082d21d145a9dba4e0",
+    "archive_bytes": 20253
+  }
+}

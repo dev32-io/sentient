@@ -17,6 +17,7 @@
 // and hands to every attaching connection.
 
 import type { UserPrincipal } from "../identity/user-principal.js";
+import type { DeviceCredential } from "../user-auth/device-registry.js";
 import type { SessionPermissionBroker } from "./session-permission-broker.js";
 import type { SessionWorkSignals } from "./session-retention.js";
 import type { SessionRuntime } from "./session-runtime.js";
@@ -47,6 +48,7 @@ export interface SessionRuntimeHandles {
  * brand-new empty conversation on every reload, reconnect and gateway restart.
  */
 export interface SessionRuntimeRequest {
+  deviceCredential?: DeviceCredential;
   principal: UserPrincipal;
   /**
    * The DURABLE session id — the session store's partition key. Server-minted,

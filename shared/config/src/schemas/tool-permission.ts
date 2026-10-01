@@ -54,6 +54,10 @@ export interface ProductToolMetadata {
  *
  * An empty table is NOT "everything off" — see the ToolBroker's
  * `storedPermissionFor`, which documents how presence and absence are read.
+ *
+ * Reserved `cube` entry: independent per-user Cube tool choices, keyed by
+ * tool name (or "*"). Unset choices are off, never ordinary role defaults.
+ * Only a registry-authenticated initial capability selects this table.
  */
 export type ToolPermissionMap = Record<string, Record<string, ToolPermission>>;
 

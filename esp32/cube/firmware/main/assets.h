@@ -30,6 +30,7 @@ public:
 
     bool Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback);
     bool Apply(bool refresh_display_theme = true);
+    bool ApplyTextFont();
     bool GetAssetData(const std::string& name, void*& ptr, size_t& size);
 
     inline bool partition_valid() const { return partition_valid_; }
@@ -37,6 +38,11 @@ public:
 
 private:
     Assets();
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Boot-only publication; never evicted while LVGL/model pointers exist.
+    uint8_t* bundled_data_ = nullptr;
+    size_t bundled_count_ = 0;
+#endif
     Assets(const Assets&) = delete;
     Assets& operator=(const Assets&) = delete;
 
@@ -44,6 +50,7 @@ private:
     void UnApplyPartition();
     static bool FindPartition(Assets* assets);
     static bool LoadSrmodelsFromIndex(Assets* assets, cJSON* root = nullptr);
+    bool LoadTextFont(void* data, size_t size);
   
     class AssetStrategy {
     public:

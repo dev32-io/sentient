@@ -2,7 +2,7 @@ import { createContext } from "preact";
 import type { ComponentChildren } from "preact";
 import { useComputed, useSignal } from "@preact/signals";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { createAttachmentsRest, createDraftStore, createLogger, deriveRestBaseUrl, type DraftRecord, type DraftStore } from "@sentient/web-sdk";
+import { createAttachmentsRest, createDraftStore, createLogger, createSessionsRest, deriveRestBaseUrl, type DraftRecord, type DraftStore } from "@sentient/web-sdk";
 import { AuthProvider, useAuth } from "./hooks/use-auth.tsx";
 import { ToastProvider, useToast } from "./hooks/use-toast.tsx";
 import type { AuthApi } from "./services/auth-api.js";
@@ -28,6 +28,7 @@ import { useSettingsDeparture } from "./components/shell/settings-departure.tsx"
 import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
 import { SessionsProvider } from "./context/sessions.tsx";
 import { createUseSessions, type UseSessions } from "./hooks/use-sessions.ts";
+import { deriveMessages } from "./hooks/cycle-helpers.ts";
 import { useVoiceClient } from "./hooks/use-voice-client.ts";
 import { useLocalDrafts } from "./hooks/use-local-drafts.ts";
 import { useInstallState } from "./hooks/use-install-state.ts";
@@ -235,6 +236,30 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
     baseUrl: deriveRestBaseUrl(client.gatewayUrl ?? `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/v1/ws`),
     token: () => token,
   }), [client.gatewayUrl, token]);
+  const historyRest = useMemo(() => createSessionsRest({
+    baseUrl: deriveRestBaseUrl(client.gatewayUrl ?? `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/v1/ws`),
+    token: () => token,
+  }), [client.gatewayUrl, token]);
+  const [viewerMessages, setViewerMessages] = useState<readonly ChatMessage[]>([]);
+  const [viewerLoadedId, setViewerLoadedId] = useState<string | null>(null);
+  const [viewerState, setViewerState] = useState<"loading" | "ready" | "error">("loading");
+  const viewerId = sessions.viewerId.value;
+  useEffect(() => {
+    if (!viewerId) return;
+    let cancelled = false;
+    setViewerMessages([]);
+    setViewerLoadedId(null);
+    setViewerState("loading");
+    void historyRest.getHistory(viewerId).then((history) => {
+      if (cancelled) return;
+      // REST metadata, not a guessed session ID, controls viewer authority.
+      if (history.provenance !== "cube" || !history.readOnly) throw new Error("Not a Cube history session");
+      setViewerMessages(deriveMessages(history.items, []));
+      setViewerLoadedId(viewerId);
+      setViewerState("ready");
+    }).catch(() => { if (!cancelled) setViewerState("error"); });
+    return () => { cancelled = true; };
+  }, [viewerId, historyRest]);
   const localDrafts = useLocalDrafts({
     store: draftStore,
     attachments: attachmentsRest,
@@ -419,7 +444,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
   }, [authExpired, auth]);
 
   useEffect(() => {
-    if (!canInterrupt) return;
+    if (!canInterrupt || viewerId) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         client.interrupt();
@@ -427,7 +452,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canInterrupt, client]);
+  }, [canInterrupt, client, viewerId]);
 
   return (
     <SessionsProvider value={sessions}>
@@ -453,15 +478,15 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
         main={
           route === "chat" ? (
             <ChatView
-              messages={sessionRouteState === "idle" ? visibleMessages : []}
+              messages={viewerId ? viewerLoadedId === viewerId ? viewerMessages : [] : sessionRouteState === "idle" ? visibleMessages : []}
               localSendIds={client.localSendIds.value}
-              transcript={sessionRouteState === "idle" ? client.transcript.value : ""}
-              currentTurnId={currentTurnId}
-              activeCycleState={activeCycleState}
+              transcript={viewerId ? "" : sessionRouteState === "idle" ? client.transcript.value : ""}
+              currentTurnId={viewerId ? null : currentTurnId}
+              activeCycleState={viewerId ? "idle" : activeCycleState}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
-              status={sessionRouteState === "unavailable" ? "unavailable" : sessionRouteState === "loading" ? "loading" : connectionLost ? "error" : connectionReady ? "ready" : "loading"}
+              status={viewerId ? viewerLoadedId === viewerId && viewerState === "ready" ? "ready" : viewerState === "error" ? "unavailable" : "loading" : sessionRouteState === "unavailable" ? "unavailable" : sessionRouteState === "loading" ? "loading" : connectionLost ? "error" : connectionReady ? "ready" : "loading"}
               attachmentsRest={attachmentsRest}
-              sessionBoundaryKey={`${sessions.currentId.value ?? "none"}:${sessionRouteState}:${sessionRouteAttemptRef.current}`}
+              sessionBoundaryKey={`${viewerId ?? sessions.currentId.value ?? "none"}:${sessionRouteState}:${sessionRouteAttemptRef.current}`}
             />
           ) : route === "calendar" ? (
             <CalendarView token={token} />
@@ -477,7 +502,7 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
           )
         }
         dock={
-          route === "chat" ? (
+          route === "chat" && !viewerId ? (
             <ChatComposer
               cycleStatus={cycleStatus}
               connectionReady={connectionReady && sessionRouteState === "idle"}
@@ -554,8 +579,8 @@ function AuthenticatedApp({ auth, route, freshLogin, settingsTab, settingsNonce,
         onSessionSelected={recoverSessionRoute}
       />
       {departure.dialog}
-      {connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}
-      {client.permissionRequest.value && (
+      {!viewerId && connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}
+      {!viewerId && client.permissionRequest.value && (
         <PermissionDialog request={client.permissionRequest.value} onRespond={client.respondToPermission} />
       )}
       <ToastHost />

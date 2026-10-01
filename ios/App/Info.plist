@@ -17,7 +17,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.7.0</string>
+	<string>1.8.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>14</string>
+	<string>15</string>
 	<key>GatewayWSURL</key>
 	<string>$(GATEWAY_WS_URL)</string>
 	<key>NSAppTransportSecurity</key>
@@ -50,8 +50,10 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Sentient uses Bluetooth to securely set up your Cube and manage its Wi-Fi.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Sentient uses the camera when you choose to take a photo attachment.</string>
+	<string>Sentient uses the camera for photo attachments and scanning your Cube setup code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Sentient connects to your home gateway on the local network.</string>
 	<key>NSMicrophoneUsageDescription</key>

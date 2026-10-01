@@ -339,6 +339,9 @@ export interface ToolBroker {
 }
 
 export interface ToolBrokerDeps {
+  authorizeExecution?: () => Promise<boolean>;
+  /** Synchronous durable execution fence, rechecked after asynchronous policy resolution. */
+  executionAllowed?: () => boolean;
   mcp: McpClient;
   store: SessionStore;
   /** THE authorization input (spec §3.2). `broker.ownerUserId`, the role gate
@@ -521,7 +524,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     try {
       permissions = await toolPermissions();
     } catch (err) {
-      // Keep the last known table rather than widening to an empty one: a
+      if (capability.origin?.kind === "cube") permissions = {};
+      // Ordinary grants keep the last known table rather than widening: a
       // settings read that fails must never grant more than it granted a
       // moment ago.
       log.warn("tool-broker.permissions.refresh-failed", {
@@ -552,6 +556,14 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    * backstop) plus the gateway-native serverless case (`delegateTask`).
    */
   function resolvePermission(definition: ToolDefinition): ResolvedPermission {
+    // Cube has an independent opt-in table, including native/background tools.
+    // Role and risk ceilings still run in the shared dispatch gate.
+    if (capability.origin?.kind === "cube") {
+      return {
+        permission: permissions?.cube?.[definition.name] ?? permissions?.cube?.["*"] ?? "off",
+        source: "profile",
+      };
+    }
     if (definition.productGroup !== undefined) {
       return resolveToolPermission({
         toolName: definition.name,
@@ -1055,6 +1067,9 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   }
 
   async function dispatch(inv: ToolInvocation): Promise<ToolResult | { taskId: string }> {
+    if (inv.signal.aborted || deps.executionAllowed?.() === false) {
+      return { content: "Session execution is closed", isError: true };
+    }
     const target = await resolveTarget(inv);
     if (!target) {
       log.warn("tool-broker.dispatch.unknown-tool", {
@@ -1103,6 +1118,14 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       return { content: decision.reason, isError: true };
     }
 
+    if (deps.authorizeExecution && !(await deps.authorizeExecution())) {
+      return { content: "Session execution is closed", isError: true };
+    }
+    // No await between this fence and starting the runner. Closing execution
+    // during a permission/profile read must not authorize a late side effect.
+    if (inv.signal.aborted || deps.executionAllowed?.() === false) {
+      return { content: "Session execution is closed", isError: true };
+    }
     if (target.kind === "background") return dispatchBackground(inv, target.runner);
     if (target.kind === "native") return dispatchNative(inv, target.runner);
     return dispatchForeground(inv, target.serverName);

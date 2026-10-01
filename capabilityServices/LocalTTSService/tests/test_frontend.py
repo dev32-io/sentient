@@ -194,3 +194,10 @@ def test_space_before_punct_still_cleans_a_dropped_span_artifact(policy):
     assert out == "Check the chart, it changes weekly."
 
 
+@pytest.mark.parametrize("doc", ["4", "4.", " 42.\n", "0.", "-4.", "4.5", "4.5."])
+def test_numeric_only_answer_is_not_an_empty_list(policy, doc):
+    assert _fe(policy).process(doc, "auto") == doc.strip()
+
+
+def test_numbered_list_still_drops_markers(policy):
+    assert _fe(policy).process("1. First\n2. Second", "auto") == "First\n\nSecond"

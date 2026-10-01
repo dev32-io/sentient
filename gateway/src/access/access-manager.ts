@@ -74,6 +74,7 @@ export function createAccessManager(config: AccessManagerConfig): AccessManager 
         // Baked in at mint, not read again later — this IS the principal
         // becoming authority (spec §2.1/L1). See Capability.role's doc comment.
         role: principal.role,
+        ...(principal.origin ? { origin: Object.freeze({ ...principal.origin }) } : {}),
       });
       log.debug("capability.minted", {
         userId: principal.userId,

@@ -1,5 +1,5 @@
-// image_to_jpeg.h - 图像到JPEG转换的高效编码接口
-// 节省约8KB SRAM的JPEG编码实现
+// image_to_jpeg.h - Efficient image-to-JPEG conversion interface
+// JPEG encoder implementation that saves about 8 KB of SRAM
 #pragma once
 #include "sdkconfig.h"
 #ifndef CONFIG_IDF_TARGET_ESP32
@@ -8,10 +8,10 @@
 #include <stddef.h>
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S3)
-// ESP32-P4 使用 esp_video 组件提供的 V4L2 头文件
+// ESP32-P4 uses the V4L2 header provided by esp_video
 #include <linux/videodev2.h>
 #else
-// ESP32-S3 等其他芯片：定义常用的 V4L2 像素格式
+// Other chips: define common V4L2 pixel formats
 #define V4L2_PIX_FMT_RGB565 0x50424752  // 'RGBP'
 #define V4L2_PIX_FMT_RGB565X 0x52474250 // 'PRGB'
 #define V4L2_PIX_FMT_RGB24 0x33424752   // 'RGB3'
@@ -30,51 +30,51 @@ extern "C"
 {
 #endif
 
-    // JPEG输出回调函数类型
-    // arg: 用户自定义参数, index: 当前数据索引, data: JPEG数据块, len: 数据块长度
-    // 返回: 实际处理的字节数
+    // JPEG output callback type
+    // arg: user data, index: current data index, data: JPEG chunk, len: chunk length
+    // Returns the number of bytes processed
     typedef size_t (*jpg_out_cb)(void *arg, size_t index, const void *data, size_t len);
 
     /**
-     * @brief 将图像格式高效转换为JPEG
+     * @brief Convert an image to JPEG efficiently
      *
-     * 这个函数使用优化的JPEG编码器进行编码，主要特点：
-     * - 节省约8KB的SRAM使用（静态变量改为堆分配）
-     * - 支持多种图像格式输入
-     * - 高质量JPEG输出
+     * Uses an optimized JPEG encoder with these features:
+     * - Saves about 8 KB of SRAM by allocating on the heap instead of using static variables
+     * - Supports multiple input image formats
+     * - Produces high-quality JPEG output
      *
-     * @param src       源图像数据
-     * @param src_len   源图像数据长度
-     * @param width     图像宽度
-     * @param height    图像高度
-     * @param format    图像格式 (PIXFORMAT_RGB565, PIXFORMAT_RGB888, 等)
-     * @param quality   JPEG质量 (1-100)
-     * @param out       输出JPEG数据指针 (需要调用者释放)
-     * @param out_len   输出JPEG数据长度
+     * @param src       Source image data
+     * @param src_len   Source image data length
+     * @param width     Image width
+     * @param height    Image height
+     * @param format    Image format (e.g., PIXFORMAT_RGB565, PIXFORMAT_RGB888)
+     * @param quality   JPEG quality (1-100)
+     * @param out       Output JPEG data pointer (caller must free)
+     * @param out_len   Output JPEG data length
      *
-     * @return true 成功, false 失败
+     * @return true on success, false on failure
      */
     bool image_to_jpeg(uint8_t *src, size_t src_len, uint16_t width, uint16_t height,
                        v4l2_pix_fmt_t format, uint8_t quality, uint8_t **out, size_t *out_len);
 
     /**
-     * @brief 将图像格式转换为JPEG（回调版本）
+     * @brief Convert an image to JPEG using a callback
      *
-     * 使用回调函数处理JPEG输出数据，适合流式传输或分块处理：
-     * - 节省约8KB的SRAM使用（静态变量改为堆分配）
-     * - 支持流式输出，无需预分配大缓冲区
-     * - 通过回调函数逐块处理JPEG数据
+     * Processes JPEG output through a callback for streaming or chunked output:
+     * - Saves about 8 KB of SRAM by allocating on the heap instead of using static variables
+     * - Supports streaming output without preallocating a large buffer
+     * - Processes JPEG data chunk by chunk through the callback
      *
-     * @param src       源图像数据
-     * @param src_len   源图像数据长度
-     * @param width     图像宽度
-     * @param height    图像高度
-     * @param format    图像格式
-     * @param quality   JPEG质量 (1-100)
-     * @param cb        输出回调函数
-     * @param arg       传递给回调函数的用户参数
+     * @param src       Source image data
+     * @param src_len   Source image data length
+     * @param width     Image width
+     * @param height    Image height
+     * @param format    Image format
+     * @param quality   JPEG quality (1-100)
+     * @param cb        Output callback
+     * @param arg       User data passed to the callback
      *
-     * @return true 成功, false 失败
+     * @return true on success, false on failure
      */
     bool image_to_jpeg_cb(uint8_t *src, size_t src_len, uint16_t width, uint16_t height,
                           v4l2_pix_fmt_t format, uint8_t quality, jpg_out_cb cb, void *arg);

@@ -2,58 +2,48 @@
 #include "sentient_ws_protocol.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <cmath>
+#include <new>
+#include <esp_crt_bundle.h>
 #include <esp_log.h>
 #include <esp_random.h>
-#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+#endif
 
 namespace sentient::cube {
-
 namespace {
+using JsonPtr = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>;
+using JsonText = std::unique_ptr<char, decltype(&cJSON_free)>;
 
 constexpr const char* TAG = "sentient.cube.sdk.ws";
-
-// Reconnect / readiness tunables. Kept here so the constants live next to
-// the impl that owns them.
 constexpr int kReadyTimeoutMs = 10000;
-constexpr int kReconnectBaseMs = 1000;
-constexpr int kReconnectMaxMs = 30000;
 constexpr int kReconnectMaxAttempts = 5;
-constexpr int kReconnectJitterMs = 500;
+constexpr int kUplinkWaitMs = 5000;
+constexpr size_t kPcmChunkBytes = 960; // 20 ms at 24 kHz, independent of WS fragmentation.
+constexpr uint32_t kReconnectSignal = 1, kReadySignal = 2,
+                   kStopSignal = 4, kFailSignal = 8, kPumpSignal = 16;
 
-constexpr size_t kLogPreviewMaxChars = 120;
-
-// Read a string field off a cJSON object. Returns nullptr if missing or
-// not a string.
-const char* json_string(const cJSON* root, const char* key) {
-    const cJSON* item = cJSON_GetObjectItem(root, key);
-    return cJSON_IsString(item) ? item->valuestring : nullptr;
+const char* field(const cJSON* obj, const char* name) {
+    const cJSON* value = cJSON_GetObjectItemCaseSensitive(obj, name);
+    return cJSON_IsString(value) ? value->valuestring : nullptr;
 }
-
-int json_int(const cJSON* root, const char* key, int fallback) {
-    const cJSON* item = cJSON_GetObjectItem(root, key);
-    return cJSON_IsNumber(item) ? item->valueint : fallback;
+std::string value(const char* s) { return s ? s : ""; }
+void binding(cJSON* obj, const std::string& session, int generation) {
+    if (!session.empty() && generation > 0) {
+        cJSON_AddStringToObject(obj, "sessionId", session.c_str());
+        cJSON_AddNumberToObject(obj, "attachmentGeneration", generation);
+    }
 }
-
-CognitionState map_cognition_state(const char* s) {
-    if (s == nullptr) return CognitionState::Idle;
-    if (strcmp(s, "idle") == 0) return CognitionState::Idle;
-    if (strcmp(s, "thinking") == 0) return CognitionState::Thinking;
-    if (strcmp(s, "acting") == 0) return CognitionState::Acting;
-    return CognitionState::Idle;
-}
-
-constexpr int kWsBufferSizeBytes = 4096;
-
-// WebSocket frame opcodes per RFC 6455 §5.2 (esp_websocket_client surfaces
-// these directly in event_data->op_code). 0x00 = continuation, 0x01 = text,
-// 0x02 = binary.
-constexpr uint8_t kWsOpcodeContinuation = 0x00;
-constexpr uint8_t kWsOpcodeText = 0x01;
-constexpr uint8_t kWsOpcodeBinary = 0x02;
-
-const char* status_name(SdkStatus s) {
-    switch (s) {
+const char* status_name(SdkStatus status) {
+    switch (status) {
         case SdkStatus::Disconnected: return "Disconnected";
         case SdkStatus::Connecting: return "Connecting";
         case SdkStatus::Authenticating: return "Authenticating";
@@ -63,71 +53,113 @@ const char* status_name(SdkStatus s) {
     }
     return "?";
 }
-
 }  // namespace
 
-SentientWsProtocol::SentientWsProtocol(SentientWsProtocolConfig cfg)
-    : cfg_(std::move(cfg)) {
-    ESP_LOGI(TAG, "ctor gateway_url=%s token_preview=%.8s...",
-             cfg_.gateway_url.c_str(),
-             cfg_.token.c_str());
-}
-
-SentientWsProtocol::~SentientWsProtocol() {
-    disconnect();
-}
+SentientWsProtocol::SentientWsProtocol(SentientWsProtocolConfig cfg) : cfg_(std::move(cfg)) {}
+SentientWsProtocol::~SentientWsProtocol() { disconnect(); }
 
 esp_err_t SentientWsProtocol::connect() {
-    if (client_ != nullptr) {
-        ESP_LOGW(TAG, "connect: client already exists, ignoring");
-        return ESP_OK;
+    auto report = [this](const char* phase, esp_err_t error) {
+        if (cfg_.on_start_result) cfg_.on_start_result(phase, error);
+        if (error != ESP_OK) ESP_LOGE(TAG, "ws.start_failed: phase=%s code=%d", phase, error);
+        return error;
+    };
+    if (client_) return report("state", ESP_ERR_INVALID_STATE);
+    bool blocked;
+    { std::lock_guard<std::mutex> lock(state_mutex_);
+      blocked = wire_.terminal_auth || stopping_; }
+    if (blocked) return report("state", ESP_ERR_INVALID_STATE);
+    // Neither plaintext nor a TLS connection without a trust anchor is supported.
+    if (cfg_.gateway_url.rfind("wss://", 0) != 0 || cfg_.device_id.empty()) {
+        set_status(SdkStatus::Error);
+        return report("config", ESP_ERR_INVALID_ARG);
+    }
+    if (!worker_) {
+        worker_done_ = xSemaphoreCreateBinary();
+        if (!worker_done_) {
+            set_status(SdkStatus::Error);
+            return report("worker-sync", ESP_ERR_NO_MEM);
+        }
+        // Socket/queue worker only: no flash/NVS writes. Keep full stack size,
+        // using PSRAM so BLE/Wi-Fi and flash-owning tasks retain internal RAM.
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+        auto created = xTaskCreateWithCaps(worker_entry, "sentient_ws", 8192, this, 4,
+                                          &worker_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+        auto created = xTaskCreate(worker_entry, "sentient_ws", 8192, this, 4, &worker_);
+#endif
+        if (created != pdPASS) {
+            vSemaphoreDelete(worker_done_);
+            worker_done_ = nullptr;
+            set_status(SdkStatus::Error);
+            return report("worker-task", ESP_ERR_NO_MEM);
+        }
     }
     set_status(SdkStatus::Connecting);
-    esp_websocket_client_config_t ws_cfg = {};
-    ws_cfg.uri = cfg_.gateway_url.c_str();
-    ws_cfg.reconnect_timeout_ms = 0;     // we own reconnect, not esp_websocket_client
-    ws_cfg.disable_auto_reconnect = true;
-    ws_cfg.buffer_size = kWsBufferSizeBytes;
-    // esp_websocket_client default task stack is 4096 bytes — too tight on
-    // this build. The WS task processes inbound frames inside its own
-    // context, calling our event handler which logs via ESP_LOGI. Each log
-    // line walks the vprintf hook chain (devtool log_relay when enabled),
-    // plus mbedTLS receive buffers on the TLS path. session.ready + the
-    // first session/configure ACK reliably blew the 4 KB stack
-    // (vApplicationStackOverflowHook fired with canary 0xa5a5a5a5). 8 KB
-    // leaves headroom for the worst-case logging chain.
-    ws_cfg.task_stack = 8192;
-    if (cfg_.cert_pem != nullptr) {
-        ws_cfg.cert_pem = cfg_.cert_pem;
+    esp_websocket_client_config_t config = {};
+    config.uri = cfg_.gateway_url.c_str();
+    config.disable_auto_reconnect = true;
+    config.buffer_size = 4096;
+    config.task_stack = 8192;
+    config.network_timeout_ms = 2000;
+    if (cfg_.cert_pem) config.cert_pem = cfg_.cert_pem;
+    else config.crt_bundle_attach = esp_crt_bundle_attach;
+    client_ = esp_websocket_client_init(&config);
+    if (!client_) {
+        set_status(reconnect_attempts_ > 0 ? SdkStatus::Reconnecting : SdkStatus::Error);
+        if (reconnect_attempts_ > 0) schedule_reconnect();
+        return report("client-init", ESP_FAIL);
     }
-    if (cfg_.skip_tls_cn_check) {
-        ws_cfg.skip_cert_common_name_check = true;
+    const char* phase = "client-events";
+    esp_err_t err = esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY, ws_event_handler, this);
+    if (err == ESP_OK) {
+        phase = "client-start";
+        err = esp_websocket_client_start(client_);
     }
-    client_ = esp_websocket_client_init(&ws_cfg);
-    if (client_ == nullptr) {
-        ESP_LOGE(TAG, "connect: esp_websocket_client_init returned NULL");
-        set_status(SdkStatus::Error);
-        return ESP_FAIL;
-    }
-    esp_err_t err = esp_websocket_register_events(client_,
-                                                  WEBSOCKET_EVENT_ANY,
-                                                  ws_event_handler,
-                                                  this);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "connect: register_events failed err=%d", err);
-        set_status(SdkStatus::Error);
-        return err;
+        esp_websocket_client_destroy(client_);
+        client_ = nullptr;
+        set_status(reconnect_attempts_ > 0 ? SdkStatus::Reconnecting : SdkStatus::Error);
+        if (reconnect_attempts_ > 0) schedule_reconnect();
     }
-    return esp_websocket_client_start(client_);
+    return report(err == ESP_OK ? "started" : phase, err);
 }
 
 void SentientWsProtocol::disconnect() {
+    stopping_ = true;
     cancel_reconnect();
-    if (client_ != nullptr) {
+    cancel_ready_timeout();
+    wait_for_timer_callbacks();
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        streaming_ = false;
+        ending_ = false;
+        uplink_failed_ = true;
+    }
+    // A synchronous uplink sender must finish before socket destruction.
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kUplinkWaitMs);
+    while (pumping_.test_and_set()) {
+        if (static_cast<int32_t>(deadline - xTaskGetTickCount()) <= 0) abort();
+        vTaskDelay(1);
+    }
+    pumping_.clear();
+    if (worker_) {
+        xTaskNotify(worker_, kStopSignal, eSetBits);
+        // Pinned client stop/destroy may wait indefinitely internally; fail closed
+        // rather than release callback target or hang teardown forever.
+        if (xSemaphoreTake(worker_done_, pdMS_TO_TICKS(15000)) != pdTRUE) abort();
+        worker_ = nullptr;
+        vSemaphoreDelete(worker_done_);
+        worker_done_ = nullptr;
+    } else if (client_) {
+        // Defensive fallback; normal connections create worker first.
         esp_websocket_client_stop(client_);
         esp_websocket_client_destroy(client_);
         client_ = nullptr;
     }
+    handle_disconnect();
+    reset_receive_state(); // Websocket task has exited; receiver ownership handed off.
+    demuxer_.reset();
     set_status(SdkStatus::Disconnected);
 }
 
@@ -135,413 +167,690 @@ SdkStatus SentientWsProtocol::status() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return status_;
 }
-
-std::string SentientWsProtocol::last_transcript() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    return last_transcript_;
-}
-
 void SentientWsProtocol::set_status(SdkStatus next) {
     SdkStatus prev;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (status_ == next) return;
+        if (status_ == next || (next == SdkStatus::Reconnecting && wire_.terminal_auth)) return;
         prev = status_;
         status_ = next;
     }
     ESP_LOGI(TAG, "status: %s -> %s", status_name(prev), status_name(next));
     if (cfg_.on_status_change) cfg_.on_status_change(next);
 }
-
-void SentientWsProtocol::send_text(const std::string& text) {
-    if (client_ == nullptr || !esp_websocket_client_is_connected(client_)) {
-        ESP_LOGW(TAG, "send_text: not connected, dropping len=%zu", text.size());
-        return;
-    }
-    esp_websocket_client_send_text(client_, text.c_str(), text.size(), portMAX_DELAY);
+bool SentientWsProtocol::send_text(const std::string& text) {
+    bool connected = client_ && esp_websocket_client_is_connected(client_);
+    int result = connected ? esp_websocket_client_send_text(client_, text.c_str(), text.size(), pdMS_TO_TICKS(2000)) : -1;
+    if (result != static_cast<int>(text.size()))
+        ESP_LOGW(TAG, "ws text send failed: expected=%u result=%d connected=%d status=%s",
+                 static_cast<unsigned>(text.size()), result, connected, status_name(status()));
+    return result == static_cast<int>(text.size());
+}
+bool SentientWsProtocol::send_binary(const uint8_t* data, size_t len) {
+    bool connected = client_ && esp_websocket_client_is_connected(client_);
+    int result = connected ? esp_websocket_client_send_bin(client_, reinterpret_cast<const char*>(data), len, pdMS_TO_TICKS(2000)) : -1;
+    if (result != static_cast<int>(len))
+        ESP_LOGW(TAG, "ws binary send failed: expected=%u result=%d connected=%d status=%s",
+                 static_cast<unsigned>(len), result, connected, status_name(status()));
+    return result == static_cast<int>(len);
+}
+bool SentientWsProtocol::send_control(const char* type, const std::string& id,
+                                      const std::string& session, int generation) {
+    JsonPtr obj_owner(cJSON_CreateObject(), cJSON_Delete);
+    cJSON* obj = obj_owner.get();
+    if (!obj) return false;
+    cJSON_AddStringToObject(obj, "type", type);
+    if (!id.empty()) cJSON_AddStringToObject(obj, "captureId", id.c_str());
+    if (strcmp(type, "audio.start") == 0) cJSON_AddStringToObject(obj, "turnMode", "manual");
+    binding(obj, session, generation);
+    JsonText encoded(cJSON_PrintUnformatted(obj), cJSON_free);
+    bool sent = encoded && send_text(encoded.get());
+    return sent;
 }
 
-void SentientWsProtocol::send_binary(const uint8_t* data, size_t len) {
-    if (client_ == nullptr || !esp_websocket_client_is_connected(client_)) return;
-    esp_websocket_client_send_bin(client_,
-                                  reinterpret_cast<const char*>(data),
-                                  len,
-                                  portMAX_DELAY);
-}
-
-void SentientWsProtocol::ws_event_handler(void* arg,
-                                          esp_event_base_t /*base*/,
-                                          int32_t event_id,
-                                          void* event_data) {
-    auto* self = static_cast<SentientWsProtocol*>(arg);
-    auto* ed = static_cast<esp_websocket_event_data_t*>(event_data);
-    switch (event_id) {
-        case WEBSOCKET_EVENT_CONNECTED: {
-            ESP_LOGI(TAG, "ws: connected, sending auth");
-            self->set_status(SdkStatus::Authenticating);
-            cJSON* root = cJSON_CreateObject();
-            cJSON_AddStringToObject(root, "type", "auth");
-            cJSON_AddStringToObject(root, "token", self->cfg_.token.c_str());
-            char* s = cJSON_PrintUnformatted(root);
-            if (s != nullptr) {
-                self->send_text(s);
-                cJSON_free(s);
-            } else {
-                ESP_LOGE(TAG, "auth: cJSON_PrintUnformatted OOM");
+bool SentientWsProtocol::start_streaming() {
+    // Only accept once audio.start is serialized before any binary packet.
+    if (pumping_.test_and_set()) return false;
+    bool accepted = false;
+    std::string id, session;
+    int gen = 0;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!stopping_ && status_ == SdkStatus::Ready && !streaming_ && !ending_ && !busy_refusal_ && !wire_.terminal_auth) {
+            char uuid[33];
+            snprintf(uuid, sizeof(uuid), "%08lx%08lx%08lx%08lx",
+                     static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()),
+                     static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
+            id = uuid;
+            accepted = wire_.start_capture(id);
+            if (accepted) {
+                streaming_ = true;
+                discard_uplink_ = false;
+                uplink_failed_ = false;
+                session = wire_.capture_session_id;
+                gen = wire_.capture_generation;
             }
-            cJSON_Delete(root);
+        }
+    }
+    if (accepted) {
+        accepted = send_control("audio.start", id, session, gen);
+        if (!accepted) fail_uplink();
+        else {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            accepted = status_ == SdkStatus::Ready && streaming_ && !busy_refusal_ && wire_.capture_id == id;
+        }
+    }
+    pumping_.clear();
+    return accepted;
+}
+void SentientWsProtocol::stop_streaming() { finish_uplink("audio.end"); }
+void SentientWsProtocol::cancel_streaming() { finish_uplink("audio.cancel"); }
+void SentientWsProtocol::finish_uplink(const char* type) {
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!streaming_ && !ending_) return;
+        if (streaming_) {
+            streaming_ = false;
+            ending_ = true;
+            pending_end_id_ = wire_.finish_capture();
+            pending_end_session_ = wire_.capture_session_id;
+            pending_end_generation_ = wire_.capture_generation;
+            pending_end_type_ = busy_refusal_ ? "audio.cancel" : type;
+            end_deadline_ = xTaskGetTickCount() + pdMS_TO_TICKS(kUplinkWaitMs);
+        } else if (busy_refusal_ && !pending_end_id_.empty()) {
+            // A terminal already taken by pump is in flight: do not rewrite or
+            // duplicate it. A still-pending provisional terminal can cancel.
+            pending_end_type_ = "audio.cancel";
+        }
+        discard_uplink_ = busy_refusal_ || strcmp(pending_end_type_, "audio.cancel") == 0;
+    }
+    pump_again_.store(true);
+    pump_uplink();
+    // Owner may be in send_bin. Stay in Listening until it drains and sends end.
+    // Timeout aborts capture; owner checks failure before any later end.
+    while (true) {
+        bool pending;
+        TickType_t deadline;
+        { std::lock_guard<std::mutex> lock(state_mutex_);
+          pending = ending_; deadline = end_deadline_; }
+        if (!pending) break;
+        if (static_cast<int32_t>(deadline - xTaskGetTickCount()) <= 0) {
+            fail_uplink();
             break;
         }
-        case WEBSOCKET_EVENT_DATA:
-            if (ed->op_code == kWsOpcodeText || ed->op_code == kWsOpcodeContinuation) {
-                self->handle_text(reinterpret_cast<const char*>(ed->data_ptr), ed->data_len);
-            } else if (ed->op_code == kWsOpcodeBinary) {
-                self->handle_binary(reinterpret_cast<const uint8_t*>(ed->data_ptr), ed->data_len);
-            }
-            break;
-        case WEBSOCKET_EVENT_DISCONNECTED:
-        case WEBSOCKET_EVENT_CLOSED:
-            ESP_LOGI(TAG, "ws: disconnect event=%d", static_cast<int>(event_id));
-            self->set_status(SdkStatus::Reconnecting);
-            self->schedule_reconnect();
-            break;
-        case WEBSOCKET_EVENT_ERROR:
-            ESP_LOGW(TAG, "ws: error event");
-            break;
-        default: break;
+        vTaskDelay(1);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Stubs — bodies filled by Tasks 4-6. Each body is `{}` (or the
-// minimum needed to link) so the firmware still builds while the
-// implementation lands incrementally.
-// ---------------------------------------------------------------------------
-
-void SentientWsProtocol::start_streaming() {
-    if (status() != SdkStatus::Ready) {
-        ESP_LOGW(TAG, "start_streaming: not Ready, ignoring");
-        return;
-    }
-    if (is_streaming_.exchange(true)) return;
-    send_text("{\"type\":\"audio.start\"}");
-    ESP_LOGI(TAG, "uplink: audio.start");
+bool SentientWsProtocol::busy_refusal_pending() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return busy_refusal_;
 }
-
-void SentientWsProtocol::stop_streaming() {
-    if (!is_streaming_.exchange(false)) return;
-    send_text("{\"type\":\"audio.end\"}");
-    ESP_LOGI(TAG, "uplink: audio.end");
+void SentientWsProtocol::settle_busy_refusal() {
+    uint32_t generation;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!busy_refusal_) return;
+        generation = busy_refusal_generation_;
+    }
+    // Only an open local capture can be cancelled; never target an ended one.
+    // Matching cancel is harmless when the server refused that capture and
+    // cannot discard a different, already-committing capture on this socket.
+    finish_uplink("audio.cancel");
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (generation == busy_refusal_generation_ && !streaming_ && !ending_) busy_refusal_ = false;
+}
+void SentientWsProtocol::fail_uplink() {
+    if (stopping_ || status() == SdkStatus::Reconnecting || status() == SdkStatus::Error) return;
+    uplink_failed_ = true;
+    handle_disconnect();
+    // Gateway capture is connection-scoped: close socket to cancel partial
+    // capture before retrying on a fresh attachment. Auth rejection stays terminal.
+    bool retry;
+    { std::lock_guard<std::mutex> lock(state_mutex_);
+      retry = !wire_.terminal_auth && !stopping_ && worker_ && client_; }
+    if (retry) {
+        set_status(SdkStatus::Reconnecting);
+        xTaskNotify(worker_, kFailSignal, eSetBits);
+    } else if (!stopping_) set_status(SdkStatus::Error);
+}
+void SentientWsProtocol::interrupt() {
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kUplinkWaitMs);
+    while (pumping_.test_and_set()) {
+        if (stopping_ || status() != SdkStatus::Ready ||
+            static_cast<int32_t>(deadline - xTaskGetTickCount()) <= 0) return;
+        vTaskDelay(1);
+    }
+    // Share the uplink sender lifetime fence, including exception unwinding.
+    struct Release { std::atomic_flag& flag; ~Release() { flag.clear(); } } release{pumping_};
+    std::string session;
+    int generation;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (stopping_ || status_ != SdkStatus::Ready) return;
+        session = wire_.session_id;
+        generation = wire_.generation;
+    }
+    if (!send_control("interrupt", "", session, generation)) fail_uplink();
 }
 
 void SentientWsProtocol::notify_uplink_available() {
-    pump_uplink();
+    // Task notification bits coalesce bursts. Never enter TLS from codec callback.
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    // Serialize notification with disconnect's state fence before worker deletion.
+    if (!stopping_ && status_ == SdkStatus::Ready && worker_)
+        xTaskNotify(worker_, kPumpSignal, eSetBits);
+}
+void SentientWsProtocol::pump_uplink() {
+    if (pumping_.test_and_set()) { pump_again_.store(true); return; }
+    do {
+        pump_again_.store(false);
+        while (cfg_.on_pop_uplink_frame) {
+            bool streaming, discard, ending;
+            TickType_t deadline;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                streaming = streaming_;
+                discard = discard_uplink_;
+                ending = ending_;
+                deadline = end_deadline_;
+            }
+            if (!streaming && !ending) break;
+            if (ending && static_cast<int32_t>(deadline - xTaskGetTickCount()) <= 0) {
+                fail_uplink();
+                break;
+            }
+            if (discard) break;
+            std::vector<uint8_t> payload;
+            if (!cfg_.on_pop_uplink_frame(payload)) break;
+            // Refusal/cancel can arrive during pop. Stop provisional bytes before
+            // the terminal; an already in-flight send still precedes cancellation.
+            { std::lock_guard<std::mutex> lock(state_mutex_); discard = discard_uplink_; }
+            bool sent = payload.empty() || discard || send_binary(payload.data(), payload.size());
+            if (!sent) { fail_uplink(); break; }
+        }
+        std::string id, session;
+        int gen = 0;
+        const char* type = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (ending_ && !uplink_failed_) {
+                id = std::move(pending_end_id_);
+                session = std::move(pending_end_session_);
+                gen = pending_end_generation_;
+                type = pending_end_type_;
+            }
+        }
+        if (type) {
+            if (!id.empty() && !uplink_failed_ &&
+                !send_control(type, id, session, gen)) fail_uplink();
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            ending_ = false;
+        }
+    } while (pump_again_.exchange(false));
+    pumping_.clear();
+    if (pump_again_.exchange(false)) pump_uplink();
 }
 
-void SentientWsProtocol::force_reconnect() {
-    ESP_LOGI(TAG, "force_reconnect: tap-to-reconnect, resetting attempts");
-    reconnect_attempts_.store(0);
-    cancel_reconnect();
-    if (client_ != nullptr) {
-        esp_websocket_client_destroy(client_);
-        client_ = nullptr;
+void SentientWsProtocol::handle_disconnect() {
+    bool playback;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        playback = !wire_.audio_turn.empty() || !wire_.done_turn.empty();
+        wire_.disconnect();
+        uplink_failed_ = true;
+        streaming_ = false;
+        ending_ = false;
+        discard_uplink_ = true;
+        busy_refusal_ = false;
+        ++busy_refusal_generation_;
+        pending_end_id_.clear();
     }
+    if (playback && cfg_.on_playback_end) cfg_.on_playback_end(true);
+}
+void SentientWsProtocol::update_token(const std::string& token) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    cfg_.token = token;
+}
+void SentientWsProtocol::force_reconnect() {
+    reconnect_attempts_.store(0);
+    disconnect();
+    { std::lock_guard<std::mutex> lock(state_mutex_); wire_.terminal_auth = false; }
+    stopping_ = false;
     connect();
 }
 
+void SentientWsProtocol::handle_data(const esp_websocket_event_data_t* ed) {
+    if (!ed) return;
+    const uint8_t* binary = nullptr;
+    size_t binary_len = 0;
+    bool complete = inbound_.append(ed->op_code, ed->fin, ed->payload_offset,
+                                    ed->payload_len, ed->data_ptr, ed->data_len,
+                                    binary, binary_len);
+    if (inbound_.framing_error) {
+        ESP_LOGW(TAG, "ws: invalid frame ordering");
+        fail_uplink();
+        return;
+    }
+    if (ed->op_code >= 8) return; // Control frames never feed/reset text parser.
+    if (inbound_.opcode == 1) {
+        auto error = BoundedEnvelope::Error::None;
+        if (inbound_.new_message) error = text_envelope_.reset();
+        if (error == BoundedEnvelope::Error::None)
+            error = text_envelope_.feed(ed->data_ptr, static_cast<size_t>(ed->data_len));
+        if (error == BoundedEnvelope::Error::None && complete) error = text_envelope_.finish();
+        size_t length = 0;
+        const char* envelope = complete ? text_envelope_.envelope(length) : nullptr;
+        if (complete && !envelope && error == BoundedEnvelope::Error::None)
+            error = BoundedEnvelope::Error::InvalidState;
+        if (error != BoundedEnvelope::Error::None) {
+            ESP_LOGW(TAG, "ws: envelope rejected category=%d", static_cast<int>(error));
+            fail_uplink();
+            return;
+        }
+        // Root completion is not publication authority: only final frame FIN.
+        if (complete) {
+            handle_text(envelope, length);
+            inbound_.reset();
+        }
+        return;
+    }
+    if (inbound_.opcode == 2 && !inbound_.dropped && binary_len) {
+        if (!inbound_.binary_accepted) {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            inbound_.binary_accepted = inbound_.header_size == 9 &&
+                wire_.audio_sequence(inbound_.binary_header.data());
+            if (!inbound_.binary_accepted) inbound_.dropped = true;
+        }
+        // Playback may block on the decode queue: never hold state_mutex_ here.
+        if (inbound_.binary_accepted && output_pcm_) {
+            // PCM16LE may split at any byte, including across WS messages.
+            while (binary_len) {
+                const size_t take = std::min(binary_len, kPcmChunkBytes - pcm_pending_.size());
+                pcm_pending_.insert(pcm_pending_.end(), binary, binary + take);
+                binary += take; binary_len -= take;
+                if (pcm_pending_.size() == kPcmChunkBytes) {
+                    if (cfg_.on_playback_frame)
+                        cfg_.on_playback_frame(pcm_pending_.data(), pcm_pending_.size(), output_sample_rate_, true);
+                    pcm_pending_.clear();
+                }
+            }
+        } else if (inbound_.binary_accepted && demuxer_) demuxer_->Process(binary, binary_len);
+    }
+    if (!complete) return;
+    inbound_.reset();
+}
+
 void SentientWsProtocol::handle_text(const char* data, size_t len) {
-    cJSON* root = cJSON_ParseWithLength(data, len);
-    if (root == nullptr) {
-        ESP_LOGW(TAG, "handle_text: parse error len=%zu", len);
-        return;
-    }
-    const cJSON* type = cJSON_GetObjectItem(root, "type");
-    if (!cJSON_IsString(type)) {
-        ESP_LOGW(TAG, "handle_text: missing type");
-        cJSON_Delete(root);
-        return;
-    }
-    const char* t = type->valuestring;
-    if      (strcmp(t, "auth.ok") == 0)                    handle_auth_ok(root);
-    else if (strcmp(t, "session.ready") == 0)              handle_session_ready(root);
-    else if (strcmp(t, "connector.transcript.final") == 0) handle_transcript_final(root);
-    else if (strcmp(t, "cycle.started") == 0)              handle_cycle_started(root);
-    else if (strcmp(t, "cycle.completed") == 0)            handle_cycle_completed(root);
-    else if (strcmp(t, "cognition.status") == 0)           handle_cognition_status(root);
-    else if (strcmp(t, "connector.audio.start") == 0)      handle_connector_audio_start(root);
-    else if (strcmp(t, "connector.audio.done") == 0)       handle_connector_audio_done(root);
-    else if (strcmp(t, "playback.stop") == 0)              handle_playback_stop(root);
-    else if (strcmp(t, "error") == 0)                      handle_error_frame(root);
-    else if (strcmp(t, "pong") == 0)                       { /* ignore */ }
-    else ESP_LOGD(TAG, "handle_text: unhandled type=%s", t);
-    cJSON_Delete(root);
-}
-
-void SentientWsProtocol::handle_binary(const uint8_t* data, size_t len) {
-    std::string current_cycle;
-    int sample_rate;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        current_cycle = active_cycle_id_;
-        sample_rate = active_output_sample_rate_;
-    }
-    if (current_cycle.empty()) {
-        ESP_LOGD(TAG, "handle_binary: no active cycle, dropping len=%zu", len);
-        return;
-    }
-#if CONFIG_CUBE_SDK_TRACE_AUDIO_FRAMES
-    ESP_LOGD(TAG, "rx opus cycle=%s len=%zu sr=%d", current_cycle.c_str(), len, sample_rate);
-#endif
-    if (cfg_.on_playback_frame) cfg_.on_playback_frame(data, len, sample_rate);
-}
-
-void SentientWsProtocol::handle_auth_ok(const cJSON* root) {
-    const char* session_id = json_string(root, "sessionId");
-    if (session_id != nullptr) {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        session_id_ = session_id;
-    }
-    ESP_LOGI(TAG, "auth.ok: sessionId=%s", session_id ? session_id : "<missing>");
-
-    // Send session.configure with the cube's capability advertisement.
-    // clientType="cube" lets gateway-side policy gates (e.g. TTS) treat
-    // headless devices differently from webui without mutating user prefs.
-    cJSON* cfg = cJSON_CreateObject();
-    cJSON_AddStringToObject(cfg, "type", "session.configure");
-    cJSON_AddStringToObject(cfg, "clientType", "cube");
-    cJSON* caps = cJSON_AddObjectToObject(cfg, "capabilities");
-    cJSON* supports = cJSON_AddArrayToObject(caps, "supports");
-    cJSON_AddItemToArray(supports, cJSON_CreateString("audio.input"));
-    cJSON_AddItemToArray(supports, cJSON_CreateString("audio.output"));
-    char* s = cJSON_PrintUnformatted(cfg);
-    if (s != nullptr) {
-        send_text(s);
-        cJSON_free(s);
-    } else {
-        ESP_LOGE(TAG, "auth.ok: cJSON_PrintUnformatted OOM");
-    }
-    cJSON_Delete(cfg);
-
-    arm_ready_timeout();
-}
-
-void SentientWsProtocol::handle_session_ready(const cJSON* root) {
-    const char* encoding = json_string(root, "audioEncoding");
-    int in_sr = json_int(root, "inputSampleRate", kSentientUplinkSampleRateHz);
-    int out_sr = json_int(root, "outputSampleRate", kSentientDownlinkSampleRateHz);
-    ESP_LOGI(TAG, "session.ready: encoding=%s inputSampleRate=%d outputSampleRate=%d",
-             encoding ? encoding : "<missing>", in_sr, out_sr);
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        active_input_sample_rate_ = in_sr;
-        active_output_sample_rate_ = out_sr;
-    }
-    set_status(SdkStatus::Ready);
-    reconnect_attempts_.store(0);
-    cancel_ready_timeout();
-}
-
-void SentientWsProtocol::handle_transcript_final(const cJSON* root) {
-    const char* text = json_string(root, "text");
-    if (text == nullptr) {
-        ESP_LOGW(TAG, "connector.transcript.final: missing text");
-        return;
-    }
-    std::string captured;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        last_transcript_ = text;
-        captured = last_transcript_;
-    }
-    ESP_LOGI(TAG, "connector.transcript.final: text=\"%.*s\"%s",
-             static_cast<int>(std::min<size_t>(captured.size(), kLogPreviewMaxChars)),
-             captured.c_str(),
-             captured.size() > kLogPreviewMaxChars ? "..." : "");
-    if (cfg_.on_transcript) cfg_.on_transcript(captured);
-}
-
-void SentientWsProtocol::handle_cycle_started(const cJSON* root) {
-    const char* cycle_id = json_string(root, "cycleId");
-    // NOTE: do NOT set active_cycle_id_ here — that field tracks the TTS
-    // cycle and is owned by connector.audio.start. cycle.started fires before
-    // any audio is produced and may not yield audio at all (text-only reply).
-    ESP_LOGI(TAG, "cycle.started: cycleId=%s", cycle_id ? cycle_id : "<missing>");
-}
-
-void SentientWsProtocol::handle_cycle_completed(const cJSON* root) {
-    const char* cycle_id = json_string(root, "cycleId");
-    ESP_LOGI(TAG, "cycle.completed: cycleId=%s", cycle_id ? cycle_id : "<missing>");
-    // Defensive: gateway may not always emit cognition.status=idle right after
-    // cycle.completed. Fire it ourselves so the UI returns to idle reliably.
-    if (cfg_.on_cognition_status) cfg_.on_cognition_status(CognitionState::Idle);
-}
-
-void SentientWsProtocol::handle_cognition_status(const cJSON* root) {
-    const char* state = json_string(root, "state");
-    if (state == nullptr) {
-        ESP_LOGW(TAG, "cognition.status: missing state");
-        return;
-    }
-    if (strcmp(state, "idle") != 0 && strcmp(state, "thinking") != 0 &&
-        strcmp(state, "acting") != 0) {
-        ESP_LOGW(TAG, "cognition.status: unknown state=%s (defaulting to idle)", state);
-    }
-    CognitionState mapped = map_cognition_state(state);
-    ESP_LOGI(TAG, "cognition.status: state=%s", state);
-    if (cfg_.on_cognition_status) cfg_.on_cognition_status(mapped);
-}
-
-void SentientWsProtocol::handle_connector_audio_start(const cJSON* root) {
-    const char* cycle_id = json_string(root, "cycleId");
-    int sample_rate = json_int(root, "sampleRate", kSentientDownlinkSampleRateHz);
-    ESP_LOGI(TAG, "connector.audio.start: cycleId=%s sampleRate=%d",
-             cycle_id ? cycle_id : "<missing>", sample_rate);
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        active_cycle_id_ = cycle_id ? cycle_id : "";
-        active_output_sample_rate_ = sample_rate;
-    }
-    if (cfg_.on_playback_begin) cfg_.on_playback_begin(sample_rate);
-}
-
-void SentientWsProtocol::handle_connector_audio_done(const cJSON* root) {
-    const char* cycle_id = json_string(root, "cycleId");
-    bool cleared = false;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        if (cycle_id != nullptr && active_cycle_id_ == cycle_id) {
-            active_cycle_id_.clear();
-            cleared = true;
+    JsonPtr root_owner(cJSON_ParseWithLength(data, len), cJSON_Delete);
+    cJSON* root = root_owner.get();
+    if (!root) { ESP_LOGW(TAG, "ws: invalid json len=%u", static_cast<unsigned>(len)); fail_uplink(); return; }
+    const std::string type = value(field(root, "type"));
+    for (const char* name : {"seq", "epoch"}) {
+        const auto* n = cJSON_GetObjectItemCaseSensitive(root, name);
+        if (n && (!cJSON_IsNumber(n) || !std::isfinite(n->valuedouble) || n->valuedouble < 0 ||
+                  n->valuedouble > 9007199254740991.0 || std::floor(n->valuedouble) != n->valuedouble)) {
+            fail_uplink(); return;
         }
     }
-    if (cleared) {
-        ESP_LOGI(TAG, "connector.audio.done: cycleId=%s playback ended (natural)", cycle_id);
-        if (cfg_.on_playback_end) cfg_.on_playback_end(false);
-    } else {
-        ESP_LOGW(TAG, "connector.audio.done: cycleId mismatch incoming=%s (no active cycle)",
-                 cycle_id ? cycle_id : "<missing>");
-    }
-}
-
-void SentientWsProtocol::handle_playback_stop(const cJSON* root) {
-    const char* cycle_id = json_string(root, "cycleId");
-    const char* reason = json_string(root, "reason");
-    ESP_LOGI(TAG, "playback.stop: cycleId=%s reason=%s",
-             cycle_id ? cycle_id : "<missing>", reason ? reason : "<missing>");
-    bool cleared = false;
+    // Lifecycle reset precedes cursor adoption; ignored projections still consume seq.
+    bool reset = false, had_playback = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (cycle_id != nullptr && active_cycle_id_ == cycle_id) {
-            active_cycle_id_.clear();
-            cleared = true;
+        const auto old_session = wire_.session_id;
+        const auto old_anchor = wire_.anchor;
+        const auto old_generation = wire_.generation;
+        had_playback = !wire_.audio_turn.empty() || !wire_.done_turn.empty();
+        if (type == "session.attached") {
+            const auto* gen = cJSON_GetObjectItemCaseSensitive(root, "generation");
+            if (cJSON_IsNumber(gen)) wire_.attached(value(field(root, "sessionId")), gen->valueint);
+        } else if (type == "session.draft") wire_.draft(value(field(root, "draftKey")));
+        reset = old_session != wire_.session_id || old_generation != wire_.generation || old_anchor != wire_.anchor;
+        const auto* seq = cJSON_GetObjectItemCaseSensitive(root, "seq");
+        const auto* epoch = cJSON_GetObjectItemCaseSensitive(root, "epoch");
+        const bool supplied = cJSON_IsNumber(epoch) && epoch->valuedouble >= 0;
+        if (supplied && wire_.has_epoch && wire_.epoch != static_cast<uint64_t>(epoch->valuedouble)) {
+            wire_.reset_journal(); reset = true;
+        }
+        if (!wire_.sequence(cJSON_IsNumber(seq) && seq->valuedouble > 0 ? static_cast<uint64_t>(seq->valuedouble) : 0,
+                            supplied, supplied ? static_cast<uint64_t>(epoch->valuedouble) : 0)) {
+            return;
         }
     }
-    if (cleared) {
-        if (cfg_.on_playback_end) cfg_.on_playback_end(true);
-    } else {
-        ESP_LOGD(TAG, "playback.stop: cycleId mismatch incoming=%s (older cycle, ok)",
-                 cycle_id ? cycle_id : "<missing>");
+    if (reset) {
+        pcm_pending_.clear();
+        if (demuxer_) demuxer_->Reset();
+        if (had_playback && cfg_.on_playback_end) cfg_.on_playback_end(true);
+        if (cfg_.on_cognition_status) cfg_.on_cognition_status(CognitionState::Idle);
     }
-}
 
-void SentientWsProtocol::handle_error_frame(const cJSON* root) {
-    const char* code = json_string(root, "code");
-    const char* message = json_string(root, "message");
-    size_t msg_len = message ? strlen(message) : 0;
-    ESP_LOGW(TAG, "error: code=%s message=\"%.*s\"%s",
-             code ? code : "<missing>",
-             static_cast<int>(std::min<size_t>(msg_len, kLogPreviewMaxChars)),
-             message ? message : "",
-             msg_len > kLogPreviewMaxChars ? "..." : "");
-    if (code != nullptr && strncmp(code, "auth.", 5) == 0) {
-        ESP_LOGW(TAG, "error: auth-class code=%s — entering Error state, halting reconnect", code);
+    if (type == "auth.error") {
+        if (cfg_.on_failure) cfg_.on_failure(SdkFailure::ServerError, value(field(root, "code")));
+        { std::lock_guard<std::mutex> lock(state_mutex_); wire_.terminal_auth = true; }
+        cancel_ready_timeout(); cancel_reconnect();
+        handle_disconnect();
+        if (demuxer_) demuxer_->Reset();
         set_status(SdkStatus::Error);
-        cancel_reconnect();
-        // Defense-in-depth: bump attempts so any future schedule_reconnect bails.
-        reconnect_attempts_.store(kReconnectMaxAttempts);
-        return;
-    }
-    // Gateway-side Hermes wire is dead (e.g. ACP WS timed out after long idle).
-    // The gateway creates a fresh ACP wire on every new client WS session, so
-    // dropping + reconnecting our WS is enough to recover — same shape as
-    // webui reopening a tab. force_reconnect resets the backoff counter so
-    // recovery is immediate, not subject to the exhaustion cap.
-    if (code != nullptr && strncmp(code, "hermes", 6) == 0) {
-        ESP_LOGW(TAG, "error: hermes-class code=%s — forcing reconnect to mint a fresh ACP wire", code);
-        force_reconnect();
+    } else if (type == "auth.ok" && status() == SdkStatus::Authenticating) {
+        JsonPtr obj_owner(cJSON_CreateObject(), cJSON_Delete);
+        cJSON* obj = obj_owner.get();
+        if (obj) {
+            cJSON_AddStringToObject(obj, "type", "session.configure");
+            cJSON_AddStringToObject(obj, "clientType", "cube");
+            cJSON_AddStringToObject(obj, "deviceId", cfg_.device_id.c_str());
+            cJSON_AddStringToObject(obj, "language", "en");
+            cJSON* caps = cJSON_AddObjectToObject(obj, "capabilities");
+            cJSON* supports = caps ? cJSON_AddArrayToObject(caps, "supports") : nullptr;
+            if (supports) {
+                cJSON_AddItemToArray(supports, cJSON_CreateString("audio.input"));
+                cJSON_AddItemToArray(supports, cJSON_CreateString("audio.output"));
+            }
+            // No resume: replay requires retaining audio/lifecycle prerequisites, not just a cursor.
+            { std::lock_guard<std::mutex> lock(state_mutex_);
+              if (!wire_.anchor.empty()) cJSON_AddStringToObject(obj, "conversationId", wire_.anchor.c_str()); }
+            JsonText encoded(cJSON_PrintUnformatted(obj), cJSON_free);
+            bool sent = encoded && send_text(encoded.get());
+            if (!sent) { fail_uplink(); return; }
+        } else { fail_uplink(); return; }
+        arm_ready_timeout();
+    } else if (type == "session.ready" && status() == SdkStatus::Authenticating) {
+        // session.ready advertises input format; downlink encoding is turn.audio.start.
+        cancel_ready_timeout(); reconnect_attempts_.store(0);
+        set_status(SdkStatus::Ready);
+    } else if (type == "command.rejected" || type == "error" || type == "session.expired") {
+        const auto command = value(field(root, "command"));
+        if (type != "command.rejected" || command == "audio.start" || command == "audio.end" ||
+            command == "audio.cancel" || command == "transcript" || command == "interrupt") {
+            const auto code = value(field(root, type == "command.rejected" ? "reason" : "code"));
+            if (type == "command.rejected" && command == "audio.start" && code == "session_busy") {
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex_);
+                    busy_refusal_ = true;
+                    ++busy_refusal_generation_;
+                    discard_uplink_ = true;
+                }
+                // No capture ID in this refusal. Fence all new local admission
+                // until main task retires its producer and settles current cancel.
+                // Keep socket and prior server-side committing capture alive.
+                if (cfg_.on_failure) cfg_.on_failure(SdkFailure::CaptureBusy, code);
+            } else {
+                if (cfg_.on_failure) cfg_.on_failure(type == "command.rejected" ? SdkFailure::CommandRejected : SdkFailure::ServerError, code);
+                fail_uplink();
+            }
+        }
+    } else if (type == "turn.started" || type == "turn.completed" || type == "turn.aborted") {
+        const auto turn = value(field(root, "turnId"));
+        bool changed = false, active = false, overflow = false;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (!turn.empty() && type == "turn.started") {
+                if (wire_.cognition_turns.count(turn) == 0) {
+                    overflow = wire_.cognition_turns.size() == SentientWireState::kMaxCognitionTurns;
+                    if (!overflow) changed = wire_.cognition_turns.insert(turn).second;
+                }
+            } else if (!turn.empty()) changed = wire_.cognition_turns.erase(turn) != 0;
+            active = !wire_.cognition_turns.empty();
+        }
+        if (overflow) fail_uplink(); // Never silently evict a live owner to fit memory.
+        else if (changed && cfg_.on_cognition_status)
+            cfg_.on_cognition_status(active ? CognitionState::Thinking : CognitionState::Idle);
+    } else if (type == "turn.audio.start") {
+        const cJSON* rate = cJSON_GetObjectItemCaseSensitive(root, "sampleRate");
+        bool accepted = false;
+        const auto encoding = value(field(root, "encoding"));
+        const bool valid_rate = cJSON_IsNumber(rate) && rate->valuedouble == rate->valueint &&
+            (rate->valueint == 8000 || rate->valueint == 12000 || rate->valueint == 16000 ||
+             rate->valueint == 24000 || rate->valueint == 48000 ||
+             (encoding == "pcm" && (rate->valueint == 32000 || rate->valueint == 44100)));
+        if (valid_rate) {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            accepted = wire_.audio_start(value(field(root, "turnId")), value(field(root, "encoding")));
+            if (accepted) { output_sample_rate_ = rate->valueint; output_pcm_ = encoding == "pcm"; }
+        }
+        if (accepted) {
+            pcm_pending_.clear();
+            if (!output_pcm_) {
+                if (!demuxer_) demuxer_ = std::make_unique<OggDemuxer>();
+                else demuxer_->Reset();
+                // OpusHead input rate is informational; decode at declared wire rate.
+                demuxer_->OnDemuxerFinished([this](const uint8_t* packet, int, size_t len) {
+                    if (cfg_.on_playback_frame) cfg_.on_playback_frame(packet, len, output_sample_rate_, false);
+                });
+            }
+            if (cfg_.on_playback_begin) cfg_.on_playback_begin(rate->valueint);
+        } else {
+            if (cfg_.on_failure) cfg_.on_failure(SdkFailure::UnsupportedAudio, "unsupported_audio");
+            fail_uplink();
+        }
+    } else if (type == "turn.audio.done" || type == "playback.stop") {
+        bool malformed;
+        { std::lock_guard<std::mutex> lock(state_mutex_);
+          malformed = output_pcm_ && (pcm_pending_.size() % 2 != 0) && value(field(root, "turnId")) == wire_.audio_turn; }
+        const bool aborted = malformed || type == "playback.stop";
+        bool ended;
+        { std::lock_guard<std::mutex> lock(state_mutex_);
+          ended = aborted
+              ? wire_.audio_stop(value(field(root, "turnId")))
+              : wire_.audio_end(value(field(root, "turnId"))); }
+        if (ended) {
+            if (!aborted && output_pcm_ && !pcm_pending_.empty() && cfg_.on_playback_frame)
+                cfg_.on_playback_frame(pcm_pending_.data(), pcm_pending_.size(), output_sample_rate_, true);
+            pcm_pending_.clear();
+            if (malformed && cfg_.on_failure) cfg_.on_failure(SdkFailure::MalformedAudio, "incomplete_pcm_sample");
+            if (demuxer_) demuxer_->Reset();
+            if (cfg_.on_playback_end) cfg_.on_playback_end(aborted);
+        }
     }
 }
+void SentientWsProtocol::reset_receive_state() noexcept {
+    // Receiver thread, or caller after client stop has joined that thread.
+    inbound_.reset();
+    text_envelope_.reset(); // Allocation error remains sticky; next text start checks reset.
+    pcm_pending_.clear();
+    if (demuxer_) demuxer_->Reset();
+}
 
-void SentientWsProtocol::pump_uplink() {
-    if (!is_streaming_.load()) return;
-    if (!cfg_.on_pop_uplink_frame) return;
-    uint8_t* buf = nullptr;
-    size_t len = 0;
-    while (is_streaming_.load() && cfg_.on_pop_uplink_frame(&buf, &len)) {
-        if (buf == nullptr || len == 0) break;
-#if CONFIG_CUBE_SDK_TRACE_AUDIO_FRAMES
-        ESP_LOGD(TAG, "tx opus len=%zu", len);
-#endif
-        send_binary(buf, len);
-        free(buf);
-        buf = nullptr;
-        len = 0;
+void SentientWsProtocol::handle_allocation_failure() noexcept {
+    // Do not invoke allocating retry/scheduling callbacks before fencing transport.
+    // Persistent OOM is terminal, not an automatic reconnect loop. Explicit
+    // force_reconnect may retry once caller has restored memory availability.
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        status_ = SdkStatus::Error;
+    }
+    try { handle_disconnect(); } catch (const std::bad_alloc&) {} // State clears before playback callback.
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!stopping_ && worker_ && client_) xTaskNotify(worker_, kFailSignal, eSetBits);
+    }
+    // Best effort hardware/UI retirement. A callback may itself be unable to
+    // allocate: never let that undo terminal state or escape the C boundary.
+    try { if (cfg_.on_status_change) cfg_.on_status_change(SdkStatus::Error); }
+    catch (const std::bad_alloc&) {}
+}
+
+void SentientWsProtocol::ws_event_handler(void* arg, esp_event_base_t, int32_t event_id, void* event_data) {
+    auto* self = static_cast<SentientWsProtocol*>(arg);
+    try {
+        switch (event_id) {
+            case WEBSOCKET_EVENT_CONNECTED: {
+                if (self->stopping_ || self->status() != SdkStatus::Connecting) break;
+                self->reset_receive_state(); // Fresh receiver, even if prior stop emitted FINISH only.
+                self->set_status(SdkStatus::Authenticating);
+                JsonPtr obj_owner(cJSON_CreateObject(), cJSON_Delete);
+                cJSON* obj = obj_owner.get();
+                if (!obj) { self->fail_uplink(); break; }
+                cJSON_AddStringToObject(obj, "type", "auth");
+                { std::lock_guard<std::mutex> lock(self->state_mutex_);
+                  cJSON_AddStringToObject(obj, "token", self->cfg_.token.c_str()); }
+                JsonText encoded(cJSON_PrintUnformatted(obj), cJSON_free);
+                bool sent = encoded && self->send_text(encoded.get());
+                if (!sent) self->fail_uplink();
+                else self->arm_ready_timeout();
+                break;
+            }
+            case WEBSOCKET_EVENT_DATA:
+                if (!self->stopping_ && (self->status() == SdkStatus::Authenticating || self->status() == SdkStatus::Ready))
+                    self->handle_data(static_cast<esp_websocket_event_data_t*>(event_data));
+                break;
+            case WEBSOCKET_EVENT_FINISH:
+                // Pinned stop emits FINISH before STOPPED_BIT, not necessarily a
+                // DISCONNECTED/CLOSED event. Worker owns retry; receiver owns reset.
+                self->reset_receive_state();
+                break;
+            case WEBSOCKET_EVENT_DISCONNECTED:
+            case WEBSOCKET_EVENT_CLOSED:
+                self->cancel_ready_timeout();
+                self->reset_receive_state();
+                self->handle_disconnect();
+                if (!self->stopping_ && self->status() != SdkStatus::Error) {
+                    self->set_status(SdkStatus::Reconnecting);
+                    self->schedule_reconnect();
+                }
+                break;
+            default: break;
+        }
+    } catch (const std::bad_alloc&) {
+        self->handle_allocation_failure();
     }
 }
 void SentientWsProtocol::schedule_reconnect() {
-    int attempts = reconnect_attempts_.fetch_add(1) + 1;
-    if (attempts > kReconnectMaxAttempts) {
-        ESP_LOGW(TAG, "reconnect: exhausted attempts=%d, setting Error", attempts);
-        set_status(SdkStatus::Error);
-        return;
-    }
-    int delay_ms = std::min(kReconnectBaseMs * (1 << (attempts - 1)), kReconnectMaxMs);
-    delay_ms += esp_random() % kReconnectJitterMs;
-    ESP_LOGI(TAG, "reconnect: attempt=%d delay_ms=%d", attempts, delay_ms);
-    cancel_reconnect();
-    esp_timer_create_args_t args = {};
-    args.callback = [](void* arg) {
-        auto* self = static_cast<SentientWsProtocol*>(arg);
-        if (self->client_ != nullptr) {
-            esp_websocket_client_destroy(self->client_);
-            self->client_ = nullptr;
+    { std::lock_guard<std::mutex> lock(state_mutex_);
+      if (wire_.terminal_auth || stopping_) return; }
+    int attempt;
+    esp_err_t err = ESP_OK;
+    {
+        std::lock_guard<std::mutex> lock(timer_mutex_);
+        if (stopping_ || reconnect_timer_) return;
+        attempt = ++reconnect_attempts_;
+        if (attempt <= kReconnectMaxAttempts) {
+            esp_timer_create_args_t args = {};
+            args.callback = [](void* ptr) {
+                auto* self = static_cast<SentientWsProtocol*>(ptr);
+                if (!self->stopping_ && self->worker_)
+                    xTaskNotify(self->worker_, kReconnectSignal, eSetBits);
+            };
+            args.arg = this;
+            err = esp_timer_create(&args, &reconnect_timer_);
+            if (err == ESP_OK) {
+                err = esp_timer_start_once(reconnect_timer_, (std::min(1000 * (1 << (attempt - 1)), 30000) + esp_random() % 500) * 1000ULL);
+                if (err != ESP_OK) { esp_timer_delete(reconnect_timer_); reconnect_timer_ = nullptr; }
+            }
         }
-        self->connect();
-    };
-    args.arg = this;
-    esp_timer_create(&args, &reconnect_timer_);
-    esp_timer_start_once(reconnect_timer_, static_cast<uint64_t>(delay_ms) * 1000);
-}
-
-void SentientWsProtocol::cancel_reconnect() {
-    if (reconnect_timer_ != nullptr) {
-        esp_timer_stop(reconnect_timer_);
-        esp_timer_delete(reconnect_timer_);
-        reconnect_timer_ = nullptr;
     }
+    if (attempt > kReconnectMaxAttempts || err != ESP_OK) set_status(SdkStatus::Error);
 }
-
+void SentientWsProtocol::cancel_reconnect() {
+    std::lock_guard<std::mutex> lock(timer_mutex_);
+    if (!reconnect_timer_) return;
+    esp_timer_stop(reconnect_timer_);
+    esp_timer_delete(reconnect_timer_);
+    reconnect_timer_ = nullptr;
+}
 void SentientWsProtocol::arm_ready_timeout() {
     cancel_ready_timeout();
-    esp_timer_create_args_t args = {};
-    args.callback = [](void* arg) {
-        auto* self = static_cast<SentientWsProtocol*>(arg);
-        ESP_LOGW(TAG, "ready-timeout: %dms with no session.ready, closing", kReadyTimeoutMs);
-        if (self->client_ != nullptr) {
-            esp_websocket_client_close(self->client_, portMAX_DELAY);
-        }
-    };
-    args.arg = this;
-    esp_timer_create(&args, &ready_timeout_timer_);
-    esp_timer_start_once(ready_timeout_timer_, static_cast<uint64_t>(kReadyTimeoutMs) * 1000);
-}
-
-void SentientWsProtocol::cancel_ready_timeout() {
-    if (ready_timeout_timer_ != nullptr) {
-        esp_timer_stop(ready_timeout_timer_);
-        esp_timer_delete(ready_timeout_timer_);
-        ready_timeout_timer_ = nullptr;
+    esp_err_t result;
+    {
+        std::lock_guard<std::mutex> lock(timer_mutex_);
+        if (stopping_) return;
+        esp_timer_create_args_t args = {};
+        args.callback = [](void* ptr) {
+            auto* self = static_cast<SentientWsProtocol*>(ptr);
+            if (!self->stopping_ && self->worker_)
+                xTaskNotify(self->worker_, kReadySignal, eSetBits);
+        };
+        args.arg = this;
+        result = esp_timer_create(&args, &ready_timeout_timer_);
+        if (result == ESP_OK) result = esp_timer_start_once(ready_timeout_timer_, kReadyTimeoutMs * 1000ULL);
     }
+    if (result != ESP_OK) fail_uplink(); // No unbounded handshake if timer allocation fails.
 }
-
+void SentientWsProtocol::cancel_ready_timeout() {
+    std::lock_guard<std::mutex> lock(timer_mutex_);
+    if (!ready_timeout_timer_) return;
+    esp_timer_stop(ready_timeout_timer_);
+    esp_timer_delete(ready_timeout_timer_);
+    ready_timeout_timer_ = nullptr;
+}
+void SentientWsProtocol::worker_entry(void* arg) {
+    static_cast<SentientWsProtocol*>(arg)->run_worker();
+}
+void SentientWsProtocol::run_worker() {
+    while (true) {
+        uint32_t events = 0;
+        xTaskNotifyWait(0, UINT32_MAX, &events, portMAX_DELAY);
+        if (events & kStopSignal || stopping_) break;
+        if ((events & kFailSignal) && client_) {
+            TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kUplinkWaitMs);
+            while (pumping_.test_and_set()) {
+                if (static_cast<int32_t>(deadline - xTaskGetTickCount()) <= 0) abort();
+                vTaskDelay(1);
+            }
+            pumping_.clear();
+            esp_websocket_client_stop(client_);
+            if (!stopping_ && status() == SdkStatus::Reconnecting) schedule_reconnect();
+        }
+        if ((events & kReadySignal) && status() == SdkStatus::Authenticating && client_) {
+            // stop (not close): pinned close falls back to portMAX_DELAY on timeout.
+            esp_websocket_client_stop(client_);
+            if (!stopping_ && status() == SdkStatus::Authenticating) {
+                handle_disconnect();
+                set_status(SdkStatus::Reconnecting);
+                schedule_reconnect();
+            }
+        }
+        if ((events & kReconnectSignal) && !stopping_ &&
+            status() == SdkStatus::Reconnecting) {
+            TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kUplinkWaitMs);
+            while (pumping_.test_and_set()) {
+                if (static_cast<int32_t>(deadline - xTaskGetTickCount()) <= 0) {
+                    set_status(SdkStatus::Error);
+                    // Keep client alive while sender may still be inside it.
+                    // Error is terminal until explicit force_reconnect.
+                    goto next_event;
+                }
+                vTaskDelay(1);
+            }
+            if (!stopping_) {
+                esp_websocket_client_destroy(client_);
+                client_ = nullptr;
+            }
+            pumping_.clear();
+            if (!stopping_) {
+                cancel_reconnect();
+                connect();
+            }
+        }
+        // Stop/failure/reconnect takes priority over stale pump notifications.
+        if ((events & kPumpSignal) && !stopping_ && status() == SdkStatus::Ready)
+            pump_uplink();
+next_event:;
+    }
+    if (client_) {
+        esp_websocket_client_stop(client_);
+        esp_websocket_client_destroy(client_);
+        client_ = nullptr;
+    }
+    xSemaphoreGive(worker_done_);
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    vTaskDeleteWithCaps(nullptr);
+#else
+    vTaskDelete(nullptr);
+#endif
+}
+void SentientWsProtocol::wait_for_timer_callbacks() {
+    // ESP_TIMER_TASK serializes callbacks. Barrier after cancellation ensures no
+    // callback still holds `this` before client teardown/destruction.
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    if (!done) abort();
+    esp_timer_handle_t barrier = nullptr;
+    esp_timer_create_args_t args = {};
+    args.callback = [](void* ptr) { xSemaphoreGive(static_cast<SemaphoreHandle_t>(ptr)); };
+    args.arg = done;
+    ESP_ERROR_CHECK(esp_timer_create(&args, &barrier));
+    ESP_ERROR_CHECK(esp_timer_start_once(barrier, 1));
+    // If timer task cannot run, cannot safely free its callback target.
+    if (xSemaphoreTake(done, pdMS_TO_TICKS(5000)) != pdTRUE) abort();
+    esp_timer_delete(barrier);
+    vSemaphoreDelete(done);
+}
 }  // namespace sentient::cube

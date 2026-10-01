@@ -46,6 +46,7 @@ const items = signal(state === "populated" || state === "stale" ? rows : []);
 const searchHits = signal<SessionRow[] | null>(null);
 const currentId = signal<string | null>("review-0");
 const sessions: UseSessions = {
+  viewerId: signal<string | null>(null),
   items, drafts: signal([]), searchHits, currentId, loading: signal(state === "loading"), error: signal(state === "error" || state === "stale" ? "Fixture unavailable" : null), deleteFailureCount: signal(0),
   async load() {},
   async search(query) { searchHits.value = query.trim() ? items.value.filter((row) => row.title.toLowerCase().includes(query.toLowerCase())) : null; },

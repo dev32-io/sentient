@@ -5,7 +5,7 @@
 // no real provider/network I/O, `services` is never touched by these two
 // branches so a cast stub is sufficient.
 
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { UserRole } from "@sentient/protocol";
@@ -142,8 +142,7 @@ function stubRuntime(): StubRuntime {
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
 
-/** Matches `session.input_arbitration_window_ms` in these fixtures. Small so a
- *  case that must land OUTSIDE the window does not pay for it in wall clock. */
+/** Matches fixture policy; time-sensitive cases control Date.now explicitly. */
 const ARBITRATION_WINDOW_MS = 30;
 
 /** A draft key shaped exactly as session-id.ts mints them (`d_` + 32 hex). */
@@ -1281,7 +1280,7 @@ describe("ws-handlers routing — conversation.activate", () => {
     // generation}` binding would stamp the next command with a generation it
     // does not hold yet and have it refused as stale.
     expect(ws.sent).toEqual([
-      { type: "session.attached", sessionId, generation: expect.any(Number) },
+      { type: "session.attached", sessionId, generation: expect.any(Number), epoch: 1 },
       { type: "session.switched", sessionId, ts: expect.any(Number) },
     ]);
     expect(ws.data.conversationId).toBe(sessionId);
@@ -1387,7 +1386,7 @@ describe("ws-handlers routing — conversation.activate", () => {
     // generation}` binding would stamp the next command with a generation it
     // does not hold yet and have it refused as stale.
     expect(ws.sent).toEqual([
-      { type: "session.attached", sessionId, generation: expect.any(Number) },
+      { type: "session.attached", sessionId, generation: expect.any(Number), epoch: 1 },
       { type: "session.switched", sessionId, ts: expect.any(Number) },
     ]);
     expect(ws.data.conversationId).toBe(sessionId);
@@ -1572,10 +1571,16 @@ describe("ws-handlers routing — two windows, one turn", () => {
         services,
       );
 
-    await send(a, "start a turn");
-    // Past the arbitration window — a real second speaker, not a race.
-    await new Promise((resolve) => setTimeout(resolve, ARBITRATION_WINDOW_MS + 20));
-    await send(b, "and mention the seagulls");
+    const now = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await send(a, "start a turn");
+      // Past the arbitration window, independent of runner speed.
+      clock.mockReturnValue(now + ARBITRATION_WINDOW_MS + 1);
+      await send(b, "and mention the seagulls");
+    } finally {
+      clock.mockRestore();
+    }
 
     expect(spy.submits()).toBe(2); // B was ACCEPTED, not refused
     expect(spy.turnsStarted()).toBe(1); // …and steered, rather than forking
@@ -1617,9 +1622,14 @@ describe("ws-handlers routing — two windows, one turn", () => {
         services,
       );
 
-    // Both inside the arbitration window — a genuine race, so B loses.
-    await send(a, "first", "p-a");
-    await send(b, "same instant", "p-b");
+    // Both inside the arbitration window, even if asynchronous work takes longer.
+    const clock = spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      await send(a, "first", "p-a");
+      await send(b, "same instant", "p-b");
+    } finally {
+      clock.mockRestore();
+    }
 
     expect(commandFrames(b)).toContainEqual(
       expect.objectContaining({ type: "command.rejected", reason: "session_busy", pendingId: "p-b" }),
@@ -1760,4 +1770,69 @@ describe("ws-handlers cleanup — the session journal", () => {
     expect(reconnect.epoch).toBe(acquired.epoch);
     expect(reconnect.journal.newestSeq).toBe(1);
   });
+});
+
+describe("Cube history is REST-only for human credentials", () => {
+  for (const route of ["session.configure", "conversation.activate"] as const) {
+    it(`${route} refuses Cube attachment and subsequent commands without minting runtime authority`, async () => {
+      let built = 0;
+      const stub = stubRuntime();
+      const services = activateServices(stub.runtime, () => {
+        built++;
+        return stub.runtime;
+      });
+      const ws = fakeAuthedWs(null);
+      const principal = ws.data.principal;
+      if (!principal) throw new Error("missing principal");
+      mkdirSync(services.accessManager.userHomeDir(principal), { recursive: true });
+      const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+      const admission = store.admitCubeInput({
+        inputId: crypto.randomUUID(),
+        expectedFence: store.getCubeAdmissionFence(),
+        dreamerHour: 3,
+        now: Date.now(),
+        entry: {
+          turnId: "cube-turn",
+          replyId: null,
+          kind: "user",
+          createdAt: Date.now(),
+          text: "test",
+          toolCallId: null,
+          toolName: null,
+          toolArgs: null,
+          cutoff: null,
+          compactedThroughSeq: null,
+        },
+      });
+      if (admission.status !== "accepted") throw new Error("admission failed");
+      const configuring = handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify(
+          route === "session.configure"
+            ? { ...CONFIGURE_FRAME, conversationId: admission.sessionId }
+            : { type: route, sessionId: admission.sessionId },
+        ),
+        services,
+      );
+      expect(ws.closes).toEqual([1008]);
+      for (const frame of [
+        { type: "text.input", text: "denied", pendingId: "denied" },
+        { type: "audio.start" },
+        { type: "interrupt" },
+        { type: "permission.response", requestId: "denied", allow: true },
+        { type: "session.new" },
+      ]) {
+        await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, JSON.stringify(frame), services);
+      }
+      await configuring;
+      expect(built).toBe(0);
+      expect(ws.data.attachment).toBeNull();
+      expect(stub.submitCalls).toHaveLength(0);
+      expect(stub.interruptCallCount()).toBe(0);
+      expect(ws.sent.some((frame) => (frame as { type: string }).type === "conversation.snapshot")).toBe(false);
+      expect(store.readSession(admission.sessionId)).toHaveLength(1);
+      expect(store.listSessions()).toHaveLength(1);
+      store.close();
+    });
+  }
 });
