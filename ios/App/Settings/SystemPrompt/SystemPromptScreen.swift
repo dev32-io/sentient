@@ -34,7 +34,7 @@ struct SystemPromptScreen: View {
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading system prompt")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load system instructions", detail: message) {
                     Task { await vm.load() }

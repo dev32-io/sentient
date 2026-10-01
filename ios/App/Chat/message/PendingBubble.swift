@@ -24,6 +24,10 @@ struct PendingBubble: View {
     var onRetryAttachment: (String) -> Void = { _ in }
     var onRetry: () -> Void = {}
     var measurement = false
+    var rendererState: MessageDocumentState?
+    var selectionViewportInWindow: (() -> CGRect)?
+    var requestSelectionScroll: ((CGFloat) -> CGFloat)?
+    var onSelectionBegin: (() -> Void)?
     /// Chronology position is supplied by MessageList; defaults keep direct
     /// previews and existing internal callers source-compatible.
     var index: Int = 0
@@ -43,15 +47,14 @@ struct PendingBubble: View {
             metadataMuted: true
         ) {
             VStack(alignment: .leading, spacing: Space.sm) {
-                if measurement {
-                    Text(msg.text)
-                        .font(Typo.ui(TypeScale.base))
-                        .foregroundStyle(DuskColors.ink)
-                        .textSelection(.enabled)
-                } else {
-                    SelectablePlainText(text: msg.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                MessageDocumentSurface(
+                    source: msg.text, literal: true, state: rendererState,
+                    measurement: measurement,
+                    selectionViewportInWindow: selectionViewportInWindow,
+                    requestSelectionScroll: requestSelectionScroll,
+                    onSelectionBegin: onSelectionBegin
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if attachments.isEmpty, !msg.attachmentIds.isEmpty {
                     Text("\(msg.attachmentIds.count) attachment\(msg.attachmentIds.count == 1 ? "" : "s")")
                         .font(Typo.ui(TypeScale.sm))
@@ -83,16 +86,17 @@ struct PendingBubble: View {
         } else {
             // FAILED — tappable retry chip.
             Button(action: onRetry) {
-                chipLabel("↺ Retry", color: DuskColors.stop)
+                chipLabel("↺ Retry", color: DuskColors.stop, actionable: true)
+                    .frame(minHeight: DesignMetrics.minimumTarget)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("msg-status-failed")
         }
     }
 
-    private func chipLabel(_ text: String, color: Color) -> some View {
+    private func chipLabel(_ text: String, color: Color, actionable: Bool = false) -> some View {
         Text(text)
-            .font(Typo.ui(TypeScale.sm))
+            .font(Typo.ui(actionable ? DesignMetrics.controlLabelSize : TypeScale.sm))
             .foregroundStyle(color)
             .padding(.horizontal, Space.sm)
             .padding(.vertical, 2)

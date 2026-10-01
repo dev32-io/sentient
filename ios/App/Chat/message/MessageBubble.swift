@@ -13,7 +13,6 @@
 //    markers.
 import Foundation
 import SwiftUI
-import MarkdownUI
 import MobileData
 
 struct MessageBubble: View {
@@ -30,10 +29,13 @@ struct MessageBubble: View {
     var attachmentPreviewFailures: Set<String> = []
     var onPreviewAttachment: (String) -> Void = { _ in }
     var imageCache: MarkdownImageCache?
+    var rendererState: MessageDocumentState?
+    var selectionViewportInWindow: (() -> CGRect)?
+    var requestSelectionScroll: ((CGFloat) -> CGFloat)?
+    var onSelectionBegin: (() -> Void)?
     var onRenderedHeightStateChange: ((Bool) -> Void)?
 
     @Environment(\.sentientIdentityMeasurement) private var measurement
-    @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
 
     private var isUser: Bool { message.role == "user" }
 
@@ -63,56 +65,47 @@ struct MessageBubble: View {
         // stable owner).
         if message.streaming && message.content.isEmpty {
             PulseDots()
-        } else if message.streaming {
-            StreamingText(content: message.content)
         } else {
-            committedText
-        }
-    }
-
-    private var committedText: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
-            if !message.content.isEmpty {
-                if measurement {
-                    nativeMarkdown
-                } else {
-                    SelectableMarkdownSurface(
-                        markdown: message.content,
-                        width: max(1, bubbleMaxWidth - Space.md * 2),
+            VStack(alignment: .leading, spacing: Space.xs) {
+                if !message.content.isEmpty {
+                    MessageDocumentSurface(
+                        source: message.content,
+                        streaming: message.streaming,
+                        state: rendererState,
                         imageCache: imageCache,
-                        onHeightChange: nil,
-                        onLoadStateChange: onRenderedHeightStateChange
-                    ) {
-                        nativeMarkdown
-                    }
+                        measurement: measurement,
+                        selectionViewportInWindow: selectionViewportInWindow,
+                        requestSelectionScroll: requestSelectionScroll,
+                        onSelectionBegin: onSelectionBegin,
+                        onReady: onRenderedHeightStateChange
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            ForEach(message.attachments, id: \.attachmentId) { attachment in
-                MessageAttachmentCard(
-                    attachment: attachment,
-                    preview: attachmentPreviews[attachment.attachmentId],
-                    previewFailed: attachmentPreviewFailures.contains(attachment.attachmentId),
-                    onPreview: { onPreviewAttachment(attachment.attachmentId) }
-                )
-            }
-            if messageCutoffLabel(for: message.cutoffKind) != nil {
-                interruptedMarker
+                ForEach(message.attachments, id: \.attachmentId) { attachment in
+                    MessageAttachmentCard(
+                        attachment: attachment,
+                        preview: attachmentPreviews[attachment.attachmentId],
+                        previewFailed: attachmentPreviewFailures.contains(attachment.attachmentId),
+                        onPreview: { onPreviewAttachment(attachment.attachmentId) }
+                    )
+                }
+                if messageCutoffLabel(for: message.cutoffKind) != nil { interruptedMarker }
             }
         }
-    }
-
-    private var nativeMarkdown: some View {
-        Markdown(message.content)
-            .markdownTheme(.dusk)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var interruptedMarker: some View {
-        Label(messageCutoffLabel(for: message.cutoffKind) ?? "", systemImage: "stop.circle")
-            .font(Typo.ui(TypeScale.sm))
-            .foregroundStyle(DuskColors.ink3)
-            .accessibilityIdentifier("message-cutoff-\(index)")
+        HStack(spacing: Space.sm) {
+            Circle().fill(DuskColors.clay).frame(width: 7, height: 7).accessibilityHidden(true)
+            Text(messageCutoffLabel(for: message.cutoffKind) ?? "")
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .padding(.horizontal, Space.sm)
+        .padding(.vertical, Space.xs)
+        .designWell(cornerRadius: Radii.pill)
+        .padding(.top, Space.md)
+        .accessibilityIdentifier("message-cutoff-\(index)")
     }
 }
 

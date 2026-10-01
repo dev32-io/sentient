@@ -59,7 +59,7 @@ struct DesignChipCanvasProjection: Equatable {
         } else if control.state.isHovered && !selected {
             yOffset = -DesignMetrics.pressedDepth
         } else {
-            yOffset = 0
+            yOffset = selected ? DesignMetrics.pressedDepth : 0
         }
         return DesignChipCanvasProjection(
             profile: selected ? .selectedChip : .raisedChip,
@@ -800,7 +800,7 @@ struct DesignMenuTriggerLabel: View {
             Text(currentLabel)
                 .font(Typo.ui(DesignMetrics.controlLabelSize))
                 .foregroundStyle(isEnabled ? DuskColors.ink : DuskColors.ink4)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityHidden(true)
             if width != .intrinsic {
                 Spacer(minLength: Space.sm)
@@ -841,18 +841,7 @@ struct DesignSelect<Value: Hashable>: View {
     }
 
     var body: some View {
-        HStack(spacing: Space.lg) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title)
-                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                if let detail {
-                    Text(detail)
-                        .font(Typo.ui(TypeScale.sm))
-                        .foregroundStyle(DuskColors.ink2)
-                }
-            }
-            Spacer(minLength: Space.sm)
+        DesignSettingsRow(title: title, detail: detail) {
             Menu {
                 ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                     Button {
@@ -875,7 +864,7 @@ struct DesignSelect<Value: Hashable>: View {
             .disabled(!isEnabled)
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
             .accessibilityLabel(title)
-            .accessibilityValue(isEnabled ? currentLabel : "Disabled")
+            .accessibilityValue(currentLabel)
             .accessibilityHint(detail ?? "")
             .accessibilityIdentifier(accessibilityId ?? "")
         }

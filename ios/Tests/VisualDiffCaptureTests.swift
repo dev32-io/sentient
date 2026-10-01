@@ -1,3 +1,4 @@
+import Darwin
 import ImageIO
 import MetalKit
 import SnapshotTesting
@@ -27,6 +28,64 @@ private let loadingStateActiveCaptureDuration: TimeInterval = 0.366
 /// script owns a fresh, serialized request file.
 @MainActor
 final class VisualDiffCaptureTests: XCTestCase {
+    private func capturePaths(reference: String, output: String, repository: String) -> (URL, URL, URL)? {
+        func normalized(_ path: String) -> URL? {
+            let name = path as NSString
+            // Resolve the existing parent before URL normalization: iOS leaves
+            // missing /private/tmp leaves unchanged, and URL resolution can
+            // collapse '..' before following a symlink. realpath preserves both.
+            guard let parent = realpath(name.deletingLastPathComponent, nil) else { return nil }
+            defer { free(parent) }
+            return URL(fileURLWithPath: String(cString: parent), isDirectory: true)
+                .standardizedFileURL.appendingPathComponent(name.lastPathComponent)
+                .resolvingSymlinksInPath().standardizedFileURL
+        }
+        guard let referenceURL = normalized(reference),
+              let outputURL = normalized(output),
+              let outputRoot = normalized(repository + "/build/visual-captures/ios") else { return nil }
+        guard referenceURL != outputURL,
+              outputURL.path.hasPrefix(outputRoot.path + "/") else { return nil }
+        return (referenceURL, outputURL, outputRoot)
+    }
+
+    func testCapturePathsInTemporaryWorktree() throws {
+        let manager = FileManager.default
+        let repository = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("visual-diff-paths-\(UUID().uuidString)", isDirectory: true)
+        let root = repository.appendingPathComponent("build/visual-captures/ios", isDirectory: true)
+        let reference = repository.appendingPathComponent("design/reference.png")
+        let parent = root.appendingPathComponent("foundation-components/static", isDirectory: true)
+        try manager.createDirectory(at: URL(fileURLWithPath: root.path + "-sibling"), withIntermediateDirectories: true)
+        try manager.createDirectory(at: parent, withIntermediateDirectories: true)
+        try manager.createDirectory(at: reference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("reference sentinel".utf8).write(to: reference)
+        defer { try? manager.removeItem(at: repository) }
+        let output = parent.appendingPathComponent("chip--selected--rest.png")
+        let physicalRepository = "/private" + repository.path
+        let physicalReference = "/private" + reference.path
+        let physicalOutput = "/private" + output.path
+        for repo in [repository.path, physicalRepository] {
+            let paths = try XCTUnwrap(capturePaths(reference: physicalReference, output: physicalOutput, repository: repo))
+            XCTAssertEqual(paths.0.path, reference.standardizedFileURL.path)
+            XCTAssertEqual(paths.1.deletingLastPathComponent().path, parent.standardizedFileURL.path)
+            XCTAssertFalse(manager.fileExists(atPath: paths.1.path))
+            XCTAssertNil(capturePaths(reference: physicalReference, output: reference.path, repository: repo))
+            XCTAssertNil(capturePaths(reference: reference.path, output: root.path + "/../escaped.png", repository: repo))
+            XCTAssertNil(capturePaths(reference: reference.path, output: root.path + "-sibling/escape.png", repository: repo))
+        }
+        let directoryLink = root.appendingPathComponent("escape", isDirectory: true)
+        try manager.createSymbolicLink(at: directoryLink, withDestinationURL: reference.deletingLastPathComponent())
+        XCTAssertNil(capturePaths(reference: reference.path, output: directoryLink.path + "/new.png", repository: physicalRepository))
+        XCTAssertNil(capturePaths(reference: reference.path, output: directoryLink.path + "/../escaped.png", repository: physicalRepository))
+        let fileLink = root.appendingPathComponent("reference-link.png")
+        try manager.createSymbolicLink(at: fileLink, withDestinationURL: reference)
+        XCTAssertNil(capturePaths(reference: reference.path, output: fileLink.path, repository: physicalRepository))
+        let rootReference = root.appendingPathComponent("reference.png")
+        try Data("inside sentinel".utf8).write(to: rootReference)
+        XCTAssertNil(capturePaths(reference: "/private" + rootReference.path, output: rootReference.path, repository: physicalRepository))
+        XCTAssertEqual(try Data(contentsOf: reference), Data("reference sentinel".utf8))
+    }
+
     func testCaptureRequestedReference() throws {
         let requestURL = URL(fileURLWithPath: "/tmp/sentient-visual-diff-request")
         guard FileManager.default.fileExists(atPath: requestURL.path) else {
@@ -50,18 +109,11 @@ final class VisualDiffCaptureTests: XCTestCase {
             return
         }
 
-        let referenceURL = URL(fileURLWithPath: request[0]).resolvingSymlinksInPath().standardizedFileURL
-        let outputURL = URL(fileURLWithPath: request[1]).resolvingSymlinksInPath().standardizedFileURL
-        let outputRoot = URL(fileURLWithPath: request[2])
-            .appendingPathComponent("build/visual-captures/ios", isDirectory: true)
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-        guard referenceURL != outputURL,
-              outputURL.path.hasPrefix(outputRoot.path + "/")
-        else {
+        guard let paths = capturePaths(reference: request[0], output: request[1], repository: request[2]) else {
             XCTFail("Implementation output must not overwrite a designer reference")
             return
         }
+        let (referenceURL, outputURL, outputRoot) = paths
         let pixelSize = try pngPixelSize(at: referenceURL)
         guard pixelSize.width.truncatingRemainder(dividingBy: 2) == 0,
               pixelSize.height.truncatingRemainder(dividingBy: 2) == 0
@@ -72,7 +124,7 @@ final class VisualDiffCaptureTests: XCTestCase {
 
         let logicalSize = CGSize(width: pixelSize.width / 2, height: pixelSize.height / 2)
         let caseID = visualDiffCaseID(for: referenceURL)
-        let frame = primaryRestCaptureFrame(caseID: caseID, canvas: logicalSize)
+        let frame = controlCaptureFrame(caseID: caseID, canvas: logicalSize)
         let identityCapture = VisualDiffFixtureRegistry.sentientIdentityCapture(for: caseID)
         let segmentedCaptureTime = VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID)
         let disclosureCaptureTime = VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID)
@@ -360,21 +412,46 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(captured.scale, 2)
     }
 
-    private func primaryRestCaptureFrame(caseID: String, canvas: CGSize) -> (viewport: CGSize, clip: CGRect) {
-        // Match capture-web.mjs captureFrame: standard controls render above
-        // the source's 620px breakpoint, then use a whole-point ceiling crop.
-        // Only the calibrated primary REST pilot opts in; other fixtures retain
-        // their current framing until their capture contracts are reviewed.
-        let width = caseID == "action-button--primary--rest" ? max(canvas.width, 621) : canvas.width
+    private func controlCaptureFrame(caseID: String, canvas: CGSize) -> (viewport: CGSize, clip: CGRect) {
+        // Source-derived static framing from capture-web.mjs captureFrame.
+        // A selected chip's extra 1pt viewport padding plus 2pt crop follows
+        // its translated paint; this is NOT a fixed-viewport motion capture.
+        let chipStatic = caseID.hasPrefix("chip--selected--") || caseID.hasPrefix("chip--unselected--")
+        let compact = caseID.contains("--compact-")
+        let selected = caseID.hasPrefix("chip--selected--")
+        let shift: CGFloat = chipStatic
+            ? selected ? (caseID.hasSuffix("--pressed") ? 2 : 1)
+                : caseID.hasSuffix("--hover") ? -1 : caseID.hasSuffix("--pressed") ? 1 : 0
+            : 0
+        let padding = chipStatic && (!compact || selected) ? abs(shift) : 0
+        let width = caseID == "action-button--primary--rest" || (chipStatic && !compact)
+            ? max(canvas.width, 621) : canvas.width
         return (
-            CGSize(width: width, height: canvas.height),
-            CGRect(x: ceil((width - canvas.width) / 2), y: 0, width: canvas.width, height: canvas.height)
+            CGSize(width: width, height: canvas.height + padding * 2),
+            CGRect(x: ceil((width - canvas.width) / 2), y: padding == 0 ? 0 : padding + shift,
+                   width: canvas.width, height: canvas.height)
         )
+    }
+
+    func testChipStaticCropFollowsSourceTranslationWithoutChangingMotionFrames() {
+        let canvas = CGSize(width: 119, height: 82)
+        let selected = controlCaptureFrame(caseID: "chip--selected--rest", canvas: canvas)
+        XCTAssertEqual(selected.viewport, CGSize(width: 621, height: 84))
+        XCTAssertEqual(selected.clip, CGRect(x: 251, y: 2, width: 119, height: 82))
+        let compact = controlCaptureFrame(caseID: "chip--selected--compact-rest", canvas: canvas)
+        XCTAssertEqual(compact.viewport, CGSize(width: 119, height: 84))
+        XCTAssertEqual(compact.clip, CGRect(x: 0, y: 2, width: 119, height: 82))
+        let unselected = controlCaptureFrame(caseID: "chip--unselected--rest", canvas: canvas)
+        XCTAssertEqual(unselected.viewport, CGSize(width: 621, height: 82))
+        XCTAssertEqual(unselected.clip, CGRect(x: 251, y: 0, width: 119, height: 82))
+        let motion = controlCaptureFrame(caseID: "chip--unselected-to-selected--frame-01--0ms", canvas: canvas)
+        XCTAssertEqual(motion.viewport, canvas)
+        XCTAssertEqual(motion.clip, CGRect(origin: .zero, size: canvas))
     }
 
     func testPrimaryRestCaptureUsesWebViewportAndCeilingCrop() {
         let canvas = CGSize(width: 156, height: 88)
-        let frame = primaryRestCaptureFrame(caseID: "action-button--primary--rest", canvas: canvas)
+        let frame = controlCaptureFrame(caseID: "action-button--primary--rest", canvas: canvas)
         XCTAssertEqual(frame.viewport, CGSize(width: 621, height: 88))
         XCTAssertEqual(frame.clip, CGRect(x: 233, y: 0, width: 156, height: 88))
         XCTAssertEqual(frame.viewport.width / 2 - frame.clip.minX, 77.5)
@@ -382,8 +459,8 @@ final class VisualDiffCaptureTests: XCTestCase {
             frame.clip.applying(CGAffineTransform(scaleX: 2, y: 2)),
             CGRect(x: 466, y: 0, width: 312, height: 176)
         )
-        for caseID in ["action-button--primary--compact-rest", "action-button--secondary--rest", "chip--unselected--rest"] {
-            let unchanged = primaryRestCaptureFrame(caseID: caseID, canvas: canvas)
+        for caseID in ["action-button--primary--compact-rest", "action-button--secondary--rest"] {
+            let unchanged = controlCaptureFrame(caseID: caseID, canvas: canvas)
             XCTAssertEqual(unchanged.viewport, canvas)
             XCTAssertEqual(unchanged.clip, CGRect(origin: .zero, size: canvas))
         }

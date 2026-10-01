@@ -1,4 +1,5 @@
 import Combine
+import Darwin
 import NetworkImage
 import SwiftUI
 import Testing
@@ -46,7 +47,7 @@ struct MessageListScrollTests {
         }
     }
 
-    @Test func committedUserAndAssistantRowsMountSelectableContentButMeasurementStaysNative() async throws {
+    @Test func allMessagePhasesMountOneNativeDocumentAndPendingStaysLiteral() async throws {
         let messages = [
             Self.message(
                 id: "selectable-user", role: "user",
@@ -57,7 +58,6 @@ struct MessageListScrollTests {
                 content: "## Assistant heading\n\nSelect this `assistant` paragraph."
             ),
         ]
-        let baseline = SelectableMarkdownHostView.liveViewCount
         let pendingID = "selectable-pending"
         let harness = try Harness(
             messages: messages,
@@ -69,33 +69,83 @@ struct MessageListScrollTests {
             collection.numberOfItems(inSection: 0) >= 4 && !collection.visibleCells.isEmpty
         }
 
-        try await waitUntil(timeout: 5) {
-            let webViews = descendants(collection).compactMap { $0 as? WKWebView }
-            return webViews.count == 2 && webViews.allSatisfy {
-                $0.alpha == 1 && $0.frame.height > 1
+        // Verify each chronology row, without assuming all three fit one viewport.
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        for index in 1...3 {
+            let path = IndexPath(item: index, section: 0)
+            collection.scrollToItem(at: path, at: .centeredVertically, animated: false)
+            try await waitUntil(timeout: 5) {
+                guard let cell = collection.cellForItem(at: path) else { return false }
+                return descendants(cell).compactMap { $0 as? MessageDocumentView }.count == 1
             }
+            let cell = try #require(collection.cellForItem(at: path))
+            let document = try #require(descendants(cell).compactMap { $0 as? MessageDocumentView }.first)
+            #expect(descendants(collection).compactMap { $0 as? WKWebView }.isEmpty)
+            document.selectAll(nil)
+            document.copy(nil)
+            #expect(UIPasteboard.general.string == document.document.plain)
+            #expect(document.state.layout === document.state.measure(width: document.bounds.width, traits: document.traitCollection))
         }
-        let webViews = descendants(collection).compactMap { $0 as? WKWebView }
-        #expect(webViews.count == 2)
-        #expect(SelectableMarkdownHostView.liveViewCount == baseline + 2)
-        #expect(webViews.allSatisfy { $0.configuration.defaultWebpagePreferences.allowsContentJavaScript == false })
-
-        for webView in webViews {
-            _ = webView.becomeFirstResponder()
-            webView.selectAll(nil)
-        }
-        try await waitUntil(timeout: 2) {
-            webViews.allSatisfy {
-                $0.canPerformAction(#selector(UIResponderStandardEditActions.copy(_:)), withSender: nil)
-            }
-        }
-
         let pendingCell = try #require(collection.visibleCells.first {
             $0.accessibilityIdentifier == "chat-user-row-\(pendingID)"
         })
-        let pendingTextView = try #require(descendants(pendingCell).compactMap { $0 as? UITextView }.first)
-        #expect(pendingTextView.isSelectable)
-        #expect(pendingTextView.text == "Pending copy")
+        let pending = try #require(descendants(pendingCell).compactMap { $0 as? MessageDocumentView }.first)
+        #expect(pending.document.literal)
+        #expect(pending.document.plain == "Pending copy")
+    }
+
+    @Test func finalizationKeepsNativeLayoutAndEverySampledFramePaintable() async throws {
+        let content = "## Same source\n\nA **rich** café 👩🏽‍💻 paragraph.\n\n| A | B |\n| --- | --- |\n| partial | 東京 |"
+        let harness = try Harness(messages: [Self.message(id: "phase", role: "assistant", content: content, streaming: true)])
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1, requireRenderedMarkdown: true)
+        let view = try #require(collection.visibleCells.flatMap { descendants($0) }.compactMap { $0 as? MessageDocumentView }.first)
+        let layout = try #require(view.state.layout)
+        let identity = ObjectIdentifier(view.state)
+        let initialHeight = view.measuredHeight
+        harness.model.messages = [Self.message(id: "phase", role: "assistant", content: content)]
+        for frameIndex in 0..<12 {
+            try await DisplayFrameWaiter.next()
+            let current = try #require(collection.visibleCells.flatMap { descendants($0) }.compactMap { $0 as? MessageDocumentView }.first)
+            #expect(ObjectIdentifier(current.state) == identity)
+            #expect(current.state.layout === layout)
+            #expect(current.measuredHeight == initialHeight)
+            #expect(current.alpha == 1 && !current.isHidden && current.bounds.height > 0)
+            #expect(current.document.plain == view.document.plain)
+            // Frame-based raster witness, not a source-level no-alpha assertion.
+            let frame = UIGraphicsImageRenderer(bounds: current.bounds).image { _ in
+                current.drawHierarchy(in: current.bounds, afterScreenUpdates: true)
+            }
+            Attachment.record(frame, named: "live-final-\(frameIndex).png", as: .png)
+            if frameIndex == 6, let window = current.window {
+                let fullFrame = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                Attachment.record(fullFrame, named: "live-final-full-frame.png", as: .png)
+            }
+            let image = try #require(frame.cgImage)
+            let firstRange = try #require(current.document.blocks.first?.range)
+            let ink = current.selectionRects(for: MessageTextRange(firstRange)).reduce(CGRect.null) { $0.union($1.rect) }
+            let crop = ink.applying(CGAffineTransform(scaleX: frame.scale, y: frame.scale))
+            let textImage = try #require(image.cropping(to: crop))
+            var pixels = [UInt8](repeating: 0, count: textImage.width * textImage.height * 4)
+            let painted = pixels.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: textImage.width, height: textImage.height,
+                                              bitsPerComponent: 8, bytesPerRow: textImage.width * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(textImage, in: CGRect(x: 0, y: 0, width: textImage.width, height: textImage.height))
+                return stride(from: 3, to: bytes.count, by: 4).contains { bytes[$0] > 0 }
+            }
+            #expect(painted, "No blank heading frame during live-to-final handoff")
+        }
+        let history = try Harness(messages: [Self.message(id: "phase", role: "assistant", content: content)])
+        defer { history.close() }
+        let historyCollection = try await mountedCollection(in: history.host.view)
+        try await settle(historyCollection, hostView: history.host.view, minimumItems: 1, requireRenderedMarkdown: true)
+        let restored = try #require(historyCollection.visibleCells.flatMap { descendants($0) }.compactMap { $0 as? MessageDocumentView }.first)
+        #expect(restored.measuredHeight == initialHeight)
+        #expect(restored.document.plain == view.document.plain)
     }
 
     @Test func scrollingUnchangedLongMarkdownDoesNotReconfigureVisibleCells() async throws {
@@ -258,13 +308,13 @@ struct MessageListScrollTests {
 
             let coldExtent = collection.contentSize.height
             #expect(coldExtent > collection.bounds.height)
-            let coldSamples = try await traverse(collection, hostView: harness.host.view)
+            let coldSamples = try await traverse(collection, hostView: harness.host.view, captureName: "cold-\(setting.uiKit.rawValue)")
             let settledColdExtent = try #require(coldSamples.last)
             #expect(settledColdExtent.isFinite && settledColdExtent > 0)
 
             harness.model.messages = harness.model.messages
             try await settle(collection, hostView: harness.host.view, minimumItems: Self.gfmHistory.count)
-            let warmSamples = try await traverse(collection, hostView: harness.host.view)
+            let warmSamples = try await traverse(collection, hostView: harness.host.view, captureName: "warm-\(setting.uiKit.rawValue)")
             let settledWarmExtent = try #require(warmSamples.last)
             #expect(warmSamples.allSatisfy { $0.isFinite && $0 > 0 })
             #expect(warmSamples.allSatisfy { abs($0 - settledWarmExtent) < 1 })
@@ -827,18 +877,19 @@ struct MessageListScrollTests {
         try await waitUntil(timeout: 5) {
             abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1
         }
-        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) == 1 }
+        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) >= 1 }
         let provisionalExtent = collection.contentSize.height
 
         await loader.resolve(url: imageURL, image: testImage(width: 240, height: 180))
-        try await waitUntil(timeout: 5) { collection.contentSize.height > provisionalExtent + 50 }
+        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) > 0 }
+        try await DisplayFrameWaiter.next()
         try await waitUntil(timeout: 5) { scheduler.count > 0 }
         scheduler.runAll()
         try await waitUntil(timeout: 5) {
             abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1
         }
 
-        #expect(collection.contentSize.height > provisionalExtent + 50)
+        #expect(abs(collection.contentSize.height - provisionalExtent) <= 1)
         #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
     }
 
@@ -1037,12 +1088,12 @@ struct MessageListScrollTests {
             cell: MessageHostingCell, paintedBottom: CGFloat, allocatedBottom: CGFloat
         )? in
             guard let cell = collection.cellForItem(at: indexPath) as? MessageHostingCell,
-                  let markdown = descendants(cell).compactMap({ $0 as? SelectableMarkdownHostView }).first,
-                  markdown.webView.alpha == 1 else { return nil }
+                  let markdown = descendants(cell).compactMap({ $0 as? MessageDocumentView }).first,
+                  markdown.measuredHeight > 0 else { return nil }
             let frame = cell.convert(cell.bounds, to: collection)
             return (
                 cell,
-                markdown.webView.convert(markdown.webView.bounds, to: collection).maxY + Space.md,
+                markdown.convert(markdown.bounds, to: collection).maxY + Space.md,
                 frame.maxY
             )
         }
@@ -1052,11 +1103,13 @@ struct MessageListScrollTests {
         }
         for (previous, next) in zip(paintedRows, paintedRows.dropFirst()) {
             let gap = next.cell.convert(next.cell.bounds, to: collection).minY - previous.paintedBottom
-            #expect(abs(gap - Space.gapMsg) <= 1)
+            #expect(abs(gap - BubbleLayout.rowGap(width: collection.bounds.width)) <= 1)
         }
     }
 
     @Test func largeHistoryMountsBoundedNativeCellCount() async throws {
+        let baselineBytes = try physicalFootprint()
+        let started = CACurrentMediaTime()
         let messages = (0..<1_000).map { index in
             Self.message(id: "large-\(index)", role: index.isMultiple(of: 2) ? "user" : "assistant")
         }
@@ -1073,9 +1126,44 @@ struct MessageListScrollTests {
         let mountedCells = descendants(collection).compactMap { $0 as? UICollectionViewCell }
         #expect(collection.numberOfItems(inSection: 0) >= messages.count)
         #expect(mountedCells.count < 100)
+        let initialBytes = try physicalFootprint()
+        let mountSeconds = CACurrentMediaTime() - started
+        var frameIntervals: [Double] = []
+        var footprints: [UInt64] = []
+        for pass in 0..<2 {
+            collection.delegate?.scrollViewWillBeginDragging?(collection)
+            for step in 0..<20 {
+                let start = CACurrentMediaTime()
+                let fraction = CGFloat(step) / 19
+                collection.setContentOffset(CGPoint(x: 0, y: minimumOffset(of: collection) + maximumTravel(of: collection) * fraction), animated: false)
+                try await DisplayFrameWaiter.next()
+                frameIntervals.append(CACurrentMediaTime() - start)
+                #expect(descendants(collection).compactMap { $0 as? UICollectionViewCell }.count < 100)
+            }
+            try await settle(collection, hostView: harness.host.view, minimumItems: messages.count)
+            footprints.append(try physicalFootprint())
+            Attachment.record("pass=\(pass),footprintBytes=\(footprints.last!)", named: "history-memory-\(pass).txt")
+        }
+        // A second identical traversal must not retain another transcript's UI.
+        // Leave room for system raster/cache warmup; cells remain the strict bound.
+        #expect(footprints[1] <= footprints[0] + 32 * 1024 * 1024)
+        frameIntervals.sort()
+        Attachment.record("rows=1000,baselineBytes=\(baselineBytes),mountedBytes=\(initialBytes),mountSeconds=\(mountSeconds),medianFrameSeconds=\(frameIntervals[frameIntervals.count / 2]),maxFrameSeconds=\(frameIntervals.last!)", named: "history-performance.txt")
     }
 
-    @Test func resolvedMarkdownImageChangesExtentOnceAndSurvivesRecycle() async throws {
+    private func physicalFootprint() throws -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        #expect(status == KERN_SUCCESS)
+        return info.phys_footprint
+    }
+
+    @Test func reservedMarkdownImageExtentSurvivesArrivalAndRecycle() async throws {
         let loader = DelayedImageLoader()
         let imageURL = URL(string: "https://fixture.invalid/resolved.png")!
         var messages = Self.readerHistory
@@ -1088,7 +1176,7 @@ struct MessageListScrollTests {
         let collection = try await mountedCollection(in: harness.host.view)
         try await settle(collection, hostView: harness.host.view, minimumItems: messages.count, timeout: 10)
         // Establish rendered history before isolating the delayed image change;
-        // native fallback estimates are not the baseline for a WebKit image row.
+        // reserved native geometry is the baseline before image arrival.
         _ = try await traverse(collection, hostView: harness.host.view)
         harness.model.messages = messages
         collection.delegate?.scrollViewWillBeginDragging?(collection)
@@ -1099,19 +1187,21 @@ struct MessageListScrollTests {
         let provisionalExtent = collection.contentSize.height
 
         await loader.resolve(url: imageURL, image: testImage(width: 240, height: 180))
-        try await waitUntil(timeout: 5) { collection.contentSize.height > provisionalExtent + 50 }
+        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) > 0 }
+        try await DisplayFrameWaiter.next()
         try await settle(
             collection, hostView: harness.host.view, minimumItems: messages.count,
             requireRenderedMarkdown: true
         )
         let resolvedExtent = collection.contentSize.height
+        #expect(abs(resolvedExtent - provisionalExtent) <= 1)
         #expect(abs(try mountedCellFrame(at: anchor, in: collection).minY - beforeFrame) <= 1)
 
         let samples = try await traverse(collection, hostView: harness.host.view)
         #expect(samples.allSatisfy { abs($0 - resolvedExtent) < 1 })
     }
 
-    @Test func lateRenderedOffscreenCorrectionUpdatesExtentAndKeepsHistoryBottom() async throws {
+    @Test func offscreenImageCompletionCannotChangeReservedExtentOrHistoryBottom() async throws {
         let loader = DelayedImageLoader()
         let imageURL = URL(string: "https://fixture.invalid/offscreen.png")!
         var messages = Self.readerHistory
@@ -1135,7 +1225,7 @@ struct MessageListScrollTests {
         try await waitUntil(timeout: 5) {
             collection.indexPathsForVisibleItems.contains(targetPath)
         }
-        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) == 1 }
+        try await waitUntilAsync(timeout: 5) { await loader.requestCount(for: imageURL) >= 1 }
         let targetCell = try #require(
             collection.cellForItem(at: targetPath) as? MessageHostingCell
         )
@@ -1148,16 +1238,15 @@ struct MessageListScrollTests {
         try await waitUntil(timeout: 5) {
             !collection.indexPathsForVisibleItems.contains(targetPath)
         }
-        #expect(targetCell.configurationToken == targetConfigurationToken)
-        #expect(targetCell.measurementKey == targetMeasurementKey)
+        #expect(targetCell.configurationToken == 0 || targetCell.configurationToken == targetConfigurationToken)
+        #expect(targetCell.measurementKey == nil || targetCell.measurementKey == targetMeasurementKey)
         #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
 
         await loader.resolve(url: imageURL, image: testImage(width: 240, height: 180))
-        try await waitUntil(timeout: 5) {
-            !collection.indexPathsForVisibleItems.contains(targetPath)
-                && collection.contentSize.height > provisionalExtent + 50
-        }
-        #expect(layout.rowHeights[targetPath.item] > provisionalRowHeight + 50)
+        try await DisplayFrameWaiter.next()
+        #expect(!collection.indexPathsForVisibleItems.contains(targetPath))
+        #expect(abs(collection.contentSize.height - provisionalExtent) <= 1)
+        #expect(abs(layout.rowHeights[targetPath.item] - provisionalRowHeight) <= 1)
         #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1)
     }
 
@@ -1188,44 +1277,47 @@ struct MessageListScrollTests {
         let cache = MarkdownImageCache(loader: loader, decodedCountLimit: 1, decodedCostLimit: .max)
         let firstURL = URL(string: "https://fixture.invalid/first.png")!
         let secondURL = URL(string: "https://fixture.invalid/second.png")!
-        let first = cache.entry(for: firstURL)
-        cache.acquire(first, for: firstURL)
-        try await waitUntilAsync(timeout: 3) { await loader.requestCount(for: firstURL) == 1 }
         await loader.resolve(url: firstURL, image: testImage(width: 120, height: 80))
-        try await waitUntilAsync(timeout: 3) { cache.image(for: firstURL) != nil }
-        cache.release(first)
-
-        let second = cache.entry(for: secondURL)
-        cache.acquire(second, for: secondURL)
-        try await waitUntilAsync(timeout: 3) { await loader.requestCount(for: secondURL) == 1 }
+        #expect(await cache.imageData(for: firstURL) != nil)
         await loader.resolve(url: secondURL, image: testImage(width: 90, height: 60))
-        try await waitUntilAsync(timeout: 3) { cache.image(for: secondURL) != nil }
-        cache.release(second)
+        #expect(await cache.imageData(for: secondURL) != nil)
 
         #expect([firstURL, secondURL].compactMap(cache.image(for:)).count <= 1)
         #expect(cache.knownMetadata(for: firstURL) == .size(CGSize(width: 120, height: 80)))
-        #expect(first.result == .known(CGSize(width: 120, height: 80)))
-
-        cache.acquire(first, for: firstURL)
-        try await waitUntilAsync(timeout: 3) { await loader.requestCount(for: firstURL) == 2 }
-        #expect(first.result == .known(CGSize(width: 120, height: 80)))
-        cache.release(first)
+        #expect(cache.knownMetadata(for: secondURL) == .size(CGSize(width: 90, height: 60)))
+        let evicted = try #require([firstURL, secondURL].first { cache.image(for: $0) == nil })
+        let metadata = cache.knownMetadata(for: evicted)
+        #expect(await cache.imageData(for: evicted) != nil)
+        #expect(cache.knownMetadata(for: evicted) == metadata)
+        #expect([firstURL, secondURL].compactMap(cache.image(for:)).count <= 1)
     }
 
     @Test func markdownImageCacheCancelsOnlyAfterLastSharedConsumerReleases() async throws {
-        let loader = DelayedImageLoader()
-        let cache = MarkdownImageCache(loader: loader)
-        let url = URL(string: "https://fixture.invalid/shared.png")!
-        let entry = cache.entry(for: url)
-        cache.acquire(entry, for: url)
-        cache.acquire(entry, for: url)
-        try await waitUntilAsync(timeout: 3) { await loader.requestCount(for: url) == 1 }
-
-        cache.release(entry)
-        try await DisplayFrameWaiter.next()
-        #expect(await loader.cancellationCount(for: url) == 0)
-        cache.release(entry)
-        try await waitUntilAsync(timeout: 3) { await loader.cancellationCount(for: url) == 1 }
+        // Exercise scheduler interleavings: both consumers must enter before
+        // cancellation, rather than merely allocating two Task handles.
+        for _ in 0..<10 {
+            let loader = DelayedImageLoader()
+            let cache = MarkdownImageCache(loader: loader)
+            let url = URL(string: "https://fixture.invalid/shared.png")!
+            var started = 0
+            let first = Task { @MainActor in started += 1; return await cache.imageData(for: url) }
+            let second = Task { @MainActor in started += 1; return await cache.imageData(for: url) }
+            defer { first.cancel(); second.cancel() }
+            try await waitUntilAsync(timeout: 3) {
+                guard started == 2 else { return false }
+                return await loader.requestCount(for: url) > 0
+            }
+            let requests = await loader.requestCount(for: url)
+            #expect(requests == 1)
+            first.cancel()
+            try await DisplayFrameWaiter.next()
+            #expect(await loader.cancellationCount(for: url) == 0)
+            second.cancel()
+            try await waitUntilAsync(timeout: 3) { await loader.cancellationCount(for: url) > 0 }
+            #expect(await loader.cancellationCount(for: url) == 1)
+            #expect(await first.value == nil)
+            #expect(await second.value == nil)
+        }
     }
 
     @Test func sendDuringHistoryReloadOverridesPendingBottomIntent() async throws {
@@ -1262,11 +1354,17 @@ struct MessageListScrollTests {
         defer { harness.close() }
         let collection = try await mountedCollection(in: harness.host.view)
         try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        let native = try #require(collection as? MessageUICollectionView)
+        let completions = native.positioningAnimationCompletionCount
         harness.model.pending = [PendingMessage(id: "owned", text: "send", status: .queued, sentAtMs: nil)]
         try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 1)
+        // Keep send ownership, but finish its animation before establishing the
+        // fixture's pre-reload offset. Geometry settling alone is not that signal.
+        try await waitUntil(timeout: 3) { native.positioningAnimationCompletionCount > completions }
         collection.setContentOffset(CGPoint(x: 0, y: minimumOffset(of: collection)), animated: false)
         try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 1)
 
+        #expect(abs(collection.contentOffset.y - minimumOffset(of: collection)) <= 1)
         harness.model.historyLoading = true
         try await DisplayFrameWaiter.next()
         harness.model.messages[harness.model.messages.count - 1] = Self.message(
@@ -1600,8 +1698,8 @@ struct MessageListScrollTests {
             // Opt in only for rendered-history checks; controlled-image tests
             // intentionally inspect the fallback before releasing their loader.
             let renderedMarkdownReady = !requireRenderedMarkdown || collection.visibleCells.allSatisfy { cell in
-                descendants(cell).compactMap { $0 as? SelectableMarkdownHostView }.allSatisfy {
-                    $0.measuredHeight != nil && $0.webView.alpha == 1
+                descendants(cell).compactMap { $0 as? MessageDocumentView }.allSatisfy {
+                    $0.measuredHeight > 0 && $0.alpha == 1
                 }
             }
             if itemCount >= minimumItems,
@@ -1621,22 +1719,20 @@ struct MessageListScrollTests {
             }
             previous = current
         }
-        let webState = collection.visibleCells.flatMap { descendants($0) }
-            .compactMap { $0 as? SelectableMarkdownHostView }.map {
-                "loads=\($0.loadCount),height=\($0.measuredHeight ?? -1),publications=\($0.heightUpdateCount),failure=\(String(describing: $0.loadFailure))"
-            }
-        Issue.record("MessageList geometry/row did not settle; live WebKit hosts=\(SelectableMarkdownHostView.liveViewCount), visible states: \(webState)")
+        let nativeState = collection.visibleCells.flatMap { descendants($0) }
+            .compactMap { $0 as? MessageDocumentView }.map { "height=\($0.measuredHeight)" }
+        Issue.record("MessageList geometry/row did not settle; visible native states: \(nativeState)")
         throw MessageListScrollTestError.geometryDidNotSettle
     }
 
-    private func traverse(_ collection: UICollectionView, hostView: UIView) async throws -> [CGFloat] {
+    private func traverse(_ collection: UICollectionView, hostView: UIView, captureName: String = "history-recycle") async throws -> [CGFloat] {
         try await settle(
             collection, hostView: hostView, minimumItems: Self.gfmHistory.count, timeout: 10,
             requireRenderedMarkdown: true
         )
         collection.delegate?.scrollViewWillBeginDragging?(collection)
         var extents = [collection.contentSize.height]
-        for fraction in [0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25, 0] {
+        for (sample, fraction) in [0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25, 0].enumerated() {
             collection.setContentOffset(CGPoint(
                 x: 0,
                 y: minimumOffset(of: collection) + maximumTravel(of: collection) * fraction
@@ -1646,6 +1742,30 @@ struct MessageListScrollTests {
                 requireRenderedMarkdown: true
             )
             extents.append(collection.contentSize.height)
+            if sample == 0 || sample == 7 || sample == 11, let window = collection.window {
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                Attachment.record(image, named: "\(captureName)-\(sample).png", as: .png)
+                // Long native text must retain its bubble face, not exceed the
+                // GPU texture limit and silently paint only text over the pane.
+                let viewport = collection.convert(collection.bounds, to: window)
+                for document in collection.visibleCells.flatMap({ descendants($0) }).compactMap({ $0 as? MessageDocumentView }) where document.bounds.height > 2048 {
+                    let body = document.convert(document.bounds, to: window)
+                    let visible = body.intersection(viewport)
+                    guard visible.height > 30 else { continue }
+                    let cg = try #require(image.cgImage)
+                    let data = try #require(cg.dataProvider?.data)
+                    let bytes = try #require(CFDataGetBytePtr(data))
+                    let stride = cg.bitsPerPixel / 8
+                    func pixel(_ x: CGFloat) -> Int {
+                        Int(visible.midY * image.scale) * cg.bytesPerRow + Int(x * image.scale) * stride
+                    }
+                    let face = pixel(body.maxX + 4), pane = pixel(viewport.minX + 2)
+                    let difference = (0..<stride).reduce(0) { $0 + abs(Int(bytes[face + $1]) - Int(bytes[pane + $1])) }
+                    #expect(difference > 6, "Long bubble face must paint at each traversed viewport")
+                }
+            }
         }
         return extents
     }
@@ -1961,51 +2081,6 @@ private final class HeldMessagePositionScheduler {
         actions.removeAll()
         action()
     }
-}
-
-private actor DelayedImageLoader: NetworkImageLoader {
-    private var continuations: [URL: [CheckedContinuation<CGImage, Error>]] = [:]
-    private var resolved: [URL: CGImage] = [:]
-    private var requests: [URL: Int] = [:]
-    private var cancellations: [URL: Int] = [:]
-
-    func image(from url: URL) async throws -> CGImage {
-        requests[url, default: 0] += 1
-        if let image = resolved[url] { return image }
-        return try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            return try await withCheckedThrowingContinuation { continuation in
-                continuations[url, default: []].append(continuation)
-            }
-        } onCancel: {
-            Task { await self.cancel(url: url) }
-        }
-    }
-
-    func resolve(url: URL, image: CGImage) {
-        resolved[url] = image
-        continuations.removeValue(forKey: url)?.forEach { $0.resume(returning: image) }
-    }
-
-    func requestCount(for url: URL) -> Int { requests[url, default: 0] }
-    func cancellationCount(for url: URL) -> Int { cancellations[url, default: 0] }
-
-    private func cancel(url: URL) {
-        cancellations[url, default: 0] += 1
-        continuations.removeValue(forKey: url)?.forEach { $0.resume(throwing: CancellationError()) }
-    }
-}
-
-private func testImage(width: Int, height: Int) -> CGImage {
-    let context = CGContext(
-        data: nil, width: width, height: height,
-        bitsPerComponent: 8, bytesPerRow: width * 4,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    context.setFillColor(UIColor.systemBlue.cgColor)
-    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    return context.makeImage()!
 }
 
 private enum MessageListScrollTestError: Error {

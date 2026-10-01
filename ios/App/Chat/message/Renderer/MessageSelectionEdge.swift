@@ -3,7 +3,7 @@ import UIKit
 /// Observes physical touch lifetime without recognizing selection, preventing any
 /// native recognizer, or installing another set of handles. Window coordinates
 /// remain stationary when the host scrolls the document underneath the finger.
-final class R0PointerObserver: UIGestureRecognizer {
+final class MessagePointerObserver: UIGestureRecognizer {
     var sample: ((CGPoint?) -> Void)?
     private weak var tracked: UITouch?
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
@@ -42,8 +42,8 @@ final class R0PointerObserver: UIGestureRecognizer {
 /// Host owns vertical scroll policy/bounds and returns the actual applied delta.
 /// Native selection and this coordinator write the SAME UITextInput range.
 @MainActor
-final class R0SelectionEdge {
-    private weak var document: R0DocumentView?
+final class MessageSelectionEdge {
+    private weak var document: MessageDocumentView?
     private(set) var pointer: CGPoint?
     private(set) var anchor: Int?
     private var pointerToCaret = CGVector.zero
@@ -53,13 +53,14 @@ final class R0SelectionEdge {
     private(set) var frameCount = 0
     private(set) var pointerSamples = 0
     private(set) var nativeGestureStates: [String: Int] = [:]
+    private var anchorTrailing = false
     private var armedAnchor: Int?
     private var activeGesture: ObjectIdentifier?
     private var cancelled = false
     var isRunning: Bool { link?.isEnabled == true }
     var onMotion: ((CGPoint, Int, CGFloat, CGFloat) -> Void)?
 
-    init(document: R0DocumentView) { self.document = document }
+    init(document: MessageDocumentView) { self.document = document }
 
     func sample(_ point: CGPoint?, handleAnchor: Int? = nil) {
         guard let point else { stop(); return }
@@ -67,9 +68,10 @@ final class R0SelectionEdge {
         if pointer == nil {
             armedAnchor = cancelled ? nil : handleAnchor
             if let document, let handleAnchor,
-               let range = (document.selectedTextRange as? R0Range)?.value {
+               let range = (document.selectedTextRange as? MessageTextRange)?.value {
+                anchorTrailing = NSMaxRange(range) == handleAnchor
                 let endpoint = range.location == handleAnchor ? NSMaxRange(range) : range.location
-                let caret = document.convert(document.caretRect(for: R0Position(endpoint)), to: document.window)
+                let caret = document.convert(document.caretRect(for: MessageTextPosition(endpoint)), to: document.window)
                 pointerToCaret = CGVector(dx: 0, dy: caret.midY - point.y)
             }
         }
@@ -104,6 +106,11 @@ final class R0SelectionEdge {
         updateScheduling()
     }
 
+    func remap(from old: MessageDocument, to new: MessageDocument) {
+        if let anchor { self.anchor = new.remap(NSRange(location: anchor, length: 0), from: old, caretTrailing: anchorTrailing).location }
+        if let armedAnchor { self.armedAnchor = new.remap(NSRange(location: armedAnchor, length: 0), from: old, caretTrailing: anchorTrailing).location }
+    }
+
     func stop() {
         pointer = nil; anchor = nil; armedAnchor = nil; activeGesture = nil; cancelled = false
         suspend()
@@ -119,6 +126,7 @@ final class R0SelectionEdge {
         let viewport = document.selectionViewportInWindow?() ?? .null
         let vertical = viewport.isNull ? 0 : Self.speed(pointer.y, min: viewport.minY, max: viewport.maxY)
         let local = document.convert(CGPoint(x: pointer.x + pointerToCaret.dx, y: pointer.y + pointerToCaret.dy), from: document.window)
+        document.activateTable(at: local)
         let table = document.tableRect
         let horizontal = (table.minY...table.maxY).contains(local.y)
             ? Self.speed(local.x, min: table.minX, max: table.maxX) : 0
@@ -170,8 +178,8 @@ final class R0SelectionEdge {
         let dy = requestedY == 0 ? 0 : (document.requestSelectionScroll?(requestedY) ?? 0)
         guard dx != 0 || dy != 0 else { suspend(); return }
         let local = document.convert(CGPoint(x: pointer.x + pointerToCaret.dx, y: pointer.y + pointerToCaret.dy), from: document.window)
-        guard let endpoint = document.closestPosition(to: local) as? R0Position else { return }
-        document.selectedTextRange = R0Range(NSRange(location: min(anchor, endpoint.index), length: abs(endpoint.index - anchor)))
+        guard let endpoint = document.closestPosition(to: local) as? MessageTextPosition else { return }
+        document.selectedTextRange = MessageTextRange(NSRange(location: min(anchor, endpoint.index), length: abs(endpoint.index - anchor)))
         document.refreshSelectionGeometry()
         frameCount += 1
         onMotion?(pointer, anchor, dx, dy)

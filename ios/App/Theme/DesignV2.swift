@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MobileData
 
 /// Thin, additive Swift projection of `io.sentient.mobilesdk.design.v2`.
@@ -142,23 +143,25 @@ enum DesignTextRole {
         }
     }
 
-    var font: Font {
+    var textStyle: Font.TextStyle {
         switch self {
-        case .telemetry:
-            .custom(family, size: DesignV2.Typography.xs, relativeTo: .caption2)
-        case .caption, .supporting:
-            .custom(family, size: DesignV2.Typography.supporting, relativeTo: .footnote)
-        case .label:
-            .custom(family, size: DesignMetrics.controlLabelSize, relativeTo: .footnote)
-        case .body:
-            .custom(family, size: DesignV2.Typography.body, relativeTo: .body)
-        case .large:
-            .custom(family, size: DesignV2.Typography.large, relativeTo: .headline)
-        case .title:
-            .custom(family, size: DesignV2.Typography.title, relativeTo: .title2)
-        case .display:
-            .custom(family, size: DesignV2.Typography.display, relativeTo: .largeTitle)
+        case .telemetry: .caption2
+        case .caption, .supporting, .label: .footnote
+        case .body: .body
+        case .large: .headline
+        case .title: .title2
+        case .display: .largeTitle
         }
+    }
+
+    var font: Font { .custom(family, size: baseSize, relativeTo: textStyle) }
+
+    func extraLeading(scaledSize: CGFloat) -> CGFloat {
+        let face = "\(family.filter { !$0.isWhitespace })-Regular"
+        let nativeFont = UIFont(name: face, size: scaledSize.rounded()) ?? UIFont.systemFont(ofSize: scaledSize.rounded())
+        // Native baseline probes establish that SwiftUI already includes the
+        // font's ascent/descent/leading. Add only the missing line-box space.
+        return max(0, scaledSize * CGFloat(lineHeight) - nativeFont.lineHeight)
     }
 
     var baseSize: CGFloat {
@@ -184,11 +187,17 @@ enum DesignTextRole {
 
 private struct DesignTextModifier: ViewModifier {
     let role: DesignTextRole
+    @ScaledMetric private var scaledSize: CGFloat
+
+    init(role: DesignTextRole) {
+        self.role = role
+        _scaledSize = ScaledMetric(wrappedValue: role.baseSize, relativeTo: role.textStyle)
+    }
 
     func body(content: Content) -> some View {
         content
             .font(role.font)
-            .lineSpacing(role.baseSize * CGFloat(role.lineHeight - 1))
+            .lineSpacing(role.extraLeading(scaledSize: scaledSize))
             .environment(\.defaultMinListRowHeight, DesignMetrics.minimumTarget)
     }
 }

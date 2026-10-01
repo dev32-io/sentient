@@ -30,7 +30,7 @@ struct PersonalitiesScreen: View {
         SettingsPageScaffold(title: "Personalities", screenId: "settings-personalities-screen") {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading personalities")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load personalities", detail: message) {
                     Task { await vm.load() }

@@ -1,4 +1,4 @@
-// Compile in the isolated R0 bundle.ui-testing target, not the app's unit-test
+// Compile in the isolated production-renderer bundle.ui-testing target, not the app's unit-test
 // target. The delivery runner supplies this flag and a network-free fixture app.
 #if R0_NATIVE_UI_TESTS
 import XCTest
@@ -17,19 +17,19 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["R0_SCENARIO"] = scenario
         app.launch()
-        XCTAssertTrue(app.descendants(matching: .any)["r0-prose-before"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Before café 👩🏽‍💻 — select from here into any cell.")).firstMatch.waitForExistence(timeout: 5))
         return app
     }
     private func point(_ app: XCUIApplication, _ x: Double, _ y: Double) -> XCUICoordinate {
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: y))
     }
-    private func save(_ app: XCUIApplication, _ name: String) throws -> [String: Any] {
+    private func save(_ app: XCUIApplication, _ name: String, expectedClipboard: String? = nil) throws -> [String: Any] {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
         app.buttons["r0-save"].tap()
         sequence += 1
         let state = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("\(scenario)-\(sequence).json"))) as! [String: Any]
         if let clipboard = state["clipboard"] as? String {
-            XCTAssertEqual(Data(clipboard.utf8), Data((state["selectedText"] as! String).utf8), "Native menu Copy must equal exact current range bytes")
+            XCTAssertEqual(Data(clipboard.utf8), Data((expectedClipboard ?? (state["selectedText"] as! String)).utf8), "Native menu Copy must equal exact current range bytes")
         }
         return state
     }
@@ -41,11 +41,12 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         let item = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 3))
         item.tap()
-        try! Data().write(to: output.appendingPathComponent("capture-owned-clipboard"))
+        try! Data().write(to: output.appendingPathComponent("capture-owned-clipboard"), options: .withoutOverwriting)
     }
     private func drag(_ app: XCUIApplication, _ state: [String: Any], to end: CGPoint, hold: Double = 3) {
-        let caret = rect(state, "caretEnd")
-        point(app, caret.minX + 1, caret.maxY + 5).press(forDuration: 0.15,
+        let handle = (state["handles"] as! [[String: Any]]).first { $0["leading"] as? Bool == false }!
+        let box = rect(handle, "rect")
+        point(app, box.midX, box.maxY - min(8, box.height / 2)).press(forDuration: 0.15,
             thenDragTo: point(app, end.x, end.y), withVelocity: .slow, thenHoldForDuration: hold)
     }
     private func assertStopped(_ state: [String: Any]) {
@@ -65,16 +66,45 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         XCTAssertTrue(moving.allSatisfy { abs($0[axis] as! Double) <= 8.01 }, "Frame delta must stay bounded")
         XCTAssertEqual(Set(moving.map { $0["anchor"] as! Int }).count, 1)
     }
-    private func selectCafe(_ app: XCUIApplication, _ state: [String: Any]) {
+    private func selectFirstWord(_ app: XCUIApplication, _ state: [String: Any]) {
         let first = rect(state, "firstCaret")
-        point(app, 90, first.midY).press(forDuration: 1)
+        point(app, first.minX + max(2, first.height / 4), first.midY).press(forDuration: 1)
+    }
+
+    func testCanonicalTableToolbarActivation() throws {
+        let app = try launch("toolbar")
+        let initial = try save(app, "canonical-toolbar")
+        func activate(_ state: [String: Any], _ name: String) throws {
+            let button = app.buttons["chat-copy-table"].firstMatch
+            XCTAssertTrue(button.waitForExistence(timeout: 3))
+            XCTAssertEqual(button.label, "Copy table as Markdown")
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            let tools = rect(state, "toolsRect")
+            XCTAssertGreaterThanOrEqual(button.frame.minX, tools.minX - 1)
+            XCTAssertLessThanOrEqual(button.frame.maxX, tools.maxX + 1)
+            XCTAssertGreaterThanOrEqual(button.frame.minY, tools.minY - 1)
+            XCTAssertLessThanOrEqual(button.frame.maxY, tools.maxY + 1)
+            XCTAssertTrue(button.isHittable)
+            button.tap()
+            try Data().write(to: output.appendingPathComponent("capture-owned-clipboard"), options: .withoutOverwriting)
+            let after = try save(app, name, expectedClipboard: state["firstTableMarkdown"] as? String)
+            XCTAssertEqual(after["selectionStart"] as? Int, state["selectionStart"] as? Int)
+            XCTAssertEqual(after["openedLinks"] as? Int, 0, "Toolbar activation must not activate adjacent document links")
+        }
+        try activate(initial, "canonical-toolbar-activated")
+        app.buttons["r0-width"].tap()
+        app.buttons["r0-type"].tap()
+        let large = try save(app, "canonical-toolbar-large")
+        XCTAssertGreaterThan(large["toolsHeight"] as! Double, initial["toolsHeight"] as! Double)
+        try activate(large, "canonical-toolbar-large-activated")
     }
 
     func testHorizontalHoldAndReverse() throws {
         let app = try launch("horizontal")
         let initial = try save(app, "initial-AX")
-        XCTAssertFalse(app.descendants(matching: .any)["r0-cell-0-2"].exists)
-        selectCafe(app, initial)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Value")).firstMatch.exists)
+        selectFirstWord(app, initial)
         let selected = try save(app, "native-word")
         let table = rect(selected, "tableRect")
         drag(app, selected, to: CGPoint(x: table.maxX - 2, y: table.minY + table.height / 2 + 45))
@@ -82,7 +112,7 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         let forward = try save(app, "horizontal-held")
         assertStationary(forward, axis: "dx"); assertStopped(forward)
         XCTAssertGreaterThan(forward["tableOffset"] as! Double, 100)
-        XCTAssertTrue(app.descendants(matching: .any)["r0-cell-0-2"].exists, "Previously offscreen cell must be reachable in native AX")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Value")).firstMatch.exists, "Previously offscreen cell must be reachable in native AX")
         let caret = rect(forward, "caretEnd")
         drag(app, forward, to: CGPoint(x: table.minX + 1, y: caret.midY + 45), hold: 2)
         copy(app)
@@ -91,7 +121,7 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         XCTAssertLessThan(reverse["tableOffset"] as! Double, forward["tableOffset"] as! Double)
         let motion = reverse["motion"] as! [[String: Any]]
         XCTAssertTrue(motion.contains { ($0["dx"] as! Double) < 0 })
-        XCTAssertEqual(reverse["selectionStart"] as? Int, 7)
+        XCTAssertEqual(reverse["selectionStart"] as? Int, selected["selectionStart"] as? Int)
     }
 
     func testVerticalHoldReverseAndManualPan() throws {
@@ -100,7 +130,7 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         app.buttons["r0-type"].tap(); app.buttons["r0-width"].tap()
         let initial = try save(app, "large-type-initial")
         let first = rect(initial, "firstCaret")
-        point(app, 50, first.midY).press(forDuration: 1)
+        point(app, first.minX + max(2, first.height / 4), first.midY).press(forDuration: 1)
         let selected = try save(app, "native-large-word")
         let viewport = rect(selected, "viewport")
         drag(app, selected, to: CGPoint(x: 240, y: viewport.maxY - 2), hold: 2.5)
@@ -125,18 +155,34 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         let app = try launch("mutation")
         let initial = try save(app, "mutation-initial")
         app.buttons["r0-arm"].tap()
-        selectCafe(app, initial)
+        selectFirstWord(app, initial)
         let selected = try save(app, "mutation-word")
         let table = rect(selected, "tableRect")
         drag(app, selected, to: CGPoint(x: table.maxX - 2, y: table.minY + table.height / 2 + 45))
         copy(app)
         let state = try save(app, "stream-resize-image-during-hold")
         XCTAssertEqual(state["mutations"] as? Int, 3)
+        XCTAssertEqual(state["imageReady"] as? Bool, true, "Controlled image must really arrive while native selection is held")
         let probe = state["mutationProbe"] as! [String: Any]
-        XCTAssertEqual(probe["anchorBefore"] as? Int, 7)
-        XCTAssertEqual(probe["anchorAfter"] as? Int, 7)
+        XCTAssertEqual(probe["anchorBefore"] as? Int, selected["selectionStart"] as? Int)
+        XCTAssertEqual(probe["anchorAfter"] as? Int, selected["selectionStart"] as? Int)
         XCTAssertEqual(probe["offsetBefore"] as? Double, probe["offsetAfter"] as? Double)
         assertStationary(state, axis: "dx"); assertStopped(state)
+    }
+
+    func testHostDeniesNativeSelectionScroll() throws {
+        let app = try launch("denied")
+        app.buttons["r0-type"].tap(); app.buttons["r0-width"].tap()
+        app.buttons["r0-deny"].tap()
+        let initial = try save(app, "denied-initial")
+        selectFirstWord(app, initial)
+        let selected = try save(app, "denied-word")
+        let viewport = rect(selected, "viewport")
+        drag(app, selected, to: CGPoint(x: 240, y: viewport.maxY - 2))
+        let state = try save(app, "denied-held")
+        XCTAssertGreaterThan(state["deniedRequests"] as! Int, 0)
+        XCTAssertEqual(state["parentOffset"] as! Double, initial["parentOffset"] as! Double)
+        assertStopped(state)
     }
 
     func testNativeCancellationDuringHeldDrag() throws { try interruption("cancel") }
@@ -145,7 +191,7 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         let app = try launch(action)
         let initial = try save(app, "\(action)-initial")
         app.buttons["r0-\(action)"].tap()
-        selectCafe(app, initial)
+        selectFirstWord(app, initial)
         let selected = try save(app, "\(action)-word")
         let table = rect(selected, "tableRect")
         drag(app, selected, to: CGPoint(x: table.maxX - 2, y: table.minY + table.height / 2 + 45))

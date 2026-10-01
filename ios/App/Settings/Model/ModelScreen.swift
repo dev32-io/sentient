@@ -54,7 +54,7 @@ struct ModelScreen: View {
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: auxiliaryOnly ? "Loading auxiliary runners" : "Loading models")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load models", detail: message) {
                     Task { await vm.load() }

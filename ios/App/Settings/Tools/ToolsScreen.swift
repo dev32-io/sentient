@@ -38,7 +38,7 @@ struct ToolsScreen: View {
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading capabilities")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load capabilities", detail: message) {
                     Task { await vm.load() }

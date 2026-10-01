@@ -1,12 +1,14 @@
 import type { JSX } from "preact";
 import type { ConversationAssistantCutoff } from "@sentient/protocol";
-import { renderMarkdown } from "../../lib/render-markdown.ts";
+import type { MarkdownImages } from "../../lib/render-markdown.ts";
+import { RichMarkdown } from "./rich-markdown.tsx";
 import { MessageCutoff } from "./message-cutoff.tsx";
 import { StreamingCaret, ThinkingPulse } from "./streaming-presentation.tsx";
 
 export interface MessageContentProps {
   text: string;
   isStreaming: boolean;
+  images?: MarkdownImages | undefined;
   cutoff?: ConversationAssistantCutoff | undefined;
 }
 
@@ -18,9 +20,9 @@ export function MessageContent({
   text,
   isStreaming,
   cutoff,
+  images,
 }: MessageContentProps): JSX.Element {
   const showPlaceholder = isStreaming && text.length === 0;
-  const htmlProp = { __html: renderMarkdown(text) };
 
   return (
     <div
@@ -29,7 +31,7 @@ export function MessageContent({
       {showPlaceholder ? (
         <ThinkingPulse />
       ) : (
-        <div class="bubble-text__md" dangerouslySetInnerHTML={htmlProp} />
+        <RichMarkdown text={text} images={images} />
       )}
       {isStreaming && text.length > 0 && <StreamingCaret />}
       {cutoff && <MessageCutoff variant="inline" cutoffKind={cutoff.kind} />}

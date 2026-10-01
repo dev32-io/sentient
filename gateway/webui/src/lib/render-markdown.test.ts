@@ -3,6 +3,54 @@ import { describe, expect, it } from "vitest";
 import { renderMarkdown } from "./render-markdown.ts";
 
 describe("renderMarkdown", () => {
+  it("retains GFM headers and rectangular table structure without admitting active attributes", () => {
+    const html = renderMarkdown("| Name | Value |\n| --- | --- |\n| Alpha | 42 |\n| Beta | 7 | ");
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    expect(root.querySelectorAll("thead tr th")).toHaveLength(2);
+    expect(root.querySelectorAll('th[scope="col"]')).toHaveLength(2);
+    expect(root.querySelectorAll("tbody tr")).toHaveLength(2);
+    expect(root.querySelectorAll("tbody tr td")).toHaveLength(4);
+    const hostile = renderMarkdown(
+      '<table onclick="bad()"><tr><th style="background:url(https://tracker.invalid)">Safe</th><td><svg onload="bad()"></svg><iframe src="https://tracker.invalid"></iframe></td></tr></table>',
+    );
+    expect(hostile).toContain("Safe");
+    expect(hostile).not.toMatch(/onclick|style=|svg|iframe|tracker/);
+  });
+
+  it.each(["javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,<script>bad()</script>", "vbscript:bad()"])(
+    "rejects malicious link URL %s",
+    (url) => {
+      expect(renderMarkdown(`<a href="${url}" onmouseover="bad()">link</a>`)).not.toMatch(/href=|onmouseover/);
+    },
+  );
+
+  it("never fetches Markdown image URLs; only caller-authorized attachment previews become local images", () => {
+    const path = "/api/v1/attachments/att_fixture/preview";
+    const images = new Map([[path, "blob:http://localhost/owned-preview"]]);
+    const html = renderMarkdown(`![Accessible café](${path})`, images);
+    expect(html).toContain('src="blob:http://localhost/owned-preview"');
+    expect(html).toContain('alt="Accessible café"');
+    expect(html).toContain('width="640" height="360"');
+    expect(html).toContain('referrerpolicy="no-referrer"');
+    for (const url of [
+      "https://tracker.invalid/pixel",
+      "//tracker.invalid/pixel",
+      "/private.png",
+      "blob:http://localhost/unowned",
+      "data:image/svg+xml,evil",
+      "javascript:alert(1)",
+    ]) {
+      expect(
+        renderMarkdown(`<img src="${url}" alt="Fallback" onerror="bad()" srcset="https://tracker.invalid 2x">`, images),
+      ).toBe("Fallback");
+    }
+    expect(renderMarkdown(`![Fallback](${path})`)).toContain("Fallback");
+    expect(renderMarkdown(`![Fallback](${path})`)).not.toContain("<img");
+    expect(renderMarkdown(`![Fallback](${path})`, new Map([[path, "https://tracker.invalid/pixel"]]))).not.toContain(
+      "<img",
+    );
+  });
   describe("a bare list marker alone", () => {
     it("renders a bare numeric marker as visible text instead of an empty ordered list", () => {
       // CommonMark quirk (task-21 extra defect): "84." alone is valid syntax

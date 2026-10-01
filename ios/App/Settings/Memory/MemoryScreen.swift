@@ -86,7 +86,7 @@ struct MemoryScreen: View {
     private var slotContent: some View {
         let state = vm.state(for: slot)
         if !state.loaded {
-            SoulLoadingRow()
+            SoulLoadingRow(title: "Loading memory")
         } else if let loadError = state.loadError {
             AsyncNotice(kind: .error, title: "Couldn't load this memory", detail: loadError) {
                 Task { await vm.retry(slot) }

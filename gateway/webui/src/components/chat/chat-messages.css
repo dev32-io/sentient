@@ -477,6 +477,98 @@
   outline-offset: 3px;
 }
 
+/* Rich blocks stay inside the native selectable bubble document. */
+.markdown-table {
+  min-width: 0;
+  max-width: 100%;
+  margin-block: var(--space-sm);
+  contain: inline-size;
+  /* Tables must contribute a readable bubble measure, including table-only replies.
+     Reuse the shell's existing maximum rather than its potentially huge contents. */
+  contain-intrinsic-inline-size: 62ch;
+}
+.markdown-table__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  user-select: none;
+}
+.markdown-table__tools .snt-button {
+  min-height: 44px;
+}
+.markdown-table__viewport:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.markdown-table__edges {
+  position: relative;
+}
+.markdown-table__edges::before,
+.markdown-table__edges::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  width: var(--space-md);
+  pointer-events: none;
+  opacity: 0;
+}
+.markdown-table__edges::before {
+  left: 0;
+  background: linear-gradient(to right, var(--color-bg-sunk), transparent);
+}
+.markdown-table__edges::after {
+  right: 0;
+  background: linear-gradient(to left, var(--color-bg-sunk), transparent);
+}
+.markdown-table__edges[data-left="true"]::before,
+.markdown-table__edges[data-right="true"]::after {
+  opacity: 1;
+}
+.markdown-table__viewport {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-sm);
+  scrollbar-width: thin;
+  /* Logical row order and positive retained offsets, even inside an RTL host.
+     Cell text keeps native Unicode bidi behavior. */
+  direction: ltr;
+}
+.markdown-table table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+.markdown-table th,
+.markdown-table td {
+  min-width: 12ch;
+  max-width: 32ch;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-line-soft);
+  text-align: start;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.markdown-table th {
+  background: var(--color-bg-sunk);
+  font-weight: 600;
+}
+.bubble-text__md img {
+  display: block;
+  width: min(100%, 640px);
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-sunk);
+}
+
 /* Streaming presentation is intentionally outside the Markdown HTML so a
    growing response can update without changing the sanitized content shape. */
 .bubble-text--thinking {

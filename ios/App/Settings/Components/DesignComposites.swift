@@ -698,8 +698,12 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
             .background {
                 DesignCanvasSurfaceKernel(
                     shape: .continuousRoundedRectangle(cornerRadius: Radii.lg),
-                    tier: raised ? .float : .plate,
-                    increasedContrast: contrast == .increased
+                    tier: .plate,
+                    increasedContrast: contrast == .increased,
+                    recipeOverride: .mediaCard(
+                        state: DesignCanvasControlState(isHovered: hovered, isPressed: pressed, isDisabled: !isEnabled),
+                        increasedContrast: contrast == .increased
+                    )
                 )
             }
             .overlay {
@@ -708,12 +712,15 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                         ? DuskColors.accent
                         : contrast == .increased
                             ? DuskColors.ink3
-                            : hovered && !quietHoverBorder ? DuskColors.line : .clear,
+                            : .clear,
                     lineWidth: DesignMetrics.hairline
                 )
             }
             .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
             .opacity(isEnabled ? 1 : 0.58)
+            // Keep decorative Canvas overflow outside the native action's AX
+            // and hit boundary, matching the canonical key style.
+            .contentShape(Rectangle())
             // Touch-down is immediate; only pointer hover gets a transition.
             .animation(
                 DesignV2.Motion.animation(
@@ -733,6 +740,7 @@ struct DesignDominantVisualCard<Visual: View>: View {
     let accessibilityLabel: String
     let accessibilityId: String
     var quietHoverBorder = false
+    var accessibilityHint = ""
     let action: () -> Void
     @ViewBuilder let visual: () -> Visual
     @State private var hovered = false
@@ -743,6 +751,7 @@ struct DesignDominantVisualCard<Visual: View>: View {
         accessibilityLabel: String,
         accessibilityId: String,
         quietHoverBorder: Bool = false,
+        accessibilityHint: String = "",
         action: @escaping () -> Void,
         @ViewBuilder visual: @escaping () -> Visual
     ) {
@@ -751,6 +760,7 @@ struct DesignDominantVisualCard<Visual: View>: View {
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityId = accessibilityId
         self.quietHoverBorder = quietHoverBorder
+        self.accessibilityHint = accessibilityHint
         self.action = action
         self.visual = visual
     }
@@ -800,11 +810,8 @@ struct DesignDominantVisualCard<Visual: View>: View {
         }
         .buttonStyle(DominantVisualCardButtonStyle(hovered: hovered, quietHoverBorder: quietHoverBorder))
         .onHover { hovered = $0 }
-        .accessibilityRepresentation {
-            Text(accessibilityLabel)
-        }
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Enter PIN")
+        .accessibilityHint(accessibilityHint)
         .accessibilityIdentifier(accessibilityId)
     }
 }
@@ -2831,27 +2838,14 @@ struct DesignTextButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(role: role == .destructive ? .destructive : nil, action: action) {
-            Text(title)
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(tint)
-                .frame(minHeight: DesignMetrics.minimumTarget)
-        }
-        .buttonStyle(.plain)
-        .disabled(!state.isInteractive)
-        .accessibilityLabel(title)
-        .accessibilityValue(state.accessibilityValue)
-        .accessibilityAddTraits(state.isSelected ? .isSelected : [])
-        .accessibilityIdentifier(accessibilityId ?? "")
-    }
-
-    private var tint: Color {
-        switch role {
-        case .action: DuskColors.accent
-        case .secondary: DuskColors.ink
-        case .destructive: DuskColors.stop
-        case .quiet: DuskColors.ink2
-        }
+        DesignActionButton(
+            title: title,
+            role: role,
+            state: state,
+            accessibilityId: accessibilityId,
+            fillsWidth: false,
+            action: action
+        )
     }
 }
 

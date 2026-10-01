@@ -37,7 +37,7 @@ struct AudioScreen: View {
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading audio settings")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load audio settings", detail: message) {
                     Task { await vm.load() }

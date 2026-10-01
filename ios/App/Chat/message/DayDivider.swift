@@ -6,12 +6,12 @@ struct DayDivider: View {
     var body: some View {
         HStack(spacing: Space.md) {
             line
-            Text(label.uppercased())
-                .font(Typo.ui(TypeScale.xs, .medium)).tracking(1)
-                .foregroundStyle(DuskColors.ink3)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
             line
         }
         .padding(.vertical, Space.xs)

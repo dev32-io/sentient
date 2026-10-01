@@ -31,11 +31,11 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
     let avatarMode: SentientIdentityState
     let accessibilityIdentifier: String?
     let metadataMuted: Bool
-    let hasInteractiveFooter: Bool
     @ViewBuilder let content: () -> Content
     @ViewBuilder let footer: () -> Footer
 
     @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
+    @Environment(\.chatUserAvatarTint) private var userTint
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.sentientIdentityMeasurement) private var measurement
     @State private var identitySize = CGSize.zero
@@ -65,7 +65,6 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         self.avatarMode = avatarMode
         self.accessibilityIdentifier = accessibilityIdentifier
         self.metadataMuted = metadataMuted
-        self.hasInteractiveFooter = false
         self.content = content
         self.footer = { EmptyView() }
     }
@@ -96,7 +95,6 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         self.avatarMode = avatarMode
         self.accessibilityIdentifier = accessibilityIdentifier
         self.metadataMuted = metadataMuted
-        self.hasInteractiveFooter = true
         self.content = content
         self.footer = footer
     }
@@ -111,10 +109,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
 
     private var accessibleRow: some View {
         row
-            // A retry footer must remain a separate actionable accessibility
-            // element. Committed bubbles have no interactive footer and keep
-            // their established single chronology element.
-            .accessibilityElement(children: hasInteractiveFooter ? .contain : .combine)
+            // Preserve native source paragraph/cell/link actions and footer
+            // actions inside one independently labeled chronology container.
+            .accessibilityElement(children: .contain)
             .accessibilityLabel(accessibilityChronology)
     }
 
@@ -132,8 +129,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
 
     private var bubbleBody: some View {
         VStack(alignment: role.isUser ? .trailing : .leading, spacing: Space.sm) {
-            measuredIdentity
+            if !continuation { measuredIdentity }
             content()
+                .padding(.top, continuation ? Space.md : 0)
                 .padding(.horizontal, Space.md)
                 .padding(.bottom, Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,7 +146,8 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
                 BubbleCanvasChrome(
                     shape: bubbleShape,
                     style: bubbleChromeStyle,
-                    breathes: !role.isUser && avatarMode == .responding
+                    breathes: !role.isUser && avatarMode == .responding,
+                    bodyTop: continuation ? 0 : identitySize.height + Space.sm
                 )
             }
         }
@@ -180,7 +179,7 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         if measurement {
             Color.clear.frame(width: BubbleLayout.avatarSize, height: BubbleLayout.avatarSize)
         } else if role.isUser {
-            UserAvatar(name: name, size: BubbleLayout.avatarSize)
+            UserAvatar(name: name, size: BubbleLayout.avatarSize, tint: userTint)
                 .accessibilityHidden(true)
         } else {
             SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
@@ -210,8 +209,8 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
 
     private var bubbleShape: SweptBubbleShape {
         SweptBubbleShape(
-            identityWidth: identitySize.width,
-            identityHeight: identitySize.height,
+            identityWidth: continuation ? 0 : identitySize.width,
+            identityHeight: continuation ? 0 : identitySize.height,
             sweepsFromTrailing: role.isUser != (layoutDirection == .rightToLeft)
         )
     }
@@ -298,6 +297,7 @@ private struct BubbleCanvasChrome: View {
     let shape: SweptBubbleShape
     let style: BubbleChromeStyle
     let breathes: Bool
+    let bodyTop: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -315,19 +315,34 @@ private struct BubbleCanvasChrome: View {
 
     private func chrome(phase: Double?) -> some View {
         GeometryReader { proxy in
-            let overflow = shadowOverflow(phase: phase)
+            let overflow = shadowOverflow()
             let faceRect = CGRect(
                 x: overflow, y: overflow,
                 width: proxy.size.width, height: proxy.size.height
             )
 
-            Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, _ in
-                draw(phase: phase, in: &context, faceRect: faceRect)
+            // Long replies exceed Metal's texture limit when the whole bubble is
+            // one Canvas. Tiles share the full shape/gradient coordinates; shadow
+            // overscan avoids seams without changing appearance or row geometry.
+            let width = proxy.size.width + overflow * 2
+            let height = proxy.size.height + overflow * 2
+            let tileHeight: CGFloat = 512
+            VStack(spacing: 0) {
+                ForEach(0..<Int(ceil(height / tileHeight)), id: \.self) { index in
+                    let start = CGFloat(index) * tileHeight
+                    let span = min(tileHeight, height - start)
+                    Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, size in
+                        context.clip(to: Path(CGRect(origin: .zero, size: size)))
+                        context.translateBy(x: 0, y: overflow - start)
+                        draw(phase: phase, in: &context, faceRect: faceRect)
+                    }
+                    .frame(width: width, height: span + overflow * 2)
+                    .offset(y: -overflow)
+                    .frame(height: span, alignment: .top)
+                    .clipped()
+                }
             }
-            .frame(
-                width: proxy.size.width + overflow * 2,
-                height: proxy.size.height + overflow * 2
-            )
+            .frame(width: width, height: height)
             .offset(x: -overflow, y: -overflow)
         }
         .allowsHitTesting(false)
@@ -341,7 +356,7 @@ private struct BubbleCanvasChrome: View {
             .truncatingRemainder(dividingBy: period) / period
     }
 
-    private func shadowOverflow(phase: Double?) -> CGFloat {
+    private func shadowOverflow() -> CGFloat {
         let plate = DesignCanvasSurfaceRecipe.make(tier: .plate, increasedContrast: contrast == .increased)
         var overflow = [plate.cast, plate.contact].map {
             DesignCanvasEffects.overflow(
@@ -351,7 +366,7 @@ private struct BubbleCanvasChrome: View {
             )
         }.max() ?? 0
         if style == .activeAssistant {
-            let shadow = activeShadow(phase: phase)
+            let shadow = activeShadow()
             overflow = max(overflow, DesignCanvasEffects.overflow(blur: shadow.blur, y: shadow.y))
         }
         return overflow
@@ -363,7 +378,7 @@ private struct BubbleCanvasChrome: View {
         faceRect: CGRect
     ) {
         let facePath = path(in: faceRect)
-        drawRoleShadow(phase: phase, in: &context, faceRect: faceRect)
+        drawRoleShadow(in: &context, faceRect: faceRect)
         drawPlateElevation(in: &context, faceRect: faceRect)
 
         let face = faceColors
@@ -414,13 +429,12 @@ private struct BubbleCanvasChrome: View {
     }
 
     private func drawRoleShadow(
-        phase: Double?,
         in context: inout GraphicsContext,
         faceRect: CGRect
     ) {
         switch style {
         case .activeAssistant:
-            let shadow = activeShadow(phase: phase)
+            let shadow = activeShadow()
             drawShadow(
                 color: DuskColors.accent, opacity: shadow.opacity,
                 blur: shadow.blur, y: shadow.y, sourceInset: shadow.inset,
@@ -431,18 +445,9 @@ private struct BubbleCanvasChrome: View {
         }
     }
 
-    private func activeShadow(phase: Double?) -> (opacity: Double, blur: CGFloat, y: CGFloat, inset: CGFloat) {
-        guard let phase else {
-            // Reduced Motion and thinking retain a clear active cast without a cycle.
-            return (0.52, 24, 15, 18)
-        }
-        let energy = CGFloat((sin(phase * 2 * .pi - .pi / 2) + 1) / 2)
-        return (
-            0.34 + 0.24 * Double(energy),
-            21 + 10 * energy,
-            12 + 7 * energy,
-            18 - 3 * energy
-        )
+    private func activeShadow() -> (opacity: Double, blur: CGFloat, y: CGFloat, inset: CGFloat) {
+        // Current web swept shell: steady ember cast, body-only moving wave.
+        (0.42, 20, 12, 16)
     }
 
     private func drawShadow(
@@ -493,9 +498,11 @@ private struct BubbleCanvasChrome: View {
         facePath: Path
     ) {
         let width = faceRect.width
-        let x = faceRect.minX + CGFloat(phase) * width * 2.2 - width * 0.7
+        let travel = CGFloat((1 - cos(phase * 2 * .pi)) / 2)
+        let x = faceRect.minX + travel * width * 2.2 - width * 0.7
         var wave = context
         wave.clip(to: facePath)
+        wave.clip(to: Path(CGRect(x: faceRect.minX, y: faceRect.minY + bodyTop, width: faceRect.width, height: max(0, faceRect.height - bodyTop))))
         wave.fill(
             Path(CGRect(x: x, y: faceRect.minY, width: width * 1.2, height: faceRect.height)),
             with: .linearGradient(
@@ -536,12 +543,25 @@ private struct BubbleCanvasChrome: View {
 /// design/KMP tokens; this type only names message-specific composition.
 enum BubbleLayout {
     static let standardOffset: CGFloat = .zero
-    static let continuationPullup = -Space.lg
+    static func rowGap(width: CGFloat) -> CGFloat { width < 600 ? Space.lg : Space.xl }
+    static func rowMargin(width: CGFloat) -> CGFloat { width < 600 ? Space.md : Space.lg }
+    static func continuationPullup(width: CGFloat) -> CGFloat { -rowMargin(width: width) }
     static let avatarSize: CGFloat = 28
     static let identityHeight: CGFloat = 34
     static let edgeMin: CGFloat = 12
-    static let pulseDot: CGFloat = 5
+    static let pulseDot: CGFloat = 6
     static let pulseGap: CGFloat = 4
-    static let pulseDuration: Double = 1.2
-    static let pulseStagger: Double = 0.14
+    static let pulseDuration: Double = Motion.respondingCadence
+}
+
+private struct ChatUserAvatarTintKey: EnvironmentKey {
+    static let defaultValue: DesignUserAvatarTint = .fallback
+}
+
+extension EnvironmentValues {
+    /// Authenticated host supplies existing server tint; never infer from name.
+    var chatUserAvatarTint: DesignUserAvatarTint {
+        get { self[ChatUserAvatarTintKey.self] }
+        set { self[ChatUserAvatarTintKey.self] = newValue }
+    }
 }

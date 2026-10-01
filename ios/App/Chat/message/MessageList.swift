@@ -36,6 +36,7 @@ struct MessageList: View {
 
     @Environment(\.sentientIdentityPlaybackEnabled) private var playbackEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.chatUserAvatarTint) private var userTint
     @Environment(\.locale) private var locale
     @Environment(\.layoutDirection) private var layoutDirection
 
@@ -48,6 +49,7 @@ struct MessageList: View {
                 rows: layoutRows(for: chronology),
                 messageCount: chronology.messageCount,
                 userName: userName,
+                userTint: userTint,
                 historyLoading: historyLoading,
                 initialExistingHistory: initialExistingHistory,
                 playbackEnabled: playbackEnabled,

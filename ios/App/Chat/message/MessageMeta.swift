@@ -39,7 +39,9 @@ struct MessageMeta: View {
     var body: some View {
         HStack(spacing: Space.sm) {
             Text(name)
-                .font(Typo.ui(TypeScale.sm, muted ? .regular : .semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .font(Typo.ui(TypeScale.sm, muted ? .regular : .medium))
                 .foregroundStyle(muted ? DuskColors.ink3 : DuskColors.ink)
             // Hide the separator + timestamp while a message is still streaming
             // (or when the outbox has no authoritative timestamp). The committed
@@ -47,7 +49,7 @@ struct MessageMeta: View {
             if !hidesTimestamp, let time {
                 Text("·").foregroundStyle(DuskColors.ink4)
                 Text(time)
-                    .font(Typo.ui(TypeScale.xs))
+                    .font(Typo.mono(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink3)
             }
         }

@@ -3,6 +3,7 @@ import type { ChatAttachment, ChatMessage } from "../../types.ts";
 import type { SentientIdentityState } from "../common/sentient-identity.tsx";
 import { AttachmentCards, type AttachmentAsset } from "./attachment-cards.tsx";
 import { MessageContent } from "./message-content.tsx";
+import { messageImages } from "./rich-markdown.tsx";
 import { MessageBubbleFrame } from "./message-frame.tsx";
 import { ASSISTANT_NAME, AssistantMessageIdentity, MessageContinuationIdentity } from "./message-identity.tsx";
 import { messageStateFor } from "./message-state.ts";
@@ -30,7 +31,7 @@ export function AssistantMessageBubble({ message, identityState, continuation, p
       content={
         <>
           {message.attachments?.length ? <AttachmentCards attachments={message.attachments} assets={attachmentAssets} onPreview={onAttachmentPreview} /> : null}
-          <MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} />
+          <MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} images={messageImages(message.attachments, attachmentAssets)} />
         </>
       }
     />

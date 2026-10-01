@@ -48,7 +48,7 @@ struct AdvancedScreen: View {
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading advanced settings")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load advanced settings", detail: message) {
                     Task { await vm.load() }

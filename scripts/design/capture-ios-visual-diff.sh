@@ -13,8 +13,6 @@ fi
 reference="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 case_id="$(node --input-type=module -e 'import {caseIdFromReference} from "./tools/visual-diff/reference-image.mjs"; console.log(caseIdFromReference(process.argv[1]))' "$reference")"
 output="${2:-$repo_root/build/visual-captures/ios/$case_id.png}"
-mkdir -p "$(dirname "$output")" "$repo_root/build/visual-ios-derived"
-output="$(cd "$(dirname "$output")" && pwd)/$(basename "$output")"
 
 reference_real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$reference")"
 output_real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$output")"
@@ -27,6 +25,8 @@ if [[ ! -f "$reference" ]]; then
   echo "Reference does not exist: $reference" >&2
   exit 2
 fi
+output="$output_real"
+mkdir -p "$(dirname "$output")" "$repo_root/build/visual-ios-derived"
 
 if [[ -n "${VISUAL_DIFF_IOS_DESTINATION:-}" ]]; then
   destination="$VISUAL_DIFF_IOS_DESTINATION"
@@ -52,7 +52,7 @@ if ! mkdir "$lock_dir" 2>/dev/null; then
 fi
 cleanup() { rm -f "$request_file"; rmdir "$lock_dir" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
-printf '%s\n%s\n%s\n' "$reference" "$output" "$repo_root" > "$request_file"
+printf '%s\n%s\n%s\n' "$reference_real" "$output_real" "$(pwd -P)" > "$request_file"
 node tools/visual-diff/evidence.mjs begin "$reference" "$output" ios
 rm -f "$output" "$output.capture.json" "$output.evidence.json"
 

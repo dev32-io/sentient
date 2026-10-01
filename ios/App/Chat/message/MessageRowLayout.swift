@@ -1,4 +1,3 @@
-import MarkdownUI
 import MobileData
 import SwiftUI
 import UIKit
@@ -40,12 +39,16 @@ struct MessageRowLayout: View {
     var onPreviewAttachment: (String) -> Void = { _ in }
     var onRetryAttachmentUpload: (String) -> Void = { _ in }
     var heightRevision = ""
+    var rendererState: MessageDocumentState?
+    var selectionViewportInWindow: (() -> CGRect)?
+    var requestSelectionScroll: ((CGFloat) -> CGFloat)?
+    var onSelectionBegin: (() -> Void)?
     var onGeometryChange: ((MessageRowGeometry) -> Void)?
     // Render readiness is scoped to current content revision; queued old reports stay estimated.
     @State private var renderedHeightRevision: String?
 
     private var bubbleMaxWidth: CGFloat {
-        let margins = Space.lg * 2 + BubbleLayout.edgeMin
+        let margins = BubbleLayout.rowMargin(width: paneWidth) * 2 + BubbleLayout.edgeMin
         return min(Space.msgMax, max(0, paneWidth - margins))
     }
 
@@ -54,11 +57,7 @@ struct MessageRowLayout: View {
             .environment(\.bubbleMaxWidth, bubbleMaxWidth)
             .environment(\.sentientIdentityPlaybackEnabled, avatarPlaybackEnabled)
             .environment(\.sentientIdentityMeasurement, measurement)
-            .markdownImageProvider(CachedMarkdownImageProvider(
-                cache: imageCache,
-                loadsUnresolved: !measurement
-            ))
-            .padding(.horizontal, Space.lg)
+            .padding(.horizontal, BubbleLayout.rowMargin(width: paneWidth))
             .frame(width: paneWidth, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .background {
@@ -129,11 +128,15 @@ struct MessageRowLayout: View {
                 attachmentPreviewFailures: attachmentPreviewFailures,
                 onPreviewAttachment: onPreviewAttachment,
                 imageCache: imageCache,
+                rendererState: rendererState,
+                selectionViewportInWindow: selectionViewportInWindow,
+                requestSelectionScroll: requestSelectionScroll,
+                onSelectionBegin: onSelectionBegin,
                 onRenderedHeightStateChange: measurement ? nil : { [heightRevision] ready in
                     renderedHeightRevision = ready ? heightRevision : nil
                 }
             )
-            .padding(.top, continuation ? BubbleLayout.continuationPullup : BubbleLayout.standardOffset)
+            .padding(.top, continuation ? BubbleLayout.continuationPullup(width: paneWidth) : BubbleLayout.standardOffset)
         case let .pending(message, index):
             PendingBubble(
                 msg: message,
@@ -145,6 +148,10 @@ struct MessageRowLayout: View {
                 onRetryAttachment: onRetryAttachmentUpload,
                 onRetry: { onRetry(message.id) },
                 measurement: measurement,
+                rendererState: rendererState,
+                selectionViewportInWindow: selectionViewportInWindow,
+                requestSelectionScroll: requestSelectionScroll,
+                onSelectionBegin: onSelectionBegin,
                 index: index,
                 total: messageCount
             )

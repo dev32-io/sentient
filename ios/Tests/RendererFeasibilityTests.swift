@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import SwiftUI
 @testable import SentientApp
 
 @MainActor
@@ -12,13 +13,13 @@ final class RendererFeasibilityTests: XCTestCase {
         // This regressed when hit testing used ink width after horizontal scroll.
         let partial = text.range(of: "partial 👩🏽‍💻 text e\u{301}")
         view.setTableOffset(200)
-        let cellEnd = view.caretRect(for: R0Position(NSMaxRange(partial)))
-        let whitespace = view.closestPosition(to: CGPoint(x: view.tableRect.maxX - 1, y: cellEnd.midY)) as? R0Position
+        let cellEnd = view.caretRect(for: MessageTextPosition(NSMaxRange(partial)))
+        let whitespace = view.closestPosition(to: CGPoint(x: min(view.tableRect.maxX - 1, cellEnd.maxX + 4), y: cellEnd.midY)) as? MessageTextPosition
         XCTAssertEqual(whitespace?.index, NSMaxRange(partial))
         view.setTableOffset(0)
         let start = text.range(of: "fé").location
         let end = text.range(of: "partial 👩🏽‍💻 text e\u{301}").location + ("partial 👩🏽‍💻" as NSString).length
-        let range = R0Range(NSRange(location: start, length: end - start))
+        let range = MessageTextRange(NSRange(location: start, length: end - start))
         view.selectedTextRange = range
         view.copy(nil)
         XCTAssertEqual(UIPasteboard.general.string.map { Data($0.utf8) }, Data("fé 👩🏽‍💻 — select from here into any cell.\nName\tObservation\tValue\nAlpha café\tpartial 👩🏽‍💻".utf8))
@@ -30,11 +31,11 @@ final class RendererFeasibilityTests: XCTestCase {
         for mutate in [
             { view.append("追加 👨‍👩‍👧‍👦 e\u{301}") },
             { view.frame.size.width = 320; view.layoutIfNeeded() },
-            { view.font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)) },
-            { view.imageHeight = 120 }
+            { view.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge; view.rebuild() },
+            { view.append("\n\n![Reserved image](file:///blocked)") }
         ] {
             mutate()
-            XCTAssertEqual((view.selectedTextRange as? R0Range)?.value, range.value)
+            XCTAssertEqual((view.selectedTextRange as? MessageTextRange)?.value, range.value)
             XCTAssertEqual(view.tableOffset, 80)
             XCTAssertFalse(view.selectionRects(for: range).isEmpty)
             view.copy(nil)
@@ -43,8 +44,8 @@ final class RendererFeasibilityTests: XCTestCase {
         // Coordinates come from the very CTLines used for drawing, including table translation.
         let cellIndex = text.range(of: "Alpha").location + 2
         view.setTableOffset(0)
-        let caret = view.caretRect(for: R0Position(cellIndex))
-        let hit = try XCTUnwrap(view.closestPosition(to: CGPoint(x: caret.minX, y: caret.midY)) as? R0Position)
+        let caret = view.caretRect(for: MessageTextPosition(cellIndex))
+        let hit = try XCTUnwrap(view.closestPosition(to: CGPoint(x: caret.minX, y: caret.midY)) as? MessageTextPosition)
         XCTAssertEqual(hit.index, cellIndex)
         view.setTableOffset(.greatestFiniteMagnitude)
         XCTAssertFalse(view.remainingRight)
@@ -60,13 +61,13 @@ final class RendererFeasibilityTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
         let view = host.document
-        let before = try XCTUnwrap((view.accessibilityElements as? [R0ReadingElement])?.first)
-        XCTAssertEqual(before.accessibilityIdentifier, "r0-prose-before")
+        let before = try XCTUnwrap((view.accessibilityElements?.compactMap { $0 as? MessageReadingElement })?.first)
+        XCTAssertEqual(before.accessibilityIdentifier, view.document.blocks.first!.id.uuidString)
         XCTAssertFalse(before.accessibilityFrame.isEmpty)
-        XCTAssertFalse((view.accessibilityElements as? [R0ReadingElement] ?? []).contains { $0.accessibilityIdentifier == "r0-cell-0-2" })
+        XCTAssertFalse((view.accessibilityElements?.compactMap { $0 as? MessageReadingElement } ?? []).contains { $0.accessibilityIdentifier == "\(view.document.blocks.first { $0.kind == .table }!.id)-0-2" })
         view.setTableOffset(.greatestFiniteMagnitude)
-        let value = try XCTUnwrap((view.accessibilityElements as? [R0ReadingElement])?.first { $0.accessibilityIdentifier == "r0-cell-0-2" })
-        XCTAssertTrue(value.accessibilityLabel?.contains("Value") == true)
+        let value = try XCTUnwrap((view.accessibilityElements?.compactMap { $0 as? MessageReadingElement })?.first { $0.accessibilityIdentifier == "\(view.document.blocks.first { $0.kind == .table }!.id)-0-2" })
+        XCTAssertEqual(value.accessibilityLabel, "Value")
         XCTAssertLessThanOrEqual(value.accessibilityFrame.width, view.tableRect.width)
         XCTAssertTrue(value.accessibilityScroll(.right))
         view.setTableOffset(0)
@@ -77,14 +78,14 @@ final class RendererFeasibilityTests: XCTestCase {
         let point = CGPoint(x: viewport.midX, y: viewport.maxY - 2)
         let old = NSRange(location: 7, length: 100)
         let new = NSRange(location: 7, length: 110)
-        view.selectedTextRange = R0Range(old)
-        let initialCaret = view.convert(view.caretRect(for: R0Position(NSMaxRange(old))), to: window)
+        view.selectedTextRange = MessageTextRange(old)
+        let initialCaret = view.convert(view.caretRect(for: MessageTextPosition(NSMaxRange(old))), to: window)
         edge.sample(CGPoint(x: initialCaret.midX, y: initialCaret.midY), handleAnchor: 7)
         let gestureID = ObjectIdentifier(view)
         edge.nativeGestureChanged(.began, id: gestureID)
         edge.sample(point)
         edge.nativeHitTest(view.convert(CGPoint(x: point.x, y: point.y - 40), from: window))
-        view.selectedTextRange = R0Range(new)
+        view.selectedTextRange = MessageTextRange(new)
         XCTAssertEqual(edge.anchor, 7)
         XCTAssertTrue(edge.isRunning)
         edge.advance(at: 1)
@@ -126,8 +127,8 @@ final class RendererFeasibilityTests: XCTestCase {
         // Horizontal requests use the same pointer, fixed anchor and hit map.
         host.scroll.contentOffset = .zero
         let cell = (view.document.plain as NSString).range(of: "partial")
-        let caret = view.convert(view.caretRect(for: R0Position(cell.location + 2)), to: window)
-        view.selectedTextRange = R0Range(NSRange(location: 7, length: cell.location + 2 - 7))
+        let caret = view.convert(view.caretRect(for: MessageTextPosition(cell.location + 2)), to: window)
+        view.selectedTextRange = MessageTextRange(NSRange(location: 7, length: cell.location + 2 - 7))
         edge.sample(CGPoint(x: caret.minX, y: caret.midY), handleAnchor: 7)
         edge.nativeGestureChanged(.began, id: gestureID)
         let table = view.convert(view.tableRect, to: window)
@@ -148,52 +149,7 @@ final class RendererFeasibilityTests: XCTestCase {
 
     /// Explicit opt-in only; held open for native Maestro gestures on disposable sim.
     /// No production root, network, user state, or existing simulator involved.
-    func testNativeGestureProbe() throws {
-        // Same DEBUG app-root bypass contract as the visual capture runner. For
-        // R0, line two names an existing scratch directory, not a capture PNG.
-        let request = try? String(contentsOfFile: "/tmp/sentient-visual-diff-request", encoding: .utf8)
-        let fields = request?.split(separator: "\n").map(String.init) ?? []
-        guard fields.count == 3 else { throw XCTSkip("R0 isolated host not requested") }
-        let evidence = URL(fileURLWithPath: fields[1], isDirectory: true)
-        let flag = evidence.appendingPathComponent("interactive")
-        guard FileManager.default.fileExists(atPath: flag.path) else { throw XCTSkip("R0 interactive probe not requested") }
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-        let window = UIWindow(windowScene: scene)
-        let host = R0FixtureController()
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        host.view.layoutIfNeeded()
-        try Data("ready".utf8).write(to: evidence.appendingPathComponent("ready"))
-        let deadline = Date().addingTimeInterval(600)
-        while FileManager.default.fileExists(atPath: flag.path), Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path), "R0 gesture driver timed out")
-        let selected = (host.document.selectedTextRange as? R0Range)?.value
-        let state: [String: Any] = [
-            "selectionStart": selected?.location ?? -1,
-            "selectionLength": selected?.length ?? 0,
-            "tableOffset": host.document.tableOffset,
-            "parentOffset": host.scroll.contentOffset.y,
-            "mutations": host.mutationCount,
-            "retentionFailures": host.retentionFailures,
-            "selectionRangeChanges": host.selectionChanges,
-            "accessibleReadingElements": host.document.accessibilityElements?.count ?? 0,
-            "edgeFrames": host.document.selectionEdge.frameCount,
-            "edgeRunningAfterRelease": host.document.selectionEdge.isRunning,
-            "edgeAnchorAfterRelease": host.document.selectionEdge.anchor ?? -1
-        ]
-        try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]).write(to: evidence.appendingPathComponent("gesture-state.json"))
-        try JSONSerialization.data(withJSONObject: host.motionTrace, options: [.prettyPrinted, .sortedKeys]).write(to: evidence.appendingPathComponent("edge-motion.json"))
-        XCTAssertFalse(host.document.selectionEdge.isRunning)
-        XCTAssertNil(host.document.selectionEdge.anchor)
-        XCTAssertEqual(host.retentionFailures, 0)
-        XCTAssertGreaterThan(host.selectionChanges, 0, "Native gesture must produce a range")
-        let gestureRange = try XCTUnwrap(selected)
-        XCTAssertGreaterThan(gestureRange.length, 0)
-        XCTAssertEqual(UIPasteboard.general.string.map { Data($0.utf8) }, Data(host.document.document.plain(in: gestureRange).utf8), "Copy must come from native menu, not a test-set clipboard")
-    }
+
 }
 
 @MainActor
@@ -203,11 +159,14 @@ private final class R0FixtureController: UIViewController {
     private let status = UILabel()
     private let controls = UIStackView()
     private var narrow = false
+    private var deniesScroll = false
+    private(set) var deniedRequests = 0
     private(set) var mutationCount = 0
     private(set) var retentionFailures = 0
     private(set) var selectionChanges = 0
     private(set) var motionTrace: [[String: Any]] = []
     var onCheckpoint: (() -> Void)?
+    var typeCategory: UIContentSizeCategory = .accessibilityExtraLarge
     private enum EdgeProbe { case mutate, cancel, remove }
     private var edgeProbe: EdgeProbe?
     private var probeAtFrame = 0
@@ -216,20 +175,21 @@ private final class R0FixtureController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = UIColor(DuskColors.paper)
+        status.textColor = UIColor(DuskColors.ink)
         status.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         status.accessibilityIdentifier = "r0-status"
         controls.axis = .vertical
         controls.distribution = .fillEqually
         let primary = UIStackView(), probes = UIStackView()
         for row in [primary, probes] { row.distribution = .fillEqually; controls.addArrangedSubview(row) }
-        for (title, action) in [("Append", #selector(append)), ("Width", #selector(width)), ("Type", #selector(typeSize)), ("Image", #selector(image)), ("Table Copy", #selector(tableCopy)), ("Save", #selector(checkpoint)), ("Arm", #selector(armMutation)), ("Cancel", #selector(armCancel)), ("Remove", #selector(armRemove))] {
+        for (title, action) in [("Append", #selector(append)), ("Width", #selector(width)), ("Type", #selector(typeSize)), ("Image", #selector(image)), ("Table Copy", #selector(tableCopy)), ("Save", #selector(checkpoint)), ("Arm", #selector(armMutation)), ("Cancel", #selector(armCancel)), ("Remove", #selector(armRemove)), ("Deny", #selector(denyScroll))] {
             let button = UIButton(type: .system)
             button.setTitle(title, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 12)
             button.accessibilityIdentifier = "r0-" + title.lowercased().replacingOccurrences(of: " ", with: "-")
             button.addTarget(self, action: action, for: .touchUpInside)
-            (["Arm", "Cancel", "Remove"].contains(title) ? probes : primary).addArrangedSubview(button)
+            (["Arm", "Cancel", "Remove", "Deny"].contains(title) ? probes : primary).addArrangedSubview(button)
         }
         view.addSubview(controls); view.addSubview(status); view.addSubview(scroll)
         scroll.accessibilityIdentifier = "r0-parent-scroll"
@@ -241,6 +201,7 @@ private final class R0FixtureController: UIViewController {
         }
         document.requestSelectionScroll = { [weak self] delta in
             guard let self else { return 0 }
+            if deniesScroll { deniedRequests += 1; return 0 }
             let old = scroll.contentOffset.y
             let minimum = -scroll.adjustedContentInset.top
             let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
@@ -252,8 +213,8 @@ private final class R0FixtureController: UIViewController {
             if motionTrace.count < 4096 {
                 motionTrace.append(["time": CACurrentMediaTime(), "x": point.x, "y": point.y, "anchor": anchor, "dx": dx, "dy": dy,
                                     "tableOffset": document.tableOffset, "parentOffset": scroll.contentOffset.y,
-                                    "rangeStart": (document.selectedTextRange as? R0Range)?.value.location ?? -1,
-                                    "rangeLength": (document.selectedTextRange as? R0Range)?.value.length ?? 0])
+                                    "rangeStart": (document.selectedTextRange as? MessageTextRange)?.value.location ?? -1,
+                                    "rangeLength": (document.selectedTextRange as? MessageTextRange)?.value.length ?? 0])
             }
             if let probe = edgeProbe, document.selectionEdge.frameCount >= probeAtFrame {
                 edgeProbe = nil
@@ -264,7 +225,7 @@ private final class R0FixtureController: UIViewController {
                     let offset = document.tableOffset
                     mutate { self.document.append("During drag 東京 👩🏽‍💻. ") }
                     mutate { self.narrow = true; self.view.setNeedsLayout(); self.view.layoutIfNeeded() }
-                    mutate { self.document.imageHeight = 120 }
+                    image()
                     mutationProbe = ["anchorBefore": anchor ?? -1, "anchorAfter": document.selectionEdge.anchor ?? -1,
                                      "offsetBefore": offset, "offsetAfter": document.tableOffset]
                 case .cancel:
@@ -304,28 +265,53 @@ private final class R0FixtureController: UIViewController {
         scroll.contentSize = CGSize(width: scroll.bounds.width, height: max(scroll.bounds.height + 200, document.measuredHeight + 300))
     }
     private func updateStatus() {
-        let range = (document.selectedTextRange as? R0Range)?.value
+        let range = (document.selectedTextRange as? MessageTextRange)?.value
         status.text = "Range \(range?.location ?? -1):\(range?.length ?? 0) updates \(mutationCount) failures \(retentionFailures)"
     }
     private func mutate(_ action: () -> Void) {
-        let range = (document.selectedTextRange as? R0Range)?.value
+        let range = (document.selectedTextRange as? MessageTextRange)?.value
         let offset = document.tableOffset
         let reading = scroll.contentOffset
         action()
         document.layoutIfNeeded()
         updateHeight()
         mutationCount += 1
-        if range != (document.selectedTextRange as? R0Range)?.value || document.tableOffset != offset || scroll.contentOffset != reading { retentionFailures += 1 }
+        if range != (document.selectedTextRange as? MessageTextRange)?.value || document.tableOffset != offset || scroll.contentOffset != reading { retentionFailures += 1 }
         updateStatus()
     }
     @objc private func append() { mutate { document.append("Stream 東京 👩🏽‍💻 continues. ") } }
     @objc private func width() { mutate { narrow.toggle(); view.setNeedsLayout(); view.layoutIfNeeded() } }
-    @objc private func typeSize() { mutate { document.font = .preferredFont(forTextStyle: .body, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge)) } }
-    @objc private func image() { mutate { document.imageHeight = 120 } }
+    @objc private func typeSize() { mutate { document.traitOverrides.preferredContentSizeCategory = typeCategory; document.rebuild() } }
+    @objc private func image() {
+        mutate { Task { await document.delayedImageLoader.resolve(url: R0DocumentView.imageURL, image: testImage(width: 240, height: 180)) } }
+    }
+    @objc private func denyScroll() { deniesScroll = true }
     private func arm(_ probe: EdgeProbe) { edgeProbe = probe; probeAtFrame = document.selectionEdge.frameCount + 10 }
     @objc private func armMutation() { arm(.mutate) }
     @objc private func armCancel() { arm(.cancel) }
     @objc private func armRemove() { arm(.remove) }
     @objc private func checkpoint() { onCheckpoint?() }
     @objc private func tableCopy() { document.copyTableMarkdown() }
+}
+
+/// Existing native gesture host now exercises the production renderer. Only
+/// fixture setup lives here; no alternate painting/input/selection algorithm.
+@MainActor
+private final class R0DocumentView: MessageDocumentView {
+    static let imageURL = URL(string: "https://fixture.invalid/renderer.png")!
+    let delayedImageLoader = DelayedImageLoader()
+    var imageReady: Bool { imageAccessibilityValue(for: Self.imageURL) == nil }
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        accessibilityIdentifier = "r0-document"
+        imageCache = MarkdownImageCache(loader: delayedImageLoader)
+        let fixture = R0Document.fixture
+        state = MessageDocumentState(source: fixture.before + "\n\n" + fixture.tableMarkdown + "\n\n" + fixture.after + "\n\n![Controlled photo](\(Self.imageURL.absoluteString))")
+        rebuild()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func append(_ text: String) { update(source: document.source + text, literal: false) }
+    func copyTableMarkdown() {
+        if let table = document.blocks.first(where: { $0.kind == .table }) { copyTableMarkdown(id: table.id) }
+    }
 }
