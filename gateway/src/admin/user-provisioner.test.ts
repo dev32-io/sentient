@@ -99,7 +99,11 @@ function buildMocks(overrides?: Overrides): MockDeps {
       log("userStore.update", userId, patch);
       return overrides?.updateResult ?? okVoid;
     },
-    remove: async (userId: string) => {
+    remove: async (userId, beforeRemove) => {
+      if (beforeRemove) {
+        const result = await beforeRemove();
+        if (!result.ok) return result;
+      }
       log("userStore.remove", userId);
       return overrides?.removeResult ?? okVoid;
     },
@@ -159,6 +163,12 @@ function buildMocks(overrides?: Overrides): MockDeps {
 }
 
 describe("UserProvisioner", () => {
+  it("does not announce deletion or purge device authority if durable account removal fails", async () => {
+    const { provisioner, callLog } = buildMocks({ removeResult: err("io-error" as const) });
+    expect(await provisioner.deleteUser(OTHER)).toEqual({ ok: false, error: "io-error" });
+    expect(callLog.some((call) => call.method === "userLifecycle.emitDeleted")).toBe(false);
+  });
+
   // DELEGATION INVARIANT. `hermes -p <userId>` refuses to run at all until the
   // Hermes CLI has a profile REGISTERED under that name in its own store
   // (~/.hermes/profiles/<userId>) — a different tree from the gateway-side

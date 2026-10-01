@@ -17,7 +17,7 @@ public:
     void Initialize(AudioCodec* codec, int frame_duration_ms, srmodel_list_t* models_list) override;
     void Feed(std::vector<int16_t>&& data, uint32_t capture_generation) override;
     bool Start(uint32_t capture_generation) override;
-    bool Stop() override;
+    bool Stop(bool drain = false) override;
     bool IsRunning() override;
     void OnOutput(std::function<void(std::vector<int16_t>&& data, uint32_t capture_generation)> callback) override;
     void OnVadStateChange(std::function<void(bool speaking)> callback) override;

@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from local_tts.config import GenerationConfig
 from local_tts.engine import SAMPLE_RATE, QwenEngine
 
 _MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
@@ -33,7 +34,7 @@ _REF_AUDIO_PATH = str(
 @pytest.mark.live
 def test_streams_pcm_chunks_default_voice_zh():
     """No ref audio + auto lang detect on Chinese text -> real audio."""
-    eng = QwenEngine(_MODEL_ID)
+    eng = QwenEngine(_MODEL_ID, generation=GenerationConfig(4096, 75, 12))
     eng.warm()
 
     chunks = list(
@@ -55,7 +56,7 @@ def test_streams_pcm_chunks_default_voice_zh():
 @pytest.mark.live
 def test_streams_pcm_chunks_with_ref_audio_clone():
     """Reference-audio voice cloning (no ref_text) on English text."""
-    eng = QwenEngine(_MODEL_ID)
+    eng = QwenEngine(_MODEL_ID, generation=GenerationConfig(4096, 75, 12))
     eng.warm()
 
     chunks = list(
@@ -77,7 +78,7 @@ def test_streams_pcm_chunks_with_ref_audio_clone():
 @pytest.mark.live
 def test_cancel_stops_streaming_early():
     """A cancel event set before synthesis starts yields zero chunks."""
-    eng = QwenEngine(_MODEL_ID)
+    eng = QwenEngine(_MODEL_ID, generation=GenerationConfig(4096, 75, 12))
     eng.warm()
 
     cancel = threading.Event()

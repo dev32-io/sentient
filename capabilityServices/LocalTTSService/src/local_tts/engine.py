@@ -34,6 +34,8 @@ from typing import Iterator
 import numpy as np
 from mlx_audio.tts.utils import load_model
 
+from .config import GenerationConfig
+
 log = logging.getLogger("local_tts.engine")
 
 # Qwen3-TTS's native output rate (Hz) — a property of the model
@@ -93,6 +95,10 @@ def _log_synthesize_start(
     )
 
 
+class GenerationLimitError(RuntimeError):
+    """Model produced its full codec-token budget without EOS."""
+
+
 class QwenEngine:
     """One (model_id, default_lang) view over the MLX Qwen3-TTS model.
 
@@ -107,7 +113,8 @@ class QwenEngine:
     with each other.
     """
 
-    def __init__(self, model_id: str, default_lang: str = "auto") -> None:
+    def __init__(self, model_id: str, *, generation: GenerationConfig, default_lang: str = "auto") -> None:
+        self._generation = generation
         self._model_id = model_id
         self._default_lang = default_lang
 
@@ -140,26 +147,49 @@ class QwenEngine:
         _log_synthesize_start(
             self._model_id, text, ref_audio_path, lang_code, streaming_interval
         )
-        chunk_count = 0
-        total_samples = 0
-        for result in model.generate(
-            text,
-            ref_audio=ref_audio_path,
-            lang_code=lang_code,
-            stream=True,
-            streaming_interval=streaming_interval,
-        ):
+        # Preserve the library's newline segmentation, but budget each segment
+        # separately so a long paragraph cannot subsidize a runaway short one.
+        for segment in filter(None, (part.strip() for part in text.split("\n"))):
             if cancel.is_set():
-                log.debug(
-                    "engine.synthesize cancelled model_id=%s chunk_count=%d",
-                    self._model_id, chunk_count,
-                )
                 return
-            chunk_count += 1
-            pcm = _prepare_chunk(result)
-            total_samples += pcm.size
-            yield pcm
-        log.debug(
-            "engine.synthesize done model_id=%s chunk_count=%d total_samples=%d",
-            self._model_id, chunk_count, total_samples,
+            budget = min(self._generation.max_tokens, max(
+                self._generation.min_tokens,
+                len(model.tokenizer.encode(segment)) * self._generation.tokens_per_text_token,
+            ))
+            yield from self._generate_segment(
+                model, segment, ref_audio_path, lang_code, streaming_interval, cancel, budget,
+            )
+
+    def _generate_segment(
+        self, model, text, ref_audio_path, lang_code, streaming_interval, cancel, budget,
+    ) -> Iterator[np.ndarray]:
+        tokens = 0
+        results = model.generate(
+            text, ref_audio=ref_audio_path, lang_code=lang_code,
+            stream=True, streaming_interval=streaming_interval,
+            split_pattern=None, max_tokens=budget,
         )
+        try:
+            for result in results:
+                if cancel.is_set():
+                    return
+                # mlx-audio streaming token_count is DELTA, not cumulative.
+                # is_final_chunk also marks exhaustion, and can be absent at
+                # exact chunk boundaries. Neither flag proves EOS.
+                tokens += result.token_count
+                if tokens < budget:
+                    yield _prepare_chunk(result)
+            if cancel.is_set():
+                return
+            reason = "token_limit" if tokens >= budget else "eos"
+            log.info("engine.generation stop_reason=%s tokens=%d max_tokens=%d",
+                     reason, tokens, budget)
+            if tokens >= budget:
+                raise GenerationLimitError(
+                    f"generation_token_limit: tokens={tokens} max_tokens={budget}"
+                )
+        finally:
+            results.close()
+            # Generator cancellation skips mlx-audio's post-yield reset.
+            # Keep all cleanup on the same long-lived MLX worker thread.
+            model.speech_tokenizer.decoder.reset_streaming_state()

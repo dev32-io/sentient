@@ -96,6 +96,21 @@ class ResumeCursorTest {
     }
 
     @Test
+    fun supplied_epoch_on_seq0_is_adopted_before_binary_without_advancing_watermark() {
+        val c = ResumeCursor()
+        c.tryApply(100, 1)
+        assertTrue(c.tryApply(0, 2))
+        assertEquals(CursorSnapshot(2, 0), c.snapshot)
+        assertTrue(c.tryApply(0, 2))
+        assertTrue(c.tryApply(0))
+        assertEquals(CursorSnapshot(2, 0), c.snapshot)
+        assertTrue(c.tryApply(2)) // binary header has seq, no epoch
+        assertFalse(c.tryApply(2))
+        assertTrue(c.tryApply(0, 0))
+        assertEquals(CursorSnapshot(2, 2), c.snapshot)
+    }
+
+    @Test
     fun same_epoch_dedup_still_works() {
         val c = ResumeCursor()
         c.tryApply(3, 5)

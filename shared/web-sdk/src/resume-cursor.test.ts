@@ -87,6 +87,20 @@ describe("createResumeCursor — epoch handling", () => {
     expect(c.cursor.lastSeq).toBe(1);
   });
 
+  it("adopts a supplied epoch on seq 0 before binary, without advancing its watermark", () => {
+    const c = createResumeCursor();
+    c.tryApply(100, 1);
+    expect(c.tryApply(0, 2)).toBe(true);
+    expect(c.cursor).toEqual({ epoch: 2, lastSeq: 0 });
+    expect(c.tryApply(0, 2)).toBe(true);
+    expect(c.tryApply(0)).toBe(true);
+    expect(c.cursor).toEqual({ epoch: 2, lastSeq: 0 });
+    expect(c.tryApply(2)).toBe(true); // binary header has seq, no epoch
+    expect(c.tryApply(2)).toBe(false);
+    expect(c.tryApply(0, 0)).toBe(true); // absent epoch does not reset
+    expect(c.cursor).toEqual({ epoch: 2, lastSeq: 2 });
+  });
+
   it("same epoch: dedup still works after epoch is set", () => {
     const c = createResumeCursor();
     c.tryApply(3, 5);

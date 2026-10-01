@@ -1281,7 +1281,7 @@ describe("ws-handlers routing — conversation.activate", () => {
     // generation}` binding would stamp the next command with a generation it
     // does not hold yet and have it refused as stale.
     expect(ws.sent).toEqual([
-      { type: "session.attached", sessionId, generation: expect.any(Number) },
+      { type: "session.attached", sessionId, generation: expect.any(Number), epoch: 1 },
       { type: "session.switched", sessionId, ts: expect.any(Number) },
     ]);
     expect(ws.data.conversationId).toBe(sessionId);
@@ -1387,7 +1387,7 @@ describe("ws-handlers routing — conversation.activate", () => {
     // generation}` binding would stamp the next command with a generation it
     // does not hold yet and have it refused as stale.
     expect(ws.sent).toEqual([
-      { type: "session.attached", sessionId, generation: expect.any(Number) },
+      { type: "session.attached", sessionId, generation: expect.any(Number), epoch: 1 },
       { type: "session.switched", sessionId, ts: expect.any(Number) },
     ]);
     expect(ws.data.conversationId).toBe(sessionId);
@@ -1760,4 +1760,69 @@ describe("ws-handlers cleanup — the session journal", () => {
     expect(reconnect.epoch).toBe(acquired.epoch);
     expect(reconnect.journal.newestSeq).toBe(1);
   });
+});
+
+describe("Cube history is REST-only for human credentials", () => {
+  for (const route of ["session.configure", "conversation.activate"] as const) {
+    it(`${route} refuses Cube attachment and subsequent commands without minting runtime authority`, async () => {
+      let built = 0;
+      const stub = stubRuntime();
+      const services = activateServices(stub.runtime, () => {
+        built++;
+        return stub.runtime;
+      });
+      const ws = fakeAuthedWs(null);
+      const principal = ws.data.principal;
+      if (!principal) throw new Error("missing principal");
+      mkdirSync(services.accessManager.userHomeDir(principal), { recursive: true });
+      const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+      const admission = store.admitCubeInput({
+        inputId: crypto.randomUUID(),
+        expectedFence: store.getCubeAdmissionFence(),
+        dreamerHour: 3,
+        now: Date.now(),
+        entry: {
+          turnId: "cube-turn",
+          replyId: null,
+          kind: "user",
+          createdAt: Date.now(),
+          text: "test",
+          toolCallId: null,
+          toolName: null,
+          toolArgs: null,
+          cutoff: null,
+          compactedThroughSeq: null,
+        },
+      });
+      if (admission.status !== "accepted") throw new Error("admission failed");
+      const configuring = handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify(
+          route === "session.configure"
+            ? { ...CONFIGURE_FRAME, conversationId: admission.sessionId }
+            : { type: route, sessionId: admission.sessionId },
+        ),
+        services,
+      );
+      expect(ws.closes).toEqual([1008]);
+      for (const frame of [
+        { type: "text.input", text: "denied", pendingId: "denied" },
+        { type: "audio.start" },
+        { type: "interrupt" },
+        { type: "permission.response", requestId: "denied", allow: true },
+        { type: "session.new" },
+      ]) {
+        await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, JSON.stringify(frame), services);
+      }
+      await configuring;
+      expect(built).toBe(0);
+      expect(ws.data.attachment).toBeNull();
+      expect(stub.submitCalls).toHaveLength(0);
+      expect(stub.interruptCallCount()).toBe(0);
+      expect(ws.sent.some((frame) => (frame as { type: string }).type === "conversation.snapshot")).toBe(false);
+      expect(store.readSession(admission.sessionId)).toHaveLength(1);
+      expect(store.listSessions()).toHaveLength(1);
+      store.close();
+    });
+  }
 });

@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "id": "cat",
+  "revision": 1,
+  "name": "Cat",
+  "canvas": {
+    "width": 32,
+    "height": 32,
+    "background": "#2b2621"
+  },
+  "frames": {
+    "ready": {
+      "asset": "/companions/cat/ready.rgb565",
+      "format": "rgb565"
+    },
+    "blink": {
+      "asset": "/companions/cat/blink.rgb565",
+      "format": "rgb565"
+    },
+    "listening": {
+      "asset": "/companions/cat/listening.rgb565",
+      "format": "rgb565"
+    },
+    "listening-blink": {
+      "asset": "/companions/cat/listening-blink.rgb565",
+      "format": "rgb565"
+    },
+    "thinking": {
+      "asset": "/companions/cat/thinking.rgb565",
+      "format": "rgb565"
+    },
+    "thinking-blink": {
+      "asset": "/companions/cat/thinking-blink.rgb565",
+      "format": "rgb565"
+    },
+    "speaking": {
+      "asset": "/companions/cat/speaking.rgb565",
+      "format": "rgb565"
+    },
+    "offline": {
+      "asset": "/companions/cat/offline.rgb565",
+      "format": "rgb565"
+    },
+    "offline-tail": {
+      "asset": "/companions/cat/offline-tail.rgb565",
+      "format": "rgb565"
+    }
+  },
+  "states": {
+    "ready": {
+      "mode": "loop",
+      "frames": [
+        {
+          "frame": "ready",
+          "durationMs": 3300
+        },
+        {
+          "frame": "blink",
+          "durationMs": 120
+        },
+        {
+          "frame": "ready",
+          "durationMs": 180
+        }
+      ]
+    },
+    "listening": {
+      "mode": "loop",
+      "frames": [
+        {
+          "frame": "listening",
+          "durationMs": 900
+        },
+        {
+          "frame": "listening-blink",
+          "durationMs": 120
+        },
+        {
+          "frame": "listening",
+          "durationMs": 2580
+        }
+      ]
+    },
+    "thinking": {
+      "mode": "loop",
+      "frames": [
+        {
+          "frame": "ready",
+          "durationMs": 180
+        },
+        {
+          "frame": "thinking",
+          "durationMs": 900
+        },
+        {
+          "frame": "thinking-blink",
+          "durationMs": 120
+        },
+        {
+          "frame": "thinking",
+          "durationMs": 2580
+        }
+      ],
+      "loopFrom": 1
+    },
+    "speaking": {
+      "mode": "loop",
+      "frames": [
+        {
+          "frame": "speaking",
+          "durationMs": 500
+        },
+        {
+          "frame": "ready",
+          "durationMs": 500
+        }
+      ]
+    },
+    "offline": {
+      "mode": "loop",
+      "frames": [
+        {
+          "frame": "offline",
+          "durationMs": 3300
+        },
+        {
+          "frame": "offline-tail",
+          "durationMs": 120
+        },
+        {
+          "frame": "offline",
+          "durationMs": 180
+        }
+      ]
+    },
+    "volume": {
+      "mode": "loop",
+      "frames": [
+        {
+          "frame": "ready",
+          "durationMs": 900
+        },
+        {
+          "frame": "blink",
+          "durationMs": 120
+        },
+        {
+          "frame": "ready",
+          "durationMs": 2580
+        }
+      ]
+    },
+    "charging": {
+      "fallback": "ready"
+    },
+    "pairing": {
+      "fallback": "ready"
+    },
+    "no-wifi": {
+      "fallback": "offline"
+    },
+    "service": {
+      "fallback": "offline"
+    },
+    "account": {
+      "fallback": "offline"
+    },
+    "low": {
+      "fallback": "offline"
+    }
+  },
+  "fallback": "ready"
+}

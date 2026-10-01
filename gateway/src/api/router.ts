@@ -17,6 +17,7 @@ export interface ApiRouterDeps {
   handleSecrets: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/auth/*` path. Public endpoints — no global gate. */
   handleAuth: (request: Request) => Promise<Response>;
+  handleDevices?: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/profile/*` path. Bearer auth applied per route. */
   handleProfile: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/providers/*` path. Bearer auth applied per route. */
@@ -64,6 +65,8 @@ export function createApiRouter(deps: ApiRouterDeps): ApiRouter {
 
     if (pathname.startsWith(`${API_V1}/admin/secrets`)) return deps.handleSecrets(request);
     if (pathname.startsWith(`${API_V1}/admin/`)) return deps.handleAdmin(request);
+    if (pathname === `${API_V1}/devices` || pathname.startsWith(`${API_V1}/devices/`))
+      return deps.handleDevices?.(request) ?? new Response("Not Found", { status: HTTP_NOT_FOUND });
     if (pathname.startsWith(`${API_V1}/auth/`)) return deps.handleAuth(request);
     if (pathname.startsWith(`${API_V1}/profile/`)) return deps.handleProfile(request);
     if (pathname.startsWith(`${API_V1}/providers/`)) return deps.handleProviders(request);

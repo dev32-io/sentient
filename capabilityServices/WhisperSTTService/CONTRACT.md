@@ -81,7 +81,9 @@ Wire framing per format:
   duration. The opus decoder is **stateful across packets within a
   single connection**: reusing one connection for many turns benefits
   from predictor / codebook continuity, so clients SHOULD keep one
-  connection open rather than reconnecting per turn.
+  connection open within an active capture. The gateway rotates connections
+  at capture terminal boundaries to fence callbacks: this protocol carries
+  no capture identity, so a late result must never attach to a new capture.
 
 Example connect URL combining both params:
 
@@ -227,8 +229,11 @@ Client end-of-stream signal — send when the audio source stops while a
 turn may still be open (push-to-talk release, mic toggled off). The
 server force-finalizes any open turn immediately (`turn.force_finalize`
 with `reason: "client_flush"`, synthetic `vad_end` if mid-speech) and
-emits the normal `turn_complete` / `transcript_ready` pair. No-op when
-no turn is active. Without a `flush`, an open turn only finalizes when
+emits the normal `turn_complete` / `transcript_ready` pair, or
+`turn_rejected` for rejected audio. When idle (zero frames or VAD-empty
+silence), emits `turn_rejected` with `reason: "no_speech"`, empty text,
+zero decode/audio duration, and a fresh monotonic `turnIdx`. No VAD onset
+is invented. Idle flush also clears buffered silence and VAD state. Without a `flush`, an open turn only finalizes when
 audio frames resume — the §6 watchdogs are evaluated on frame arrival,
 not on a wall clock.
 
@@ -288,7 +293,9 @@ The server emits two kinds of messages:
 
 **The two events a minimal gateway must handle are `ready` and
 `transcript_ready`.** Everything else is either optional telemetry or a
-companion binary payload.
+companion binary payload. Capture-aware consumers must also handle
+`turn_rejected` as terminal, bound finalization waits, and fence late
+callbacks when abandoning a connection.
 
 ---
 
@@ -424,11 +431,11 @@ no acoustic-event tag, so `audioEvent` is always `""` and there is no
 non-Speech exception — a turn is rejected purely on whether its text
 has any letter/digit character.
 
-**The gateway should silently ignore `turn_rejected` events** unless
-it wants to audit/count false positives. No `turn_complete`, no WAV,
+**The gateway must treat `turn_rejected` as a terminal no-input result**
+and release any pending capture finalization without submitting text. No `turn_complete`, no WAV,
 no `transcript_ready` are emitted for rejected turns.
 
-`reason` values currently: `"empty_transcript"` (text had no
+`reason` values currently: `"no_speech"` (idle flush), `"empty_transcript"` (text had no
 letter/digit content), `"short_burst"` (turn shorter than the
 configured minimum speech duration), and `"hallucination"` (all
 super-segments were dropped by the safety-net gate — energy floor,

@@ -75,6 +75,27 @@ final class ToolsViewModel {
     /// MCP server ids in a stable sorted order.
     var groupIds: [String] { (catalog?.groups.keys).map { $0.sorted() } ?? [] }
 
+    /// Catalog is role-filtered; its ordinary permission values do not govern Cube.
+    var cubeTools: [McpToolView] {
+        var seen = Set<String>()
+        return (catalog?.groups.values.flatMap(\.tools) ?? [])
+            .filter { seen.insert($0.name).inserted }
+            .sorted { $0.name < $1.name }
+    }
+
+    func cubePermission(_ name: String) -> ToolPermission {
+        cubeToolPermission(base: original?.tools.permissions, overlay: draftPermissions, toolName: name)
+    }
+
+    func setCubePermission(_ name: String, _ permission: ToolPermission) {
+        guard (permission == .allow || permission == .off),
+              cubeTools.contains(where: { $0.name == name && $0.settable }) else { return }
+        draftPermissions = withToolPermission(
+            permissions: draftPermissions, serverId: "cube", toolName: name, permission: permission
+        )
+        log.info("tools.cube.permission.change tool=\(name) permission=\(permission.wireValue)")
+    }
+
     // ── Read helpers (delegate to the shared resolvers, never re-simulate) ──
 
     /// This person's pending-or-resolved permission for one tool. Reads the

@@ -12,6 +12,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <chrono>
 
 #include "audio_processor.h"
 #include "audio_codec.h"
@@ -24,8 +25,11 @@ public:
     void Initialize(AudioCodec* codec, int frame_duration_ms, srmodel_list_t* models_list) override;
     void Feed(std::vector<int16_t>&& data, uint32_t capture_generation) override;
     bool Start(uint32_t capture_generation) override;
-    bool Stop() override;
+    bool Stop(bool drain = false) override;
     bool IsRunning() override;
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    bool GetCaptureSampleCounts(uint32_t generation, size_t& fed, size_t& fetched) override;
+#endif
     void OnOutput(std::function<void(std::vector<int16_t>&& data, uint32_t capture_generation)> callback) override;
     void OnVadStateChange(std::function<void(bool speaking)> callback) override;
     size_t GetFeedSize() override;
@@ -47,6 +51,10 @@ private:
     bool running_ = false;
     bool stopped_ = true;
     bool reset_ok_ = true;
+    bool feed_failed_ = false;
+    bool draining_ = false;
+    size_t fed_samples_ = 0, fetched_samples_ = 0;
+    std::chrono::steady_clock::time_point drain_deadline_;
     uint32_t capture_generation_ = 0;
     std::vector<int16_t> output_buffer_;
 

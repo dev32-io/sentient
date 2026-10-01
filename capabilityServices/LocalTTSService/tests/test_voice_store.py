@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from local_tts.config import GenerationConfig
 from local_tts.voice_store import VoiceStore
 
 _SR = 24_000
@@ -282,7 +283,7 @@ def test_create_then_get_roundtrip(tmp_path: Path) -> None:
     from local_tts.engine import QwenEngine
 
     model_id = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
-    engine = QwenEngine(model_id)
+    engine = QwenEngine(model_id, generation=GenerationConfig(4096, 75, 12))
     voice_dir = tmp_path / "voices"
     store = VoiceStore(engine, voice_dir)
 

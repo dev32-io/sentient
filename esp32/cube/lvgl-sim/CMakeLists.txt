@@ -1,70 +1,45 @@
 cmake_minimum_required(VERSION 3.13)
-project(sentient_cube_lvgl_sim C)
-
+project(sentient_cube_lvgl_sim C CXX)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ---- Configuration ----------------------------------------------------------
-# LVGL source lives next to this CMakeLists (cloned by setup step, see
-# README.md). Version is pinned to match firmware/main's managed component.
-set(LVGL_DIR        "${CMAKE_CURRENT_LIST_DIR}/lvgl"      CACHE PATH "Path to LVGL source clone.")
-set(SENTIENT_FW_DIR "${CMAKE_CURRENT_LIST_DIR}/../firmware" CACHE PATH "Path to sentient cube firmware/.")
-
-if(NOT EXISTS "${LVGL_DIR}/lvgl.h")
-    message(FATAL_ERROR
-        "LVGL source not found at ${LVGL_DIR}.\n"
-        "Clone the pinned LVGL version next to this CMakeLists.txt:\n"
-        "  cd ${CMAKE_CURRENT_LIST_DIR}\n"
-        "  git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl lvgl")
+set(SENTIENT_FW_DIR "${CMAKE_CURRENT_LIST_DIR}/../firmware" CACHE PATH "Cube firmware source")
+set(LVGL_DIR "${SENTIENT_FW_DIR}/managed_components/lvgl__lvgl" CACHE PATH "LVGL 9.5.0 source")
+set(CJSON_DIR "$ENV{IDF_PATH}/components/json/cJSON" CACHE PATH "Existing cJSON source directory")
+set(QRCODE_DIR "${SENTIENT_FW_DIR}/managed_components/espressif2022__esp_emote_gfx/src/lib/qrcode")
+set(BOARD_DIR "${SENTIENT_FW_DIR}/main/boards/sentient-cube")
+if(NOT EXISTS "${LVGL_DIR}/lvgl.h" OR NOT EXISTS "${CJSON_DIR}/cJSON.c")
+    message(FATAL_ERROR "Supply LVGL_DIR (LVGL 9.5.0) and CJSON_DIR (existing IDF components/json/cJSON).")
 endif()
 
-if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h")
-    message(FATAL_ERROR
-        "Sim-side lv_conf.h not found at ${CMAKE_CURRENT_LIST_DIR}/lv_conf.h.\n"
-        "This file is part of the repo; if it is missing, your checkout is\n"
-        "incomplete. Restore via: git checkout HEAD -- lv_conf.h")
-endif()
-
-# ---- LVGL config dispatch ---------------------------------------------------
-# Point LVGL at the sim-side lv_conf.h via LV_CONF_PATH. This bypasses any
-# Kconfig-driven config (none here) and the `../../lv_conf.h` default.
-# Quoting the path with backslash escapes is the supported syntax — see
-# lvgl/src/lv_conf_internal.h dispatch logic.
-add_compile_definitions(
-    LV_CONF_PATH=\"${CMAKE_CURRENT_LIST_DIR}/lv_conf.h\"
-)
-
-# ---- SDL2 -------------------------------------------------------------------
+add_compile_definitions(LV_CONF_PATH="${CMAKE_CURRENT_LIST_DIR}/lv_conf.h")
 find_package(SDL2 REQUIRED)
-include_directories(${SDL2_INCLUDE_DIRS})
-
-# ---- LVGL as a library ------------------------------------------------------
-# LVGL provides its own CMakeLists at the cloned-source root. Disable the
-# examples + demos + ThorVG targets — they build by default but are never
-# linked into sentient_cube_lvgl_sim. Skipping them keeps the ~2s iteration
-# loop the spec wants. Option names come from lvgl/env_support/cmake/
-# os_desktop.cmake (the desktop-build entry point).
-set(CONFIG_LV_BUILD_EXAMPLES      OFF CACHE BOOL "" FORCE)
-set(CONFIG_LV_BUILD_DEMOS         OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 add_subdirectory(${LVGL_DIR} ${CMAKE_CURRENT_BINARY_DIR}/lvgl_build)
+add_library(cube_companion STATIC "${SENTIENT_FW_DIR}/ui-shared/companion.cc" "${CJSON_DIR}/cJSON.c")
+target_include_directories(cube_companion PUBLIC "${SENTIENT_FW_DIR}/ui-shared" PRIVATE "${CJSON_DIR}")
+add_library(cube_views STATIC
+    "${SENTIENT_FW_DIR}/ui-shared/cube_views.cc"
+    "${BOARD_DIR}/character_data.cc"
+    "${QRCODE_DIR}/qrcodegen.c")
+target_include_directories(cube_views PUBLIC "${BOARD_DIR}" PRIVATE "${QRCODE_DIR}")
+target_link_libraries(cube_views PUBLIC cube_companion lvgl)
+add_executable(sentient_cube_lvgl_sim main/main.cc main/sdl2_driver.c)
+target_include_directories(sentient_cube_lvgl_sim PRIVATE ${SDL2_INCLUDE_DIRS})
+target_compile_definitions(sentient_cube_lvgl_sim PRIVATE SENTIENT_BOARD_DIR="${BOARD_DIR}")
+target_link_libraries(sentient_cube_lvgl_sim PRIVATE cube_views ${SDL2_LIBRARIES})
 
-# ---- Sentient shared UI sources --------------------------------------------
-set(SENTIENT_UI_SRCS
-    "${SENTIENT_FW_DIR}/ui-shared/test_screen.c"
-)
-
-# ---- Sim app ----------------------------------------------------------------
-add_executable(sentient_cube_lvgl_sim
-    main/main.c
-    main/sdl2_driver.c
-    ${SENTIENT_UI_SRCS}
-)
-
-target_include_directories(sentient_cube_lvgl_sim PRIVATE
-    "${SENTIENT_FW_DIR}/ui-shared"
-    "${SENTIENT_FW_DIR}/main"
-    "${LVGL_DIR}"
-)
-
-target_link_libraries(sentient_cube_lvgl_sim PRIVATE lvgl ${SDL2_LIBRARIES})
+enable_testing()
+add_executable(cube_companion_test ../tests/unit/cube_companion_host_test.cc)
+target_include_directories(cube_companion_test PRIVATE main "${CJSON_DIR}")
+target_compile_definitions(cube_companion_test PRIVATE SENTIENT_BOARD_DIR="${BOARD_DIR}")
+target_link_libraries(cube_companion_test PRIVATE cube_companion)
+add_test(NAME companion COMMAND cube_companion_test)
+add_test(NAME views COMMAND sentient_cube_lvgl_sim --self-test)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME snapshots COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_LIST_DIR}/tests/snapshots.py" "$<TARGET_FILE:sentient_cube_lvgl_sim>" "${BOARD_DIR}")

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { getLog } from "../logging/logger.js";
 import { writeFileAtomic } from "./atomic-write.js";
@@ -12,6 +13,19 @@ const log = getLog(["sentient", "gateway", "user-auth", "user-store"]);
 // every get/list, so logging per read would spam a line per request until an
 // unrelated mutation happened to rewrite users.json.
 let loggedLegacyMigration = false;
+
+// ponytail: one process-wide write queue for users.json, including separate store
+// handles. Multi-process writers require a transactional store instead.
+const removingUsers = new Set<string>();
+let mutationQueue: Promise<unknown> = Promise.resolve();
+function mutate(operation: () => Promise<StoreResult<void>>): Promise<StoreResult<void>> {
+  const result = mutationQueue.then(operation);
+  mutationQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 function migrateAll(rows: unknown[]): UserRecord[] {
   const migrated = rows.map(migrateUserRecord);
@@ -28,11 +42,17 @@ function migrateAll(rows: unknown[]): UserRecord[] {
 }
 
 export interface UserStore {
+  /** Security hook before and after durable role/deletion mutation. Pre-write failure aborts mutation. */
+  onAuthorityChanging?(listener: (user: UserRecord) => void): void;
   list(): Promise<StoreResult<UserRecord[]>>;
   get(userId: string): Promise<StoreResult<UserRecord | null>>;
   add(rec: UserRecord): Promise<StoreResult<void>>;
-  update(userId: string, patch: Partial<Omit<UserRecord, "userId" | "createdAt">>): Promise<StoreResult<void>>;
-  remove(userId: string): Promise<StoreResult<void>>;
+  update(
+    userId: string,
+    patch: Partial<Omit<UserRecord, "userId" | "createdAt" | "deviceAuthorityRevision">>,
+  ): Promise<StoreResult<void>>;
+  /** Optional archive runs after retirement, before account deletion, inside the mutation queue. */
+  remove(userId: string, beforeRemove?: () => Promise<StoreResult<void>>): Promise<StoreResult<void>>;
 }
 
 async function readAll(): Promise<StoreResult<UserRecord[]>> {
@@ -74,7 +94,20 @@ async function writeAll(users: UserRecord[]): Promise<StoreResult<void>> {
 }
 
 export function createUserStore(): UserStore {
-  return {
+  const authorityListeners = new Set<(user: UserRecord) => void>();
+  function retire(user: UserRecord): boolean {
+    try {
+      for (const listener of authorityListeners) listener(user);
+      return true;
+    } catch {
+      log.warn("authority-retirement-failed", { userId: user.userId });
+      return false;
+    }
+  }
+  const store: UserStore = {
+    onAuthorityChanging: (listener) => {
+      authorityListeners.add(listener);
+    },
     async list() {
       return readAll();
     },
@@ -82,6 +115,7 @@ export function createUserStore(): UserStore {
     async get(userId) {
       const r = await readAll();
       if (!r.ok) return r;
+      if (removingUsers.has(userId)) return { ok: true, value: null };
       const found = r.value.find((u) => u.userId === userId) ?? null;
       return { ok: true, value: found };
     },
@@ -106,19 +140,30 @@ export function createUserStore(): UserStore {
       }
       const existing = r.value[idx];
       if (!existing) return { ok: false, error: "not-found" };
+      if (patch.role !== undefined && patch.role !== existing.role && !retire(existing))
+        return { ok: false, error: "io-error" };
       const next: UserRecord = {
         ...existing,
         ...patch,
         userId: existing.userId,
         createdAt: existing.createdAt,
+        // Role round-trips must not revive old device credentials. PIN changes
+        // preserve this revision, independently of the human credential floor.
+        ...(patch.role !== undefined && patch.role !== existing.role ? { deviceAuthorityRevision: randomUUID() } : {}),
       };
       const updated = [...r.value];
       updated[idx] = next;
       log.info("update", { userId, fields: Object.keys(patch) });
-      return writeAll(updated);
+      const result = await writeAll(updated);
+      // File replacement yields. Fence enrollments/inputs authorized during that
+      // window too, including lookups holding the previous owner snapshot.
+      if (result.ok && patch.role !== undefined && patch.role !== existing.role && !retire(next)) {
+        return { ok: false, error: "io-error" };
+      }
+      return result;
     },
 
-    async remove(userId) {
+    async remove(userId, beforeRemove) {
       const r = await readAll();
       if (!r.ok) return r;
       const next = r.value.filter((u) => u.userId !== userId);
@@ -126,8 +171,29 @@ export function createUserStore(): UserStore {
         log.warn("remove.not-found", { userId });
         return { ok: false, error: "not-found" };
       }
-      log.info("remove", { userId });
-      return writeAll(next);
+      const existing = r.value.find((u) => u.userId === userId);
+      if (existing && !retire(existing)) return { ok: false, error: "io-error" };
+      removingUsers.add(userId);
+      try {
+        if (beforeRemove) {
+          const prepared = await beforeRemove();
+          if (!prepared.ok) return prepared;
+        }
+        log.info("remove", { userId });
+        const result = await writeAll(next);
+        if (result.ok && existing && !retire(existing)) return { ok: false, error: "io-error" };
+        return result;
+      } finally {
+        removingUsers.delete(userId);
+      }
     },
+  };
+  // Serialize the read-modify-write, not only rename: a racing PIN update must
+  // never restore the role/revision read before a role change.
+  return {
+    ...store,
+    add: (rec) => mutate(() => store.add(rec)),
+    update: (userId, patch) => mutate(() => store.update(userId, patch)),
+    remove: (userId, beforeRemove) => mutate(() => store.remove(userId, beforeRemove)),
   };
 }

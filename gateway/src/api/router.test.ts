@@ -89,6 +89,16 @@ describe("createApiRouter — sessions route dispatch", () => {
     expect(res?.status).toBe(200);
   });
 
+  it("routes GET /api/v1/sessions/search to sessions handler, never static fallback", async () => {
+    const handleSessions = vi.fn().mockResolvedValue(sentinel);
+    const handleStatic = vi.fn().mockResolvedValue(new Response("index.html"));
+    const router = createApiRouter(makeDeps({ handleSessions, handleStatic }));
+    const request = new Request("http://host/api/v1/sessions/search?q=cube");
+    expect(await router(request)).toBe(sentinel);
+    expect(handleSessions).toHaveBeenCalledWith(request);
+    expect(handleStatic).not.toHaveBeenCalled();
+  });
+
   it("routes GET /api/v1/sessions/<id>/messages to handleSessions", async () => {
     const handleSessions = vi.fn().mockResolvedValue(sentinel);
     const router = createApiRouter(makeDeps({ handleSessions }));

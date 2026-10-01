@@ -38,7 +38,7 @@ struct NoAudioProcessor {
     std::atomic<bool> stopped_cleanly_ = true;
     void Feed(std::vector<int16_t>&&, uint32_t);
     bool Start(uint32_t);
-    bool Stop();
+    bool Stop(bool drain = false);
 };
 ''' + '\n'.join(method(name) for name in ('Feed', 'Start', 'Stop')) + r'''
 int main() {
@@ -61,6 +61,15 @@ int main() {
     assert((frames[0] == std::vector<int16_t>{20, 21}));
     assert(generations[0] == 2);
     assert(p.Stop());
+    assert(p.Start(3));
+    p.Feed({30}, 3);
+    assert(p.Stop(true)); // Graceful release pads, does not discard accepted tail.
+    assert((frames.back() == std::vector<int16_t>{30, 0}));
+    assert(generations.back() == 3);
+    assert(p.Start(4));
+    p.Feed({40}, 4);
+    assert(p.Stop(false));
+    assert(frames.size() == 2); // Cancel still discards.
 }
 '''
         with tempfile.TemporaryDirectory() as directory:

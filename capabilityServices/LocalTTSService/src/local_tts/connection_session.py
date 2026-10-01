@@ -123,7 +123,7 @@ class ConnectionSession:
         if isinstance(msg, TextMessage):
             self._synth.add_text(msg.text)
         elif isinstance(msg, (FlushMessage, EndMessage)):
-            self._synth.flush()
+            self._synth.flush(end=isinstance(msg, EndMessage))
         elif isinstance(msg, CancelMessage):
             self._synth.cancel_current()
         elif isinstance(msg, PingMessage):

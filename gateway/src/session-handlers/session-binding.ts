@@ -23,7 +23,8 @@ import { getLog } from "../logging/logger.js";
 import { SESSION_CLOSED_MESSAGE } from "../runtime/permission-prompt.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
-import { type SessionStore, openSessionStore } from "../store/session-store.js";
+import { openSessionStore } from "../store/session-store.js";
+import type { DeviceCredential } from "../user-auth/device-registry.js";
 import { type CommittedFeedSource, attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createInputArbiter } from "./input-arbiter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
@@ -61,7 +62,7 @@ const log = getLog(["sentient", "ws", "session-binding"]);
 export function withSessionStore<T>(
   services: Pick<GatewayServices, "accessManager" | "dbFileName">,
   principal: UserPrincipal,
-  use: (store: SessionStore) => T,
+  use: (store: ReturnType<typeof openSessionStore>) => T,
 ): T {
   const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
   try {
@@ -170,6 +171,31 @@ export async function bindSessionRuntime(
   }
   const userId = principal.userId;
 
+  // Configure parks its target before this async bind. Refuse human Cube
+  // targets synchronously, so a pipelined text/audio frame cannot act in that gap.
+  function refuseExecution(): boolean {
+    if (services.accessManager === undefined || principal === null) return false;
+    const allowed = withSessionStore(services, principal, (store) => {
+      const status = store.getSessionExecutionStatus(sessionId);
+      const cube = store.getSession(sessionId)?.provenance === "cube";
+      return status !== "closed" && cube === (principal.origin?.kind === "cube");
+    });
+    if (!allowed) {
+      ws.data.authState = "rejected";
+      ws.data.principal = null;
+      detachSession(ws, services);
+      sendConnectionFrame(ws, {
+        type: "sessions.error",
+        code: "not_found",
+        message: "session is not available for execution; use REST for history",
+      });
+      ws.close(1008, "Session execution denied");
+      return true;
+    }
+    return false;
+  }
+  if (refuseExecution()) return { kind: "refused" };
+
   const stale = await refuseStaleAuthority(ws, services.auth.users);
   if (stale !== null) {
     log.warn("session-binding.authority-refused", {
@@ -200,6 +226,7 @@ export async function bindSessionRuntime(
   // supply only registry/runtime slices despite casting them as GatewayServices.
   // Production GatewayServices always has accessManager.
   if (services.accessManager !== undefined) {
+    if (refuseExecution()) return { kind: "refused" };
     const resolution = withSessionStore(services, principal, (store) =>
       resolveSession({ store, presented: sessionId }),
     );
@@ -238,7 +265,7 @@ export async function bindSessionRuntime(
   let attachment: Attachment;
   try {
     attachment = services.sessionRegistry.attach(sessionId, connectionId, ws, () =>
-      buildSessionHandles(services, principal, sessionId, connectionId),
+      buildSessionHandles(services, principal, sessionId, connectionId, ws.data.deviceCredential ?? undefined),
     );
   } catch (err) {
     log.error("session-binding.runtime-construction-failed", {
@@ -294,7 +321,8 @@ export async function bindSessionRuntime(
   // TELL THE CLIENT WHICH WINDOW IT IS (spec §3.7). This is the only source of
   // the `{sessionId, generation}` pair a client stamps on its commands, and it
   // goes out from the ONE place an attachment is minted, so there is no path
-  // that attaches without announcing it.
+  // that attaches without announcing it. The journal epoch must accompany it:
+  // generation can repeat after handles are rebuilt, while the seq space cannot.
   //
   // Ahead of the handshake frames on purpose: `session.ready` /
   // `session.created` / `session.switched` all follow this call, and a client
@@ -306,6 +334,7 @@ export async function bindSessionRuntime(
     type: "session.attached",
     sessionId,
     generation: attachment.generation,
+    epoch: handles.epoch,
   });
   return { kind: "bound", runtime: handles.runtime };
 }
@@ -326,6 +355,7 @@ export function buildSessionHandles(
   principal: UserPrincipal,
   sessionId: string,
   connectionId: string,
+  deviceCredential?: DeviceCredential,
 ): SessionHandles {
   // ONE journal per session, acquired with the session's handles and released
   // when they are disposed. The registry keeps it for the retention window
@@ -343,9 +373,19 @@ export function buildSessionHandles(
   // swept and its bytes are held for the life of the process, once per
   // affected session. The shape this replaced parked the lease on the socket
   // and released it in `cleanupSession`, which survived exactly this failure.
+  // Also covers headless admission recovery, which bypasses socket attachment.
+  if (services.accessManager !== undefined) {
+    withSessionStore(services, principal, (store) => {
+      const status = store.getSessionExecutionStatus(sessionId);
+      const cube = store.getSession(sessionId)?.provenance === "cube";
+      if (status === "closed" || status === "deleted" || cube !== (principal.origin?.kind === "cube")) {
+        throw new Error("session execution is not authorized");
+      }
+    });
+  }
   const acquisition = services.replayRegistry.acquire(sessionId);
   try {
-    return buildHandlesOver(services, principal, sessionId, connectionId, acquisition);
+    return buildHandlesOver(services, principal, sessionId, connectionId, acquisition, deviceCredential);
   } catch (err) {
     services.replayRegistry.release(acquisition.lease);
     log.warn("session-binding.journal-released-on-build-failure", {
@@ -367,6 +407,7 @@ function buildHandlesOver(
   sessionId: string,
   connectionId: string,
   acquisition: ReplayAcquisition,
+  deviceCredential?: DeviceCredential,
 ): SessionHandles {
   const fanOut = createFanOutTurnEmitter({
     registry: services.sessionRegistry,
@@ -391,7 +432,9 @@ function buildHandlesOver(
   // session handles, because nothing else needs to reach it. A preference
   // patch persists to the profile and the next read sees it — there is no
   // second copy to keep in step. See user-audio-policy.ts.
-  const audioPolicy = createUserAudioPolicy(services.profileStore, principal.userId, connectionId);
+  const preferences = createUserAudioPolicy(services.profileStore, principal.userId, connectionId);
+  const audioPolicy =
+    principal.origin?.kind === "cube" ? { ...preferences, shouldSpeak: async () => true } : preferences;
   // Every attached window's mic, read at TTS-start time — the session's TTS
   // reaches all of them, so a guard scoped to this one connection would leave
   // the others open on the assistant's own voice (self-triggered barge-in).
@@ -401,6 +444,7 @@ function buildHandlesOver(
     sessionId,
   );
   const synthesizer = services.createSynthesizerFor(() => audioPolicy.voiceId());
+  if (principal.origin?.kind === "cube" && !synthesizer) throw new Error("Cube speech synthesis is unavailable");
   const voice = synthesizer
     ? createTurnVoice({
         synthesizer,
@@ -420,6 +464,7 @@ function buildHandlesOver(
   // before calling `attach`, and this closure runs synchronously inside that
   // call.
   const built = services.createSessionRuntime?.({
+    ...(deviceCredential ? { deviceCredential } : {}),
     principal,
     conversationId: sessionId,
     connectionId,

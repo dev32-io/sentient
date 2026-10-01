@@ -5,6 +5,11 @@ import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
+import io.sentient.mobilesdk.sessions.SessionHistory
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WsIncoming
 import kotlinx.coroutines.CompletableDeferred
@@ -47,6 +52,29 @@ private fun FakeWebSocketEngine.draftReply(key: String): WsIncoming.Text {
 }
 
 class SessionActivationTest {
+    @Test
+    fun cube_history_reads_rest_without_activating_or_configuring_socket() = runTest {
+        val fake = FakeWebSocketEngine()
+        val http = object : SessionsHttpClient(
+            HttpClient(MockEngine { respond("{}") }), "wss://test/api/v1/ws", { "t" },
+        ) {
+            override suspend fun getHistory(sessionId: String, limit: Int, offset: Int): SessionHistory =
+                SessionHistory(emptyList(), "cube", true, true, false)
+        }
+        val sdk = buildSdk(fake, sessionsHttpClient = http)
+        connectToReady(sdk, fake)
+        val activation = async { sdk.switchSession("ordinary") }
+        runCurrent()
+        fake.emit(attached("ordinary"))
+        fake.emit(switched("ordinary"))
+        activation.await()
+        runCurrent()
+        val sent = fake.sentText.toList()
+        assertTrue(sdk.cubeHistory("cube").isEmpty())
+        assertEquals(sent, fake.sentText)
+        assertEquals("ordinary", sdk.currentSessionId.value)
+        assertEquals(listOf("ordinary"), fake.activationIds())
+    }
     @Test
     fun prior_draft_mint_cannot_cross_new_chat_transport_boundary() = runTest {
         val fake = FakeWebSocketEngine().apply { beforeClose = { kotlinx.coroutines.awaitCancellation() } }

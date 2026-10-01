@@ -165,3 +165,10 @@ export function effectiveWildcardPermission(
 
 export const effectiveProductGroupToolPermission = effectiveToolPermission;
 export const effectiveProductGroupWildcardPermission = effectiveWildcardPermission;
+
+/** Cube uses global tool names. Legacy Ask/Deny cannot run without a permission UI;
+ * show them as Off without changing the stored choice until the user edits it. */
+export function cubeToolPermission(permissions: ToolPermissionPatchMap | undefined, toolName: string): "allow" | "off" {
+  const cube = permissions?.cube;
+  return (cube?.[toolName] ?? cube?.["*"]) === "allow" ? "allow" : "off";
+}

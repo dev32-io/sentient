@@ -19,6 +19,14 @@
 extern "C" {
 #endif
 
+// Explicit test intent, before upload and capture. Ordinary capture cannot
+// consume uploaded data without this arm. End/cancel discards all leftovers.
+void audio_inject_ring_arm(void);
+void audio_inject_ring_begin_capture(void);
+void audio_inject_ring_end_capture(void);
+// Samples consumed in most recent capture; SIZE_MAX if lock unavailable.
+size_t audio_inject_ring_consumed(void);
+
 // Push samples into the ring. Returns the number actually pushed (may be less
 // than `n` if the ring is at capacity — surplus is silently dropped, matching
 // the legacy behavior that HIL tests already tolerate).
@@ -31,7 +39,7 @@ size_t audio_inject_ring_push(const int16_t* src, size_t n);
 // `agent_audio_inject_pop_samples`.
 int audio_inject_ring_pop(int16_t* dst, int target_samples, int sample_rate);
 
-// Inspector: how many samples are currently queued. Test / diagnostic use.
+// Inspector: queued samples, SIZE_MAX if lock unavailable (unknown, not empty).
 size_t audio_inject_ring_available(void);
 
 #ifdef __cplusplus

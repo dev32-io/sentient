@@ -42,9 +42,11 @@ export function migrateDatabase(
   for (const migration of migrations) {
     if (migration.version <= from) continue;
     db.transaction(() => {
+      // Another handle may have migrated while this opener waited for the writer lock.
+      if (readUserVersion(db) >= migration.version) return;
       for (const statement of migration.statements) db.exec(statement);
       db.exec(`PRAGMA user_version = ${Math.trunc(migration.version)}`);
-    })();
+    }).immediate();
     log.info(`${logScope}.schema.migrated`, { userId: ownerId, from, to: migration.version, name: migration.name });
   }
   return readUserVersion(db);

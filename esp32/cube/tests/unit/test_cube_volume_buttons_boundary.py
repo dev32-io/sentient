@@ -39,8 +39,10 @@ class CubeVolumeButtonsBoundaryTest(unittest.TestCase):
         self.assertNotIn('OnLongPress', callback)
         self.assertNotIn('OnPressRepeat', callback)
         self.assertEqual(callback.count('.OnPressDown('), 2)
-        self.assertLess(source.index('sentient_cube_create_toggle_button_screen();'),
-                        source.index('lv_obj_set_parent(notification_label_, lv_screen_active());'))
+        # Base display keeps its legacy header on its inactive screen; Cube
+        # scene owns visible status art without stealing button feedback.
+        setup = function(source, 'virtual void SetupUI() override')
+        self.assertNotIn('lv_obj_set_parent(top_bar_', setup)
 
         cpp = r'''
 #include <algorithm>
@@ -61,9 +63,7 @@ struct AudioCodec {
     void SetOutputVolume(int value) { volume = value; ++writes; }
 };
 struct Display {
-    std::string notification;
-    int duration = 0;
-    void ShowNotification(const char* text, int ms) { notification = text; duration = ms; }
+
 };
 struct Application {
     std::vector<std::function<void()>> tasks;
@@ -96,7 +96,7 @@ struct SentientCubeBoard {
     void EnterWifiConfigMode() { ++wifi_config_requests; }
     void InitializeButtons();
 };
-''' + callback + r'''
+''' + 'int shown_volume = -1; void sentient_cube_show_volume(int value) { shown_volume = value; }\n' + callback + r'''
 int main() {
     auto& app = Application::GetInstance();
     SentientCubeBoard board;
@@ -110,10 +110,10 @@ int main() {
 
     board.codec.volume = 98;
     board.volume_up_button_.PressDown();
-    assert(app.tasks.size() == 1 && board.codec.writes == 0 && board.display.notification.empty());
+    assert(app.tasks.size() == 1 && board.codec.writes == 0 && shown_volume == -1);
     app.RunScheduled();
     assert(board.codec.volume == 100 && board.codec.writes == 1);
-    assert(board.display.notification == "Volume 100%" && board.display.duration == 1500);
+    assert(shown_volume == 100);
 
     board.codec.volume = 50;
     board.volume_up_button_.PressDown();
@@ -121,20 +121,20 @@ int main() {
     assert(app.tasks.size() == 2 && board.codec.writes == 1);
     app.RunScheduled();
     assert(board.codec.volume == 60 && board.codec.writes == 3);
-    assert(board.display.notification == "Volume 60%" && board.display.duration == 1500);
+    assert(shown_volume == 60);
 
     board.codec.volume = 3;
     board.boot_button_.PressDown();
     assert(app.tasks.size() == 1 && board.codec.writes == 3);
     app.RunScheduled();
     assert(board.codec.volume == 0 && board.codec.writes == 4);
-    assert(board.display.notification == "Volume 0%" && board.display.duration == 1500);
+    assert(shown_volume == 0);
 
     board.codec.volume = 50;
     board.boot_button_.PressDown();
     app.RunScheduled();
     assert(board.codec.volume == 45 && board.codec.writes == 5);
-    assert(board.display.notification == "Volume 45%" && board.display.duration == 1500);
+    assert(shown_volume == 45);
 
     board.volume_up_button_.PressDown();
     app.RunScheduled();

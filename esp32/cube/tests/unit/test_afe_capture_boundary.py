@@ -63,13 +63,28 @@ struct FakeAfe {
     std::mutex mutex;
     std::condition_variable cv;
     bool ready = false;
-    int resets = 0, feeds = 0;
-    bool reset_success = true;
+    int resets = 0, feeds = 0, feed_result = 4;
+    bool reset_success = true, auto_output = false;
+    int output_delay_ms = 0;
     Result result;
 };
 struct Codec { int input_channels() { return 1; } };
 struct Interface {
-    int feed(FakeAfe* afe, const int16_t*) { ++afe->feeds; return 1; }
+    int feed(FakeAfe* afe, const int16_t* data) {
+        std::lock_guard<std::mutex> lock(afe->mutex);
+        ++afe->feeds;
+        if (afe->auto_output) {
+            afe->result.data[0] = data[0]; afe->result.data[1] = data[1];
+            if (afe->output_delay_ms) {
+                std::thread([afe] {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(afe->output_delay_ms));
+                    std::lock_guard<std::mutex> lock(afe->mutex);
+                    afe->ready = true; afe->cv.notify_all();
+                }).detach();
+            } else { afe->ready = true; afe->cv.notify_all(); }
+        }
+        return afe->feed_result;
+    }
     int get_fetch_chunksize(FakeAfe*) { return 2; }
     int get_feed_chunksize(FakeAfe*) { return 2; }
     Result* fetch_with_delay(FakeAfe* afe, int ms) {
@@ -96,16 +111,20 @@ struct AfeAudioProcessor {
     std::timed_mutex input_buffer_mutex_;
     std::condition_variable_any stopped_cv_;
     std::atomic<bool> stop_requested_ = true;
-    bool running_ = false, stopped_ = true, reset_ok_ = true;
+    bool running_ = false, stopped_ = true, reset_ok_ = true, feed_failed_ = false;
+    bool draining_ = false;
+    size_t fed_samples_ = 0, fetched_samples_ = 0;
+    std::chrono::steady_clock::time_point drain_deadline_;
     uint32_t capture_generation_ = 0;
     std::function<void(std::vector<int16_t>&&, uint32_t)> output_callback_;
     std::function<void(bool)> vad_state_change_callback_;
     void Feed(std::vector<int16_t>&&, uint32_t);
     bool Start(uint32_t);
-    bool Stop();
+    bool Stop(bool drain = false);
+    bool GetCaptureSampleCounts(uint32_t, size_t&, size_t&);
     void AudioProcessorTask();
 };
-''' + '\n'.join(method(name) for name in ('Feed', 'Start', 'Stop', 'AudioProcessorTask')) + r'''
+''' + '\n'.join(method(name) for name in ('Feed', 'Start', 'Stop', 'AudioProcessorTask', 'GetCaptureSampleCounts')) + r'''
 int main() {
     auto* processor = new AfeAudioProcessor;
     auto* event = new EventGroup;
@@ -157,10 +176,48 @@ int main() {
     assert(afe->feeds == 1);
     assert(processor->Stop());
     assert(afe->resets == 2);
-    assert(processor->Start(9));
+    // SDK ring-full is ZERO, not ESP_FAIL. Both must cancel this capture,
+    // stop feeding, reset on worker, and remain failed through repeated Stop.
+    for (int result : {0, -1}) {
+        assert(processor->Start(9));
+        afe->feed_result = result;
+        const int before = afe->feeds;
+        processor->Feed({40, 41, 42, 43}, 9);
+        processor->Feed({44, 45}, 9);
+        assert(afe->feeds == before + 1); // no retries or remaining chunk feeds
+        assert(!processor->Stop());
+        assert(!processor->Stop()); // worker reset must not erase capture failure
+        assert(processor->input_buffer_.empty());
+        assert(processor->output_buffer_.empty());
+    }
+    afe->feed_result = 4;
+    assert(processor->Start(10));
+    processor->Feed({50, 51}, 10);
+    assert(processor->Stop()); // new capture can recover after acknowledged reset
+    std::vector<std::vector<int16_t>> tails;
+    processor->frame_samples_ = 4;
+    processor->output_callback_ = [&](std::vector<int16_t>&& data, uint32_t token) {
+        assert(token == 11); tails.push_back(std::move(data));
+    };
+    afe->auto_output = true;
+    afe->output_delay_ms = 180; // First empty 100-ms fetch is not EOS.
+    assert(processor->Start(11));
+    processor->Feed({60}, 11); // Partial producer feed, partial encoder output.
+    size_t fed = 999, fetched = 999;
+    assert(!processor->GetCaptureSampleCounts(processor->capture_generation_, fed, fetched));
+    assert(processor->Stop(true));
+    assert(processor->GetCaptureSampleCounts(processor->capture_generation_, fed, fetched));
+    assert(fed == processor->fed_samples_ && fetched == processor->fetched_samples_);
+    assert(!processor->GetCaptureSampleCounts(processor->capture_generation_ + 1, fed, fetched));
+    assert(tails.size() == 1 && (tails[0] == std::vector<int16_t>{60, 0, 0, 0}));
+    assert(processor->Start(12));
+    processor->Feed({70}, 12);
+    assert(processor->Stop(false));
+    assert(tails.size() == 1); // Discard path never flushes partial staged input.
+    assert(processor->Start(13));
     afe->reset_success = false;
     assert(!processor->Stop());
-    assert(!processor->Start(10)); // Failed hardware reset cannot relabel old ring data.
+    assert(!processor->Start(12)); // Failed hardware reset cannot relabel old ring data.
 }
 '''
         with tempfile.TemporaryDirectory() as directory:

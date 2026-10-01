@@ -7,6 +7,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <string>
+#include <functional>
+#include <cassert>
 using esp_err_t = int;
 constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_INVALID_STATE = 1, ESP_ERR_INVALID_ARG = 2, ESP_ERR_NO_MEM = 3;
 #define ESP_ERROR_CHECK(x) do { if ((x) != ESP_OK) abort(); } while (0)
@@ -24,7 +26,11 @@ inline TickType_t xTaskGetTickCount() { return std::chrono::duration_cast<std::c
 inline void vTaskDelay(int ticks) { std::this_thread::sleep_for(std::chrono::milliseconds(ticks)); }
 struct MockTask {};
 using TaskHandle_t = MockTask*;
-inline int xTaskCreate(void (*)(void*), const char*, int, void*, int, TaskHandle_t*) { return 0; }
+inline int xTaskCreate(void (*fn)(void*), const char*, int, void* arg, int, TaskHandle_t* handle) {
+    *handle = new MockTask;
+    std::thread(fn, arg).detach();
+    return pdPASS;
+}
 inline void vTaskDelete(void*) {}
 extern std::mutex mock_notify_mutex;
 extern std::condition_variable mock_notify_cv;
@@ -53,13 +59,18 @@ struct MockTimer { void (*callback)(void*); void* arg; };
 using esp_timer_handle_t = MockTimer*;
 struct esp_timer_create_args_t { void (*callback)(void*); void* arg; };
 inline esp_err_t esp_timer_create(const esp_timer_create_args_t* a, esp_timer_handle_t* t) { *t = new MockTimer{a->callback, a->arg}; return ESP_OK; }
-inline esp_err_t esp_timer_start_once(esp_timer_handle_t t, uint64_t) { t->callback(t->arg); return ESP_OK; }
+inline esp_err_t esp_timer_start_once(esp_timer_handle_t t, uint64_t us) { if (us != 10000000) t->callback(t->arg); return ESP_OK; }
 inline esp_err_t esp_timer_stop(esp_timer_handle_t) { return ESP_OK; }
 inline esp_err_t esp_timer_delete(esp_timer_handle_t t) { delete t; return ESP_OK; }
-inline uint32_t esp_random() { return 42; }
+inline uint32_t esp_random() { static std::atomic<uint32_t> next{42}; return next++; }
 inline int esp_crt_bundle_attach(void*) { return 0; }
 using esp_event_base_t = const char*;
-struct MockClient {};
+struct MockClient {
+    void (*handler)(void*, esp_event_base_t, int32_t, void*) = nullptr;
+    void* context = nullptr;
+    std::mutex receive_mutex;
+    std::atomic<int> active_sends{0};
+};
 using esp_websocket_client_handle_t = MockClient*;
 struct esp_websocket_client_config_t { const char* uri; bool disable_auto_reconnect; int buffer_size; int task_stack; int network_timeout_ms; const char* cert_pem; int (*crt_bundle_attach)(void*); };
 // Pinned esp_websocket_client event fields (including client/context before frame totals).
@@ -68,14 +79,28 @@ struct esp_websocket_event_data_t {
     esp_websocket_client_handle_t client; void* user_context;
     int payload_len; int payload_offset;
 };
-constexpr int WEBSOCKET_EVENT_ANY = 0, WEBSOCKET_EVENT_CONNECTED = 1, WEBSOCKET_EVENT_DATA = 2, WEBSOCKET_EVENT_DISCONNECTED = 3, WEBSOCKET_EVENT_CLOSED = 4;
+constexpr int WEBSOCKET_EVENT_ANY = 0, WEBSOCKET_EVENT_CONNECTED = 1, WEBSOCKET_EVENT_DATA = 2, WEBSOCKET_EVENT_DISCONNECTED = 3, WEBSOCKET_EVENT_CLOSED = 4, WEBSOCKET_EVENT_FINISH = 5;
 using EventHandler = void (*)(void*, esp_event_base_t, int32_t, void*);
 inline esp_websocket_client_handle_t esp_websocket_client_init(const esp_websocket_client_config_t*) { return new MockClient; }
-inline esp_err_t esp_websocket_register_events(esp_websocket_client_handle_t, int, EventHandler, void*) { return ESP_OK; }
+inline esp_err_t esp_websocket_register_events(esp_websocket_client_handle_t c, int, EventHandler handler, void* context) {
+    c->handler = handler; c->context = context; return ESP_OK;
+}
 inline esp_err_t esp_websocket_client_start(esp_websocket_client_handle_t) { return ESP_OK; }
-extern std::atomic<int> mock_client_stops;
-inline esp_err_t esp_websocket_client_stop(esp_websocket_client_handle_t) { ++mock_client_stops; return ESP_OK; }
-inline esp_err_t esp_websocket_client_destroy(esp_websocket_client_handle_t c) { delete c; return ESP_OK; }
+extern std::atomic<int> mock_client_stops, mock_client_finishes;
+inline esp_err_t esp_websocket_client_stop(esp_websocket_client_handle_t c) {
+    ++mock_client_stops;
+    std::lock_guard<std::mutex> lock(c->receive_mutex);
+    if (c->handler) { c->handler(c->context, nullptr, WEBSOCKET_EVENT_FINISH, nullptr); ++mock_client_finishes; }
+    return ESP_OK;
+}
+inline std::atomic<int> mock_client_destroys{0};
+inline std::function<void()> mock_text_send_hook;
+inline esp_err_t esp_websocket_client_destroy(esp_websocket_client_handle_t c) {
+    { std::lock_guard<std::mutex> lock(c->receive_mutex); } // Join last event like pinned destroy.
+    assert(c->active_sends == 0);
+    ++mock_client_destroys;
+    delete c; return ESP_OK;
+}
 inline bool esp_websocket_client_is_connected(esp_websocket_client_handle_t c) { return c != nullptr; }
 extern int mock_binary_result;
 extern int mock_binary_sends;
@@ -87,8 +112,11 @@ extern bool mock_release_binary;
 extern std::string mock_text;
 extern int mock_end_result;
 extern int mock_start_result;
-inline int esp_websocket_client_send_text(esp_websocket_client_handle_t, const char* data, int len, TickType_t) {
+inline int esp_websocket_client_send_text(esp_websocket_client_handle_t c, const char* data, int len, TickType_t) {
+    if (c) ++c->active_sends;
+    if (mock_text_send_hook) mock_text_send_hook();
     mock_text.append(data, len);
+    if (c) --c->active_sends;
     if (mock_start_result && std::string(data, len).find("audio.start") != std::string::npos) return -1;
     return mock_end_result && std::string(data, len).find("audio.end") != std::string::npos ? -1 : len;
 }

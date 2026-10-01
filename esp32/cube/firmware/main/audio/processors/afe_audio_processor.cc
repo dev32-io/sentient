@@ -1,6 +1,11 @@
 #include "afe_audio_processor.h"
 #include <esp_log.h>
 #include <chrono>
+#include <cstdlib>
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+#endif
 
 #define PROCESSOR_RUNNING 0x01
 
@@ -55,6 +60,9 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     }
 
     afe_config->agc_init = false;
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    afe_config->afe_linear_gain = CONFIG_CUBE_AFE_GAIN_PERCENT / 100.0f;
+#endif
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
 #ifdef CONFIG_USE_DEVICE_AEC
@@ -68,11 +76,32 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
     
-    xTaskCreate([](void* arg) {
+    // Fetch/reset + queue callbacks do not write flash/NVS. As with opus_codec,
+    // keep full stack in PSRAM; flash owners remain on internal stacks and IDF
+    // suspends this worker during cache-off operations. Do not add flash calls.
+    if (afe_data_ == nullptr || event_group_ == nullptr) {
+        ESP_LOGE(TAG, "AFE allocation failed");
+        std::abort();
+    }
+    auto worker = [](void* arg) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+        vTaskDeleteWithCaps(NULL);
+#else
         vTaskDelete(NULL);
-    }, "audio_communication", 4096, this, 3, NULL);
+#endif
+    };
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    auto created = xTaskCreateWithCaps(worker, "audio_communication", 4096, this, 3,
+                                       nullptr, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    auto created = xTaskCreate(worker, "audio_communication", 4096, this, 3, nullptr);
+#endif
+    if (created != pdPASS) {
+        ESP_LOGE(TAG, "AFE worker allocation failed");
+        std::abort();
+    }
 }
 
 AfeAudioProcessor::~AfeAudioProcessor() {
@@ -102,7 +131,20 @@ void AfeAudioProcessor::Feed(std::vector<int16_t>&& data, uint32_t capture_gener
     input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
     size_t chunk_size = afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels();
     while (!stop_requested_ && input_buffer_.size() >= chunk_size) {
-        afe_iface_->feed(afe_data_, input_buffer_.data());
+        // ESP-SR 2.3.1 returns sr_rb_write's positive count on success,
+        // zero on feed-ring-full (not ESP_FAIL). Never retry consumed DSP input.
+        const int result = afe_iface_->feed(afe_data_, input_buffer_.data());
+        if (result <= 0) {
+            ESP_LOGE(TAG, "AFE feed failed generation=%lu result=%d staged_samples=%u",
+                     (unsigned long)capture_generation_, result,
+                     (unsigned)(input_buffer_.size() / codec_->input_channels()));
+            feed_failed_ = true;
+            stop_requested_ = true;
+            running_ = false;
+            xEventGroupSetBits(event_group_, PROCESSOR_RUNNING);
+            return;
+        }
+        fed_samples_ += chunk_size / codec_->input_channels();
         input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + chunk_size);
     }
 }
@@ -110,6 +152,8 @@ void AfeAudioProcessor::Feed(std::vector<int16_t>&& data, uint32_t capture_gener
 bool AfeAudioProcessor::Start(uint32_t capture_generation) {
     std::unique_lock<std::timed_mutex> lock(input_buffer_mutex_, std::defer_lock);
     if (!lock.try_lock_for(std::chrono::seconds(5)) || !stopped_ || !reset_ok_) return false;
+    feed_failed_ = false;
+    fed_samples_ = fetched_samples_ = 0;
     capture_generation_ = capture_generation;
     stop_requested_ = false;
     stopped_ = false;
@@ -118,16 +162,28 @@ bool AfeAudioProcessor::Start(uint32_t capture_generation) {
     return true;
 }
 
-bool AfeAudioProcessor::Stop() {
-    stop_requested_ = true;
+bool AfeAudioProcessor::Stop(bool drain) {
+    if (!drain) stop_requested_ = true;
     std::unique_lock<std::timed_mutex> lock(input_buffer_mutex_, std::defer_lock);
     if (!lock.try_lock_for(std::chrono::seconds(5))) return false;
-    if (stopped_) return reset_ok_;
+    if (stopped_) return reset_ok_ && !feed_failed_;
+    if (drain && !feed_failed_) {
+        // Producer is joined by AudioService first. Preserve its partial feed.
+        if (!input_buffer_.empty()) {
+            input_buffer_.resize(afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels(), 0);
+            if (afe_iface_->feed(afe_data_, input_buffer_.data()) <= 0) feed_failed_ = true;
+            else fed_samples_ += input_buffer_.size() / codec_->input_channels();
+            input_buffer_.clear();
+        }
+        draining_ = !feed_failed_;
+        drain_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    }
+    stop_requested_ = true;
     running_ = false;
     // Wake worker even if it has not entered fetch yet. Worker owns fetch and
     // reset: never reset AFE storage concurrently with fetch_with_delay.
     xEventGroupSetBits(event_group_, PROCESSOR_RUNNING);
-    return stopped_cv_.wait_for(lock, std::chrono::seconds(5), [this] { return stopped_; }) && reset_ok_;
+    return stopped_cv_.wait_for(lock, std::chrono::seconds(5), [this] { return stopped_; }) && reset_ok_ && !feed_failed_;
 }
 
 bool AfeAudioProcessor::IsRunning() {
@@ -155,7 +211,11 @@ void AfeAudioProcessor::AudioProcessorTask() {
         uint32_t generation;
         {
             std::lock_guard<std::timed_mutex> lock(input_buffer_mutex_);
-            if (!running_ || stop_requested_) {
+            if (draining_ && std::chrono::steady_clock::now() >= drain_deadline_) {
+                draining_ = false;
+                feed_failed_ = true;
+            }
+            if ((!running_ || stop_requested_) && !draining_) {
                 // No in-flight fetch or callback remains. Drop staged PCM and
                 // AFE ring data before permitting another capture to start.
                 input_buffer_.clear();
@@ -174,10 +234,31 @@ void AfeAudioProcessor::AudioProcessorTask() {
         // waits for this fetch and callback; no concurrent reset or feed.
         auto res = afe_iface_->fetch_with_delay(afe_data_, pdMS_TO_TICKS(100));
         if (res == nullptr || res->ret_value == ESP_FAIL) {
+            bool finish_tail = false;
+            {
+                std::lock_guard<std::timed_mutex> lock(input_buffer_mutex_);
+                // Empty fetch is a wait timeout, not EOS. Retry outstanding
+                // returned-data work until bounded deadline (not DSP-tail proof).
+                if (draining_ && fetched_samples_ < fed_samples_ &&
+                    std::chrono::steady_clock::now() < drain_deadline_) continue;
+                if (draining_ && fetched_samples_ < fed_samples_) feed_failed_ = true;
+                finish_tail = draining_ && !feed_failed_;
+                draining_ = false;
+            }
+            if (finish_tail && !output_buffer_.empty() && output_callback_) {
+                output_buffer_.resize(frame_samples_, 0);
+                output_callback_(std::move(output_buffer_), generation);
+                output_buffer_.clear();
+            }
             if (res != nullptr) {
                 ESP_LOGI(TAG, "Error code: %d", res->ret_value);
             }
             continue;
+        }
+
+        {
+            std::lock_guard<std::timed_mutex> lock(input_buffer_mutex_);
+            fetched_samples_ += res->data_size / sizeof(int16_t);
         }
 
         // VAD state change
@@ -227,3 +308,13 @@ void AfeAudioProcessor::EnableDeviceAec(bool enable) {
         afe_iface_->enable_vad(afe_data_);
     }
 }
+
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+bool AfeAudioProcessor::GetCaptureSampleCounts(uint32_t generation, size_t& fed, size_t& fetched) {
+    std::unique_lock<std::timed_mutex> lock(input_buffer_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || !stopped_ || capture_generation_ != generation) return false;
+    fed = fed_samples_;
+    fetched = fetched_samples_;
+    return true;
+}
+#endif

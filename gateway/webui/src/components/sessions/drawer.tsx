@@ -212,7 +212,7 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
             <SessionList
               rows={visible}
               drafts={visibleDrafts}
-              currentId={sessions.currentId.value}
+              currentId={sessions.viewerId.value ?? sessions.currentId.value}
               insertedIds={insertedIds}
               emptyMessage={emptyMessage}
               pending={pending}

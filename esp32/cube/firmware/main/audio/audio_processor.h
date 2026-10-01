@@ -19,8 +19,12 @@ public:
     // capture transition (caller must cancel, never commit a partial tail).
     virtual void Feed(std::vector<int16_t>&& data, uint32_t capture_generation) = 0;
     virtual bool Start(uint32_t capture_generation) = 0;
-    virtual bool Stop() = 0;
+    virtual bool Stop(bool drain = false) = 0;
     virtual bool IsRunning() = 0;
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    // Finalized native AFE sample counts only; other processors are unavailable.
+    virtual bool GetCaptureSampleCounts(uint32_t, size_t&, size_t&) { return false; }
+#endif
     virtual void OnOutput(std::function<void(std::vector<int16_t>&& data, uint32_t capture_generation)> callback) = 0;
     virtual void OnVadStateChange(std::function<void(bool speaking)> callback) = 0;
     virtual size_t GetFeedSize() = 0;

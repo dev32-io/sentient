@@ -2,6 +2,7 @@ import type { ClientType, TurnMode } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { DeviceCredential } from "../user-auth/device-registry.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { Attachment } from "./session-registry.js";
 import type { SttSession } from "./stt-session.js";
@@ -71,6 +72,7 @@ export interface SessionData {
   authState: "pending" | "authenticating" | "authed" | "rejected";
   /** Minted once at the auth gate; null until authenticated. Never reassigned after. */
   principal: UserPrincipal | null;
+  deviceCredential: DeviceCredential | null;
   /**
    * When THIS connection's PASETO token stops authorizing (epoch ms), or null
    * before auth.
@@ -221,6 +223,7 @@ export function createEmptySessionData(): SessionData {
     draftKey: null,
     authState: "pending",
     principal: null,
+    deviceCredential: null,
     tokenExpiresAtMs: null,
     tokenIssuedAtMs: null,
     surfaceId: null,

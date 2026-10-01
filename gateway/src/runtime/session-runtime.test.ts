@@ -4010,3 +4010,86 @@ describe("buildSessionMemory — household (family) scope (Task 24)", () => {
     app.stop();
   });
 });
+
+describe("Cube runtime execution retirement", () => {
+  for (const retire of ["revoke", "close", "delete"] as const) {
+    it(`${retire} fences late provider output, stimuli, and runtime reconstruction`, async () => {
+      const am = createAccessManager({ userDataRoot: `${ROOT}/cube-${retire}` });
+      const human = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+      const principal = Object.freeze({
+        ...human,
+        origin: Object.freeze({ kind: "cube" as const, deviceId: crypto.randomUUID(), generation: 1 }),
+      });
+      mkdirSync(am.userHomeDir(human), { recursive: true });
+      const store = openSessionStore(am.grant(human, "session-store"));
+      const admission = store.admitCubeInput({
+        inputId: crypto.randomUUID(),
+        expectedFence: store.getCubeAdmissionFence(),
+        dreamerHour: 3,
+        now: Date.now(),
+        entry: {
+          turnId: "cube-turn",
+          replyId: null,
+          kind: "user",
+          createdAt: Date.now(),
+          text: "test",
+          toolCallId: null,
+          toolName: null,
+          toolArgs: null,
+          cutoff: null,
+          compactedThroughSeq: null,
+        },
+      });
+      if (admission.status !== "accepted") throw new Error("admission failed");
+      let release!: () => void;
+      const paused = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const provider = fakeProvider(async function* () {
+        await paused; // Deliberately ignores abort, like already-started external work.
+        yield { type: "text", content: "late" };
+        yield { type: "done", finishReason: "stop" };
+      });
+      const config = testConfig();
+      config.auxiliary.enabled = false;
+      const emitter = recordingEmitter();
+      const deps = {
+        principal,
+        deviceCredential: {
+          principal,
+          issuedAt: Date.now() / 1000,
+          expiresAt: Date.now() / 1000 + 60,
+          live: () => true,
+          current: async () => true,
+        },
+        sessionId: admission.sessionId,
+        accessManager: am,
+        provider,
+        broker: noopBroker(),
+        emitter,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "test",
+        config,
+      };
+      expect(() => createSessionRuntime({ ...deps, principal: human })).toThrow("session execution is not authorized");
+      const runtime = createSessionRuntime(deps);
+      runtime.submit({ kind: "preadmitted-conversational", entrySeq: admission.entry.seq, admission: "fresh" });
+      await waitFor(() => provider.calls.length === 1);
+      if (retire === "revoke") runtime.revokeAuthority("device-disabled");
+      else if (retire === "close") store.closeCubeExecutions("revoked");
+      else store.deleteSession(admission.sessionId);
+      expect(() => runtime.submit({ kind: "background-completion", note: "late result" })).not.toThrow();
+      expect(() => runtime.interrupt()).not.toThrow();
+      release();
+      await waitUntilIdle(runtime);
+      runtime.submit({ kind: "conversational", text: "old input" });
+      runtime.submit({ kind: "preadmitted-conversational", entrySeq: admission.entry.seq, admission: "retry" });
+      expect(provider.calls).toHaveLength(1);
+      expect(emitter.events.filter((event) => event.type === "textDelta")).toHaveLength(0);
+      expect(store.readSession(admission.sessionId)).toHaveLength(retire === "delete" ? 0 : 1);
+      expect(() => createSessionRuntime(deps)).toThrow("session execution is not authorized");
+      runtime.dispose();
+      store.close();
+    });
+  }
+});

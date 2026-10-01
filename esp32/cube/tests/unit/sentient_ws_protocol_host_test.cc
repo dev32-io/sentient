@@ -38,7 +38,7 @@ static std::string head(int rate) {
 }
 
 std::atomic<int> mock_ticks_extra{0};
-std::atomic<int> mock_client_stops{0};
+std::atomic<int> mock_client_stops{0}, mock_client_finishes{0};
 std::mutex mock_notify_mutex;
 std::condition_variable mock_notify_cv;
 uint32_t mock_notifications = 0;
@@ -54,8 +54,170 @@ std::condition_variable mock_cv;
 std::string mock_text;
 using namespace sentient::cube;
 
+// Actual bounded component linked by host runner; these drive SDK DATA events.
+static void envelope_regressions() {
+    auto fragment = [](SentientWsProtocol& sdk, uint8_t op, bool fin, int offset,
+                       int total, const char* bytes, int length) {
+        esp_websocket_event_data_t e{};
+        e.op_code = op; e.fin = fin; e.payload_offset = offset; e.payload_len = total;
+        e.data_ptr = bytes; e.data_len = length;
+        SentientWsProtocol::ws_event_handler(&sdk, nullptr, WEBSOCKET_EVENT_DATA, &e);
+    };
+    auto text = [&](SentientWsProtocol& sdk, const std::string& json) {
+        fragment(sdk, 1, true, 0, json.size(), json.data(), json.size());
+    };
+    for (size_t width : {1u, 17u, 4096u}) {
+        int thinking = 0, beginnings = 0, packets = 0;
+        SentientWsProtocolConfig cfg;
+        cfg.on_cognition_status = [&](CognitionState state) { thinking += state == CognitionState::Thinking; };
+        cfg.on_playback_begin = [&](int) { ++beginnings; };
+        cfg.on_playback_frame = [&](const uint8_t*, size_t size, int rate, bool pcm) {
+            assert(size == 960 && rate == 24000 && pcm); ++packets;
+        };
+        SentientWsProtocol sdk(std::move(cfg)); sdk.status_ = SdkStatus::Ready;
+        // Frame-local offsets restart only at actual WS continuation boundaries.
+        // Hold FIN after the complete root to prove no publication from parser done.
+        auto fragmented = [&](const std::string& json) {
+            for (size_t frame = 0; frame < json.size(); frame += 8191) {
+                size_t total = std::min(size_t(8191), json.size() - frame);
+                for (size_t offset = 0; offset < total;) {
+                    size_t size = std::min(width == 17 ? 1 + (offset * 7 % 37) : width, total - offset);
+                    fragment(sdk, frame ? 0 : 1, false, offset, total, json.data() + frame + offset, size);
+                    if (offset == 0) {
+                        fragment(sdk, 9, true, 0, 2, "p", 1);
+                        fragment(sdk, 9, true, 1, 2, "q", 1);
+                        fragment(sdk, 10, true, 0, 0, nullptr, 0);
+                    }
+                    offset += size;
+                }
+            }
+            assert(sdk.status() == SdkStatus::Ready);
+        };
+        const std::string payload = std::string(width == 4096 ? 2 * 1024 * 1024 : 65537, 'x') +
+                                    R"(\"\\\u20ac\ud83d\ude00)";
+        const std::string items = R"("items":[{"entryId":"fixture","ts":0,"kind":"user","channel":"speech","content":")" + payload + R"("}])";
+        const std::string snapshot = "{" + items + R"(,"t\u0079pe":"conversation.snapshot","s\u0065q":101,"epoch":4})";
+        fragmented(snapshot);
+        assert(sdk.wire_.last_seq == 0 && !sdk.wire_.has_epoch && thinking == 0 && beginnings == 0);
+        fragment(sdk, 0, true, 0, 0, nullptr, 0);
+        assert(sdk.wire_.last_seq == 101 && sdk.wire_.epoch == 4 && thinking == 0);
+        assert(sdk.last_transcript().empty()); // History never becomes STT diagnostics.
+        text(sdk, R"({"t\u0079pe":"turn.started","turnId":"live","s\u0065q":102,"epoch":4})");
+        assert(thinking == 1); // No pre-dispatch/double cursor advance.
+        text(sdk, R"({"type":"turn.audio.start","turnId":"live","encoding":"pcm","sampleRate":24000,"seq":103})");
+        const std::string tasks = R"({"items":[{"id":"job","toolName":"delegate","kind":"background","status":"running","argsPreview":")" +
+            payload + R"(","startedAtMs":0}],"type":"tasklist.state","turnId":null,"seq":104,"epoch":4})";
+        fragmented(tasks);
+        assert(sdk.wire_.last_seq == 103);
+        fragment(sdk, 0, true, 0, 0, nullptr, 0);
+        assert(sdk.wire_.last_seq == 104 && sdk.wire_.audio_turn == "live" && thinking == 1 && beginnings == 1);
+        fragmented(R"({"type":"turn.text.delta","turnId":"live","replyId":"reply","text":")" + payload + R"(","seq":105})");
+        assert(sdk.wire_.last_seq == 104);
+        fragment(sdk, 0, true, 0, 0, nullptr, 0);
+        assert(sdk.wire_.last_seq == 105 && sdk.wire_.cognition_turns.count("live") && beginnings == 1);
+        std::string pcm(969, '\0'); pcm[7] = 106; pcm[8] = 1;
+        fragment(sdk, 2, true, 0, pcm.size(), pcm.data(), pcm.size());
+        assert(packets == 1 && sdk.wire_.last_seq == 106);
+        // Epoch after huge ignored items is authoritative, including reset to low seq.
+        fragmented("{" + items + R"(,"type":"conversation.snapshot","seq":1,"epoch":5})");
+        assert(sdk.wire_.epoch == 4 && sdk.wire_.last_seq == 106);
+        fragment(sdk, 0, true, 0, 0, nullptr, 0);
+        assert(sdk.wire_.epoch == 5 && sdk.wire_.last_seq == 1 && sdk.wire_.cognition_turns.empty());
+    }
+    // Late malformed ignored body, trailing root junk, duplicate escaped envelope
+    // key, truncated root, and bounded selected-field failure never publish prefix.
+    const std::string prefix = R"({"type":"turn.started","turnId":"never","seq":8,"items":[")" + std::string(65537, 'x');
+    for (const auto& pair : std::vector<std::pair<std::string, std::string>>{
+            {prefix, R"(",]})"},
+            {R"({"type":"turn.started","turnId":"never","seq":8})", "!"},
+            {R"({"type":"turn.started","turnId":"never",)", R"("t\u0079pe":"turn.completed"})"},
+            {R"({"type":"turn.started","turnId":"never")", ""},
+            {R"({"type":"turn.started","turnId":")" + std::string(257, 'x'), R"("})"}}) {
+        int thinking = 0;
+        SentientWsProtocolConfig cfg;
+        cfg.on_cognition_status = [&](CognitionState state) { thinking += state == CognitionState::Thinking; };
+        SentientWsProtocol sdk(std::move(cfg)); sdk.status_ = SdkStatus::Ready;
+        fragment(sdk, 1, false, 0, pair.first.size(), pair.first.data(), pair.first.size());
+        assert(thinking == 0 && sdk.wire_.last_seq == 0);
+        fragment(sdk, 0, true, 0, pair.second.size(), pair.second.data(), pair.second.size());
+        assert(sdk.status() == SdkStatus::Error && thinking == 0 && sdk.wire_.last_seq == 0);
+        text(sdk, R"({"type":"turn.started","turnId":"blocked"})");
+        assert(thinking == 0); // Sticky recovery gate, not a new valid prefix.
+    }
+    // Invalid frame metadata/order, including continuation-local gaps/reordering.
+    for (int fault = 0; fault < 21; ++fault) {
+        SentientWsProtocol sdk({}); sdk.status_ = SdkStatus::Ready;
+        if (fault < 5) {
+            fragment(sdk, 1, false, 0, 4, "{ ", 2);
+            if (fault == 0) fragment(sdk, 1, false, 3, 4, "}", 1); // Gap.
+            if (fault == 1) fragment(sdk, 1, false, 0, 4, "{ ", 2); // Reordered/repeated callback.
+            if (fault == 2) fragment(sdk, 1, false, 2, 5, " }", 2); // Changed total.
+            if (fault == 3) fragment(sdk, 1, true, 2, 4, " }", 2); // Changed FIN mid-frame.
+            if (fault == 4) fragment(sdk, 0, false, 2, 4, " }", 2); // Changed opcode mid-frame.
+        } else if (fault == 5) {
+            fragment(sdk, 1, false, 0, 1, "{", 1);
+            fragment(sdk, 0, true, 0, 4, "  ", 2);
+            fragment(sdk, 0, true, 3, 4, "}", 1); // Continuation frame gap.
+        } else if (fault == 6) {
+            fragment(sdk, 1, false, 0, 2, "{}", 2);
+            text(sdk, "{}"); // New data opcode before prior FIN.
+        } else if (fault == 7) fragment(sdk, 0, true, 0, 2, "{}", 2); // Orphan continuation.
+        else if (fault == 8) fragment(sdk, 3, true, 0, 2, "{}", 2); // Reserved opcode.
+        else if (fault == 9) fragment(sdk, 9, false, 0, 0, nullptr, 0); // Fragmented control.
+        else if (fault == 10) fragment(sdk, 1, true, -1, 2, "{}", 2);
+        else if (fault == 11) fragment(sdk, 1, true, 0, -1, "{}", 2);
+        else if (fault == 12) fragment(sdk, 1, true, 0, 1, "{}", 2);
+        else if (fault == 13) fragment(sdk, 1, true, 0, 2, nullptr, 2);
+        else if (fault == 14) fragment(sdk, 1, true, 3, 2, nullptr, 0);
+        else if (fault == 15) fragment(sdk, 1, true, 0, 2, "{}", -1);
+        else if (fault == 16) fragment(sdk, 9, true, 0, 126, "p", 126);
+        else if (fault == 17) fragment(sdk, 11, true, 0, 0, nullptr, 0);
+        else if (fault == 18) {
+            fragment(sdk, 1, false, 0, 1, "{", 1);
+            fragment(sdk, 0, true, 0, 4, "  ", 2);
+            fragment(sdk, 0, true, 0, 4, "  ", 2); // Continuation callback reordered.
+        } else {
+            fragment(sdk, 9, true, 0, 3, "p", 1);
+            if (fault == 19) fragment(sdk, 9, true, 2, 3, "q", 1); // Control offset gap.
+            else text(sdk, "{}"); // Data before control payload complete.
+        }
+        assert(sdk.status() == SdkStatus::Error && sdk.inbound_.framing_error);
+    }
+    {
+        int thinking = 0;
+        SentientWsProtocolConfig cfg;
+        cfg.on_cognition_status = [&](CognitionState state) { thinking += state == CognitionState::Thinking; };
+        SentientWsProtocol sdk(std::move(cfg)); sdk.status_ = SdkStatus::Ready;
+        fragment(sdk, 1, false, 0, 4, "{\"ty", 4);
+        SentientWsProtocol::ws_event_handler(&sdk, nullptr, WEBSOCKET_EVENT_DISCONNECTED, nullptr);
+        assert(sdk.inbound_.opcode == 0 && !sdk.inbound_.frame_open);
+        sdk.status_ = SdkStatus::Authenticating; // Next connection's auth completed.
+        text(sdk, R"({"type":"session.ready","epoch":9})");
+        assert(sdk.status() == SdkStatus::Ready);
+        const std::string fresh = R"({"type":"turn.started","turnId":"fresh","seq":1})";
+        fragment(sdk, 1, false, 0, fresh.size(), fresh.data(), fresh.size());
+        assert(thinking == 0 && sdk.wire_.last_seq == 0);
+        fragment(sdk, 9, true, 0, 0, nullptr, 0);
+        fragment(sdk, 0, true, 0, 0, nullptr, 0);
+        assert(thinking == 1 && sdk.wire_.last_seq == 1 && sdk.wire_.epoch == 9);
+        fragment(sdk, 0, true, 0, 0, nullptr, 0); // Extra final continuation cannot redispatch.
+        assert(thinking == 1 && sdk.status() == SdkStatus::Error);
+    }
+    {
+        SentientWsProtocol sdk({}); sdk.status_ = SdkStatus::Ready;
+        cJSON_Hooks hooks{};
+        hooks.malloc_fn = [](size_t) -> void* { return nullptr; };
+        hooks.free_fn = free;
+        cJSON_InitHooks(&hooks);
+        text(sdk, R"({"type":"turn.started","turnId":"never","seq":7})");
+        cJSON_InitHooks(nullptr);
+        assert(sdk.status() == SdkStatus::Error && sdk.wire_.cognition_turns.empty());
+    }
+}
+
 int main() {
-    auto exercise = [](bool binary_fails, bool end_fails, bool cancel = false) {
+    envelope_regressions();
+    auto exercise = [](bool binary_fails, bool end_fails, bool cancel = false, bool busy = false) {
         mock_text.clear();
         mock_binary_result = binary_fails;
         mock_binary_sends = 0;
@@ -83,16 +245,37 @@ int main() {
         protocol.notify_uplink_available();
         { std::unique_lock<std::mutex> lock(mock_mutex);
           mock_cv.wait(lock, [] { return mock_inside_binary; }); }
+        const char* refusal = R"({"type":"command.rejected","command":"audio.start","reason":"session_busy"})";
+        if (busy) {
+            protocol.handle_text(refusal, strlen(refusal));
+            assert(protocol.busy_refusal_pending() && !protocol.start_streaming());
+        }
         std::thread release([&] {
-            if (cancel) protocol.cancel_streaming();
+            if (busy) protocol.settle_busy_refusal();
+            else if (cancel) protocol.cancel_streaming();
             else protocol.stop_streaming();
             stopped = true;
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         assert(!stopped && mock_text.find("audio.end") == std::string::npos);
+        if (busy) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            for (;;) {
+                { std::lock_guard<std::mutex> lock(protocol.state_mutex_); if (protocol.ending_) break; }
+                assert(std::chrono::steady_clock::now() < deadline);
+                std::this_thread::yield();
+            }
+            protocol.handle_text(refusal, strlen(refusal)); // New refusal while cancel waits.
+        }
         { std::lock_guard<std::mutex> lock(mock_mutex); mock_release_binary = true; mock_cv.notify_all(); }
         release.join();
         assert(stopped);
+        if (busy) {
+            assert(protocol.busy_refusal_pending());
+            protocol.settle_busy_refusal();
+            assert(!protocol.busy_refusal_pending());
+            assert(mock_text.find("audio.cancel") == mock_text.rfind("audio.cancel"));
+        }
         protocol.stopping_ = true;
         xTaskNotify(protocol.worker_, 4, eSetBits);
         worker.join();
@@ -128,6 +311,7 @@ int main() {
     exercise(true, false);
     exercise(false, true);
     exercise(false, false, true);
+    exercise(false, false, true, true);
     // Bounded stop: simulated deadline while send is in flight must suppress end.
     mock_ticks_extra = 0;
     mock_text.clear(); mock_binary_result = 0; mock_end_result = 0;
@@ -323,48 +507,14 @@ int main() {
     protocol.handle_data(&continuation);
     assert(protocol.status() == SdkStatus::Ready);
 
-    std::vector<std::string> transcripts;
-    SentientWsProtocolConfig transcript_cfg;
-    transcript_cfg.on_transcript = [&](const std::string& text) { transcripts.push_back(text); };
-    SentientWsProtocol snapshot(std::move(transcript_cfg));
-    snapshot.status_ = SdkStatus::Ready;
-    auto feed = [&](const std::string& json) {
-        esp_websocket_event_data_t e{};
-        e.op_code = 1; e.fin = true;
-        e.data_ptr = json.data(); e.data_len = e.payload_len = static_cast<int>(json.size());
-        SentientWsProtocol::ws_event_handler(&snapshot, nullptr, WEBSOCKET_EVENT_DATA, &e);
-    };
-    feed(R"({"type":"conversation.snapshot","items":[{"kind":"user","content":"older"},{"kind":"user","content":42},{"kind":"user","content":"first capture"},{"kind":"assistant","content":"reply"}]})");
-    assert(snapshot.last_transcript() == "first capture" && transcripts == std::vector<std::string>{"first capture"});
-    feed(R"({"type":"conversation.entry","item":{"kind":"user","content":"live"}})");
-    assert(snapshot.last_transcript() == "live" && transcripts.back() == "live");
-    SentientWsProtocol::ws_event_handler(&snapshot, nullptr, WEBSOCKET_EVENT_DISCONNECTED, nullptr);
-    snapshot.status_ = SdkStatus::Ready; // new attachment
-    feed(R"({"type":"conversation.snapshot","items":[{"kind":"user","content":"reconnected"}]})");
-    assert(snapshot.last_transcript() == "reconnected" && transcripts.back() == "reconnected");
-    const size_t delivered = transcripts.size();
-    feed(R"({"type":"conversation.snapshot","items":{}})");
-    feed(R"({"type":"conversation.snapshot","items":[{"kind":"user","content":null}]})");
-    feed(R"({"type":"conversation.snapshot","items":[{"kind":3,"content":"wrong"}]})");
-    feed(R"({"type":"conversation.snapshot"})");
-    feed(std::string(R"({"type":"conversation.snapshot","items":[{"kind":"user","content":")") +
-         std::string(BoundedWsMessage::kLimit, 'x') + R"("}]})");
-    assert(transcripts.size() == delivered && snapshot.last_transcript() == "reconnected");
-    feed(R"({"type":"conversation.snapshot","items":[]})");
-    assert(snapshot.last_transcript().empty() && transcripts.size() == delivered + 1 && transcripts.back().empty());
-    feed(R"({"type":"conversation.entry","item":{"kind":"user","content":"stale"}})");
-    const size_t before_replacement = transcripts.size();
-    feed(R"({"type":"conversation.snapshot","items":[{"entryId":"a1","ts":1,"kind":"assistant","content":"reply"},{"entryId":"t1","ts":2,"kind":"trigger","source":"task","summary":"done"}]})");
-    assert(snapshot.last_transcript().empty() && transcripts.size() == before_replacement + 1 && transcripts.back().empty());
-    feed(R"({"type":"conversation.entry","item":{"kind":"user","content":"keep"}})");
-    const size_t before_malformed = transcripts.size();
-    feed(R"({"type":"conversation.snapshot","items":[{"kind":"assistant","content":null}]})");
-    feed(R"({"type":"conversation.snapshot","items":[{"kind":"trigger","summary":"missing source"}]})");
-    assert(snapshot.last_transcript() == "keep" && transcripts.size() == before_malformed);
-
     std::vector<std::pair<std::string, int>> packets;
     SentientWsProtocolConfig down_cfg;
-    down_cfg.on_playback_frame = [&](const uint8_t* data, size_t len, int rate) {
+    std::vector<bool> terminals;
+    std::vector<CognitionState> cognition;
+    down_cfg.on_cognition_status = [&](CognitionState state) { cognition.push_back(state); };
+    down_cfg.on_playback_end = [&](bool aborted) { terminals.push_back(aborted); };
+    down_cfg.on_playback_frame = [&](const uint8_t* data, size_t len, int rate, bool pcm) {
+        (void)pcm;
         packets.emplace_back(std::string(reinterpret_cast<const char*>(data), len), rate);
     };
     SentientWsProtocol down(std::move(down_cfg));
@@ -431,7 +581,7 @@ int main() {
     assert(packets.size() == 1);
     std::vector<std::string> many(200, std::string(80, 'x'));
     std::string flush = page(many) + page(many);
-    assert(flush.size() > BoundedWsMessage::kLimit);
+    assert(flush.size() > 16384);
     binary_message(2, flush);
     assert(packets.size() == 401 && packets.back().first == many.back());
     // Chained BOS in same turn must parse new headers, not deliver them as audio.
@@ -461,4 +611,110 @@ int main() {
     assert(packets.size() == 404);
     binary_message(4, page({head(48000)}, true) + page({"OpusTags", "after-stop"}));
     assert(packets.size() == 405 && packets.back().first == "after-stop");
+    // Partial generation failure closes receipt normally; playback prefix drains.
+    const size_t before_failure = terminals.size();
+    text(R"({"type":"turn.audio.done","turnId":"four"})");
+    assert(terminals.size() == before_failure + 1 && !terminals.back());
+    binary_message(5, page({"late"}));
+    assert(packets.size() == 405);
+    start("five");
+    // A stale Done for the old stream cannot clear the newer owner's decoder.
+    text(R"({"type":"turn.audio.done","turnId":"four"})");
+    assert(terminals.size() == before_failure + 1);
+    binary_message(6, initial + page({"normal-after-failure"}));
+    assert(packets.size() == 406 && packets.back().first == "normal-after-failure");
+    text(R"({"type":"turn.audio.done","turnId":"five"})");
+    assert(terminals.size() == before_failure + 2 && !terminals.back());
+    // Ignored JSON shares cursor; seq zero never deduplicates live replay frames.
+    text(R"({"type":"turn.audio.start","turnId":"zero","encoding":"opus","sampleRate":48000})");
+    binary_message(0, initial + page({"zero-one"}));
+    binary_message(0, page({"zero-two"}));
+    assert(packets.back().first == "zero-two");
+    text(R"({"type":"tasklist.state","seq":100,"epoch":1,"items":[]})");
+    const auto count = packets.size();
+    binary_message(99, page({"duplicate"}));
+    assert(packets.size() == count);
+    text(R"({"type":"turn.started","turnId":"new","seq":101,"epoch":1})");
+    text(R"({"type":"turn.completed","turnId":"old","seq":102,"epoch":1})");
+    assert(cognition.back() == CognitionState::Thinking);
+    text(R"({"type":"turn.completed","turnId":"new","seq":103,"epoch":1})");
+    assert(cognition.back() == CognitionState::Idle);
+    // Supplied epoch without sequence retires old bracket and resets watermark.
+    text(R"({"type":"conversation.snapshot","epoch":2,"seq":0,"items":[]})");
+    start("epoch-two");
+    binary_message(2, initial + page({"epoch-two"}));
+    assert(packets.back().first == "epoch-two");
+    text(R"({"type":"session.attached","sessionId":"next-day","generation":1})");
+    start("next-day");
+    binary_message(1, initial + page({"next-day"}));
+    assert(packets.back().first == "next-day");
+    text(R"({"type":"turn.audio.done","turnId":"next-day"})");
+    text(R"({"type":"turn.audio.start","turnId":"pcm","encoding":"pcm","sampleRate":24000})");
+    binary_message(0, std::string("\x01", 1));
+    binary_message(0, std::string("\x02\x03\x04", 3));
+    text(R"({"type":"turn.audio.done","turnId":"pcm"})");
+    assert(packets.back() == std::make_pair(std::string("\x01\x02\x03\x04", 4), 24000));
+    assert(!terminals.back());
+    text(R"({"type":"turn.audio.start","turnId":"bad-pcm","encoding":"pcm","sampleRate":24000})");
+    binary_message(0, "x");
+    text(R"({"type":"turn.audio.done","turnId":"bad-pcm"})");
+    assert(terminals.back());
+    // Both overlap completion orders, duplicate starts/terminals, and unknown terminals.
+    for (bool reverse : {false, true}) {
+        text(R"({"type":"turn.started","turnId":"A"})");
+        const auto once = cognition.size();
+        text(R"({"type":"turn.started","turnId":"A"})");
+        assert(cognition.size() == once);
+        text(R"({"type":"turn.started","turnId":"B"})");
+        text(reverse ? R"({"type":"turn.completed","turnId":"A"})" : R"({"type":"turn.aborted","turnId":"B"})");
+        assert(cognition.back() == CognitionState::Thinking);
+        text(R"({"type":"turn.completed","turnId":"unknown"})");
+        text(reverse ? R"({"type":"turn.completed","turnId":"B"})" : R"({"type":"turn.aborted","turnId":"A"})");
+        assert(cognition.back() == CognitionState::Idle);
+        const auto done = cognition.size();
+        text(R"({"type":"turn.completed","turnId":"A"})");
+        text(R"({"type":"turn.completed","turnId":"B"})");
+        assert(cognition.size() == done);
+    }
+    // Actual producer order: attachment and ready stamp epoch before reconstruction.
+    text(R"({"type":"session.attached","sessionId":"same","generation":1,"epoch":40})");
+    text(R"({"type":"session.ready","sessionId":"connection","epoch":40})");
+    start("old-journal");
+    binary_message(100, initial + page({"old-journal"}));
+    text(R"({"type":"turn.started","turnId":"old-cognition","seq":101,"epoch":40})");
+    text(R"({"type":"session.attached","sessionId":"same","generation":1,"epoch":41})");
+    assert(down.wire_.epoch == 41 && down.wire_.last_seq == 0);
+    assert(down.wire_.audio_turn.empty() && down.wire_.cognition_turns.empty());
+    text(R"({"type":"session.ready","sessionId":"connection","epoch":41})");
+    start("reconstructed");
+    binary_message(2, initial + page({"reconstructed"}));
+    assert(packets.back().first == "reconstructed" && down.wire_.epoch == 41);
+    text(R"({"type":"turn.audio.done","turnId":"reconstructed"})");
+    text(R"({"type":"turn.started","turnId":"ready-reset"})");
+    text(R"({"type":"session.ready","sessionId":"connection","epoch":42})");
+    assert(down.wire_.epoch == 42 && down.wire_.last_seq == 0 && down.wire_.cognition_turns.empty());
+    start("after-ready"); binary_message(1, initial + page({"after-ready"}));
+    assert(packets.back().first == "after-ready");
+    text(R"({"type":"turn.audio.done","turnId":"after-ready"})");
+    // PCM converter input is invariant under arbitrary transport fragments.
+    const std::string pcm_bytes(1026, 'p');
+    for (size_t width : {1u, 3u, 19u, 960u, 2048u}) {
+        const auto begin = packets.size();
+        text(R"({"type":"turn.audio.start","turnId":"fragmented-pcm","encoding":"pcm","sampleRate":48000})");
+        for (size_t pos = 0; pos < pcm_bytes.size(); pos += width)
+            binary_message(0, pcm_bytes.substr(pos, width));
+        text(R"({"type":"turn.audio.done","turnId":"fragmented-pcm"})");
+        assert(packets.size() == begin + 2);
+        assert(packets[begin] == std::make_pair(pcm_bytes.substr(0, 960), 48000));
+        assert(packets[begin + 1] == std::make_pair(pcm_bytes.substr(960), 48000));
+    }
+    text(R"({"type":"turn.audio.start","turnId":"unsupported","encoding":"pcm","sampleRate":12345})");
+    assert(down.status() != SdkStatus::Ready);
+    SentientWsProtocol bounded({}); bounded.status_ = SdkStatus::Ready;
+    for (size_t i = 0; i <= SentientWireState::kMaxCognitionTurns; ++i) {
+        auto json = std::string("{\"type\":\"turn.started\",\"turnId\":\"") + std::to_string(i) + "\"}";
+        bounded.handle_text(json.data(), json.size());
+    }
+    assert(bounded.status() != SdkStatus::Ready && bounded.wire_.cognition_turns.empty());
+    return 0;
 }

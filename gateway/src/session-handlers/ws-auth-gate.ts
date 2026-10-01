@@ -26,6 +26,7 @@ import type { SessionManager } from "../auth/session-manager.js";
 import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
+import type { DeviceRegistry } from "../user-auth/device-registry.js";
 import type { AuthenticatedSockets } from "./authenticated-sockets.js";
 import { closeWithAuthError } from "./credential-lifetime.js";
 import type { SessionData } from "./ws-helpers.js";
@@ -64,6 +65,7 @@ export async function handleAuthMessage(
   auth: AuthService,
   sessionManager: SessionManager,
   sockets: AuthenticatedSockets,
+  devices?: DeviceRegistry,
 ): Promise<void> {
   if (ws.data.authState !== "pending") {
     log.debug("auth.ignored", { sessionId: ws.data.sessionId, state: ws.data.authState });
@@ -84,7 +86,10 @@ export async function handleAuthMessage(
     return reject(ws, "auth-required", "first message must be type:auth");
   }
 
-  const r = await auth.tokens.validate(parsed.data.token);
+  const human = await auth.tokens.validate(parsed.data.token);
+  const device =
+    !human.ok && human.error === "wrong-purpose" && devices ? await devices.validate(parsed.data.token) : null;
+  const r = device?.ok ? device : human;
   if (ws.data.authState !== "authenticating") {
     log.warn("auth.abandoned", {
       sessionId,
@@ -119,7 +124,20 @@ export async function handleAuthMessage(
 
   let principal: UserPrincipal;
   try {
-    principal = createUserPrincipal(userId, userR.value.role, DEFAULT_HOUSEHOLD_ID);
+    if (device?.ok) {
+      if (
+        !(await device.value.current()) ||
+        !device.value.live() ||
+        userR.value.role !== device.value.principal.role ||
+        ws.data.authState !== "authenticating"
+      ) {
+        return reject(ws, "expired", "device authority changed");
+      }
+      principal = device.value.principal;
+      ws.data.deviceCredential = device.value;
+    } else {
+      principal = createUserPrincipal(userId, userR.value.role, DEFAULT_HOUSEHOLD_ID);
+    }
   } catch {
     // assertUserId throws on a stored userId that doesn't match the
     // canonical shape (legacy install, hand-edited users.json). Reject

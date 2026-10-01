@@ -97,7 +97,7 @@ def main() -> None:
         config.health.port, config.log_dir, config.voice_dir, config.builtin_voice_dir,
     )
 
-    engine = QwenEngine(config.model, default_lang=config.default_lang)
+    engine = QwenEngine(config.model, generation=config.generation, default_lang=config.default_lang)
     # All MLX work runs on the executor's single thread — including warm —
     # because MLX binds array stream affinity per-thread (see
     # synth_executor.py). start_and_warm() blocks here until warm completes

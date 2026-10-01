@@ -11,6 +11,7 @@ import type {
 } from "../../../services/profile-api.js";
 import { ActionButton, AsyncState, Disclosure, PaneChrome, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
 import {
+  cubeToolPermission,
   effectiveToolPermission,
   effectiveWildcardPermission,
   withServerMasterPermission,
@@ -31,6 +32,7 @@ const PERMISSION_OPTION_BY_VALUE: Record<ToolPermission, SelectOption> = {
   off: { value: "off", label: "Off", tag: "hidden" },
 };
 const PERMISSION_OPTIONS: SelectOption[] = Object.values(PERMISSION_OPTION_BY_VALUE);
+const CUBE_OPTIONS = [PERMISSION_OPTION_BY_VALUE.allow, PERMISSION_OPTION_BY_VALUE.off];
 
 /** Row-dimming modifier for the shared `.tool-row` style. EXHAUSTIVE, no
  *  `default:` arm — a fifth permission value must break this at compile
@@ -126,6 +128,8 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 
   const serverIds = Object.keys(catalog.groups).sort();
   const wildcardKey = catalog.wildcardPermissionKey;
+  const cubeTools = [...new Map(serverIds.flatMap((id) => catalog.groups[id]?.tools ?? []).map((tool) => [tool.name, tool])).values()]
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <PaneChrome title="Tools" subtitle="Choose whether each capability can run, ask first, be refused, or stay hidden. Changes apply after you save settings.">
@@ -161,6 +165,25 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
               />
             );
           })}
+        </div>
+      </SettingsCard>
+
+      <SettingsCard title="Cube" subtitle="Separate from other Tools settings. Enabled tools run without asking on Cube. Unset tools default Off unless a Cube-wide choice exists; role and risk limits still apply. Changes apply after you save settings." padded={false}>
+        <div class="mcp-list">
+          {cubeTools.length === 0 ? <div class="empty-pad">No available Cube tools for this account.</div> : (
+            <PermissionToolTable rows={cubeTools.map((tool) => ({
+              key: tool.name,
+              name: tool.name,
+              description: tool.name === "delegateTask"
+                ? "Delegated tasks run with broader per-user access, not Cube's tool limits. Turning this Off does not cancel work already started."
+                : tool.description,
+              permission: cubeToolPermission(permissions, tool.name),
+              settable: tool.settable,
+              cubeOnly: true,
+              onChange: (permission: ToolPermission) =>
+                onDraftTools({ ...draft.tools, permissions: withToolPermission(permissions, "cube", tool.name, permission) }),
+            }))} />
+          )}
         </div>
       </SettingsCard>
 
@@ -302,6 +325,7 @@ interface PermissionToolRow {
    *  on the underlying button — no click reaches `onChange`), for a tool a
    *  stored table cannot address (`delegateTask`). */
   settable: boolean;
+  cubeOnly?: boolean;
   onChange: (permission: ToolPermission) => void;
 }
 
@@ -319,8 +343,10 @@ function PermissionToolTable({ rows }: { rows: readonly PermissionToolRow[] }): 
             <SelectControl
               label={`${r.name} permission`}
               value={r.permission}
-              options={PERMISSION_OPTIONS}
-              onChange={(v) => r.onChange(v as ToolPermission)}
+              options={r.cubeOnly ? CUBE_OPTIONS : PERMISSION_OPTIONS}
+              onChange={(v) => {
+                if (!r.cubeOnly || v === "allow" || v === "off") r.onChange(v as ToolPermission);
+              }}
               disabled={!r.settable}
             />
           </div>

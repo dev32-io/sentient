@@ -7,6 +7,7 @@
 
 import path from "node:path";
 import type { UserRole } from "@sentient/protocol";
+import type { CubeOrigin } from "../identity/user-principal.js";
 import type { UserId } from "../user-auth/user-id.js";
 
 export type ResourceClass =
@@ -20,9 +21,12 @@ export type ResourceClass =
   | "schedule-private"
   | "push-private"
   | "web-artifact"
-  | "attachment-store";
+  | "attachment-store"
+  | "device-registry";
 
 export interface Capability {
+  /** Trusted initial grant, never selected by a tool invocation or client metadata. */
+  readonly origin?: CubeOrigin;
   /** Whose authority this grant derives from. Stamped at mint, never rewritten. */
   readonly ownerUserId: UserId;
   readonly resource: ResourceClass;

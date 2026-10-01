@@ -156,6 +156,15 @@ export type McpServerEntry = z.output<typeof mcpServerEntrySchema>;
 export const mcpCatalogSchema = z
   .record(z.string(), mcpServerEntrySchema)
   .superRefine((catalog, ctx) => {
+    for (const [server, entry] of Object.entries(catalog)) {
+      if (server === "cube" || entry.product_group === "cube") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [server],
+          message: 'Permission group "cube" is reserved for trusted Cube execution choices.',
+        });
+      }
+    }
     if (Object.hasOwn(catalog, NATIVE_TOOL_SERVER_KEY)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

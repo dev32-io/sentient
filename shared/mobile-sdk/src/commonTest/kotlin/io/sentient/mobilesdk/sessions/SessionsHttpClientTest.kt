@@ -11,6 +11,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
+import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -50,6 +51,31 @@ class SessionsHttpClientTest {
     }
 
     @Test
+    fun list_and_messages_keep_cube_flags_and_legacy_defaults() = runTest {
+        val engine = MockEngine { req -> respond(
+            if (req.url.encodedPath.endsWith("/messages"))
+                """{"items":[],"provenance":"cube","readOnly":true,"currentPin":true,"executionClosed":true}"""
+            else """{"sessions":[{"sessionId":"c","provenance":"cube","readOnly":true,"currentPin":true,"executionClosed":true},{"sessionId":"h"}]}""",
+            HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"),
+        ) }
+        val client = buildClient(engine)
+        val rows = client.list(100, 0)
+        assertEquals("cube", rows[0].provenance)
+        assertEquals(true, rows[0].readOnly)
+        assertEquals(true, rows[0].currentPin)
+        assertEquals(true, rows[0].executionClosed)
+        assertEquals("human", rows[1].provenance)
+        assertEquals(false, rows[1].readOnly)
+        assertEquals(false, rows[1].currentPin)
+        assertEquals(false, rows[1].executionClosed)
+        val history = client.getHistory("c")
+        assertEquals("cube", history.provenance)
+        assertEquals(true, history.readOnly)
+        assertEquals(true, history.currentPin)
+        assertEquals(true, history.executionClosed)
+    }
+
+    @Test
     fun list_sends_limit_and_offset_params() = runTest {
         var capturedUrl: String? = null
         val engine = MockEngine { req ->
@@ -80,6 +106,15 @@ class SessionsHttpClientTest {
         assertIs<ConversationFeedItem.User>(item)
         assertEquals("hello", item.content)
         assertEquals(100L, item.ts)
+    }
+
+    @Test
+    fun viewer_reports_unavailable_history_without_changing_legacy_message_fallback() = runTest {
+        val engine = MockEngine { respond("{}", HttpStatusCode.NotFound) }
+        val client = buildClient(engine)
+        assertEquals(emptyList(), client.getMessages("deleted"))
+        val failure = assertIs<SessionsRequestException>(runCatching { client.getHistory("deleted") }.exceptionOrNull())
+        assertEquals("not_found", failure.code)
     }
 
     @Test

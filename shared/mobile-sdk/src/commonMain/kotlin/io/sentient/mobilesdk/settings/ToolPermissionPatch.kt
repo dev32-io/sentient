@@ -123,6 +123,19 @@ fun effectiveWildcardPermission(
     return serverMap[wildcardKey]
 }
 
+/** Cube keys are global tool names. Legacy ASK/DENY display as disabled without altering storage. */
+fun cubeToolPermission(
+    base: ToolPermissionMap?,
+    overlay: ToolPermissionPatchMap?,
+    toolName: String,
+): ToolPermission {
+    val stored = base?.get("cube")
+    val pending = overlay?.get("cube")
+    val named = if (pending?.containsKey(toolName) == true) pending[toolName] else stored?.get(toolName)
+    val wildcard = if (pending?.containsKey("*") == true) pending["*"] else stored?.get("*")
+    return if ((named ?: wildcard) == ToolPermission.ALLOW) ToolPermission.ALLOW else ToolPermission.OFF
+}
+
 /** Product-group spellings for new mobile settings callers. */
 fun withProductGroupToolPermission(
     permissions: ToolPermissionPatchMap?,

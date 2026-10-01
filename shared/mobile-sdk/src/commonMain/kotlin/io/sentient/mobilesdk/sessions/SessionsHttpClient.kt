@@ -32,18 +32,24 @@ import io.ktor.http.encodeURLQueryComponent
 import io.ktor.http.isSuccess
 import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.auth.deriveBaseUrl
+import io.sentient.mobilesdk.connectors.SessionsRequestException
+import io.sentient.mobilesdk.connectors.SessionsTransportException
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.SessionRow
 import io.sentient.mobilesdk.protocol.WireJson
 import io.sentient.mobilesdk.settings.mapSettingsResponse
 import io.sentient.mobilesdk.settings.safeSettingsCall
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 
 // ── Path constants (relative to /api/v1 base) ──
 private const val PATH_SESSIONS = "/sessions"
@@ -60,6 +66,14 @@ private const val FIELD_ITEMS = "items"
 private const val FIELD_SESSIONS = "sessions"
 
 // ── Response DTOs ──
+
+data class SessionHistory(
+    val items: List<ConversationFeedItem>,
+    val provenance: String = "human",
+    val readOnly: Boolean = false,
+    val currentPin: Boolean = false,
+    val executionClosed: Boolean = false,
+)
 
 @Serializable
 private data class RenameRequest(val title: String)
@@ -80,6 +94,10 @@ private data class SessionMetadataDto(
     val title: String? = null,
     val titleProvenance: String? = null,
     val version: Int = 0,
+    val provenance: String = "human",
+    val readOnly: Boolean = false,
+    val currentPin: Boolean = false,
+    val executionClosed: Boolean = false,
 )
 
 // Matches web-sdk's sessions-rest.ts UNTITLED_SESSION_TITLE and webui's
@@ -99,6 +117,10 @@ private fun SessionMetadataDto.toSessionRow(): SessionRow = SessionRow(
     lastActiveAt = updatedAt,
     messageCount = 0,
     isActive = false,
+    provenance = provenance,
+    readOnly = readOnly,
+    currentPin = currentPin,
+    executionClosed = executionClosed,
 )
 
 // Lenient Json for session rows (no polymorphism needed).
@@ -169,28 +191,61 @@ open class SessionsHttpClient(
         sessionId: String,
         limit: Int = DEFAULT_MESSAGES_LIMIT,
         offset: Int = 0,
-    ): List<ConversationFeedItem> {
+    ): List<ConversationFeedItem> = runCatching { getHistory(sessionId, limit, offset).items }.getOrElse {
+        if (it is CancellationException) throw it
+        emptyList()
+    }
+
+    open suspend fun getHistory(
+        sessionId: String, limit: Int = DEFAULT_MESSAGES_LIMIT, offset: Int = 0,
+    ): SessionHistory {
         log.debug("getMessages", mapOf("sessionId" to sessionId, "limit" to limit))
-        return safeGet {
-            val resp = httpClient.get(
+        val resp = try {
+            httpClient.get(
                 "$baseUrl$PATH_SESSIONS/$sessionId$PATH_MESSAGES_SUFFIX?limit=$limit&offset=$offset",
             ) {
                 header(HttpHeaders.Authorization, "Bearer ${token()}")
             }
-            if (!resp.status.isSuccess()) {
-                log.warn("getMessages.error", mapOf("sessionId" to sessionId, "status" to resp.status.value))
-                return@safeGet emptyList()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            log.warn("getMessages.error", mapOf("sessionId" to sessionId, "code" to "transport-failure"))
+            throw SessionsTransportException()
+        }
+        if (!resp.status.isSuccess()) {
+            log.warn("getMessages.error", mapOf("sessionId" to sessionId, "status" to resp.status.value))
+            val code = when (resp.status.value) {
+                401 -> "unauthorized"
+                403 -> "forbidden"
+                404 -> "not_found"
+                else -> "unavailable"
             }
-            val text = resp.bodyAsText()
-            // ConversationFeedItem uses @JsonClassDiscriminator("kind") — use WireJson.
-            val items = parseArrayField<ConversationFeedItem>(
-                text,
-                WireJson.instance,
-                ConversationFeedItem.serializer(),
-                FIELD_ITEMS,
+            throw SessionsRequestException(code, "")
+        }
+        val text = try {
+            resp.bodyAsText()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            throw SessionsTransportException()
+        }
+        return try {
+            val fields = rowJson.parseToJsonElement(text).jsonObject
+            // Viewer must not mistake a malformed response for empty history.
+            val items = WireJson.instance.decodeFromJsonElement(
+                ListSerializer(ConversationFeedItem.serializer()),
+                fields[FIELD_ITEMS]?.jsonArray ?: error("Missing history items"),
             )
             log.debug("getMessages.ok", mapOf("sessionId" to sessionId, "count" to items.size))
-            items
+            SessionHistory(items, fields["provenance"]?.jsonPrimitive?.contentOrNull ?: "human",
+                fields["readOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+                fields["currentPin"]?.jsonPrimitive?.booleanOrNull ?: false,
+                fields["executionClosed"]?.jsonPrimitive?.booleanOrNull ?: false)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            log.warn("getMessages.error", mapOf("sessionId" to sessionId, "code" to "invalid_response"))
+            throw SessionsRequestException("invalid_response", "")
         }
     }
 

@@ -27,6 +27,7 @@
 //
 // Once a read HAS succeeded, every later failure returns that last-known table
 // regardless of class — a profile cannot un-say what it already said.
+// Exception: reserved Cube choices fail closed to off on every read failure.
 
 import type { ToolPermissionMap } from "@sentient/config";
 import { getLog } from "../logging/logger.js";
@@ -89,7 +90,9 @@ export function createToolPermissionsReader(
         outcome: fallback === undefined ? "unset-inherit" : "table",
         servers: fallback === undefined ? 0 : Object.keys(fallback).length,
       });
-      return fallback;
+      // Cube choices must be readable now; retain the ordinary-surface cache
+      // contract without carrying a stale Cube allow through a failed read.
+      return fallback?.cube === undefined ? fallback : { ...fallback, cube: {} };
     }
     const permissions = got.value.tools.permissions;
     log.debug("user-tool-permissions.read", {

@@ -38,6 +38,11 @@ public:
 
 private:
     Assets();
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Boot-only publication; never evicted while LVGL/model pointers exist.
+    uint8_t* bundled_data_ = nullptr;
+    size_t bundled_count_ = 0;
+#endif
     Assets(const Assets&) = delete;
     Assets& operator=(const Assets&) = delete;
 

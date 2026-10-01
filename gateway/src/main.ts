@@ -486,6 +486,7 @@ async function shutdown(signal: string): Promise<never> {
   schedules?.close();
   pushStore?.close();
   if (mcpHost) await mcpHost.stop();
+  services.devices.close();
   // Last, so the slot stays claimed for the whole teardown: a successor that
   // starts while this process is still holding the tool sockets would hit the
   // very conflict the claim exists to name.

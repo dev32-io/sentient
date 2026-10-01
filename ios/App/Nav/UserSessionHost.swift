@@ -168,6 +168,19 @@ struct UserSessionHost: View {
             }
             .navigationDestination(for: Route.self) { route in destination(for: route) }
         }
+        .onChange(of: path) { old, new in
+            userSession.cube?.navigationChanged(from: old.last?.cubePage, to: new.last?.cubePage)
+        }
+        .alert("Cube access cleanup failed", isPresented: Binding(
+            get: { userSession.cubeCleanupError != nil },
+            set: { if !$0 { userSession.cubeCleanupError = nil } }
+        )) {
+            Button("Retry logout") { userSession.explicitLogout() }
+            Button("Cancel", role: .cancel) { authenticationEnding = false }
+        } message: { Text(userSession.cubeCleanupError ?? "Unlock iPhone and retry.") }
+        .onReceive(userSession.$cubeCleanupError) { error in
+            if error != nil { authenticationEnding = false }
+        }
         .allowsHitTesting(!authenticationEnding)
         .accessibilityHidden(authenticationEnding)
         .overlay(alignment: .top) {
@@ -211,6 +224,7 @@ struct UserSessionHost: View {
             }
         }
         .onDisappear {
+            userSession.cube?.pause()
             notificationResume.cancel()
             inboxRefresh.cancel()
             scheduledInboxViewModel.cancel()
@@ -287,6 +301,14 @@ struct UserSessionHost: View {
     // fills its own screen file (below) and never re-touches Route.swift or this
     // host: the wiring (settings scope + push/pop closures) is already threaded in.
 
+    private func openCubePage(_ page: CubePage) {
+        if page == .hub {
+            // Setup is a flow, not a second parent of the owned-device hub.
+            while path.last?.cubePage != nil, path.last != .cube { path.removeLast() }
+        }
+        path.append(.cubePage(page))
+    }
+
     /// Pop one level off the stack (category page → settings root, or sub → parent).
     private func popRoute() { if !path.isEmpty { path.removeLast() } }
 
@@ -359,6 +381,10 @@ struct UserSessionHost: View {
     private func destination(for route: Route) -> some View {
         let settings = userSession.settings
         switch route {
+        case .cube:
+            CubeScreen(model: userSession.cube, onBack: popRoute, onOpen: openCubePage)
+        case .cubePage(let page):
+            CubeScreen(model: userSession.cube, page: page, onBack: popRoute, onOpen: openCubePage)
         case .settings:
             SettingsSheet(
                 settings: settings,

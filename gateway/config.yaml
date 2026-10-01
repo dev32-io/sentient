@@ -650,6 +650,8 @@ stt:
   # Range: 0–5000. Default 2500.
   tts_echo_cooldown_ms: 2500
 
+  # Maximum End-to-terminal STT wait; expiry drops and fences this capture.
+  finalize_timeout_ms: 30000
   connect_timeout_ms: 10000
 
 # ---------------------------------------------------------------------------
@@ -1197,3 +1199,16 @@ security:
       skill_body: true             # use-time screening of skill bodies loaded by skill_use; write-time authoring scan is unconditional and not governed by this
       delegation_prompt: true      # CURRENTLY INERT — the delegation prompt is always scanned via prompt-classifier directly, not the gate; see docs/native-todo.md
       memory_body: true            # read-time screening of sparked snippets, memory_recall hits, and drill-down session reads (memory-system spec §3.1); MEMORY.md rendered into the system prompt is NOT gated here — write-time + edit-ingest scanning cover it instead
+
+# Device lifecycle HTTP policy (agent WS admission remains closed).
+# Escrow key: $SENTIENT_GATEWAY_ROOT/device-escrow.key (default ~/.sentient/gateway).
+# First startup provisions mode 0600 only without devices.db. Back up key separately
+# from database; missing/corrupt established key fails startup, never regenerates.
+devices:
+  access_ttl_seconds: 604800
+  attempt_ttl_seconds: 600
+  max_body_bytes: 4096
+  body_timeout_ms: 5000
+  # Global budget, including invalid requests; no trust in forwarded/client ids.
+  requests_per_minute: 120
+  max_concurrent_requests: 8

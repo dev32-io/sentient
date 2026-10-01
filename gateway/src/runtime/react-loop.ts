@@ -98,6 +98,9 @@ export interface ToolUpdate {
 }
 
 export interface ReactLoopDeps {
+  authorizeExecution?: () => Promise<boolean>;
+  /** Runtime-owned durable fence; checked again after asynchronous preparation. */
+  executionAllowed?: () => boolean;
   provider: ProviderClient;
   /** Production main-only seam. Omitted harnesses retain static provider behavior. */
   resolveMainModel?: () => Promise<MainModelSnapshot>;
@@ -577,7 +580,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
   while (true) {
     iteration += 1;
 
-    if (signal.aborted) {
+    if (signal.aborted || deps.executionAllowed?.() === false) {
       log.info("react-loop.aborted-before-iteration", { sessionId, turnId, iteration });
       return { completed: false, iterations: iteration - 1, consumedThroughSeq };
     }
@@ -635,7 +638,8 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
           "Prepared visual evidence is unavailable to current main model. Use available gateway-prepared overview or request inspect_attachment for closer inspection.",
       });
     }
-    if (signal.aborted) {
+    const authorized = deps.authorizeExecution ? await deps.authorizeExecution() : true;
+    if (!authorized || signal.aborted || deps.executionAllowed?.() === false) {
       log.info("react-loop.aborted-during-vision-preparation", { sessionId, turnId, iteration });
       return { completed: false, iterations: iteration - 1, consumedThroughSeq };
     }

@@ -655,6 +655,10 @@ final class SentientAppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in NativePushCoordinator.shared.didFailRegistration() }
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--qa-cube-physical") ||
+            ProcessInfo.processInfo.arguments.contains("--qa-cube-setup") { return true }
+        #endif
         // Install UN delegate before launch returns. Navigation remains app-scoped
         // inside this singleton until delayed authentication mounts UserSessionHost.
         let coordinator = NativePushCoordinator.shared

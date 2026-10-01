@@ -82,7 +82,10 @@ async function* synthesizeImpl(
         message: err instanceof Error ? err.message : String(err),
       });
     } finally {
-      session.endInput();
+      // No text means ready() was never awaited: End could be lost while
+      // the socket is connecting. No request exists; release its drain now.
+      if (firstPush) session.dispose();
+      else session.endInput();
       log.debug("producer-end-input");
     }
   })();

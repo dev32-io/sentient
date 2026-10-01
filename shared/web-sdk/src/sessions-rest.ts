@@ -1,4 +1,4 @@
-import type { ConversationFeedItem, SessionRow } from "@sentient/protocol";
+import type { ConversationFeedItem, SessionHistoryFields, SessionRow } from "@sentient/protocol";
 import { createLogger } from "./logger.ts";
 
 const log = createLogger(["sentient", "sdk", "sessions", "rest"]);
@@ -30,7 +30,7 @@ export class SessionsRestError extends Error {
 // ---------------------------------------------------------------------------
 
 export interface SessionsListResult {
-  items: SessionRow[];
+  items: HistorySessionRow[];
   total: number;
   hasMore: boolean;
 }
@@ -52,13 +52,19 @@ interface SessionMetadataDTO {
   title: string | null;
   titleProvenance: "generated" | "user" | null;
   version: number;
+  provenance?: "human" | "cube";
+  readOnly?: boolean;
+  currentPin?: boolean;
+  executionClosed?: boolean;
 }
 
 // Matches use-sessions.ts's DEFAULT_NEW_CHAT_TITLE — a session with no title
 // yet (nothing has generated or set one) still needs row text to render.
 const UNTITLED_SESSION_TITLE = "New chat";
 
-function toSessionRow(dto: SessionMetadataDTO): SessionRow {
+export type HistorySessionRow = SessionRow & Partial<SessionHistoryFields>;
+
+function toSessionRow(dto: SessionMetadataDTO): HistorySessionRow {
   return {
     sessionId: dto.sessionId,
     rootId: dto.sessionId,
@@ -71,6 +77,10 @@ function toSessionRow(dto: SessionMetadataDTO): SessionRow {
     // value that exists elsewhere.
     messageCount: 0,
     isActive: false,
+    provenance: dto.provenance ?? "human",
+    readOnly: dto.readOnly ?? false,
+    currentPin: dto.currentPin ?? false,
+    executionClosed: dto.executionClosed ?? false,
   };
 }
 
@@ -80,8 +90,12 @@ function toSessionRow(dto: SessionMetadataDTO): SessionRow {
 
 export interface SessionsRest {
   list(opts?: { limit?: number; offset?: number }): Promise<SessionsListResult>;
-  search(q: string, limit?: number): Promise<SessionRow[]>;
+  search(q: string, limit?: number): Promise<HistorySessionRow[]>;
   getMessages(sessionId: string, opts?: { limit?: number; offset?: number }): Promise<ConversationFeedItem[]>;
+  getHistory?(
+    sessionId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ items: ConversationFeedItem[] } & SessionHistoryFields>;
   rename(sessionId: string, title: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
 }
@@ -145,7 +159,9 @@ async function parseResponse<T>(response: Response): Promise<T> {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
+export function createSessionsRest(
+  config: SessionsRestConfig,
+): SessionsRest & { getHistory: NonNullable<SessionsRest["getHistory"]> } {
   const { baseUrl, token, fetchFn = globalThis.fetch } = config;
 
   async function doFetch<T>(url: string, init: RequestInit): Promise<T> {
@@ -153,7 +169,7 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
     try {
       response = await fetchFn(url, init);
     } catch (err: unknown) {
-      log.warn("network-error", { url, error: String(err) });
+      log.warn("network-error", { path: new URL(url).pathname });
       throw new SessionsRestError(0, "network-error", `sessions REST network error: ${String(err)}`);
     }
     return parseResponse<T>(response);
@@ -181,8 +197,8 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
 
     async search(q, limit = DEFAULT_SEARCH_LIMIT) {
       const url = `${baseUrl}/sessions/search?q=${encodeURIComponent(q)}&limit=${limit}`;
-      log.debug("search", { q, limit });
-      const result = await doFetch<{ items: SessionRow[] }>(url, {
+      log.debug("search", { qLen: q.length, limit });
+      const result = await doFetch<{ items: HistorySessionRow[] }>(url, {
         method: "GET",
         headers: bearerHeaders(token()),
       });
@@ -190,15 +206,25 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
     },
 
     async getMessages(sessionId, opts = {}) {
+      return (await this.getHistory(sessionId, opts)).items;
+    },
+
+    async getHistory(sessionId, opts: { limit?: number; offset?: number } = {}) {
       const limit = opts.limit ?? DEFAULT_MESSAGES_LIMIT;
       const offset = opts.offset ?? 0;
       const url = `${baseUrl}/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`;
       log.debug("getMessages", { sessionId, limit, offset });
-      const result = await doFetch<{ items: ConversationFeedItem[] }>(url, {
+      const result = await doFetch<{ items: ConversationFeedItem[] } & Partial<SessionHistoryFields>>(url, {
         method: "GET",
         headers: bearerHeaders(token()),
       });
-      return result.items;
+      return {
+        ...result,
+        provenance: result.provenance ?? "human",
+        readOnly: result.readOnly ?? false,
+        currentPin: result.currentPin ?? false,
+        executionClosed: result.executionClosed ?? false,
+      };
     },
 
     async rename(sessionId, title) {

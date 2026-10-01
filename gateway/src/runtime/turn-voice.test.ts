@@ -14,8 +14,11 @@
 //      every reply is un-cancellable.
 
 import { describe, expect, it } from "bun:test";
+import { type GatewayMessage, gatewayMessageSchema } from "@sentient/protocol";
+import { createWsTurnEmitter } from "../session-handlers/ws-turn-emitter.js";
 import { FLUSH_SIGNAL, type TtsChunk } from "../tts/stages/stage-types.js";
 import type { AudioFrame, TextStreamSynthesizer } from "../tts/text-stream-synthesizer.js";
+import { createTurnStateTracker } from "./turn-state-snapshot.js";
 import type { MicEchoGuard, TurnAudioSink } from "./turn-voice.js";
 import { createTurnVoice } from "./turn-voice.js";
 
@@ -281,6 +284,138 @@ describe("createTurnVoice", () => {
 
     expect(sink.events.some((e) => e.type === "done")).toBe(true);
     expect(voice.cancelAudio()).toEqual([]);
+  });
+
+  it("never labels unknown provider bytes PCM or opens a bracket; empty streams have no terminal", async () => {
+    for (const frames of [[], [{ ...FRAME, encoding: "unknown", data: new Uint8Array([1, 2]) }]]) {
+      const synth = fakeSynthesizer();
+      const guard = recordingGuard();
+      const wire: GatewayMessage[] = [];
+      let binaryFrames = 0;
+      const emitter = createWsTurnEmitter(
+        {
+          broadcast(frame) {
+            wire.push(gatewayMessageSchema.parse(frame));
+            return 1;
+          },
+          broadcastAudio() {
+            binaryFrames += 1;
+          },
+          directed: () => 0,
+          size: 1,
+        },
+        "sess-1",
+      );
+      const voice = createTurnVoice({
+        synthesizer: synth.synthesizer,
+        sink: emitter,
+        echoGuard: guard.guard,
+        shouldSpeak: async () => true,
+        hasAudience: () => true,
+        sessionId: "sess-1",
+      });
+      const speech = voice.begin("t1", new AbortController().signal);
+      speech.end();
+      for (const frame of frames) synth.calls[0]?.emit(frame);
+      synth.calls[0]?.finish();
+      await settle();
+      expect(wire).toEqual([]);
+      expect(binaryFrames).toBe(0);
+      expect(guard.started).toEqual([]);
+    }
+  });
+
+  it("declares supported provider encodings; later invalid/mixed frames close the open bracket normally", async () => {
+    for (const encoding of ["opus", "pcm"] as const) {
+      for (const tail of [null, "unknown", encoding === "opus" ? "pcm" : "opus"]) {
+        const synth = fakeSynthesizer();
+        const guard = recordingGuard();
+        const wire: GatewayMessage[] = [];
+        let binaryFrames = 0;
+        const emitter = createWsTurnEmitter(
+          {
+            broadcast(frame) {
+              wire.push(gatewayMessageSchema.parse(frame));
+              return 1;
+            },
+            broadcastAudio() {
+              binaryFrames += 1;
+            },
+            directed: () => 0,
+            size: 1,
+          },
+          "sess-1",
+        );
+        const voice = createTurnVoice({
+          synthesizer: synth.synthesizer,
+          sink: emitter,
+          echoGuard: guard.guard,
+          shouldSpeak: async () => true,
+          hasAudience: () => true,
+          sessionId: "sess-1",
+        });
+        const speech = voice.begin("t1", new AbortController().signal);
+        speech.end();
+        synth.calls[0]?.emit({ ...FRAME, encoding });
+        if (tail !== null) synth.calls[0]?.emit({ ...FRAME, encoding: tail });
+        synth.calls[0]?.finish();
+        await settle();
+        expect(wire).toEqual([
+          { type: "turn.audio.start", turnId: "t1", encoding, sampleRate: 48000 },
+          { type: "turn.audio.done", turnId: "t1" },
+        ]);
+        expect(binaryFrames).toBe(1);
+        expect(guard.started).toEqual(["t1"]);
+        expect(guard.cancelled).toEqual([]);
+      }
+    }
+  });
+
+  it("closes failed synthesis with ordinary Done, releases ownership, and speaks the next turn", async () => {
+    const wire: unknown[] = [];
+    const tracker = createTurnStateTracker("sess-1");
+    const guard = recordingGuard();
+    let calls = 0;
+    const voice = createTurnVoice({
+      synthesizer: {
+        async *synthesize() {
+          const call = ++calls;
+          yield FRAME;
+          if (call === 1) throw new Error("synthetic provider failure");
+        },
+      },
+      sink: tracker.wrap(
+        createWsTurnEmitter(
+          {
+            broadcast(frame) {
+              wire.push(frame);
+              return 1;
+            },
+            broadcastAudio() {},
+            directed: () => 0,
+            size: 1,
+          },
+          "sess-1",
+        ),
+      ),
+      echoGuard: guard.guard,
+      shouldSpeak: async () => true,
+      hasAudience: () => true,
+      sessionId: "sess-1",
+    });
+    for (const turnId of ["failed", "next"]) {
+      voice.begin(turnId, new AbortController().signal).end();
+      await settle();
+      expect(tracker.snapshot().audio).toBeNull();
+      expect(voice.cancelAudio()).toEqual([]);
+    }
+    expect(wire).toEqual([
+      { type: "turn.audio.start", turnId: "failed", encoding: "opus", sampleRate: 48000 },
+      { type: "turn.audio.done", turnId: "failed" },
+      { type: "turn.audio.start", turnId: "next", encoding: "opus", sampleRate: 48000 },
+      { type: "turn.audio.done", turnId: "next" },
+    ]);
+    expect(guard.cancelled).toEqual([]);
   });
 
   it("synthesizes nothing when the user's profile has TTS off", async () => {

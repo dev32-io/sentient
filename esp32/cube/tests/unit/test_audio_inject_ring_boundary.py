@@ -50,6 +50,8 @@ int main() {
     assert(audio_inject_ring_available() == 0);
     assert(allocation_calls == 0); // Normal mic path never allocates ring.
     int16_t sample = 17;
+    assert(audio_inject_ring_push(&sample, 1) == 0); // Explicit arm required.
+    audio_inject_ring_arm();
     assert(audio_inject_ring_push(&sample, 1) == 0);
     assert(audio_inject_ring_available() == 0);
     assert(audio_inject_ring_pop(dst, 1, 16000) == 0);
@@ -61,12 +63,20 @@ int main() {
     assert(audio_inject_ring_push(src.data(), src.size()) == 32000);
     assert(allocation_calls == 2 && audio_inject_ring_available() == 32000);
     assert(audio_inject_ring_push(&sample, 1) == 0); // Bounded: drop overflow.
+    audio_inject_ring_begin_capture();
     assert(audio_inject_ring_pop(dst, 31990, 16000) == 31990);
     for (int i = 0; i < 31990; ++i) assert(dst[i] == src[i]);
     assert(audio_inject_ring_push(src.data() + 32000, 10) == 10); // Wrap.
     assert(audio_inject_ring_pop(dst, 20, 16000) == 20);
     for (int i = 0; i < 20; ++i) assert(dst[i] == src[31990 + i]);
     assert(audio_inject_ring_available() == 0 && allocation_calls == 2);
+    assert(audio_inject_ring_consumed() == 32010);
+    assert(audio_inject_ring_push(&sample, 1) == 1);
+    audio_inject_ring_end_capture();
+    assert(audio_inject_ring_available() == 0);
+    audio_inject_ring_begin_capture(); // Ordinary capture cannot reuse leftovers.
+    assert(audio_inject_ring_pop(dst, 1, 16000) == 0);
+    assert(audio_inject_ring_push(&sample, 1) == 0);
 }
 '''
         with tempfile.TemporaryDirectory() as directory:

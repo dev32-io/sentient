@@ -1,6 +1,7 @@
 menu "Xiaozhi Assistant"
 
 config OTA_URL
+    depends on !BOARD_TYPE_SENTIENT_CUBE
     string "Default OTA URL"
     default "https://api.tenclass.net/xiaozhi/ota/"
     help
@@ -8,6 +9,7 @@ config OTA_URL
 
 choice
     prompt "Flash Assets"
+    depends on !BOARD_TYPE_SENTIENT_CUBE
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
     default FLASH_EXPRESSION_ASSETS if USE_EMOTE_MESSAGE_STYLE
     help
@@ -125,6 +127,11 @@ choice BOARD_TYPE
     config BOARD_TYPE_SENTIENT_CUBE
         bool "Sentient Cube (Waveshare ESP32-S3-Touch-AMOLED-2.16 base)"
         depends on IDF_TARGET_ESP32S3
+        select BT_ENABLED
+        select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
+        select MBEDTLS_HAVE_TIME
+        select MBEDTLS_HAVE_TIME_DATE
+        select ESP_HTTP_CLIENT_ENABLE_CUSTOM_TRANSPORT
     config BOARD_TYPE_BREAD_COMPACT_WIFI
         bool "Bread Compact WiFi (breadboard)"
         depends on IDF_TARGET_ESP32S3
@@ -967,6 +974,33 @@ endmenu
 
 menu "Sentient cube SDK"
 
+config SENTIENT_PROD_BUILD
+    bool "Production build (exclude development TLS trust)"
+    default n
+    help
+        Set by sdkconfig.defaults.prod; debug profile leaves this disabled.
+        Production uses the ESP certificate bundle, never the supplied local
+        development certificate, even when that private file is present.
+
+config CUBE_MIC1_GAIN_DB
+    int "Physical MIC1 gain (dB)"
+    depends on BOARD_TYPE_SENTIENT_CUBE
+    range 0 37
+    default 36
+    help
+        Board-local ES7210 MIC1 gain trial. Reference MIC3 remains unchanged.
+        Set to 30 to restore original gain; verify register readback and clipping.
+
+config CUBE_AFE_GAIN_PERCENT
+    int "AFE output gain (%)"
+    depends on BOARD_TYPE_SENTIENT_CUBE && USE_AUDIO_PROCESSOR
+    range 10 1000
+    default 200
+    help
+        Native ESP-SR fixed output amplitude multiplier: 200 means x2, 100
+        restores unity gain. Also amplifies noise; check clipping with louder
+        speech. Does not enable AGC or change microphone/reference gain.
+
 config CUBE_SDK_TRACE_AUDIO_FRAMES
     bool "Trace every audio frame at DEBUG level"
     default n
@@ -1026,4 +1060,25 @@ config AGENT_CONSOLE_LAYOUT_INSPECTOR
 
 endmenu
 
+endmenu
+
+menu "Cube hardware lifecycle"
+    depends on BOARD_TYPE_SENTIENT_CUBE
+    config CUBE_BLE_SESSION_SECONDS
+        int "Authenticated management connection lifetime (seconds)"
+        range 60 900
+        default 300
+        help
+            Unauthenticated connections have a separate 20-second handshake
+            budget. Reconnect and re-read status after this session expires.
+    config CUBE_NTP_SERVER
+        string "Network time server for verified TLS"
+        default "pool.ntp.org"
+    config CUBE_RENEW_INTERVAL_SECONDS
+        int "Proactive device credential renewal interval (seconds)"
+        range 60 86400
+        default 3600
+        help
+            Set below gateway devices.access_ttl_seconds. Expired authentication
+            also permits one bounded renewal before requiring explicit recovery.
 endmenu

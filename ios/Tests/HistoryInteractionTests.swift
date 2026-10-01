@@ -56,6 +56,22 @@ final class HistoryInteractionTests: XCTestCase {
         XCTAssertFalse(historyEntryIsSelected(draft, activeSessionId: nil, activeDraftId: nil))
     }
 
+    func testCubeHistoryIsPinnedTaggedReadOnlyAndKeepsOwnerDelete() {
+        let cube = SessionRow(sessionId: "cube", rootId: nil, title: "Evening", startedAt: 0,
+                              lastActiveAt: 1, messageCount: 0, isActive: false, provenance: "cube",
+                              readOnly: true, currentPin: true, executionClosed: true)
+        let ordinary = row("ordinary", "Chat")
+        let entries = historyEntries(sessions: [ordinary, cube], drafts: [], deleting: [], matching: "")
+        XCTAssertEqual(entries.first?.sessionId, "cube")
+        XCTAssertEqual(entries.first?.provenance, "cube")
+        XCTAssertTrue(entries.first?.executionClosed == true)
+        XCTAssertTrue(historyEntryOpensReadOnlyViewer(entries[0]))
+        XCTAssertFalse(historyEntryOpensReadOnlyViewer(entries[1]))
+        XCTAssertEqual(entries[0].destructiveActions, [.deleteConversation(sessionId: "cube")])
+        let afterDelete = historyEntries(sessions: [ordinary], drafts: [], deleting: [], matching: "")
+        XCTAssertFalse(historyEntryOpensReadOnlyViewer(afterDelete[0]))
+    }
+
     func testAssociatedDraftKeepsConversationIdentityAndExplicitActionsOffline() {
         let associated = draft("draft-a", sessionId: "session-a")
         let offline = historyEntries(sessions: [], drafts: [associated], deleting: [], matching: "").first!

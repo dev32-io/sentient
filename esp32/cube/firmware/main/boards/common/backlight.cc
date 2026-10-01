@@ -48,16 +48,16 @@ void Backlight::SetBrightness(uint8_t brightness, bool permanent) {
         brightness = 100;
     }
 
-    if (brightness_ == brightness) {
-        return;
-    }
-
     if (permanent) {
         Settings settings("display", true);
         settings.SetInt("brightness", brightness);
     }
 
     target_brightness_ = brightness;
+    if (brightness_ == target_brightness_) {
+        if (transition_timer_ != nullptr) esp_timer_stop(transition_timer_);
+        return;
+    }
     step_ = (target_brightness_ > brightness_) ? 1 : -1;
 
     if (transition_timer_ != nullptr) {

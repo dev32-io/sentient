@@ -8,7 +8,7 @@
  * `esp32/cube/firmware/sdkconfig.defaults` plus xiaozhi's stock Kconfig).
  *
  * This file is hand-mirrored from those Kconfig values so the host sim
- * renders ui-shared/test_screen.c the same way the device does. When the
+ * renders shared shipping views with device-compatible features. When the
  * LVGL managed component is bumped, the following must move together:
  *   - bump version in firmware/main/idf_component.yml
  *   - re-clone LVGL in esp32/cube/lvgl-sim/lvgl at the matching tag
@@ -51,12 +51,12 @@
    OS + TICK
  *====================*/
 
-/* Host sim drives lv_tick via SDL_GetTicks. The device uses Kconfig's
+/* Host sim drives lv_tick via SDL_GetTicks or deterministic test ticks. The device uses Kconfig's
  * CONFIG_LV_OS_NONE=y (xiaozhi pumps lv_timer_handler from its own
  * task). Both targets: no LVGL-internal OS abstraction. */
 #define LV_USE_OS LV_OS_NONE
 
-/* lv_tick_set_cb is called from main/main.c in the sim. */
+/* lv_tick_set_cb is called from main/main.cc in the sim. */
 
 /*====================
    DRAW + MEMORY
@@ -82,14 +82,15 @@
 #define LV_USE_OBJ_NAME       1
 
 /*====================
-   WIDGETS used by test_screen.c
+   WIDGETS used by cube_views.cc
  *====================*/
 
 #define LV_USE_LABEL    1
-#define LV_USE_SPINNER  1
+#define LV_USE_IMAGE    1
+#define LV_DRAW_SW_SUPPORT_RGB565 1
+#define LV_DRAW_SW_SUPPORT_I1 1
 
-/* Other widgets default off — test_screen.c uses only the above plus
- * the always-on base obj. */
+/* Shared views use image, label and always-on base obj. */
 
 /*====================
    FONTS
@@ -99,6 +100,7 @@
  * Montserrat 14 ships with LVGL. Mirrors CONFIG_LV_FONT_MONTSERRAT_14=y
  * + CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y. */
 #define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_MONTSERRAT_28 1
 #define LV_FONT_DEFAULT       &lv_font_montserrat_14
 
 /*====================

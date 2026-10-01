@@ -19,6 +19,7 @@ struct ToolPermissionRowModel: Identifiable {
     let description: String
     let permission: ToolPermission
     let settable: Bool
+    var cubeOnly = false
 }
 
 struct ToolPermissionRow: View {
@@ -31,11 +32,13 @@ struct ToolPermissionRow: View {
             title: capabilityName(row.name),
             detail: [row.description, row.settable ? "" : "Read-only · \(row.permission.displayLabel). Not editable here."]
                 .filter { !$0.isEmpty }.joined(separator: " "),
-            options: ToolPermission.selectOptions.map { (value: $0.id, label: $0.label) },
+            options: (row.cubeOnly ? ToolPermission.selectOptions.filter { $0.id == "allow" || $0.id == "off" } : ToolPermission.selectOptions)
+                .map { (value: $0.id, label: $0.label) },
             selection: Binding(
                 get: { row.permission.wireValue },
                 set: { value in
-                    guard let permission = ToolPermission(wireValue: value) else { return }
+                    guard let permission = ToolPermission(wireValue: value),
+                          !row.cubeOnly || permission == .allow || permission == .off else { return }
                     onChange(permission)
                 }
             ),

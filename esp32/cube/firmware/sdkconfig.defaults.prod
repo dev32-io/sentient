@@ -1,6 +1,7 @@
 # Sentient cube — PROD profile.
 # Hardened build for family / shared deployment. No remote debug surface.
 # No HIL verbs. Compiler optimized for size + speed.
+CONFIG_SENTIENT_PROD_BUILD=y
 
 # Devtool verb gates off — prod has no HIL/debug verb surface. Names
 # preserved from the retired agent_console Kconfig; symbols now live in

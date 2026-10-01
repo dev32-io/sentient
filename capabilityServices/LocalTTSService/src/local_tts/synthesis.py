@@ -127,9 +127,9 @@ class SynthesisRunner:
     def add_text(self, text: str) -> None:
         self._text_buffer.append(text)
 
-    def flush(self) -> None:
-        """Run the buffered text through the frontend, then enqueue it."""
-        if not self._text_buffer:
+    def flush(self, *, end: bool = False) -> None:
+        """Enqueue speakable text; End also queues a terminal for an empty tail."""
+        if not self._text_buffer and not end:
             return
         raw = "".join(self._text_buffer)
         self._text_buffer = []
@@ -137,7 +137,9 @@ class SynthesisRunner:
         speakable = self._frontend.process(raw, declared)
         if not speakable:
             self._conn_log.log("synth.flush_empty_after_frontend", raw_len=len(raw))
-            return
+            if not end:
+                return
+        # Empty End is queued too: its terminal must not overtake prior audio.
         self._queue.put_nowait(speakable)
 
     def cancel_current(self) -> None:
@@ -200,6 +202,11 @@ class SynthesisRunner:
 
     async def _handle_one_request(self, text: str) -> None:
         request_id = uuid.uuid4().hex[:12]
+        if not text:
+            await send_server_event(self._ws, Done(
+                request_id=request_id, ttfa_ms=0, rtf=0, audio_seconds=0,
+            ), self._conn_log)
+            return
         t0 = time.monotonic()
         cancel_event = self._cancel_event
         _safe_log(

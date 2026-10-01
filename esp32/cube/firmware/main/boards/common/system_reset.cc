@@ -49,6 +49,12 @@ void SystemReset::ResetNvsFlash() {
 }
 
 void SystemReset::ResetToFactory() {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Never select an old slot that predates enrollment enforcement. Network/NVS
+    // reset preserves cube_auth/cube_seal and reboots the currently selected app.
+    RestartInSeconds(3);
+    return;
+#endif
     ESP_LOGI(TAG, "Resetting to factory");
     // Erase otadata partition
     const esp_partition_t* partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);

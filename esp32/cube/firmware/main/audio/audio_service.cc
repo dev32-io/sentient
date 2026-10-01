@@ -1,5 +1,9 @@
 #include "audio_service.h"
 #include <esp_log.h>
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+#endif
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -61,6 +65,9 @@ extern "C" int agent_audio_inject_pop_samples(int16_t* /*buf*/,
                                               int /*sample_rate*/) {
     return 0;
 }
+
+extern "C" void __attribute__((weak)) agent_audio_inject_begin_capture(void) {}
+extern "C" void __attribute__((weak)) agent_audio_inject_end_capture(void) {}
 
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
@@ -195,12 +202,26 @@ void AudioService::Start() {
     }
 #endif
 
-    /* Start the opus codec task on internal stack. */
-    if (xTaskCreate([](void* arg) {
+    // Cube's CPU-only codec/queue worker never writes flash/NVS. Keep its full
+    // stack in PSRAM; reserve internal RAM for BLE, Wi-Fi and flash-owning tasks.
+    // Flash/NVS owners stay on internal stacks; IDF suspends other tasks while
+    // flash cache is disabled. Do not add flash operations to this worker.
+    auto opus_task = [](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+        vTaskDeleteWithCaps(NULL);
+#else
         vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_) != pdPASS) {
+#endif
+    };
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    auto created = xTaskCreateWithCaps(opus_task, "opus_codec", 2048 * 12, this, 2,
+                                      &opus_codec_task_handle_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    auto created = xTaskCreate(opus_task, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+#endif
+    if (created != pdPASS) {
         ESP_LOGE(TAG, "opus_codec task allocation failed");
         std::abort();
     }
@@ -214,6 +235,10 @@ void AudioService::Stop() {
         AS_EVENT_AUDIO_PROCESSOR_RUNNING);
 
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    if (capture_energy_.Accepts(send_generation_))
+        capture_energy_.state = CaptureEnergySnapshot::State::Retired;
+#endif
     audio_encode_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
@@ -221,7 +246,9 @@ void AudioService::Stop() {
     audio_queue_cv_.notify_all();
 }
 
-bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples) {
+bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples, uint32_t capture_generation) {
+    (void)capture_generation;
+
     // Sentient overlay: if the audio injection hook is active, bypass the
     // codec read entirely and return synthetic mono samples at the rate the
     // caller requested. The hook returns 0 when inactive, so the real ES7210
@@ -235,14 +262,55 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
         int ch = codec_ != nullptr ? codec_->input_channels() : 1;
         if (ch < 1) ch = 1;
         std::vector<int16_t> mono(samples);
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+        const auto modes = xEventGroupGetBits(event_group_) & (AS_EVENT_AUDIO_TESTING_RUNNING |
+            AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+        uint32_t generation;
+        {
+            std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+            generation = send_generation_;
+        }
+#endif
         int got = agent_audio_inject_pop_samples(mono.data(), samples, sample_rate);
         if (got > 0) {
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+            // Codec reads supply real-time backpressure; injection must too.
+            // One frame deadline, no catch-up bursts after scheduling stalls.
+            // Never hold queue/processor locks while waiting. Stop/restart drops
+            // this popped frame within one tick; ordinary mic reads are unchanged.
+            // Round partial frames up to a tick (10 ms on Cube). Using the
+            // tick clock avoids doubling each 10 ms frame by chasing sub-tick
+            // wall-clock phase after vTaskDelay wakes at a tick boundary.
+            const TickType_t started = xTaskGetTickCount();
+            const TickType_t duration = (static_cast<uint64_t>(got) * configTICK_RATE_HZ +
+                                         sample_rate - 1) / sample_rate;
+            while (true) {
+                {
+                    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+                    if (service_stopped_ || generation != send_generation_) return false;
+                }
+                // Graceful release clears input admission, but joins this read.
+                // Cancel retires generation above; only non-capture modes use bits.
+                if (!(modes & AS_EVENT_AUDIO_PROCESSOR_RUNNING) &&
+                    (xEventGroupGetBits(event_group_) & modes) != modes) return false;
+                if (static_cast<TickType_t>(xTaskGetTickCount() - started) >= duration) break;
+                vTaskDelay(1);
+            }
+#endif
             std::vector<int16_t> out(static_cast<size_t>(got) * ch);
             for (int i = 0; i < got; i++) {
                 for (int c = 0; c < ch; c++) {
                     out[i * ch + c] = mono[i];
                 }
             }
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+            if (capture_generation) {
+                std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+                if (accepting_send_ && capture_generation == send_generation_ &&
+                    capture_energy_.Accepts(capture_generation))
+                    capture_energy_.injected_samples += got;
+            }
+#endif
             data = std::move(out);
             last_input_time_ = std::chrono::steady_clock::now();
             debug_statistics_.input_count++;
@@ -257,9 +325,21 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     }
 
     const bool needs_resampling = codec_->input_sample_rate() != sample_rate;
+    if (needs_resampling && input_resampler_ == nullptr) return false;
     data.resize(needs_resampling ? samples * codec_->input_sample_rate() / sample_rate * codec_->input_channels()
                                  : samples * codec_->input_channels());
     if (!codec_->InputData(data)) return false;
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    // Cube's pinned BoxAudioCodec selects ES7210 slots 0 (M), 1 (R).
+    // Do not meter the reference, rate-converter output, or other capture modes.
+    if (capture_generation) {
+        const auto frame = CaptureEnergy::Measure(data.data(), data.size(), codec_->input_channels());
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        if (accepting_send_ && capture_generation == send_generation_ &&
+            capture_energy_.Accepts(capture_generation))
+            capture_energy_.native_mic.Merge(frame);
+    }
+#endif
     if (needs_resampling && input_resampler_ != nullptr) {
         std::lock_guard<std::mutex> lock(input_resampler_mutex_);
         const int channels = codec_->input_channels();
@@ -311,11 +391,6 @@ void AudioService::AudioInputTask() {
         if (service_stopped_) {
             break;
         }
-        if (audio_input_need_warmup_) {
-            audio_input_need_warmup_ = false;
-            vTaskDelay(pdMS_TO_TICKS(120));
-            continue;
-        }
 
         /* Used for audio testing in NetworkConfiguring mode by clicking the BOOT button */
         if (bits & AS_EVENT_AUDIO_TESTING_RUNNING) {
@@ -342,6 +417,9 @@ void AudioService::AudioInputTask() {
 
         /* Feed the wake word and/or audio processor */
         if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {
+            std::lock_guard<std::timed_mutex> producer(input_capture_mutex_);
+            bits &= xEventGroupGetBits(event_group_);
+            if (!(bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING))) continue;
             int samples = 160; // 10ms
             std::vector<int16_t> data;
             // Capture before codec read: an old DMA read finishing after a
@@ -351,7 +429,8 @@ void AudioService::AudioInputTask() {
                 std::lock_guard<std::mutex> lock(audio_queue_mutex_);
                 capture_generation = send_generation_;
             }
-            if (ReadAudioData(data, 16000, samples)) {
+            if (ReadAudioData(data, 16000, samples,
+                              (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) ? capture_generation : 0)) {
                 if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
                     wake_word_->Feed(data);
                 }
@@ -359,6 +438,11 @@ void AudioService::AudioInputTask() {
                     audio_processor_->Feed(std::move(data), capture_generation);
                 }
                 continue;
+            }
+            if (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) {
+                std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+                if (capture_generation == send_generation_) send_failed_ = true;
+                audio_queue_cv_.notify_all();
             }
         }
 
@@ -372,17 +456,16 @@ void AudioService::AudioInputTask() {
 void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-        audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
+        audio_queue_cv_.wait(lock, [this]() { return (!playback_deferred_ && !audio_playback_queue_.empty()) || service_stopped_; });
         if (service_stopped_) {
             break;
         }
 
         auto task = std::move(audio_playback_queue_.front());
         audio_playback_queue_.pop_front();
-#if CONFIG_USE_SERVER_AEC
         auto generation = decode_generation_;
-#endif
         output_in_flight_ = true;
+        output_playback_epoch_ = task->playback_epoch;
         audio_queue_cv_.notify_all();
         lock.unlock();
 
@@ -392,23 +475,30 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
-        codec_->OutputData(task->pcm);
-
-        /* Update the last output time */
-        last_output_time_ = std::chrono::steady_clock::now();
-        debug_statistics_.playback_count++;
+        bool played = codec_->OutputData(task->pcm);
+        if (played) {
+            last_output_time_ = std::chrono::steady_clock::now();
+            debug_statistics_.playback_count++;
+        } else {
+            ESP_LOGE(TAG, "audio.playback_failed generation=%lu", (unsigned long)generation);
+        }
 
         lock.lock();
+        const bool failed = !played && generation == decode_generation_ && !failed_playback_epochs_.count(task->playback_epoch);
+        if (failed) FailPlaybackOwner(task->playback_epoch);
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
-        if (generation == decode_generation_ && task->timestamp > 0) {
+        if (played && generation == decode_generation_ && task->timestamp > 0) {
             timestamp_queue_.push_back(task->timestamp);
         }
 #endif
         output_in_flight_ = false;
-        bool drained = audio_decode_queue_.empty() && !decoding_ && audio_playback_queue_.empty();
+        bool drained = played && !failed_playback_epochs_.count(task->playback_epoch) && audio_decode_queue_.empty() && !decoding_ && audio_playback_queue_.empty();
         audio_queue_cv_.notify_all();
         lock.unlock();
+        if (failed && callbacks_.on_playback_failed) {
+            callbacks_.on_playback_failed(task->playback_epoch, generation);
+        }
         if (drained && callbacks_.on_playback_drained) {
             callbacks_.on_playback_drained();
         }
@@ -434,6 +524,7 @@ void AudioService::OpusCodecTask() {
             auto packet = std::move(audio_decode_queue_.front());
             audio_decode_queue_.pop_front();
             decoding_ = true;
+            decoding_playback_epoch_ = packet->playback_epoch;
             auto generation = decode_generation_;
             audio_queue_cv_.notify_all();
             lock.unlock();
@@ -441,9 +532,11 @@ void AudioService::OpusCodecTask() {
             auto task = std::make_unique<AudioTask>();
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
             task->timestamp = packet->timestamp;
+            task->playback_epoch = packet->playback_epoch;
 
-            SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
-            if (opus_decoder_ != nullptr) {
+            bool decode_failed = true;
+            SetDecodeSampleRate(packet->sample_rate, packet->frame_duration, packet->pcm);
+            if (packet->pcm || opus_decoder_ != nullptr) {
                 task->pcm.resize(decoder_frame_size_);
                 esp_audio_dec_in_raw_t raw = {
                     .buffer = (uint8_t *)(packet->payload.data()),
@@ -458,19 +551,41 @@ void AudioService::OpusCodecTask() {
                 };
                 esp_audio_dec_info_t dec_info = {};
                 std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
-                auto ret = esp_opus_dec_decode(opus_decoder_, &raw, &out_frame, &dec_info);
+                // Reset at FIFO decoder ownership boundary, never when a newer
+                // wire start arrives while older packets still await decoding.
+                if (decoder_playback_epoch_ != packet->playback_epoch || decoder_owner_generation_ != generation) {
+                    if (opus_decoder_) esp_opus_dec_reset(opus_decoder_);
+                    if (output_resampler_) esp_ae_rate_cvt_reset(output_resampler_);
+                    decoder_playback_epoch_ = packet->playback_epoch;
+                    decoder_owner_generation_ = generation;
+                }
+                auto ret = ESP_AUDIO_ERR_OK;
+                if (packet->pcm) {
+                    if (packet->payload.empty() || packet->payload.size() % 2) ret = ESP_AUDIO_ERR_FAIL;
+                    else {
+                        task->pcm.resize(packet->payload.size() / 2);
+                        for (size_t i = 0; i < task->pcm.size(); ++i)
+                            task->pcm[i] = static_cast<int16_t>(packet->payload[2*i] | (uint16_t(packet->payload[2*i+1]) << 8));
+                        out_frame.decoded_size = packet->payload.size();
+                    }
+                } else ret = esp_opus_dec_decode(opus_decoder_, &raw, &out_frame, &dec_info);
                 decoder_lock.unlock();
                 if (ret == ESP_AUDIO_ERR_OK) {
                     task->pcm.resize(out_frame.decoded_size / sizeof(int16_t));
+                    decode_failed = task->pcm.empty();
+                    if (decoder_sample_rate_ != codec_->output_sample_rate() && output_resampler_ == nullptr) {
+                        task->pcm.clear(); decode_failed = true;
+                    }
                     if (decoder_sample_rate_ != codec_->output_sample_rate() && output_resampler_ != nullptr) {
                         uint32_t target_size = 0;
                         auto max_ret = esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task->pcm.size(), &target_size);
-                        if (max_ret != ESP_AE_ERR_OK || target_size == 0 ||
+                        if (max_ret != ESP_AE_ERR_OK ||
                             target_size > task->pcm.max_size()) {
                             ESP_LOGE(TAG, "Output resampler max failed ret=%d input=%u max=%u",
                                      (int)max_ret, (unsigned)task->pcm.size(), (unsigned)target_size);
-                            task->pcm.clear();
+                            task->pcm.clear(); decode_failed = true;
                         } else {
+                            target_size = std::max(target_size, uint32_t(1));
                             std::vector<int16_t> resampled(target_size);
                             uint32_t actual_output = target_size;
                             auto process_ret = esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task->pcm.data(),
@@ -481,15 +596,18 @@ void AudioService::OpusCodecTask() {
                                 ESP_LOGE(TAG, "Output resampler process failed ret=%d max=%u actual=%u allocated=%u",
                                          (int)process_ret, (unsigned)target_size, (unsigned)actual_output,
                                          (unsigned)resampled.size());
-                                task->pcm.clear();
+                                task->pcm.clear(); decode_failed = true;
                             } else {
+                                // Success with zero output consumed/buffered valid input.
+                                decode_failed = false;
                                 resampled.resize(actual_output);
                                 task->pcm = std::move(resampled);
                             }
                         }
                     }
                     lock.lock();
-                    if (generation == decode_generation_ && !task->pcm.empty()) {
+                    if (generation == decode_generation_ &&
+                        !failed_playback_epochs_.count(task->playback_epoch) && !task->pcm.empty()) {
                         audio_playback_queue_.push_back(std::move(task));
                     }
                     audio_queue_cv_.notify_all();
@@ -504,9 +622,14 @@ void AudioService::OpusCodecTask() {
             }
             debug_statistics_.decode_count++;
             decoding_ = false;
-            bool drained = audio_decode_queue_.empty() && audio_playback_queue_.empty() && !output_in_flight_;
+            const bool failed = decode_failed && generation == decode_generation_;
+            if (failed) FailPlaybackOwner(packet->playback_epoch);
+            bool drained = !failed && generation == decode_generation_ &&
+                !failed_playback_epochs_.count(packet->playback_epoch) && audio_decode_queue_.empty() &&
+                audio_playback_queue_.empty() && !output_in_flight_;
             audio_queue_cv_.notify_all();
             lock.unlock();
+            if (failed && callbacks_.on_playback_failed) callbacks_.on_playback_failed(packet->playback_epoch, generation);
             if (drained && callbacks_.on_playback_drained) {
                 callbacks_.on_playback_drained();
             }
@@ -578,8 +701,9 @@ void AudioService::OpusCodecTask() {
     ESP_LOGW(TAG, "Opus codec task stopped");
 }
 
-void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
-    if (decoder_sample_rate_ == sample_rate && decoder_duration_ms_ == frame_duration) {
+void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration, bool pcm) {
+    if (decoder_pcm_ == pcm && (pcm || opus_decoder_) && decoder_sample_rate_ == sample_rate && decoder_duration_ms_ == frame_duration &&
+        (sample_rate == codec_->output_sample_rate() || output_resampler_)) {
         return;
     }
     std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
@@ -588,12 +712,15 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
         opus_decoder_ = nullptr;
     }
     decoder_lock.unlock();
-    esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
-    auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
-    if (opus_decoder_ == nullptr) {
-        ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
-        return;
+    if (!pcm) {
+        esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
+        auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
+        if (opus_decoder_ == nullptr) {
+            ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
+            return;
+        }
     }
+    decoder_pcm_ = pcm;
     decoder_sample_rate_ = sample_rate;
     decoder_duration_ms_ = frame_duration;
     decoder_frame_size_ = decoder_sample_rate_ / 1000 * frame_duration;
@@ -619,6 +746,10 @@ void AudioService::HandleProcessorOutput(std::vector<int16_t>&& pcm, uint32_t ca
 }
 
 void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm, uint32_t capture_generation) {
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    const auto energy = type == kAudioTaskTypeEncodeToSendQueue
+        ? CaptureEnergy::Measure(pcm.data(), pcm.size()) : CaptureEnergy{};
+#endif
     auto task = std::make_unique<AudioTask>();
     task->type = type;
     task->pcm = std::move(pcm);
@@ -643,13 +774,18 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
         timestamp_queue_.pop_front();
     }
 
-    audio_queue_cv_.wait(lock, [this, &task]() {
+    bool space = audio_queue_cv_.wait_for(lock, std::chrono::seconds(4), [this, &task]() {
         return service_stopped_ ||
                (task->type == kAudioTaskTypeEncodeToSendQueue && task->send_generation != send_generation_) ||
                audio_encode_queue_.size() < MAX_ENCODE_TASKS_IN_QUEUE;
     });
-    if (!service_stopped_ &&
+    if (!space && type == kAudioTaskTypeEncodeToSendQueue) send_failed_ = true;
+    if (space && !service_stopped_ &&
         (task->type != kAudioTaskTypeEncodeToSendQueue || task->send_generation == send_generation_)) {
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+        if (type == kAudioTaskTypeEncodeToSendQueue && capture_energy_.Accepts(capture_generation))
+            capture_energy_.encoder_input.Merge(energy);
+#endif
         audio_encode_queue_.push_back(std::move(task));
     }
     if (type == kAudioTaskTypeEncodeToSendQueue) --send_producers_;
@@ -664,14 +800,23 @@ uint32_t AudioService::DecodeGeneration() {
 DecodeQueueResult AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet,
                                                         uint32_t generation, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-    if (wait && audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
-        if (!audio_queue_cv_.wait_for(lock, std::chrono::seconds(5), [this, generation]() {
-                return service_stopped_ || generation != decode_generation_ ||
+    if (generation != decode_generation_) return DecodeQueueResult::Stale;
+    if (failed_playback_epochs_.count(packet->playback_epoch)) return DecodeQueueResult::Failed;
+    if (packet->playback_epoch && packet->playback_epoch < latest_playback_epoch_) return DecodeQueueResult::Stale;
+    latest_playback_epoch_ = std::max(latest_playback_epoch_, packet->playback_epoch);
+    PrunePlaybackFailures();
+    audio_queue_cv_.notify_all();
+    if (wait && !playback_deferred_ && audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
+        if (!audio_queue_cv_.wait_for(lock, std::chrono::seconds(5), [this, generation, epoch = packet->playback_epoch]() {
+                return service_stopped_ || failed_playback_epochs_.count(epoch) || generation != decode_generation_ ||
+                       (epoch && epoch < latest_playback_epoch_) ||
                        audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE;
             })) return DecodeQueueResult::Timeout;
     }
     if (generation != decode_generation_) return DecodeQueueResult::Stale;
     if (service_stopped_) return DecodeQueueResult::Stopped;
+    if (packet->playback_epoch && packet->playback_epoch < latest_playback_epoch_) return DecodeQueueResult::Stale;
+    if (failed_playback_epochs_.count(packet->playback_epoch)) return DecodeQueueResult::Failed;
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) return DecodeQueueResult::Full;
     audio_decode_queue_.push_back(std::move(packet));
     audio_queue_cv_.notify_all();
@@ -680,6 +825,11 @@ DecodeQueueResult AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStr
 
 void AudioService::ClearSendQueue() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+    if (capture_energy_.state == CaptureEnergySnapshot::State::Capturing ||
+        capture_energy_.state == CaptureEnergySnapshot::State::Draining)
+        capture_energy_.state = CaptureEnergySnapshot::State::Retired;
+#endif
     ++send_generation_;
     accepting_send_ = false;
     send_failed_ = false;
@@ -703,9 +853,9 @@ bool AudioService::WaitForSendEncoding() {
     return drained && !send_failed_;
 }
 
-bool AudioService::IsPlaybackDrained() {
+bool AudioService::IsPlaybackDrained(uint32_t epoch) {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-    return audio_decode_queue_.empty() && !decoding_ &&
+    return (!epoch || epoch >= latest_playback_epoch_) && !failed_playback_epochs_.count(epoch) && audio_decode_queue_.empty() && !decoding_ &&
            audio_playback_queue_.empty() && !output_in_flight_;
 }
 
@@ -768,7 +918,7 @@ void AudioService::EnableWakeWordDetection(bool enable) {
     }
 }
 
-bool AudioService::EnableVoiceProcessing(bool enable) {
+bool AudioService::EnableVoiceProcessing(bool enable, bool drain) {
     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
     if (enable) {
         if (!audio_processor_initialized_) {
@@ -778,7 +928,16 @@ bool AudioService::EnableVoiceProcessing(bool enable) {
 
         /* Do not start capture while old software-owned output is pending. */
         if (!ResetDecoder()) return false;
-        audio_input_need_warmup_ = true;
+        // Prepare physical input before Application advertises Listening.
+        last_input_time_ = std::chrono::steady_clock::now();
+        if (!codec_->input_enabled()) {
+            esp_timer_stop(audio_power_timer_);
+            esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+            codec_->EnableInput(true);
+            if (!codec_->input_enabled()) return false;
+            vTaskDelay(pdMS_TO_TICKS(120));
+        }
+        last_input_time_ = std::chrono::steady_clock::now();
         // Reset input resampler to clear cached data from previous mode (e.g. WakeWord)
         // This prevents buffer overflow when switching between different feed sizes
         {
@@ -794,27 +953,72 @@ bool AudioService::EnableVoiceProcessing(bool enable) {
             std::lock_guard<std::mutex> lock(audio_queue_mutex_);
             generation = send_generation_;
             accepting_send_ = true;
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+            const uint64_t epoch = capture_energy_.epoch + 1;
+            capture_energy_ = {};
+            capture_energy_.epoch = epoch;
+            capture_energy_.generation = generation;
+            capture_energy_.native_rate_hz = codec_->input_sample_rate();
+            capture_energy_.state = CaptureEnergySnapshot::State::Capturing;
+#endif
         }
         if (!audio_processor_->Start(generation)) {
             ESP_LOGE(TAG, "Audio processor start failed");
             std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+            capture_energy_.state = CaptureEnergySnapshot::State::Failed;
+#endif
             accepting_send_ = false;
             send_failed_ = true;
             audio_queue_cv_.notify_all();
             return false;
         }
+        agent_audio_inject_begin_capture();
         xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     } else {
-        // Keep accepting this capture until worker has finished its last
-        // fetch/callback. WaitForSendEncoding then drains that bounded tail.
-        bool stopped = !audio_processor_initialized_ || audio_processor_->Stop();
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+        uint64_t retiring_epoch;
+        uint32_t retiring_generation;
+        {
+            std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+            retiring_epoch = capture_energy_.epoch;
+            retiring_generation = capture_energy_.generation;
+            if (capture_energy_.state == CaptureEnergySnapshot::State::Capturing)
+                capture_energy_.state = drain ? CaptureEnergySnapshot::State::Draining
+                                             : CaptureEnergySnapshot::State::Retired;
+        }
+#endif
         xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+        if (!drain) ClearSendQueue(); // Retire before blocked producer/encoder resumes.
+        std::unique_lock<std::timed_mutex> producer(input_capture_mutex_, std::defer_lock);
+        const bool joined = producer.try_lock_for(std::chrono::seconds(5));
+        // Flush returned PCM and AFE/encoder staging. Native rate converter has
+        // no documented flush/delay API; internal filter-tail guarantee remains
+        // an integration gap, not established by these queue/drain checks.
+        bool stopped = joined && (!audio_processor_initialized_ || audio_processor_->Stop(drain));
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+        size_t fed = 0, fetched = 0;
+        const bool counts_available = joined && audio_processor_initialized_ &&
+            audio_processor_->GetCaptureSampleCounts(retiring_generation, fed, fetched);
+#endif
         {
             std::lock_guard<std::mutex> lock(audio_queue_mutex_);
             accepting_send_ = false;
             if (!stopped) send_failed_ = true;
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+            if (capture_energy_.epoch == retiring_epoch && retiring_epoch &&
+                (capture_energy_.state == CaptureEnergySnapshot::State::Draining ||
+                 capture_energy_.state == CaptureEnergySnapshot::State::Retired)) {
+                capture_energy_.afe_counts_available = counts_available;
+                capture_energy_.afe_fed_samples = fed;
+                capture_energy_.afe_fetched_samples = fetched;
+                capture_energy_.state = (!stopped || send_failed_) ? CaptureEnergySnapshot::State::Failed
+                    : drain ? CaptureEnergySnapshot::State::Complete : CaptureEnergySnapshot::State::Retired;
+            }
+#endif
             audio_queue_cv_.notify_all();
         }
+        agent_audio_inject_end_capture();
         if (!stopped) ESP_LOGE(TAG, "Audio processor stop/reset timed out or failed");
         return stopped;
     }
@@ -919,7 +1123,10 @@ bool AudioService::PlayPcm(const int16_t* samples, size_t sample_count, int samp
         codec_->EnableOutput(true);
     }
 
-    codec_->OutputData(resampled);
+    if (!codec_->OutputData(resampled)) {
+        ESP_LOGE(TAG, "PlayPcm codec output failed");
+        return false;
+    }
     last_output_time_ = std::chrono::steady_clock::now();
     ESP_LOGI(TAG, "PlayPcm done samples_out=%u", (unsigned)resampled.size());
     return true;
@@ -1033,6 +1240,8 @@ bool AudioService::ResetDecoder() {
     decoder_lock.unlock();
     timestamp_queue_.clear();
     ++decode_generation_;
+    failed_playback_epochs_.clear();
+    latest_playback_epoch_ = 0;
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
     audio_testing_queue_.clear();
@@ -1101,3 +1310,43 @@ bool AudioService::IsAfeWakeWord() {
     return false;
 #endif
 }
+
+void AudioService::DeferPlayback(bool defer) {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    playback_deferred_ = defer;
+    audio_queue_cv_.notify_all();
+}
+
+void AudioService::DiscardPlayback(uint32_t epoch, uint32_t generation) {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    if (generation != decode_generation_) return;
+    FailPlaybackOwner(epoch);
+    audio_queue_cv_.notify_all();
+}
+
+void AudioService::FailPlaybackOwner(uint32_t epoch) {
+    failed_playback_epochs_.insert(epoch);
+    PrunePlaybackFailures();
+    auto same_owner = [epoch](const auto& item) { return item->playback_epoch == epoch; };
+    audio_decode_queue_.erase(std::remove_if(audio_decode_queue_.begin(), audio_decode_queue_.end(), same_owner), audio_decode_queue_.end());
+    audio_playback_queue_.erase(std::remove_if(audio_playback_queue_.begin(), audio_playback_queue_.end(), same_owner), audio_playback_queue_.end());
+}
+
+void AudioService::PrunePlaybackFailures() {
+    for (auto it = failed_playback_epochs_.begin(); it != failed_playback_epochs_.end();) {
+        const auto epoch = *it;
+        if (epoch == 0 || epoch == latest_playback_epoch_ ||
+            (decoding_ && epoch == decoding_playback_epoch_) ||
+            (output_in_flight_ && epoch == output_playback_epoch_)) ++it;
+        else it = failed_playback_epochs_.erase(it);
+    }
+}
+
+#if CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+bool AudioService::GetCaptureEnergy(CaptureEnergySnapshot& snapshot) {
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || !capture_energy_.epoch) return false;
+    snapshot = capture_energy_;
+    return true;
+}
+#endif

@@ -37,6 +37,7 @@ export function createSttService(cfg: StartupConfig): SttService {
     inputSampleRate: cfg.stt.input_sample_rate,
     ttsEchoCooldownMs: cfg.stt.tts_echo_cooldown_ms,
     connectTimeoutMs: cfg.stt.connect_timeout_ms,
+    finalizeTimeoutMs: cfg.stt.finalize_timeout_ms,
     audioFormat: "opus",
   };
   log.info("service-enabled", {

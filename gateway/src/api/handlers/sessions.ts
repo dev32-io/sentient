@@ -1,4 +1,4 @@
-// GET /api/v1/sessions and GET /api/v1/sessions/:id/messages (spec §3.5 #3,
+// GET /api/v1/sessions, /sessions/search, and /sessions/:id/messages (spec §3.5 #3,
 // §1; session-model plan task 4) — the REST surface that lets a reload or a
 // second window list a user's own sessions and re-open one's full history.
 //
@@ -20,6 +20,7 @@
 // MUST-requirement — "the sessions REST surface MUST 404 it" — holding
 // structurally rather than by a bolted-on check here.
 
+import type { SessionRow } from "@sentient/protocol";
 import type { AccessManager } from "../../access/access-manager.js";
 import { type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
 import { getLog } from "../../logging/logger.js";
@@ -51,6 +52,7 @@ const HTTP_METHOD_NOT_ALLOWED = 405;
 const REST_HOUSEHOLD_ID = "home";
 
 const SESSIONS_PATH = "/api/v1/sessions";
+const SEARCH_PATH = `${SESSIONS_PATH}/search`;
 const MESSAGES_PATH_RE = /^\/api\/v1\/sessions\/([^/]+)\/messages$/;
 const SESSION_PATH_RE = /^\/api\/v1\/sessions\/([^/]+)$/;
 
@@ -120,6 +122,15 @@ async function handleSessions(deps: SessionsHandlerDeps, request: Request): Prom
     return handleList(deps, principal);
   }
 
+  // Static routes precede /:id so "search" is never interpreted as a session ID.
+  if (pathname === SEARCH_PATH) {
+    if (request.method !== "GET") return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed");
+    const q = searchParams.get("q")?.trim().toLocaleLowerCase() ?? "";
+    const requestedLimit = Number(searchParams.get("limit"));
+    const limit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 50) : 20;
+    return handleSearch(deps, principal, q, limit);
+  }
+
   const sessionMatch = SESSION_PATH_RE.exec(pathname);
   if (sessionMatch) {
     if (request.method !== "DELETE") return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed");
@@ -156,6 +167,31 @@ function handleList(deps: SessionsHandlerDeps, principal: UserPrincipal): Respon
   return Response.json({ sessions }, { status: HTTP_OK });
 }
 
+function handleSearch(deps: SessionsHandlerDeps, principal: UserPrincipal, q: string, limit: number): Response {
+  // ponytail: title-only scan; add per-user FTS index if transcript search or large histories need it.
+  const items: SessionRow[] = withSessionStore(deps, principal, (store) =>
+    store
+      .listSessionsWithMetadata()
+      .filter((session) => q !== "" && (session.title ?? "").toLocaleLowerCase().includes(q))
+      .slice(0, limit)
+      .map((session) => ({
+        sessionId: session.sessionId,
+        rootId: session.sessionId,
+        title: session.title ?? "New chat",
+        startedAt: session.createdAt,
+        lastActiveAt: session.updatedAt,
+        messageCount: 0,
+        isActive: false,
+        provenance: session.provenance,
+        readOnly: session.readOnly,
+        currentPin: session.currentPin,
+        executionClosed: session.executionClosed,
+      })),
+  );
+  log.info("sessions.search", { userId: principal.userId, count: items.length });
+  return Response.json({ items }, { status: HTTP_OK });
+}
+
 function handleMessages(deps: SessionsHandlerDeps, principal: UserPrincipal, presented: string): Response {
   return withSessionStore(deps, principal, (store) => {
     const resolution = resolveSession({ store, presented });
@@ -169,7 +205,17 @@ function handleMessages(deps: SessionsHandlerDeps, principal: UserPrincipal, pre
     // what keeps render(replay) == render(live) a structural fact.
     const items = snapshotFeedItems(entries);
     log.info("sessions.messages", { userId: principal.userId, sessionId: resolution.sessionId, count: items.length });
-    return Response.json({ items }, { status: HTTP_OK });
+    const metadata = store.getSession(resolution.sessionId);
+    return Response.json(
+      {
+        items,
+        provenance: metadata?.provenance ?? "human",
+        readOnly: metadata?.readOnly ?? false,
+        currentPin: metadata?.currentPin ?? false,
+        executionClosed: metadata?.executionClosed ?? false,
+      },
+      { status: HTTP_OK },
+    );
   });
 }
 

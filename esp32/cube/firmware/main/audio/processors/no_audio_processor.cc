@@ -47,12 +47,16 @@ bool NoAudioProcessor::Start(uint32_t capture_generation) {
     return true;
 }
 
-bool NoAudioProcessor::Stop() {
+bool NoAudioProcessor::Stop(bool drain) {
     is_running_ = false;
     std::unique_lock<std::timed_mutex> lock(feed_mutex_, std::defer_lock);
     if (!lock.try_lock_for(std::chrono::seconds(5))) {
         stopped_cleanly_ = false;
         return false;
+    }
+    if (drain && !output_buffer_.empty() && output_callback_) {
+        output_buffer_.resize(frame_samples_, 0);
+        output_callback_(std::move(output_buffer_), capture_generation_);
     }
     output_buffer_.clear();
     stopped_cleanly_ = true;

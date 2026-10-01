@@ -17,6 +17,9 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.audioio
 
+import io.sentient.mobilesdk.connectors.AssistantAudioResponseConnector
+import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.protocol.WireJson
 import io.sentient.mobilesdk.fakes.FakeOpusDecoderPort
 import io.sentient.mobilesdk.sdk.AudioFsm
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
@@ -133,5 +136,53 @@ class AudioPipelineDownlinkTest {
         advanceTimeBy(50 + 100 + 20)
         runCurrent()
         assertTrue(!speaking, "speaking cleared once the player drained + settle elapsed")
+    }
+    @Test
+    fun partial_failure_done_preserves_playing_audio_and_next_turn() = runTest {
+        val sink = FakeVoiceAudio()
+        var speaking = false
+        val done = mutableListOf<String>()
+        val p = AudioPipeline(
+            playback = sink, opusDecoder = cannedDecoder(), fsm = AudioFsm(), scope = this,
+            outputSampleRate = 24000, onStateChanged = { sp, _ -> speaking = sp },
+            armPlayback = { sink.configure(mic = false, playback = true); true },
+            disarmPlayback = { },
+        )
+        val connector = AssistantAudioResponseConnector(
+            onAudioStart = p::onAudioStart, onAudioFrame = p::onAudioFrame,
+            onAudioDone = { done += it; p.onAudioDone(it) }, onPlaybackStop = p::onPlaybackStop,
+        )
+        fun route(json: String) = connector.handle(
+            WireJson.instance.decodeFromString(ServerMessage.serializer(), json),
+        )
+        fun start(id: String) = route("""{"type":"turn.audio.start","turnId":"$id","encoding":"opus","sampleRate":48000}""")
+        fun finish(id: String) = route("""{"type":"turn.audio.done","turnId":"$id"}""")
+        start("A")
+        runCurrent()
+        connector.handleBinary(byteArrayOf(1))
+        finish("A") // physically still playing when B arrives
+        start("B")
+        runCurrent()
+        connector.handleBinary(byteArrayOf(2))
+        finish("B") // failed synthesis closes receipt, not playback
+        connector.handleBinary(byteArrayOf(99))
+        assertTrue(!connector.isReceiving())
+        assertTrue(speaking && !sink.isPlaybackIdle)
+        assertEquals(0, sink.flushCount)
+        assertEquals(listOf(1, 2), sink.playedFrames.map { it[1].toInt() })
+        sink.setPlaybackIdle(true)
+        advanceUntilIdle()
+        assertTrue(!speaking)
+        start("C")
+        runCurrent()
+        connector.handleBinary(byteArrayOf(3))
+        finish("C")
+        assertTrue(speaking && !sink.isPlaybackIdle)
+        assertEquals(listOf("A", "B", "C"), done)
+        assertEquals(listOf(1, 2, 3), sink.playedFrames.map { it[1].toInt() })
+        assertEquals(0, sink.flushCount)
+        sink.setPlaybackIdle(true)
+        advanceUntilIdle()
+        assertTrue(!speaking)
     }
 }

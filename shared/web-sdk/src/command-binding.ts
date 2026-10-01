@@ -32,6 +32,7 @@ const COMMAND_TYPES: ReadonlySet<string> = new Set([
   "permission.response",
   "audio.start",
   "audio.end",
+  "audio.cancel",
 ]);
 
 export interface CommandBinding {

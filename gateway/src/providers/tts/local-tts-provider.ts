@@ -46,8 +46,8 @@ export interface LocalTtsProviderConfig {
 //   1. open WS with format/sample_rate/voice as connect-time query params
 //   2. server sends `ready` as the first message
 //   3. client sends one or more `text` messages (buffered, not yet
-//      synthesized), then `end` (== `flush`: synthesize what's buffered)
-//   4. server replies `started`, then binary audio frames, then `done`
+//      synthesized), then `end` (synthesize buffered text, or complete without audio)
+//   4. server replies `started`, binary frames, `done`; empty End replies only `done`
 //   5. the connection is NOT closed by `end` — it's reusable for further
 //      requests (§1.2) — so this provider (one WS per synthesis run) drives
 //      the close itself, via dispose().
@@ -58,11 +58,9 @@ export interface LocalTtsProviderConfig {
 //   call dispose() once it is done pulling from audioFrames() — after the
 //   loop completes normally, NOT only on abort — or the socket leaks for the
 //   lifetime of the process. audioFrames() deliberately does NOT auto-close
-//   on the `done` frame: a single run may push multiple text/end request
-//   cycles (multiple `done` frames) before the consumer is actually
-//   finished, so a premature close on the first `done` would break a
-//   multi-block run. See audioFrames()'s docstring below for the exact exit
-//   points this applies to.
+//   on the `done` frame: ownership stays with the consumer's finally block.
+//   This provider represents one text/end request; reusable service connections
+//   do not imply reusable provider queues. See audioFrames() below for exits.
 // ---------------------------------------------------------------------------
 
 export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: TTSProviderOverrides): TTSProvider {
@@ -73,6 +71,7 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
   let readyPromise: Promise<void> | null = null;
   let warmupStarted = false;
   let disposed = false;
+  let streamError: Error | null = null;
 
   function rejectReadyIfPending(err: Error): void {
     if (readyReject) {
@@ -108,7 +107,8 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
         return;
       case "error":
         log.error("server-error", { reason: frame.reason });
-        rejectReadyIfPending(new Error(frame.reason));
+        streamError = new Error(frame.reason);
+        rejectReadyIfPending(streamError);
         queue.finish();
         return;
       case "warning":
@@ -199,7 +199,7 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
       return;
     }
     if (text.length === 0) return;
-    log.debug("push-text", { chars: text.length, preview: text.length <= 80 ? text : `${text.slice(0, 80)}…` });
+    log.debug("push-text", { chars: text.length });
     // `text` only buffers server-side — nothing is synthesized until
     // `end`/`flush`. endInput() sends `end`.
     send(textMsg(text));
@@ -207,8 +207,8 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
 
   function endInput(): void {
     if (disposed) return;
-    // `end` behaves identically to `flush`: it synthesizes whatever text is
-    // buffered since the last flush. One WS per synthesis run means this is
+    // `end` always completes, even when the frontend removes all text.
+    // One WS per synthesis run means this is
     // the single trigger for this provider's request — no separate flush
     // call needed.
     log.debug("end-input-sent");
@@ -243,12 +243,14 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
     log.debug("audio-frames-start");
     let emitted = 0;
     while (!signal.aborted) {
+      if (streamError) throw streamError;
       if (queue.isDone() && queue.isEmpty()) {
         log.debug("audio-frames-end", { emitted, reason: "queue-done" });
         return;
       }
 
       while (!queue.isEmpty()) {
+        if (streamError) throw streamError;
         if (signal.aborted) {
           log.debug("audio-frames-end", { emitted, reason: "aborted-mid-drain" });
           return;
@@ -260,12 +262,14 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
         }
       }
 
+      if (streamError) throw streamError;
       if (queue.isDone()) {
         log.debug("audio-frames-end", { emitted, reason: "queue-done-after-drain" });
         return;
       }
 
       const hasItem = await queue.waitForItem(signal);
+      if (streamError && !signal.aborted) throw streamError;
       if (!hasItem) {
         log.debug("audio-frames-end", { emitted, reason: "wait-returned-no-item" });
         return;

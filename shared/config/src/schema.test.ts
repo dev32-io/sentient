@@ -398,3 +398,15 @@ describe("mcpCatalogSchema — the reserved 'native' server key", () => {
     expect(result.success).toBe(false);
   });
 });
+
+it("reserves Cube permission namespace so catalog defaults cannot seed Cube grants", () => {
+  const entry = {
+    transport: "http",
+    url: "http://127.0.0.1:9000/mcp",
+    tools: { include: [{ name: "get_weather", tier: "read" }] },
+  };
+  expect(mcpCatalogSchema.safeParse({ other: entry }).success).toBe(true);
+  expect(mcpCatalogSchema.safeParse({ cube: entry }).success).toBe(false);
+  expect(mcpCatalogSchema.safeParse({ cube: { ...entry, product_group: "other" } }).success).toBe(false);
+  expect(mcpCatalogSchema.safeParse({ other: { ...entry, product_group: "cube" } }).success).toBe(false);
+});

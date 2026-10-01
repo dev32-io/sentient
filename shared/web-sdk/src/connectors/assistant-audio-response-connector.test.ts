@@ -95,3 +95,54 @@ describe("AssistantAudioResponseConnector", () => {
     expect(onAudioFrame.mock.calls[1]?.[1]).toBe("t-2");
   });
 });
+
+describe("partial synthesis closes receipt without cancelling playback", () => {
+  it("keeps A playing, drains B's prefix, then accepts C", async () => {
+    const { createTurnAudioQueue } = await import("../turn-audio-queue.ts");
+    let drain = () => {};
+    const playback = {
+      enqueue: vi.fn(),
+      clear: vi.fn(),
+      onDrain: (handler: () => void) => {
+        drain = handler;
+        return () => {};
+      },
+    };
+    const queue = createTurnAudioQueue({ playback });
+    const done = vi.fn((id: string) => queue.onAudioDone(id));
+    const connector = new AssistantAudioResponseConnector({
+      onAudioStart: (id) => queue.onAudioStart(id),
+      onAudioFrame: (bytes, id) => queue.onAudioFrame(id, new Float32Array(new Uint8Array(bytes))),
+      onAudioDone: done,
+      onPlaybackStop: () => queue.cancelAll(),
+    });
+    const mock = createMockSDK();
+    connector.attach(mock.sdk);
+    const start = (turnId: string) => mock.emit("turn.audio.start", { turnId, encoding: "pcm", sampleRate: 24000 });
+    const finish = (turnId: string) => mock.emit("turn.audio.done", { turnId });
+    start("A");
+    mock.emitBinary(audioBytes(1));
+    finish("A"); // synthesis complete, physical playback still busy
+    start("B");
+    mock.emitBinary(audioBytes(2));
+    finish("B"); // synthesis failed after this prefix: ordinary Done
+    mock.emitBinary(audioBytes(99)); // bracket closed
+    expect(queue.depth()).toBe(2);
+    expect(playback.enqueue.mock.calls).toEqual([[new Float32Array([1])]]);
+    expect(playback.clear).not.toHaveBeenCalled();
+    drain();
+    expect(playback.enqueue.mock.calls).toEqual([[new Float32Array([1])], [new Float32Array([2])]]);
+    drain();
+    expect(queue.depth()).toBe(0);
+    start("C");
+    mock.emitBinary(audioBytes(3));
+    finish("C");
+    drain();
+    expect(queue.depth()).toBe(0);
+    expect(done.mock.calls).toEqual([["A"], ["B"], ["C"]]);
+    expect(playback.enqueue).toHaveBeenLastCalledWith(new Float32Array([3]));
+    expect(playback.clear).not.toHaveBeenCalled();
+    connector.detach();
+    queue.dispose();
+  });
+});

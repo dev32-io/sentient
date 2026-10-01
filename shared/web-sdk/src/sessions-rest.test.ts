@@ -55,11 +55,30 @@ describe("sessions REST client", () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const fetchFn = mockFetch(async (url, init) => {
       calls.push([url, init]);
-      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              sessionId: "s-cube",
+              rootId: "s-cube",
+              title: "hello Cube",
+              startedAt: 1,
+              lastActiveAt: 2,
+              messageCount: 0,
+              isActive: false,
+              provenance: "cube",
+              readOnly: true,
+              currentPin: true,
+              executionClosed: false,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
     });
     const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "tok", fetchFn });
     const items = await rest.search("hello", 20);
-    expect(items).toEqual([]);
+    expect(items).toEqual([expect.objectContaining({ title: "hello Cube", provenance: "cube", currentPin: true })]);
     const url = calls[0]?.[0] ?? "";
     expect(url).toContain("q=hello");
     expect(url).toContain("limit=20");
@@ -167,5 +186,43 @@ describe("deriveRestBaseUrl", () => {
 
   it("handles wss URL without a /ws suffix", () => {
     expect(deriveRestBaseUrl("wss://h/api/v1")).toBe("https://h/api/v1");
+  });
+});
+
+describe("authoritative history flags", () => {
+  it("maps Cube summaries and messages, defaulting legacy human rows", async () => {
+    const cube = {
+      sessionId: "c",
+      createdAt: 1,
+      updatedAt: 2,
+      title: null,
+      provenance: "cube",
+      readOnly: true,
+      currentPin: true,
+      executionClosed: true,
+    };
+    const legacy = { sessionId: "h", createdAt: 1, updatedAt: 2, title: "Human" };
+    const fetchFn = mockFetch(
+      async (url) =>
+        new Response(
+          JSON.stringify(
+            url.includes("messages")
+              ? { items: [], provenance: "cube", readOnly: true, currentPin: true, executionClosed: true }
+              : { sessions: [cube, legacy] },
+          ),
+          { status: 200 },
+        ),
+    );
+    const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
+    const rows = (await rest.list()).items;
+    expect(rows[0]).toMatchObject({ provenance: "cube", readOnly: true, currentPin: true, executionClosed: true });
+    expect(rows[1]).toMatchObject({ provenance: "human", readOnly: false, currentPin: false, executionClosed: false });
+    expect(await rest.getHistory("c")).toMatchObject({
+      items: [],
+      provenance: "cube",
+      readOnly: true,
+      currentPin: true,
+      executionClosed: true,
+    });
   });
 });

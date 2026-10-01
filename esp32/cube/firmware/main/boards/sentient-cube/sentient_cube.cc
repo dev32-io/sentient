@@ -16,9 +16,8 @@
 //      ES7210 audio codec, boot button.
 //   2. Constructs a CustomLcdDisplay subclass whose SetupUI() override replaces
 //      xiaozhi's chat/status screen with our hold-to-talk screen.
-//   3. Optionally seeds WiFi credentials into SsidManager. The application
-//      configures its native gateway protocol directly; no duplicate token
-//      is written to NVS.
+//   3. Hardware lifecycle owns authenticated provisioning and device credentials;
+//      no compiled Wi-Fi or account credentials are seeded at boot.
 //   4. Exposes extern "C" `cube_*` shims so the esp32-devtool verb files
 //      under main/devtool_verbs/ can reach Application/SentientWsProtocol
 //      state without pulling main into the devtool component's REQUIRES.
@@ -55,18 +54,21 @@
 #include <lvgl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
-#include "sentient_creds.h"
 
 #include "sentient_tokens.h"
 #include "sentient_ui_controller.h"
+#include "cube_hardware.h"
 #include "test_screen.h"
 #include "esp32_devtool/companion.h"
 
 static const char* TAG = "sentient.cube.board";
+static std::atomic<bool> s_display_asleep{false};
+static CubeWakeGesture s_wake_gesture;
 
 // ---------------------------------------------------------------------------
 // Per-board provider functions. Defined as extern "C" so the cube_* shims
@@ -110,7 +112,7 @@ static void sentient_button_toggle_provider(void) {
 static void sentient_tts_cancel_provider(void) {
     // Sentient SDK barge-in path: stops the active uplink, resets the local
     // decoder, and clears in-flight playback.
-    Application::GetInstance().AbortSpeaking();
+    Application::GetInstance().Schedule([]() { Application::GetInstance().AbortSpeaking(); });
 }
 
 static bool sentient_play_pcm_provider(const int16_t* samples, size_t count, int sample_rate) {
@@ -121,14 +123,10 @@ static bool sentient_record_pcm_provider(int16_t* dst, size_t count, int sample_
     return Application::GetInstance().GetAudioService().RecordPcm(dst, count, sample_rate);
 }
 
-// SentientWsProtocol provider triple for the sentient.* HIL verbs. Each
-// guards against the pre-WiFi window where Application::sentient_ws() is
-// still nullptr (the protocol is constructed on first network-up event).
+// Diagnostics read snapshots or schedule work on the protocol owner task.
 static const char* sentient_sdk_status_provider(void) {
-    auto* ws = Application::GetInstance().sentient_ws();
-    if (ws == nullptr) return "uninit";
     using sentient::cube::SdkStatus;
-    switch (ws->status()) {
+    switch (static_cast<SdkStatus>(Application::GetInstance().GetSdkStatus())) {
         case SdkStatus::Disconnected:   return "Disconnected";
         case SdkStatus::Connecting:     return "Connecting";
         case SdkStatus::Authenticating: return "Authenticating";
@@ -136,38 +134,29 @@ static const char* sentient_sdk_status_provider(void) {
         case SdkStatus::Reconnecting:   return "Reconnecting";
         case SdkStatus::Error:          return "Error";
     }
-    return "?";
+    return "uninit";
 }
 
 static void sentient_sdk_force_reconnect_provider(void) {
-    auto* ws = Application::GetInstance().sentient_ws();
-    if (ws != nullptr) ws->force_reconnect();
+    Application::GetInstance().ForceProtocolReconnect();
 }
 
 static size_t sentient_sdk_last_transcript_provider(char* dst, size_t dst_cap) {
-    if (dst == nullptr || dst_cap == 0) return 0;
-    auto* ws = Application::GetInstance().sentient_ws();
-    if (ws == nullptr) {
-        dst[0] = '\0';
-        return 0;
-    }
-    const std::string s = ws->last_transcript();
-    const size_t n = (s.size() < dst_cap - 1) ? s.size() : dst_cap - 1;
-    std::memcpy(dst, s.data(), n);
-    dst[n] = '\0';
-    return n;
+    // Retired diagnostic: committed history is not a capture transcript.
+    if (dst != nullptr && dst_cap != 0) dst[0] = '\0';
+    return 0;
 }
 
 // Forward declaration — defined further down in the extern "C" block.
 extern "C" int cube_capture_ui_snapshot(uint16_t* dst, size_t dst_cap,
                                          int* out_w, int* out_h);
+extern "C" bool cube_setup_display_visible(void);
 
 // ---------------------------------------------------------------------------
 // esp32_devtool snapshot provider — lazily allocates a PSRAM buffer sized for
 // the panel's native resolution and delegates to cube_capture_ui_snapshot().
-// Returns the ACTUAL captured dimensions from LVGL (display registered as
-// 466×466, but panel native is 480×480 — we size the buffer for the worst
-// case and let LVGL fill what it manages).
+// Returns the actual captured dimensions from LVGL. Current display and panel
+// are both 480×480; buffer capacity remains checked against runtime geometry.
 // ---------------------------------------------------------------------------
 
 static constexpr int kMaxPanelDim = 480;
@@ -191,7 +180,8 @@ static SynthTap s_synth_tap = {};
 static int cube_snapshot_provider(esp32_devtool_snapshot_t* out) {
     if (s_snap_buf == nullptr) {
         s_snap_buf = static_cast<uint16_t*>(
-            heap_caps_malloc(kSnapBufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, kSnapBufBytes,
+                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         if (s_snap_buf == nullptr) {
             ESP_LOGE(TAG, "cube_snapshot_provider: PSRAM alloc failed");
             return -1;
@@ -244,7 +234,7 @@ static int cube_info_provider(esp32_devtool_info_t* out) {
         mac_buf[0] = '\0';
     }
 
-    out->device_id     = SENTIENT_DEVICE_ID;
+    out->device_id     = mac_buf; // Hardware diagnostic identity, not enrollment authority.
     out->board         = "cube";
     out->chip          = "esp32-s3";
     out->ip            = ip_buf;
@@ -283,9 +273,12 @@ extern "C" bool cube_voice_processing(void) {
     return Application::GetInstance().GetAudioService().IsAudioProcessorRunning();
 }
 
-extern "C" bool cube_playback_drained(void) {
-    return Application::GetInstance().GetAudioService().IsPlaybackDrained();
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE && CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE
+extern "C" bool cube_mic1_gain_register(int* value) {
+    if (!value) return false;
+    return static_cast<BoxAudioCodec*>(Board::GetInstance().GetAudioCodec())->GetMic1GainRegister(*value);
 }
+#endif
 
 extern "C" void cube_button_toggle(void) {
     sentient_button_toggle_provider();
@@ -333,60 +326,55 @@ extern "C" size_t cube_sentient_last_transcript(char* dst, size_t dst_cap) {
 }
 
 // ---------------------------------------------------------------------------
-// UI snapshot capture — fills dst with the current display contents as
-// RGB565 LE. Uses lv_snapshot_take (same as ui_snapshot.cc) then memcpy
-// the pixel data into the caller-provided buffer. Holds the LVGL mutex
-// for the duration of the snapshot + copy.
-//
-// Returns 0 on success, -1 on LVGL lock timeout or snapshot failure.
-// dst must point to at least w * h * 2 bytes of writable storage.
+// UI snapshot capture — render directly into caller-owned PSRAM. LVGL may
+// still allocate draw tasks/layers; no second full-frame allocation is needed.
+// Keep the lock through rendering and optional in-place stride compaction.
 // ---------------------------------------------------------------------------
 
 static const int kSnapLvglLockMs = 2000;
 
-// Capture the active LVGL screen into `dst` as packed RGB565 LE (no stride
-// padding). Returns 0 on success and writes the actual captured dimensions
-// into *out_w / *out_h. `dst_cap` is the dst buffer's byte capacity.
-//
-// The draw_buf returned by lv_snapshot_take carries its own w/h/stride —
-// blindly memcpy'ing raw bytes produces a diagonally-sheared image when the
-// internal stride is wider than w*2 (cube panel native is 480px but the visible
-// LVGL display is 466px, so LVGL pads each row). Copy row-by-row using the
-// draw_buf's stride to get a packed output.
 extern "C" int cube_capture_ui_snapshot(uint16_t* dst, size_t dst_cap,
                                          int* out_w, int* out_h) {
     if (dst == nullptr || out_w == nullptr || out_h == nullptr) return -1;
+    // Debug LAN snapshots must not turn the on-screen bootstrap proof into an API.
+    if (sentient::cube::CubeHardware::Get().Presentation().setup) return -1;
+    // Rendering still needs internal draw-task memory. Do not run diagnostics
+    // over an active capture; recheck after waiting for the display lock.
+    if (cube_voice_processing()) return -1;
     if (!lvgl_port_lock(kSnapLvglLockMs)) {
         ESP_LOGW(TAG, "cube_capture_ui_snapshot: lvgl lock timeout");
         return -1;
     }
-    lv_obj_t* screen = lv_screen_active();
-    lv_draw_buf_t* draw_buf = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB565);
-    lvgl_port_unlock();
-
-    if (draw_buf == nullptr) {
-        ESP_LOGE(TAG, "cube_capture_ui_snapshot: lv_snapshot_take returned null");
+    if (cube_setup_display_visible() || cube_voice_processing()) {
+        lvgl_port_unlock();
+        return -1;
+    }
+    // init does not fix alignment; reshape (inside snapshot) checks padded
+    // capacity, including extended draw bounds, before any rendering occurs.
+    constexpr auto cf = LV_COLOR_FORMAT_RGB565;
+    lv_draw_buf_t draw_buf;
+    if (dst_cap > UINT32_MAX || lv_draw_buf_align(dst, cf) != dst ||
+        lv_draw_buf_init(&draw_buf, 1, 1, cf, LV_STRIDE_AUTO,
+                         dst, static_cast<uint32_t>(dst_cap)) != LV_RESULT_OK ||
+        lv_snapshot_take_to_draw_buf(lv_screen_active(), cf, &draw_buf) != LV_RESULT_OK) {
+        lvgl_port_unlock();
         return -1;
     }
 
-    const int w = draw_buf->header.w;
-    const int h = draw_buf->header.h;
-    const uint32_t stride = draw_buf->header.stride;  // bytes per row in src
+    const int w = draw_buf.header.w;
+    const int h = draw_buf.header.h;
+    const uint32_t stride = draw_buf.header.stride;
     const size_t packed_row = (size_t)w * 2;
     const size_t needed = packed_row * (size_t)h;
-    if (needed > dst_cap) {
-        ESP_LOGE(TAG, "cube_capture_ui_snapshot: dst too small need=%u cap=%u (%dx%d)",
-                 (unsigned)needed, (unsigned)dst_cap, w, h);
-        lv_draw_buf_destroy(draw_buf);
-        return -1;
+    if (stride != packed_row) {
+        auto* pixels = reinterpret_cast<uint8_t*>(dst);
+        for (int y = 1; y < h; ++y) {
+            std::memmove(pixels + (size_t)y * packed_row,
+                         pixels + (size_t)y * stride, packed_row);
+        }
     }
-
-    const uint8_t* src = static_cast<const uint8_t*>(draw_buf->data);
-    uint8_t* out = reinterpret_cast<uint8_t*>(dst);
-    for (int y = 0; y < h; ++y) {
-        std::memcpy(out + (size_t)y * packed_row, src + (size_t)y * stride, packed_row);
-    }
-    lv_draw_buf_destroy(draw_buf);
+    // Stack descriptor and borrowed pixels: never lv_draw_buf_destroy here.
+    lvgl_port_unlock();
 
     *out_w = w;
     *out_h = h;
@@ -398,7 +386,7 @@ extern "C" int cube_capture_ui_snapshot(uint16_t* dst, size_t dst_cap,
 // ---------------------------------------------------------------------------
 // Synthetic touch injection — writes into s_synth_tap from the httpd task so
 // that SentientTouchReadCb (LVGL task) emits a synthetic PRESSED for the
-// requested hold window, then a real RELEASED. The existing press→release
+// requested hold window, then an explicit synthetic RELEASED. The existing press→release
 // detector inside SentientTouchReadCb fires the same `touch.tap` EVT it would
 // for a physical tap.
 //
@@ -570,7 +558,7 @@ public:
     }
 
     virtual void SetupUI() override {
-        ESP_LOGI(TAG, "setup_ui device_id=" SENTIENT_DEVICE_ID);
+        ESP_LOGI(TAG, "setup_ui");
 
         // Parent creates LVGL display + status bar; we then customize.
         SpiLcdDisplay::SetupUI();
@@ -583,24 +571,11 @@ public:
         lv_display_add_event_cb(display_, rounder_event_cb,
                                 LV_EVENT_INVALIDATE_AREA, NULL);
 
-        // Phase 5: restore the toggle-button screen as the boot UI. This
-        // spawns the device-state polling task in sentient_ui_controller.cc,
-        // which is the sole emitter of:
-        //   >>> READY
-        //   >>> CHECKPOINT {listen,ws,wifi}.{start,stop,connected,disconnected}
-        // The Phase 2 test-screen path is retained as a callable function
-        // (sentient_cube_show_test_screen()) so HIL UI-snapshot smoke can
-        // still exercise it via a verb if a future need arises.
+        // Pack-independent BootView. Application publishes readiness only after
+        // decoding and font installation, outside this display lock.
         sentient_cube_create_toggle_button_screen();
-        lv_obj_set_parent(notification_label_, lv_screen_active());
-        lv_obj_set_width(notification_label_, LV_HOR_RES * 0.8);
-        lv_obj_set_style_text_font(notification_label_, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(notification_label_, lv_color_hex(SENTIENT_INK), 0);
-        lv_obj_set_style_bg_color(notification_label_, lv_color_hex(SENTIENT_BG_DARKER), 0);
-        lv_obj_set_style_bg_opa(notification_label_, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(notification_label_, 12, 0);
-        lv_obj_set_style_pad_all(notification_label_, 4, 0);
-        lv_obj_align(notification_label_, LV_ALIGN_TOP_MID, 0, 8);
+        // Cube screen owns its status/battery art. Leave inherited status bar on
+        // parent's inactive screen; upstream notifications may contain user text.
     }
 };
 
@@ -652,10 +627,14 @@ private:
         // the cube wake-recoverable from any state.
         power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
         power_save_timer_->OnEnterSleepMode([this]() {
+            s_display_asleep = true;
+            sentient_cube_set_sleep(true);
             GetDisplay()->SetPowerSaveMode(true);
-            GetBacklight()->SetBrightness(20);
+            GetBacklight()->SetBrightness(0, /*permanent=*/false); // Wake restores saved brightness.
         });
         power_save_timer_->OnExitSleepMode([this]() {
+            s_display_asleep = false;
+            sentient_cube_set_sleep(false);
             GetDisplay()->SetPowerSaveMode(false);
             GetBacklight()->RestoreBrightness();
         });
@@ -868,9 +847,7 @@ private:
                 auto codec = GetAudioCodec();
                 int volume = std::clamp(codec->output_volume() + delta, 0, 100);
                 codec->SetOutputVolume(volume);
-                char notification[24];
-                std::snprintf(notification, sizeof(notification), "Volume %d%%", volume);
-                GetDisplay()->ShowNotification(notification, 1500);
+                sentient_cube_show_volume(volume);
             });
         };
         volume_up_button_.OnPressDown([change_volume]() { change_volume(5); });
@@ -885,7 +862,7 @@ private:
     }
 
     void InitializeDisplay() {
-        ESP_LOGI(TAG, "init_display device_id=" SENTIENT_DEVICE_ID);
+        ESP_LOGI(TAG, "init_display");
 
         esp_lcd_panel_io_handle_t panel_io = nullptr;
         esp_lcd_panel_handle_t panel = nullptr;
@@ -946,11 +923,11 @@ private:
     // shared I2C bus during WiFi RF turn-on, audio codec mode changes, charger
     // state transitions, etc. This callback treats any read failure as
     // "no touch this tick" and continues; LVGL retries next tick.
-    static void SafeTouchReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
+    static bool SafeTouchReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
         auto* tp = static_cast<esp_lcd_touch_handle_t>(lv_indev_get_driver_data(indev));
         if (tp == nullptr || esp_lcd_touch_read_data(tp) != ESP_OK) {
             data->state = LV_INDEV_STATE_RELEASED;
-            return;
+            return false;
         }
         uint16_t x = 0, y = 0, strength = 0;
         uint8_t cnt = 0;
@@ -962,6 +939,7 @@ private:
         } else {
             data->state = LV_INDEV_STATE_RELEASED;
         }
+        return true;
     }
 
     // Tap-detector wrapper around SafeTouchReadCb. Runs the safe read first,
@@ -975,11 +953,12 @@ private:
     //
     // Synthetic-tap overlay: if s_synth_tap.active and we're still inside the
     // hold window, synthesize PRESSED with the synthetic coords and skip the
-    // hardware read this tick. Once the deadline passes, clear `active` and
-    // fall through to the real read — the next tick will emit RELEASED and
+    // hardware read this tick. Once the deadline passes, emit a valid synthetic
+    // RELEASED before resuming hardware reads on the next tick. Thus
     // the press→release detector below fires the touch.tap EVT with the
     // synthetic coordinates (identical wire shape to a physical tap).
     static void SentientTouchReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
+        bool valid = true;
         if (s_synth_tap.active) {
             if (esp_timer_get_time() < s_synth_tap.release_at_us) {
                 data->point.x = s_synth_tap.x;
@@ -987,16 +966,25 @@ private:
                 data->state   = LV_INDEV_STATE_PRESSED;
             } else {
                 s_synth_tap.active = false;
-                SafeTouchReadCb(indev, data);
+                // This release belongs to the injected gesture, not CST9217.
+                // An invalid physical read must not keep synthetic wake latched.
+                data->state = LV_INDEV_STATE_RELEASED;
             }
         } else {
-            SafeTouchReadCb(indev, data);
+            valid = SafeTouchReadCb(indev, data);
         }
 
         static bool s_was_pressed_last_tick = false;
         static lv_point_t s_last_pressed_point = { 0, 0 };
 
-        const bool is_pressed = (data->state == LV_INDEV_STATE_PRESSED);
+        const bool raw_pressed = data->state == LV_INDEV_STATE_PRESSED;
+        const bool asleep = s_display_asleep.load();
+        const bool is_pressed = s_wake_gesture.accept(raw_pressed, asleep, valid);
+        if (raw_pressed && asleep) {
+            auto& board = static_cast<SentientCubeBoard&>(Board::GetInstance());
+            board.power_save_timer_->WakeUp();
+        }
+        if (!is_pressed) data->state = LV_INDEV_STATE_RELEASED;
 
         if (is_pressed) {
             s_last_pressed_point = data->point;
@@ -1070,21 +1058,11 @@ private:
         ESP_LOGI(TAG, "Touch panel initialized successfully indev=%p", (void*)indev);
     }
 
-#if !SENTIENT_PRESERVE_WIFI
-    // Seed WiFi credentials so TryWifiConnect() finds an SSID without the
-    // user going through the BLE/hotspot config flow.
-    // AddSsid is idempotent for the same SSID — safe to call every boot.
-    void InjectWifiCredentials() {
-        ESP_LOGI(TAG, "inject_wifi device_id=" SENTIENT_DEVICE_ID);
-        SsidManager::GetInstance().AddSsid(SENTIENT_WIFI_SSID, SENTIENT_WIFI_PSK);
-        ESP_LOGI(TAG, "inject_wifi.done");
-    }
-#endif
 
 public:
     SentientCubeBoard()
         : volume_up_button_(VOLUME_UP_BUTTON_GPIO), boot_button_(BOOT_BUTTON_GPIO) {
-        ESP_LOGI(TAG, "ctor begin device_id=" SENTIENT_DEVICE_ID);
+        ESP_LOGI(TAG, "ctor begin");
 
         // Hardware bring-up (verbatim from waveshare init order).
         InitializePowerSaveTimer();
@@ -1096,10 +1074,6 @@ public:
         InitializeTouch();
         InitializeButtons();
 
-        // Without explicit WiFi, TryWifiConnect() uses stored SSIDs.
-#if !SENTIENT_PRESERVE_WIFI
-        InjectWifiCredentials();
-#endif
 
         // esp32_devtool companion: USB-CDC verb reader + HTTP server on :8081
         // + UDP log relay. Registers info / snapshot / touch / audio providers
@@ -1131,7 +1105,7 @@ public:
         ESP_LOGI(TAG, "devtool_companion.started");
 #endif
 
-        ESP_LOGI(TAG, "ctor end device_id=" SENTIENT_DEVICE_ID);
+        ESP_LOGI(TAG, "ctor end");
     }
 
     virtual AudioCodec* GetAudioCodec() override {
@@ -1147,7 +1121,8 @@ public:
             AUDIO_CODEC_PA_PIN,
             AUDIO_CODEC_ES8311_ADDR,
             AUDIO_CODEC_ES7210_ADDR,
-            AUDIO_INPUT_REFERENCE);
+            AUDIO_INPUT_REFERENCE,
+            CONFIG_CUBE_MIC1_GAIN_DB);
         return &audio_codec;
     }
 
@@ -1170,6 +1145,9 @@ public:
         }
 
         level = pmic_->GetBatteryLevel();
+        sentient::cube::CubeHardware::Get().Battery(level, charging);
+        sentient_cube_set_battery(charging, level < 20 && discharging);
+        sentient_cube_set_battery_level(level);
         return true;
     }
 

@@ -23,7 +23,7 @@
 
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import type { UserRole } from "@sentient/protocol";
+import { type UserRole, sessionHistoryFieldsSchema } from "@sentient/protocol";
 import { type AccessManager, createAccessManager } from "../../access/access-manager.js";
 import type { Capability } from "../../access/capability.js";
 import { createUserPrincipal } from "../../identity/user-principal.js";
@@ -273,6 +273,107 @@ describe("GET /api/v1/sessions", () => {
   });
 });
 
+describe("GET /api/v1/sessions/search", () => {
+  it("routes search before session IDs, filters owned titles, and preserves Cube pin after deletion", async () => {
+    const h = freshHarness();
+    const owner = h.makeUser("search-owner");
+    const other = h.makeUser("search-other");
+    const store = openSessionStore(
+      h.accessManager.grant(createUserPrincipal(owner.userId, "adult", "home"), "session-store"),
+    );
+    const first = store.admitCubeInput({
+      inputId: "synthetic-search-first",
+      expectedFence: store.getCubeAdmissionFence(),
+      dreamerHour: 3,
+      now: Date.now(),
+      entry: {
+        kind: "user",
+        turnId: "synthetic-turn",
+        replyId: null,
+        createdAt: Date.now(),
+        text: "synthetic",
+        toolCallId: null,
+        toolName: null,
+        toolArgs: null,
+        cutoff: null,
+        compactedThroughSeq: null,
+      },
+    });
+    if (first.status !== "accepted") throw new Error(first.status);
+    const version = store.getSession(first.sessionId)?.version;
+    if (version === undefined) throw new Error("missing session");
+    store.setTitle(first.sessionId, "Synthetic Cube day 1", "user", version);
+    const latest = store.admitCubeInput({
+      inputId: "synthetic-search-latest",
+      expectedFence: store.getCubeAdmissionFence(),
+      dreamerHour: 3,
+      now: Date.now() + 2 * 86_400_000,
+      entry: {
+        kind: "user",
+        turnId: "synthetic-latest-turn",
+        replyId: null,
+        createdAt: Date.now(),
+        text: "synthetic",
+        toolCallId: null,
+        toolName: null,
+        toolArgs: null,
+        cutoff: null,
+        compactedThroughSeq: null,
+      },
+    });
+    if (latest.status !== "accepted") throw new Error(latest.status);
+    store.close();
+    seedSession(h.accessManager, owner, "ordinary");
+    const foreignId = seedSession(h.accessManager, other, "private");
+    const foreignStore = openSessionStore(
+      h.accessManager.grant(createUserPrincipal(other.userId, "adult", "home"), "session-store"),
+    );
+    expect(foreignStore.setTitle(foreignId, "Synthetic Cube private", "user", 1)).toBe(true);
+    foreignStore.close();
+    expect(
+      (
+        await h.handleSessions(
+          new Request(`https://x/api/v1/sessions/${latest.sessionId}`, {
+            method: "DELETE",
+            headers: { authorization: `Bearer ${owner.token}` },
+          }),
+        )
+      ).status,
+    ).toBe(204);
+
+    const path = `/api/v1/sessions/search?q=synthetic%20cube&limit=20&userId=${other.userId}`;
+    expect((await h.handleSessions(new Request(`https://x${path}`))).status).toBe(401);
+    const response = await h.handleSessions(requestAs(owner, path));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.items).toEqual([
+      expect.objectContaining({
+        sessionId: first.sessionId,
+        title: "Synthetic Cube day 1",
+        provenance: "cube",
+        readOnly: true,
+        currentPin: true,
+      }),
+    ]);
+    expect((await (await h.handleSessions(requestAs(other, path))).json()).items).toEqual([
+      expect.objectContaining({ sessionId: foreignId, title: "Synthetic Cube private" }),
+    ]);
+    expect(
+      (await (await h.handleSessions(requestAs(owner, "/api/v1/sessions/search?q=synthetic&limit=0"))).json()).items,
+    ).toHaveLength(1);
+    expect(
+      (
+        await h.handleSessions(
+          new Request("https://x/api/v1/sessions/search", {
+            method: "DELETE",
+            headers: { authorization: `Bearer ${owner.token}` },
+          }),
+        )
+      ).status,
+    ).toBe(405);
+  });
+});
+
 describe("GET /api/v1/sessions/:id/messages", () => {
   it("SECURITY: an id absent from the caller's store 404s, same as one that never existed", async () => {
     const { handleSessions, makeUser } = freshHarness();
@@ -382,4 +483,72 @@ describe("DELETE session", () => {
     expect(h.deleted).toEqual([]);
     expect((await h.handleSessions(requestAs(owner, `/api/v1/sessions/${id}/messages`))).status).toBe(200);
   });
+});
+
+it("projects durable Cube history flags without runtime admission and keeps owner deletion", async () => {
+  const h = freshHarness();
+  const user = h.makeUser("cube-history");
+  const foreign = h.makeUser("foreign");
+  const store = openSessionStore(
+    h.accessManager.grant(createUserPrincipal(user.userId, "adult", "home"), "session-store"),
+  );
+  const human = mintSessionId();
+  store.createSession(human, "human-draft");
+  const admitted = store.admitCubeInput({
+    inputId: "synthetic-input",
+    expectedFence: store.getCubeAdmissionFence(),
+    dreamerHour: 3,
+    now: Date.now(),
+    entry: {
+      kind: "user",
+      turnId: "synthetic-turn",
+      replyId: null,
+      createdAt: Date.now(),
+      text: "synthetic",
+      toolCallId: null,
+      toolName: null,
+      toolArgs: null,
+      cutoff: null,
+      compactedThroughSeq: null,
+    },
+  });
+  if (admitted.status !== "accepted") throw new Error(admitted.status);
+  store.closeCubeSessionExecution(admitted.sessionId, "revoked");
+  store.close();
+  const list = await (await h.handleSessions(requestAs(user, "/api/v1/sessions"))).json();
+  expect(list.sessions.find((s: { sessionId: string }) => s.sessionId === human)).toMatchObject({
+    provenance: "human",
+    readOnly: false,
+    currentPin: false,
+    executionClosed: false,
+  });
+  expect(list.sessions.find((s: { sessionId: string }) => s.sessionId === admitted.sessionId)).toMatchObject({
+    provenance: "cube",
+    readOnly: true,
+    currentPin: true,
+    executionClosed: true,
+  });
+  const messages = await (
+    await h.handleSessions(requestAs(user, `/api/v1/sessions/${admitted.sessionId}/messages`))
+  ).json();
+  expect(sessionHistoryFieldsSchema.parse(messages)).toEqual({
+    provenance: "cube",
+    readOnly: true,
+    currentPin: true,
+    executionClosed: true,
+  });
+  expect(messages.items).toHaveLength(1);
+  expect((await h.handleSessions(requestAs(foreign, `/api/v1/sessions/${admitted.sessionId}/messages`))).status).toBe(
+    404,
+  );
+  const deleted = await h.handleSessions(
+    new Request(`https://x/api/v1/sessions/${admitted.sessionId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${user.token}` },
+    }),
+  );
+  expect(deleted.status).toBe(204);
+  const remaining = await (await h.handleSessions(requestAs(user, "/api/v1/sessions"))).json();
+  expect(remaining.sessions).toHaveLength(1);
+  expect(remaining.sessions[0].currentPin).toBe(false);
 });

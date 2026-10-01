@@ -1,28 +1,21 @@
 # Agent Console — Details
 
-## Surface
+## Surface and ownership
 
-The debug companion exposes USB-CDC JSON-RPC through `esp32-devtool cmd`. Firmware
-verbs live in `esp32/cube/firmware/main/devtool_verbs/`; HTTP handlers live in the
-companion under `esp32/devtool/firmware/`. Both use constructor registration and
-must be retained with `WHOLE_ARCHIVE`.
+Debug devtool companion exposes USB-CDC JSON-RPC through `esp32-devtool cmd`. Cube verbs live in `esp32/cube/firmware/main/devtool_verbs/`; companion handlers live in `esp32/devtool/firmware/`. Constructor registration requires `WHOLE_ARCHIVE` retention. Add verbs through existing `devtool_register_verb()` conventions with bounded validation and stable JSON results, not a parallel dispatcher or serial helper.
 
-Add a verb by following an existing verb file: validate params, write the stable
-JSON result/error contract, register with `devtool_register_verb()`, and add it to
-the board manifest when appropriate. Do not create a parallel dispatcher or
-host serial helper. Keep `--json` output machine-readable.
+Project manifest is `esp32/cube/devtool/boards/cube.yaml`, selected by `scripts/env.sh`. Inspect manifest and registration source together; manifest lists are not proof every registered verb is safe. Keep `--json` output machine-readable.
 
-Current USB-CDC verbs include `state`, `mark`, `restart`, `log_level`,
-`button.toggle`, `tts.cancel`, the `wifi.*` controls, `sentient.*` controls,
-`audio.*` helpers, and `ui.dump_tree`. Check the source and
-`esp32/devtool/boards/cube.yaml` for the authoritative registry/manifest.
+## Content-bearing diagnostics
 
-There is no `ui.snapshot` USB verb. Screenshots use the HTTP `GET /screenshot`
-endpoint and are retrieved with `esp32-devtool screenshot`; see the frozen
-[HTTP contract](../../../../esp32/devtool/docs/HTTP-CONTRACT.md).
+Use bounded `state` and `cube.hardware.status` for approved local inspection. `UNKNOWN` may be normal during bootstrap; application voice state is not enrollment state.
 
-The daemon owns the USB-CDC port and keeps the per-port socket/ring. Use
-`esp32-devtool cmd`, `daemon ring`, and `screenshot`; do not open pyserial or a
-second monitor session beside it. Tests that need raw checkpoint matching must
-coordinate ownership through their fixtures; `cube_dut` and `serial_dut` must
-not compete for the port.
+Do not run `cmd ui.dump_tree` or `ui dump-tree` while pairing proof is populated, including hidden labels. Current tree exporter includes label text and has no matching bootstrap screenshot guard. `sentient.last_transcript` returns transcript content. Neither is a sanitized diagnostic surface: do not place secrets or real-user content into USB replies, daemon rings, terminal output or agent context. These restrictions document an open source boundary gap, not a firmware fix.
+
+No `ui.snapshot` USB verb exists. Screenshots use HTTP `GET /screenshot` through `esp32-devtool screenshot`; consult the [HTTP contract](../../../../esp32/devtool/docs/HTTP-CONTRACT.md). Preserve bootstrap screenshot refusal and do not bypass it. Other screenshots may still contain private UI content and require approved local scope/private handling.
+
+## Transport
+
+The daemon owns USB-CDC and its socket/ring. Use supported `cmd`, `daemon ring` and approved HTTP surfaces; never open a competing pyserial connection or monitor.
+
+Existing HIL `serial_dut` opens raw serial without daemon handoff. Do not combine it with daemon-backed operations or assume fixtures coordinate ownership. Approved checkpoint checks should consume the daemon ring. A command acknowledgement or explicit `mark` is not proof an asynchronous action completed; observe its actual target state.

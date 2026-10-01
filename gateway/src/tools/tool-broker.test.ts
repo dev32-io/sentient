@@ -2438,3 +2438,211 @@ describe("ToolBroker — memory tools route to the memory_body channel", () => {
     expect(write).toEqual({ content: "result from test-mcp/add_todo", isError: false });
   });
 });
+
+describe("ToolBroker — trusted Cube initial grant", () => {
+  function fixture(role: UserRole = "adult", cube = true) {
+    let permissions: ToolPermissionMap | undefined;
+    let failedRead = false;
+    let nativeCalls = 0;
+    let delegatedCalls = 0;
+    const mcp = fakeMcp([weatherTool, todoTool]);
+    const native: NativeToolRunner = {
+      definition: {
+        name: "local_read",
+        description: "",
+        parameters: {},
+        category: "foreground",
+        tier: "read",
+        productGroup: "memory",
+      },
+      run: async () => {
+        nativeCalls++;
+        return { content: "ok", isError: false };
+      },
+    };
+    const delegated: BackgroundToolRunner = {
+      definition: {
+        name: "delegateTask",
+        description: "",
+        parameters: {},
+        category: "background",
+        tier: "confirm",
+        productGroup: "research",
+      },
+      run: () => {
+        delegatedCalls++;
+        return { cancel() {}, result: Promise.resolve({ content: "ok", isError: false }) };
+      },
+    };
+    const broker = createToolBroker({
+      mcp,
+      catalog: testCatalog,
+      store: fakeStore(),
+      capability: Object.freeze({
+        ...capability,
+        role,
+        ...(cube ? { origin: Object.freeze({ kind: "cube" as const, deviceId: "test-device", generation: 1 }) } : {}),
+      }),
+      sessionId: "cube-policy-test",
+      config: toolsConfig,
+      backgroundTools: new Map([["delegateTask", delegated]]),
+      nativeTools: new Map([["local_read", native]]),
+      toolPermissions: async () => {
+        if (failedRead) throw new Error("unavailable");
+        return permissions;
+      },
+      requestConfirm: async () => false,
+    });
+    return {
+      broker,
+      mcp,
+      set: (p: ToolPermissionMap | undefined) => {
+        permissions = p;
+      },
+      fail: () => {
+        failedRead = true;
+      },
+      calls: () => ({ nativeCalls, delegatedCalls }),
+    };
+  }
+
+  it("defaults all transports off; owner defaults cannot enable Cube tools", async () => {
+    const f = fixture();
+    f.set({ "test-mcp": { "*": "allow" }, memory: { "*": "allow" }, research: { "*": "allow" } });
+    await f.broker.ready();
+    expect(f.broker.definitions()).toEqual([]);
+    for (const name of ["get_weather", "local_read", "delegateTask"])
+      expect(await f.broker.dispatch(makeInvocation({ name }))).toMatchObject({ isError: true });
+    expect(f.mcp.callToolCalls).toHaveLength(0);
+    expect(f.calls()).toEqual({ nativeCalls: 0, delegatedCalls: 0 });
+  });
+
+  it("enables explicit Cube choices across MCP/native/delegation and rereads each dispatch", async () => {
+    const f = fixture();
+    f.set({ cube: { get_weather: "allow", local_read: "allow", delegateTask: "allow" } });
+    await f.broker.ready();
+    expect(
+      f.broker
+        .definitions()
+        .map((d) => d.name)
+        .sort(),
+    ).toEqual(["delegateTask", "get_weather", "local_read"]);
+    expect(await f.broker.dispatch(makeInvocation())).toMatchObject({ isError: false });
+    expect(await f.broker.dispatch(makeInvocation({ name: "local_read" }))).toMatchObject({ isError: false });
+    expect(await f.broker.dispatch(makeInvocation({ name: "delegateTask" }))).toHaveProperty("taskId");
+    expect(f.calls()).toEqual({ nativeCalls: 1, delegatedCalls: 1 });
+    f.set({ cube: { get_weather: "off" } });
+    expect(await f.broker.dispatch(makeInvocation())).toMatchObject({ isError: true });
+    expect(f.mcp.callToolCalls).toHaveLength(1);
+  });
+
+  it("retains role ceilings even under Cube wildcard allow", async () => {
+    const f = fixture("guest");
+    f.set({ cube: { "*": "allow" } });
+    await f.broker.ready();
+    expect(
+      f.broker
+        .definitions()
+        .map((d) => d.name)
+        .sort(),
+    ).toEqual(["get_weather", "local_read"]);
+    for (const name of ["add_todo", "delegateTask"])
+      expect(await f.broker.dispatch(makeInvocation({ name }))).toMatchObject({ isError: true });
+    expect(f.calls().delegatedCalls).toBe(0);
+  });
+
+  it("fails closed on unreadable settings, and leaves ordinary grants unchanged", async () => {
+    const f = fixture();
+    f.set({ cube: { get_weather: "allow" } });
+    await f.broker.ready();
+    f.fail();
+    expect(await f.broker.dispatch(makeInvocation())).toMatchObject({ isError: true });
+    expect(f.broker.definitions()).toEqual([]);
+    const human = fixture("adult", false);
+    human.set({ cube: { "*": "off" }, "test-mcp": { get_weather: "allow" } });
+    expect(await human.broker.dispatch(makeInvocation())).toMatchObject({ isError: false });
+  });
+});
+
+it("Cube profile read failure drops cached Cube allows without changing ordinary cached permissions", async () => {
+  const reader = createToolPermissionsReader({
+    userId: capability.ownerUserId,
+    profileStore: profileStoreReturning(
+      { ok: true, value: profileFixture({ cube: { get_weather: "allow" }, web: { search_web: "deny" } }) },
+      { ok: false, error: "io-error" },
+    ),
+  });
+  expect((await reader())?.cube?.get_weather).toBe("allow");
+  expect(await reader()).toEqual({ cube: {}, web: { search_web: "deny" } });
+});
+
+describe("ToolBroker — execution fence after policy await", () => {
+  for (const lane of ["mcp", "native", "background"] as const) {
+    it(`${lane} cannot start work retired during permission resolution`, async () => {
+      let allowed = true;
+      let retireDuringPolicy = false;
+      let starts = 0;
+      const result = { content: "test", isError: false };
+      const definition = {
+        name: "get_weather",
+        description: "test",
+        parameters: {},
+        category: "foreground" as const,
+        tier: "read" as const,
+      };
+      const mcp = fakeMcp([weatherTool]);
+      const broker = createToolBroker({
+        mcp,
+        catalog: testCatalog,
+        store: fakeStore(),
+        capability,
+        sessionId: "execution-fence",
+        config: toolsConfig,
+        executionAllowed: () => allowed,
+        toolPermissions: async () => {
+          if (retireDuringPolicy) allowed = false;
+          return undefined;
+        },
+        requestConfirm: async () => true,
+        nativeTools:
+          lane === "native"
+            ? new Map([
+                [
+                  definition.name,
+                  {
+                    definition,
+                    run: async () => {
+                      starts++;
+                      return result;
+                    },
+                  },
+                ],
+              ])
+            : new Map(),
+        backgroundTools:
+          lane === "background"
+            ? new Map([
+                [
+                  definition.name,
+                  {
+                    definition: { ...definition, category: "background" as const },
+                    run: () => {
+                      starts++;
+                      return { cancel: () => {}, result: Promise.resolve(result) };
+                    },
+                  },
+                ],
+              ])
+            : new Map(),
+      });
+      await broker.dispatch(makeInvocation());
+      expect(lane === "mcp" ? mcp.callToolCalls.length : starts).toBe(1);
+      retireDuringPolicy = true;
+      expect(await broker.dispatch(makeInvocation())).toEqual({
+        content: "Session execution is closed",
+        isError: true,
+      });
+      expect(lane === "mcp" ? mcp.callToolCalls.length : starts).toBe(1);
+    });
+  }
+});

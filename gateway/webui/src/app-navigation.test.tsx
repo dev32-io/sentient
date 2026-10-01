@@ -15,7 +15,7 @@ vi.mock("./hooks/use-sessions.ts", () => ({ createUseSessions: () => observed.se
 vi.mock("./components/common/sentient-mark.tsx", () => ({ SentientMark: () => <span aria-hidden="true">Mark</span> }));
 vi.mock("./components/chat/chat-view.tsx", () => ({ ChatView: ({ messages, status }: { messages: unknown[]; status: string }) => <section><h1>Chat fixture</h1><p>Conversation state: {status}</p><p>Message count: {messages.length}</p></section> }));
 vi.mock("./components/calendar/calendar-view.tsx", () => ({ CalendarView: () => <h1>Calendar fixture</h1> }));
-vi.mock("./components/dock/composer.tsx", () => ({ ChatComposer: () => null }));
+vi.mock("./components/dock/composer.tsx", () => ({ ChatComposer: () => <button type="button">Send fixture</button> }));
 vi.mock("./components/settings/settings-view.tsx", () => ({
   SettingsView: ({ initialTab, onNavigationStateChange }: { initialTab: string; onNavigationStateChange: (s: { dirty: boolean; busy: boolean }) => void }) => {
     const [dirty, setDirty] = useState(false);
@@ -56,7 +56,7 @@ beforeEach(() => {
     dispose: observed.dispose,
     switchTo: vi.fn(async () => true),
     newChat: vi.fn(async () => true),
-    error: signal(null), currentId: signal(null), items: signal([]), searchHits: signal(null), loading: signal(false),
+    error: signal(null), viewerId: signal(null), currentId: signal(null), items: signal([]), searchHits: signal(null), loading: signal(false),
   };
   observed.localDrafts = {
     drafts: signal([]), pendingSends: signal([]), value: signal(""), activeAttachments: signal([]), uploadStates: signal({}), error: signal(null),
@@ -142,6 +142,19 @@ describe("shell navigation protects settings and conversation identity", () => {
     finishSwitch?.();
     await screen.findByText("Conversation state: ready");
     expect(location.search).toBe("");
+  });
+
+  it("shows Cube REST history without composer or live-session activation", async () => {
+    (observed.sessions as { viewerId: { value: string | null }; currentId: { value: string | null } }).viewerId.value = "cube";
+    (observed.sessions as { currentId: { value: string | null } }).currentId.value = "ordinary";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/messages")
+      ? { items: [{ kind: "user", ts: 1, content: "history", channel: "text" }], provenance: "cube", readOnly: true, currentPin: true, executionClosed: false }
+      : { audio: { ttsEnabled: false, channel: "text" } }), { status: 200 })));
+    mountStored("chat");
+    await screen.findByText("Message count: 1");
+    expect(screen.queryByText("Send fixture")).toBeNull();
+    expect((observed.sessions as { switchTo: ReturnType<typeof vi.fn> }).switchTo).not.toHaveBeenCalled();
+    expect((observed.sessions as { currentId: { value: string | null } }).currentId.value).toBe("ordinary");
   });
 
   it("renders pending sends only for active conversation", async () => {

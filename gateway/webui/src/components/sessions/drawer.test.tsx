@@ -19,6 +19,7 @@ function sessionsFixture(): UseSessions {
     error: signal(null),
     deleteFailureCount: signal(0),
     currentId: signal(null),
+    viewerId: signal(null),
     load: vi.fn().mockResolvedValue(undefined),
     search: vi.fn(async (q: string) => {
       if (!q.trim()) searchHits.value = null;

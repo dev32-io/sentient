@@ -56,6 +56,10 @@ private let responseItems: [CategoryItem] = [
     .init(icon: .model, title: "Auxiliary runners", route: .settingsAuxiliary, key: "auxiliary"),
 ]
 
+private let deviceItems: [CategoryItem] = [
+    .init(icon: .sfSymbol("cube"), title: "Cubes", route: .cube, key: "cube"),
+]
+
 private let capabilityItems: [CategoryItem] = [
     .init(icon: .calendar, title: "Calendar", route: .settingsCalendar, key: "calendar"),
     .init(icon: .advanced, title: "Scheduled messages", route: .settingsScheduledMessages, key: "scheduled-messages"),
@@ -137,6 +141,7 @@ private struct SettingsRootView: View {
                 accessNotice
                 group("Make it yours", personalItems, detail: "Shape what the assistant remembers and how it sounds.")
                 group("Responses", responseItems, detail: "Choose the model and how replies reach you.")
+                group("Devices", deviceItems)
                 group("Capabilities", capabilityItems, detail: "Manage calendars and tool access.")
                 group("Instructions and tuning", instructionItems, detail: "Adjust base instructions and expert controls.")
                 group(groupUser, userItems)

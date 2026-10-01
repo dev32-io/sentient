@@ -1,173 +1,64 @@
-# Sentient Cube — LVGL PC Simulator
+# Cube shipping-view simulator
 
-Host (macOS/Linux) SDL2 build of the Sentient Cube UI for fast UI iteration
-without flashing. Compiles the same `firmware/ui-shared/test_screen.c` that
-the device runs, rendering it in a 466×466 SDL2 window with mouse-as-touch
-input. Edit → build → run is ~2s; the device's edit → build → flash → boot
-→ smoke loop is ~30s.
+SDL2 harness compiles shipping `firmware/ui-shared/cube_views.cc`, companion parser/player, board-independent character descriptors and UI asset adapters at **480×480**. BootView, SetupView and MainView use the same code as firmware; no diagnostic-screen substitute. Mouse press/release runs the shared input boundary with host-only capture counters, never microphone/network/device calls.
 
-## Scope guard
+Resources use the same read-only paths as the bundled firmware pack. `main/source_resources.h` maps `/companions/cat/companion.json` to the board document, `/companions/cat/<pose>.rgb565` to existing `character/cat-<pose>.rgb565`, and `/ui/<filename>` to existing UI binaries in `character/`. Source bytes remain immutable for each view host's lifetime. No asset cache partition, OTA, downloads or art generation.
 
-Per spec §7, this simulator is a UI-iteration aid only. **It never replaces
-device smoke.** A green sim run is NOT evidence the device works. Device
-smoke is always required.
+## Build and checks
 
-Specifically, the sim does NOT exercise:
-- `esp_lcd_panel_draw_bitmap` async-done callback timing.
-- LVGL display-lock contention with the agent_console event-emit path.
-- Real DMA refresh, tearing, panel-IO latency.
-- `agent_console_event` emission on tap — that path is device-only.
+Dependencies: CMake, C/C++17 compiler, SDL2, Python with Pillow (already used by cube host tests), existing IDF cJSON sources, and LVGL **9.5.0** matching `firmware/dependencies.lock`. CMake defaults to the managed LVGL source; override `LVGL_DIR` for a separate matching checkout. It compiles cJSON and existing firmware qrcodegen sources directly, without invoking IDF or touching firmware build output.
 
-If a UI bug only appears in one of these axes, the sim will look fine while
-the device is broken. Always device-smoke before declaring done.
-
-## Pinned versions
-
-| Component | Version | Source |
-|---|---|---|
-| LVGL | `v9.5.0` | https://github.com/lvgl/lvgl |
-| `lv_conf.h` template SHA256 | `2ece178f34500cbb3755980c1520daee4d15fd2f0893fc68672958708c9c6291` | `firmware/managed_components/lvgl__lvgl/lv_conf_template.h` |
-| SDL2 | system Homebrew (`sdl2` 2.32.10 tested) | `brew install sdl2` |
-
-The sim's `lv_conf.h` (next to this README) is hand-mirrored from
-xiaozhi's Kconfig in `firmware/sdkconfig.defaults` + the LVGL managed
-component's Kconfig. Device-side LVGL config is generated from Kconfig and
-lives in the regenerated (gitignored) `firmware/sdkconfig`.
-
-## First-time setup (macOS)
+From repository root:
 
 ```sh
-# 1. SDL2 dev headers
-brew install sdl2 cmake
-
-# 2. Clone LVGL at the pinned version next to this README.
-cd esp32/cube/lvgl-sim
-git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl lvgl
-
-# 3. Configure + build (point find_package at Homebrew's SDL2 install)
-cmake -B build -S . -DSDL2_DIR=$(brew --prefix sdl2)/lib/cmake/SDL2
-cmake --build build -j
+source scripts/env.sh
+cmake -S esp32/cube/lvgl-sim -B /tmp/cube-companion-sim \
+  -DCJSON_DIR="$HOME/esp/esp-idf/components/json/cJSON" \
+  -DSDL2_DIR="$(brew --prefix sdl2)/lib/cmake/SDL2"
+cmake --build /tmp/cube-companion-sim -j8
+ctest --test-dir /tmp/cube-companion-sim --output-on-failure
 ```
 
-Expected: `build/sentient_cube_lvgl_sim` produced, ~1 MB arm64 binary
-(Apple Silicon) or x86_64 binary (Intel Mac).
+On Linux omit `SDL2_DIR` when SDL2 is already discoverable. `CJSON_DIR` defaults to `$IDF_PATH/components/json/cJSON` if that environment is exported. Configure separate scratch output; preserve other workers' device builds and existing checkouts.
 
-## Run
+CTest runs actual parser/player validation, real LVGL view/input/lifecycle checks, and deterministic PNG checks. Snapshot checks compare all non-background cat pixel samples against original RGB565 frames at clip boundaries, verify recording cues, repeatability, boot/error differences, and setup snapshot denial. No setup proof is exported. The focused parser/player check also runs through `tests/unit/test_toggle_button_screen_boundary.py`.
+
+## Run and snapshots
 
 ```sh
-./build/sentient_cube_lvgl_sim
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim --scene setup
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim --snapshot /tmp/cube-ready.png
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim --snapshot /tmp/cube-blink.png --at-ms 3300
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim --snapshot /tmp/cube-thinking.png --scene thinking --at-ms 180
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim --snapshot /tmp/cube-boot.png --not-ready
+/tmp/cube-companion-sim/sentient_cube_lvgl_sim --snapshot /tmp/cube-error.png --boot-error
 ```
 
-An SDL2 window pops up titled "Sentient Cube — lvgl-sim". Close the window
-or hit Cmd+W to exit cleanly.
+Scenes: ready, setup, sleep, pairing, listening, thinking, speaking, offline, service, account, volume, low, charging. Windowed setup uses disposable synthetic enrollment data. **Setup snapshots are denied**, including synthetic data; no bypass flag. Boot remains resource-independent until explicit readiness; offline enters MainView without Wi-Fi/WS readiness.
 
-The window shows:
-- Deep blue background (`0x0a1f33`)
-- Horizontal gradient bar (centered)
-- "SENTIENT CUBE" label (above the bar)
-- Spinner (below the bar, ~1.5 Hz rotation)
+Snapshot/self-test mode uses SDL dummy video and a deterministic clock, advancing in bounded 5ms increments to requested elapsed time (0–60000ms). Windowed mode uses wall-clock SDL ticks. PNG output reuses bundled `stb_image_write.h`. Keep artifacts in private scratch storage; these are host renders, not device screenshots.
 
-Left-click + drag in the window — the heatmap dot follows the cursor while
-the mouse button is held. (The sim does NOT emit `<<< EVT touch.tap` —
-that's device-only via `SentientTouchReadCb` in `sentient_cube.cc`.)
+## Companion v1 and firmware integration
 
-### Headless snapshot mode
+Document fields: `schemaVersion: 1`, bounded `id`, positive integer `revision`, `name`, `canvas {width,height,background: "#RRGGBB"}`, `frames`, `states`, explicit root `fallback` state. Frame entries contain only asset path and `format: "rgb565"`; pixel byte count must exactly match canvas. Native LVGL descriptors never appear in JSON.
 
-For agentic UI iteration without opening a window:
+State entries are clips `{mode,frames:[{frame,durationMs}],loopFrom?}` or explicit aliases `{fallback: state}`. Modes: `static` (one frame), `once-and-hold` (last frame holds), `loop` (repeats from `loopFrom`, default 0). Optional loop prefix preserves cat thinking's initial 180ms ready pose without replaying it. Missing states use root fallback; unknown alias targets and all fallback cycles are rejected iteratively. Current cat preserves 3600ms sparse blink/tail cycles, 900ms listening/volume blink onset, and 500ms speaking alternation.
 
-```sh
-./build/sentient_cube_lvgl_sim --snapshot /tmp/sim.png
-```
+Bounds: JSON 16KiB/depth 12; canvas dimensions 1–128; 32 frame references; 16 state entries; 32 steps/clip and 128 total; integer durations 1–60000ms and checked aggregate; path scoped to companion id; exact format/byte sizes. Version, duplicate keys, references, invalid dimensions/numbers, malformed JSON and trailing input are rejected before publication. Platform reader supplies lifetime-stable immutable buffers. Document failure or missing/invalid system art stays in controlled BootView, with no recording/retry loop.
 
-Runs LVGL for ~500ms simulated time (long enough for the spinner to
-settle into a clearly-rotated state), dumps the 466×466 RGB framebuffer
-as a PNG, and exits. No SDL2 window opens. Useful for automated visual
-parity checks against device `ui.snapshot` output.
+Platform integration (main CMake/application owned separately):
 
-PNG encoding uses the bundled `main/stb_image_write.h` (single-header
-public domain, pinned to nothings/stb v1.16 — sha256
-`cbd5f0ad7a9cf4468affb36354a1d2338034f2c12473cf1a8e32053cb6914a05`).
+- Add `../ui-shared/companion.cc` and `../ui-shared/cube_views.cc` for cube only.
+- Add `boards/sentient-cube` include directory; existing `../ui-shared` include and board `*.cc` glob retain `character_data.cc` and `toggle_button_screen.cc` adapter.
+- Reuse existing cJSON and esp_emote_gfx qrcodegen includes/linkage. Remove obsolete linker-symbol art embedding when bundled aliases replace it.
+- Keep `sentient_cube_create_toggle_button_screen()` during board SetupUI. It creates only BootView and starts existing poll/mailbox.
+- Call `sentient_cube_finish_boot(bool assets_ready)` after pack/font readiness, outside asset preparation. False is terminal controlled error. Lock contention preserves readiness for next poll. Controller adapts `Assets::GetAssetData` only after readiness.
 
-## Iteration loop
+ViewHost owns one active view, input cancellation and navigation; player owns clips separately. Unchanged projections do not restart playback. Exit/sleep cancels owned press and hidden animation. Setup/boot/unavailable states cannot start capture. Physical wake-touch consumption remains board-owned. Firmware icons, battery, recording truth and setup QR are not document-owned. Device opt-in display timing/minimum-heap aggregates remain in platform adapter.
 
-Edit any of:
-- `../firmware/ui-shared/test_screen.c` — shared LVGL widget construction
-- `../firmware/ui-shared/test_screen.h` — public API
-- `lv_conf.h` — sim LVGL config (touches sim only — device-side equivalent
-  is `firmware/sdkconfig.defaults`)
+## Limits
 
-Then:
+Host checks do not prove panel/DMA timing, calibrated touch/wake behavior, LVGL lock contention, PSRAM/internal heap headroom or voice/audio continuity. Current board config and LVGL display setup both use 480×480, matching the simulator; geometry agreement alone is not physical rendering proof. Host text uses LVGL fonts; device adapter hands off the active screen's resolved loaded font at readiness so future MainView text inherits it. BootView remains pack-independent and pairing labels retain explicit 14px fonts. Font-pack coverage and font lifetime remain platform-owned.
 
-```sh
-cmake --build build -j && ./build/sentient_cube_lvgl_sim
-```
-
-Round-trip is ~2 seconds (incremental build + binary launch). The device's
-smoke loop is ~30 seconds (build + flash + boot + ui.snapshot).
-
-## Update flow (when LVGL has a new release we want to track)
-
-The LVGL managed component on the device (`firmware/main/idf_component.yml`)
-and the LVGL clone here MUST move together — otherwise `lv_conf.h` defaults
-drift between targets.
-
-1. Bump the LVGL version in `firmware/main/idf_component.yml`.
-2. `idf.py reconfigure` (from `firmware/`) to fetch the new managed
-   component into `firmware/managed_components/lvgl__lvgl/`.
-3. Run a device build — verify it stays green with the new LVGL.
-4. Audit `firmware/managed_components/lvgl__lvgl/Kconfig` for any new
-   `CONFIG_LV_USE_*` flags. If a flag the test screen / future ui-shared
-   modules need has changed name or default, update both
-   `firmware/sdkconfig.defaults` (device) AND `esp32/cube/lvgl-sim/lv_conf.h`
-   (sim).
-5. Re-record the template SHA256 in the pinned-versions table above:
-   ```sh
-   shasum -a 256 firmware/managed_components/lvgl__lvgl/lv_conf_template.h
-   ```
-6. Re-clone the sibling `lvgl/` directory at the new tag:
-   ```sh
-   cd esp32/cube/lvgl-sim
-   rm -rf lvgl build
-   git clone --depth 1 --branch v<NEW-VERSION> https://github.com/lvgl/lvgl lvgl
-   cmake -B build -S . -DSDL2_DIR=$(brew --prefix sdl2)/lib/cmake/SDL2
-   cmake --build build -j
-   ```
-7. Re-run the sim and a device flash + smoke; visual-compare ui.snapshot
-   output between the two.
-8. Commit `firmware/main/idf_component.yml` + `firmware/dependencies.lock`
-   + `lvgl-sim/lv_conf.h` (if changed) + `lvgl-sim/README.md` (this file's
-   pinned table) as one commit titled
-   `chore(esp32-cube/lvgl): bump LVGL to v<NEW-VERSION>`.
-
-## What this sim does NOT do
-
-(See "Scope guard" above for the full list.) Briefly: no DMA, no real
-panel IO, no `agent_console` plumbing, no device-state machine, no audio,
-no WiFi. It is a pure LVGL widget rendering harness.
-
-## Troubleshooting
-
-- **`fatal error: 'SDL.h' file not found`** — SDL2 dev headers are missing.
-  `brew install sdl2`.
-- **`Could NOT find SDL2`** — Add `-DSDL2_DIR=$(brew --prefix sdl2)/lib/cmake/SDL2`
-  to the `cmake -B build` command.
-- **Blank black window** — `lv_display_flush_ready` was probably not
-  called. Check `main/sdl2_driver.c` `flush_cb`.
-- **`LVGL source not found at .../lvgl`** — Step 2 of "First-time setup"
-  was skipped. Clone the pinned LVGL tag (see CMakeLists.txt FATAL_ERROR
-  message for the exact command).
-- **`Sim-side lv_conf.h not found`** — `git checkout HEAD -- lv_conf.h`
-  to restore from the repo.
-- **`Sentient owned lv_conf.h not found`** — Phase 2 Task 4 must be
-  committed first.
-- **macOS Apple Silicon: SDL2 prefix is `/opt/homebrew/opt/sdl2`.**
-- **macOS Intel: SDL2 prefix is `/usr/local/opt/sdl2`.**
-- **Linux: use system SDL2 (`apt install libsdl2-dev` on Debian/Ubuntu;
-  `dnf install SDL2-devel` on Fedora). `find_package(SDL2)` should
-  resolve without the `-DSDL2_DIR` override.**
-- **Sim binary crashes immediately:** check `LVGL` version matches the
-  pinned `v9.5.0`. Mismatched LVGL versions (clone vs lv_conf.h) cause
-  struct-layout mismatches.
-- **`SDL2 init failed under dummy driver`** — `SDL_VIDEODRIVER=dummy` is
-  available in SDL2 since ~2.0. Your installed SDL2 may be too old.
-  `brew upgrade sdl2`.
+Hardware verification requires separately approved local operations through `esp32-devtool`, following [flash discipline](../../../agents/docs/esp32/cube/flash-discipline-details.md). Simulator build/checks authorize no device operation.

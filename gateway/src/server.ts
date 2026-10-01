@@ -7,6 +7,7 @@ import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.
 import { createAttachmentsHandler } from "./api/handlers/attachments.ts";
 import { createAuthHandler } from "./api/handlers/auth.ts";
 import { createCalendarHandler } from "./api/handlers/calendar.ts";
+import { createDevicesHandler } from "./api/handlers/devices.ts";
 import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
 import { renderDownloadPage } from "./api/handlers/downloads-page.ts";
 import { renderItmsPlist } from "./api/handlers/downloads-plist.ts";
@@ -127,6 +128,14 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
     ...(services.secretsStore ? { secretsStore: services.secretsStore } : {}),
     installState: services.installState,
     mcpCatalog: services.mcpCatalog,
+  });
+  const handleDevices = createDevicesHandler({
+    registry: services.devices,
+    tokens: services.auth.tokens,
+    users: services.auth.users,
+    accessManager: services.accessManager,
+    config: services.devicesConfig,
+    tlsEnabled: services.tls !== undefined,
   });
   const handleEdit = createProfileEditHandler({
     tokens: services.auth.tokens,
@@ -368,6 +377,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
         handleAdmin,
         handleSecrets,
         handleAuth,
+        handleDevices,
         handleProfile,
         handleProviders,
         handleMcpCatalog,

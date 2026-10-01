@@ -37,6 +37,7 @@ verbs:
   - button.toggle
   - tts.cancel
   - state
+  - cube.hardware.status
   - restart
   - log_level
   - mark
@@ -46,14 +47,3 @@ verbs:
   - audio.dump_state
   - audio.play_pcm
   - audio.test_tone
-
-extensions:
-  - cmd: bake-creds
-    exec: ${REPO_ROOT}/esp32/cube/scripts/bake-creds.sh
-    args_passthrough: true
-    transient: true
-    help: |
-      Provision debug firmware offline with --input PRIVATE_JSON.
-      Requires explicit WiFi, test-user token, device ID, LAN endpoint,
-      and trusted certificate. Does not mint tokens or contact a server.
-      Run explicitly before rebuilding; flash never provisions credentials.

@@ -80,7 +80,7 @@ Client                                        Server
   │◄── {"type":"done","requestId":"...", ...} ────┤
   │                                              │
   ├─── {"type":"text","text":"More."} ───────────►│  (next request's text starts buffering)
-  ├─── {"type":"end"} ────────────────────────────►│  (same as flush: synthesize what's buffered)
+  ├─── {"type":"end"} ────────────────────────────►│  (synthesize buffered text, or terminal no-audio done)
   │◄── started -> binary(s) -> done ──────────────┤
   │                                              │
   ├─── WebSocket close ───────────────────────────►│  (client-initiated; connection is reusable
@@ -94,12 +94,10 @@ Client                                        Server
    received before `ready` as impossible / a protocol violation.
 2. The server never initiates a connection close under normal
    operation. Graceful shutdown is the client's responsibility.
-3. `flush` and `end` behave identically today: both synthesize whatever
-   text is currently buffered (no-op if nothing is buffered) and reset
-   the buffer. `end` carries no additional "close the connection"
-   semantics — see §1.2. The distinction is kept on the wire so a
-   future version can special-case `end` (e.g. flush + close-after-drain)
-   without a breaking change.
+3. `flush` synthesizes buffered speakable text; empty/fully filtered flush
+   is a no-op. `end` does the same for speakable text, but emits a terminal
+   zero-audio `done` when no speakable text remains. Neither closes the
+   connection — see §1.2.
 4. Requests on one connection are processed **in the order flushed**,
    never interleaved (see §7's concurrency model) — a second `flush`
    sent while a request is still streaming queues behind it locally,
@@ -116,7 +114,7 @@ Client                                        Server
 | ---------------- | ------------------------------------------------------------ | ------------------------ |
 | `text`           | Append a text delta to the buffer (not yet synthesized).    | `text` (string)          |
 | `flush`          | Synthesize the buffered text now (sentence boundary).       | —                        |
-| `end`            | No more text is coming for this request; same as `flush`.   | —                        |
+| `end`            | Finalize buffered text; terminal `done` even if empty.   | —                        |
 | `cancel`         | Abort the in-flight request immediately; drop queued-but-unstarted ones. | — |
 | `ping`           | Liveness probe; server replies `pong`.                      | —                        |
 | `voice.create`   | Start a voice-pack upload; **must be followed by exactly one binary frame** (the reference clip — wav / flac / ogg / mp3, content-sniffed; 10-15s recommended, hard floor >3s). | `name` (string) |
@@ -144,7 +142,19 @@ nothing is synthesized until `flush`/`end`.
 
 Synthesizes whatever text has been buffered since the last flush (joins
 all `text` deltas in order, then clears the buffer). No-op if nothing
-is buffered — no `started`/`done` pair is emitted for an empty flush.
+is buffered or the frontend removes all content — no `started`/`done`
+is emitted for an empty flush.
+
+`end` always queues a completion, including when no text arrived, only
+whitespace arrived, or the frontend removed everything. For an empty End,
+the service sends exactly one `done` with a fresh `requestId` and
+`ttfa_ms: 0`, `rtf: 0`, `audio_seconds: 0`; no `started`, binary audio,
+model invocation, or retry. This terminal is ordered **after** earlier
+requests on the same connection and needs no synthesis lock/model work
+once it reaches the queue head. It does not assert audible speech.
+A subsequent text/flush/end cycle on the connection remains supported.
+Queued empty completions obey the same cancel/disconnect dropping rules
+as queued synthesis requests; an already-sent completion cannot be recalled.
 
 #### `cancel`
 
@@ -302,7 +312,7 @@ Client-visible differences from a user-created pack:
 | `ready`            | Once on connect                  | No                    | **Yes** (confirms negotiated params) |
 | `started`          | Once per synthesis request       | No                    | Optional (UX: "speaking started") |
 | *(binary frame)*   | One or more per request          | —                     | **Yes** (the audio)        |
-| `done`             | Once per synthesis request       | No                    | **Yes** (metrics + "response fully sent") |
+| `done`             | Once per synthesis request or empty End       | No                    | **Yes** (metrics + "response fully sent") |
 | `warning`          | On a non-fatal condition         | No                    | Log and continue           |
 | `error`            | On a failed request/upload       | No                    | **Yes** (surface to user / retry) |
 | `pong`             | On `ping`                        | No                    | No                          |
@@ -426,3 +436,27 @@ Pin your gateway to a specific commit of this repository — there is no
 `serverVersion` field on `ready` yet (matches the STT service's current
 state; both are expected to grow one together when either graduates
 past "single first-party consumer").
+
+### Generation output limits
+
+`generation.max_tokens`, `generation.min_tokens`, and
+`generation.tokens_per_text_token` are positive YAML integers
+(`min_tokens <= max_tokens`). Retained operational configs without this section receive
+4096 / 75 / 12 defaults with a startup warning. Explicit sections must contain
+all three keys with valid types/ranges; malformed values never default.
+Each newline-delimited segment receives
+`min(max_tokens, max(min_tokens, tokenizer_length * tokens_per_text_token))`
+codec tokens. At 12.5 codec frames/s the short-input floor allows 6 seconds;
+long segments retain the 327.68-second ceiling. This is a tunable safety
+heuristic, not a speech-duration guarantee for every language/voice.
+
+Exhaustion emits `error` with reason
+`generation_token_limit: tokens=<count> max_tokens=<budget>`, **not `done`**.
+Earlier partial audio may already have streamed; consumers must treat the service
+request as failed, stop accepting further output for it, and not retry automatically.
+The gateway closes any open client audio bracket with ordinary `turn.audio.done`;
+already-delivered audio drains under the existing playback contract. The socket
+remains reusable. Engine logs only token counts, budget, and inferred stop reason
+(`eos` or `token_limit`), never input text/audio. mlx-audio 0.4.5 does not expose
+an explicit stop reason: streaming token deltas reaching the supplied budget
+prove exhaustion; `is_final_chunk` alone does not prove EOS.

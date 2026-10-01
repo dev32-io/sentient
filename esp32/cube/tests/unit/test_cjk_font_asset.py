@@ -5,22 +5,21 @@ import struct
 import subprocess
 import tempfile
 import unittest
+import zlib
 
 FIRMWARE = Path(__file__).resolve().parents[2] / 'firmware'
-IMAGE = FIRMWARE / 'build/generated_assets.bin'
+IMAGE = FIRMWARE / 'build/cube_assets.bin'
 
 
 def asset(image, name):
-    count, checksum, length = struct.unpack_from('<III', image)
-    assert sum(image[12:12 + length]) & 0xffff == checksum
+    magic, version, count, expanded, compressed = struct.unpack_from('<8sIIII', image)
+    assert magic == b'CUBEPAK1' and version == 1 and compressed == len(image) - 24
+    raw = zlib.decompress(image[24:])
+    assert len(raw) == expanded
     for i in range(count):
-        entry = 12 + 44 * i
-        filename = image[entry:entry + 32].split(b'\0')[0].decode()
-        size, offset = struct.unpack_from('<II', image, entry + 32)
-        if filename == name:
-            start = 12 + 44 * count + offset
-            assert image[start:start + 2] == b'ZZ'
-            return image[start + 2:start + 2 + size]
+        filename, offset, size = struct.unpack_from('<96sII', raw, i * 104)
+        if filename.split(b'\0')[0].decode() == name:
+            return raw[offset:offset + size]
     raise AssertionError(f'missing asset: {name}')
 
 
@@ -103,7 +102,7 @@ int main(int argc, char** argv) {
         font = source.read_bytes()
         if IMAGE.exists():
             image = IMAGE.read_bytes()
-            index = json.loads(asset(image, 'index.json'))
+            index = json.loads(asset(image, '/index.json'))
             self.assertEqual(index['version'], 1)
             self.assertEqual(asset(image, index['text_font']), font)
         for letter in 'A中文':

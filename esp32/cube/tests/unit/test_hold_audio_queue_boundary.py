@@ -23,6 +23,8 @@ class HoldAudioQueueBoundaryTest(unittest.TestCase):
         app = MAIN / 'application.cc'
         cpp = r'''
 #include <algorithm>
+#include <set>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
@@ -54,10 +56,14 @@ struct AudioService {
     uint32_t send_generation_ = 0;
     void HandleProcessorOutput(std::vector<int16_t>&&, uint32_t);
     void PushTaskToEncodeQueue(AudioTaskType, std::vector<int16_t>&&, uint32_t = 0);
+    void ResetDecoder() {}
+    void DeferPlayback(bool) {}
     void ClearSendQueue();
     bool WaitForSendEncoding();
-    bool IsPlaybackDrained();
-    void EnableVoiceProcessing(bool) {}
+    std::set<uint32_t> failed_playback_epochs_;
+    uint32_t latest_playback_epoch_ = 0;
+    bool IsPlaybackDrained(uint32_t epoch = 0);
+    bool EnableVoiceProcessing(bool, bool = false) { return true; }
 };
 ''' + '\n'.join(method(audio, 'AudioService', name) for name in (
             'HandleProcessorOutput', 'PushTaskToEncodeQueue', 'ClearSendQueue', 'WaitForSendEncoding', 'IsPlaybackDrained')) + r'''
@@ -71,13 +77,13 @@ struct Application {
     AudioService audio_service_;
     std::unique_ptr<Protocol> sentient_ws_ = std::make_unique<Protocol>();
     bool processing_ = false, playback_active_ = false, playback_waiting_for_drain_ = false;
+    std::atomic<unsigned> playback_epoch_{0}, suppressed_playback_epoch_{0};
     int state = 0;
-    const char* hint = nullptr;
     void SetDeviceState(int s) { state = s; }
     void EndUplink();
 };
-Application* current_app;
-void sentient_cube_set_status_hint(const char* hint) { current_app->hint = hint; }
+void sentient_cube_set_playback(bool) {}
+void sentient_cube_set_processing(bool) {}
 struct Display { void ShowNotification(const char*, int) {} };
 struct Board {
     static Board& GetInstance() { static Board board; return board; }
@@ -87,7 +93,6 @@ struct Board {
 ''' + method(app, 'Application', 'EndUplink') + r'''
 int main() {
     Application app;
-    current_app = &app;
     auto& audio = app.audio_service_;
     assert(audio.IsPlaybackDrained());
     audio.decoding_ = true;

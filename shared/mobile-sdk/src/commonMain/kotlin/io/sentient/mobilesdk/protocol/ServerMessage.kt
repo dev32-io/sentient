@@ -353,7 +353,17 @@ data class SessionRow(
     val lastActiveAt: Long = 0L,
     val messageCount: Int = 0,
     val isActive: Boolean = false,
-)
+    val provenance: String = "human",
+    val readOnly: Boolean = false,
+    val currentPin: Boolean = false,
+    val executionClosed: Boolean = false,
+) {
+    // Keep existing Swift seven-argument constructor for fixture and client call sites.
+    constructor(sessionId: String, rootId: String?, title: String, startedAt: Long,
+                lastActiveAt: Long, messageCount: Int, isActive: Boolean) :
+        this(sessionId, rootId, title, startedAt, lastActiveAt, messageCount, isActive,
+            "human", false, false, false)
+}
 
 /** Playback tuning hints from session.ready (optional field). */
 @Serializable

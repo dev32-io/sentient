@@ -5,7 +5,7 @@
 // gateway epoch so that:
 //   1. Binary audio frames can be deduped by their header seq (replay protection).
 //   2. JSON frames with a `seq` field can be deduped similarly.
-//   3. On reconnect, the cursor is sent via `stream.resume` so the gateway can
+//   3. On reconnect, the cursor is sent via `session.configure.resume` so the gateway can
 //      replay any frames the client missed during the outage.
 //
 // Design notes (parity with web):
@@ -49,21 +49,20 @@ class ResumeCursor {
      * as a duplicate or already-applied replay.
      *
      * Rules (mirror web-sdk):
-     *   - seq == 0 means "no seq" — always pass through (legacy / non-seq frame).
      *   - If incomingEpoch is provided, non-zero, and differs from the tracked
-     *     epoch, reset lastSeq to 0 and adopt the new epoch. Then apply normally.
+     *     epoch, reset lastSeq to 0 and adopt the new epoch, even for seq 0.
+     *   - seq == 0 means "no seq" — pass through without advancing lastSeq.
      *   - seq <= lastSeq → DROP (already applied / replay overlap).
      *   - seq > lastSeq → APPLY, advance lastSeq.
      */
     fun tryApply(seq: Long, incomingEpoch: Long? = null): Boolean {
-        if (seq == 0L) return true
-
         if (incomingEpoch != null && incomingEpoch != 0L && incomingEpoch != epoch) {
             log.debug("epoch-transition", mapOf("from" to epoch, "to" to incomingEpoch))
             epoch = incomingEpoch
             lastSeq = 0
         }
 
+        if (seq == 0L) return true
         if (seq <= lastSeq) {
             log.debug("dedup-drop", mapOf("seq" to seq, "lastSeq" to lastSeq, "epoch" to epoch))
             return false

@@ -1,23 +1,43 @@
 # Cube build profiles
 
-Debug/prod builds and the prod-strip audit verify compilation and stripping, not runtime behavior. **Never flash placeholder credentials.** Unauthenticated debug LAN HTTP requires explicit approval before device testing. Hold-to-talk and current gateway protocol are implemented but device-unverified. **Prod provisioning/flash is not approved**; offline provisioning remains debug-only.
+Debug/prod builds and prod-strip audit verify compilation/stripping, not device behavior. Never flash unreviewed compile-only placeholders. Device access and unauthenticated debug LAN HTTP exposure require explicit approval. No production provisioning/flash is authorized by this document.
 
 | | Debug | Prod |
 |---|---|---|
 | Config | `sdkconfig.defaults` + `sdkconfig.defaults.debug` | `sdkconfig.defaults` + `sdkconfig.defaults.prod` |
 | Compiler | debug symbols/optimization | size optimization, assertions disabled |
-| Devtool companion | USB verbs + HTTP enabled; UDP log relay **off** by default | disabled (stub; no debug HTTP/verbs/relay) |
+| Devtool companion | USB verbs + HTTP; UDP relay off | disabled via stub; verify ELF stripping |
 | LVGL inspector metadata | enabled | disabled |
-| Gateway transport | `wss://` with supplied certificate and hostname verification | `wss://` with supplied certificate or ESP-IDF CA bundle and hostname verification |
+| TLS profile gate | `CONFIG_SENTIENT_PROD_BUILD=n` | `CONFIG_SENTIENT_PROD_BUILD=y` |
+| HTTPS/WSS trust | Supplied `sentient_dev_gateway.crt` when present, otherwise ESP CA bundle; date/hostname verification | ESP CA bundle; date/hostname verification; no development cert embedded |
 
-`esp32-devtool flash --profile debug|prod` builds with `SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.<profile>` and distinct `build/sdkconfig.debug` / `build/sdkconfig.prod`, but uses shared `build/` ELF output. Debug flash waits for companion `>>> READY` and settled state, **not gateway readiness**; prod reports `verification=flash-only`. Flash does not invoke credential baking. Do not flash from these docs; see [flash discipline](../../../agents/docs/esp32/cube/flash-discipline-details.md) for future approved hardware work.
+## Build-only workflow
 
-## Explicit debug provisioning (offline)
+Use reviewed ESP-IDF 5.5.2 sources and dependencies. `>=5.5.2` in the dependency manifest is a minimum, not permission to upgrade blindly: CMake's reviewed source patches are hash-pinned. On mismatch, stop for review; never bypass guards or mutate the installed SDK.
 
-From repository root after `source scripts/env.sh`, invoke `esp32-devtool bake-creds --input /absolute/path/to/private.json` explicitly. This project extension routes to [`../scripts/bake-creds.sh`](../scripts/bake-creds.sh); it accepts `--profile debug` only. Input must be operator-owned mode `0600` outside repository. See [script README](../scripts/README.md) for required JSON fields and constraints. Supply an existing authorized **test-user** PASETO token and certificate actually served by cube-facing TLS endpoint; script neither mints tokens nor scrapes services or `.e2e-testing`. Keep input values out of command arguments, logs, and Git. Generated `firmware/main/sentient_creds.h` and `sentient_dev_gateway.crt` are private, gitignored outputs. Reconfigure then rebuild after baking: CMake discovers certificate embedding at configure time. Baking never updates already-built or flashed images.
+From repository root, source `scripts/env.sh`, load the reviewed ESP-IDF environment, then:
 
-Offline provisioning validates certificate validity and SAN; runtime also verifies hostname and certificate trust. [`sentient_ws_protocol.cc`](../firmware/main/protocols/sentient_ws_protocol.cc) rejects plaintext URLs. `SENTIENT_DEV_TLS_PIN=0` uses ESP-IDF CA bundle, not plaintext. Device requires a certificate covering its actual LAN hostname/IP; localhost-only certificate is insufficient. Credentials, transcripts, and raw audio are not logged by the new protocol path. Approve LAN companion HTTP exposure and a disposable local test user before device smoke. No approved prod provisioning/flash procedure exists yet.
+```sh
+cd esp32/cube/firmware
+SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.debug' \
+  idf.py -D SDKCONFIG="$PWD/build/sdkconfig.debug" reconfigure build
+SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.prod' \
+  idf.py -D SDKCONFIG="$PWD/build/sdkconfig.prod" reconfigure build
+esp32-devtool audit-prod-strip
+```
 
-Capture failures cancel rather than submit known incomplete audio. Playback queues remain bounded; stalled playback fails visibly instead of silently dropping packets. Processor generation fences and output-drain checks cover software ownership, not proof of physical codec DMA drain or full AFE DSP reset. Reconnect requests a fresh snapshot, not journal replay. Pinned WebSocket dependency can wait internally during stop/destroy; lifecycle work stays off timer task and teardown aborts after its bounded wait rather than freeing live callback state. These paths still require device verification.
+Profile configs differ, but ELF output is shared in `build/`. Audit prod strip immediately after the prod build, not against a stale debug ELF. CMake applies reviewed build-local TLS, provisioning and other source corrections automatically; no manual installed-SDK or managed-component patch reapply is required. See [build details](../../../agents/docs/esp32/cube/build-details.md).
 
-For build-only checks, keep profile-specific sdkconfig files separate; `idf.py -D SDKCONFIG=<absolute firmware path>/build/sdkconfig.<profile> reconfigure build` with matching `SDKCONFIG_DEFAULTS` chain. Do not reuse stale shared ELF for audit: after a prod build, run `esp32-devtool audit-prod-strip` against that prod ELF. See [build details](../../../agents/docs/esp32/cube/build-details.md). No managed-component TLS override/reapply step exists in current tree.
+## Enrollment and development trust
+
+Current account/device authority and Wi-Fi setup use [authenticated BLE enrollment](ble-protocol.md), not baked account tokens or Wi-Fi strings. No credential-baking helper or generated credential header is required. `/info` uses the existing Wi-Fi MAC as hardware diagnostic identity, not the gateway enrollment UUID or authority.
+
+For development trust, explicitly supply the approved PEM certificate as private `firmware/main/sentient_dev_gateway.crt`; see [certificate input procedure](../scripts/README.md). Preserve existing private headers/certificates and other operator files. Release excludes the development certificate without deleting it. Changes to approved build inputs require reconfigure/rebuild; they do not modify an already-built/flashed image. HTTPS and WSS retain certificate/date/hostname checks; physical TLS behavior remains a separate gate.
+
+## Approved device work only
+
+Managed `flash --profile debug` uses profile-specific sdkconfig but shared build output. It does not run credential baking. Its verifier waits for companion readiness and a settled application state, not authenticated gateway readiness. Fresh BLE bootstrap may report `UNKNOWN`, which the current verifier can reject; timeout is not evidence of bad baked credentials and must not trigger blind reflash. Use bounded `cube.hardware.status` only within approved device scope.
+
+The CLI also supports prod flashing and reports flash-only verification, but that capability is not authorization. Follow [flash discipline](../../../agents/docs/esp32/cube/flash-discipline-details.md).
+
+Read [diagnostic restrictions](../../../agents/docs/esp32/cube/agent-console-details.md) before inspection: screenshot protection does not cover tree-label or transcript exports. Physical BLE/TLS, codec drain, audio continuity, memory headroom and coexistence must be validated on the approved local stack; neither source inspection nor build success establishes them.

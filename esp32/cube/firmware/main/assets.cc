@@ -1,4 +1,9 @@
 #include "assets.h"
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+#include "asset_archive.h"
+extern const uint8_t cube_assets_start[] asm("_binary_cube_assets_bin_start");
+extern const uint8_t cube_assets_end[] asm("_binary_cube_assets_bin_end");
+#endif
 #include "board.h"
 #include "display.h"
 #include "application.h"
@@ -29,6 +34,13 @@ struct mmap_assets_table {
 };
 
 Assets::Assets() {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    const int64_t started = esp_timer_get_time();
+    partition_valid_ = cube_assets::Decode(cube_assets_start,
+        cube_assets_end - cube_assets_start, bundled_data_, bundled_count_);
+    ESP_LOGI(TAG, "Bundled assets ready=%d entries=%u load_ms=%lu", partition_valid_,
+        unsigned(bundled_count_), static_cast<unsigned long>((esp_timer_get_time() - started) / 1000));
+#else
 #if HAVE_LVGL
     strategy_ = std::make_unique<Assets::LvglStrategy>();
 #else
@@ -36,10 +48,13 @@ Assets::Assets() {
 #endif
     // Initialize the partition
     InitializePartition();
+#endif
 }
 
 Assets::~Assets() {
     UnApplyPartition();
+    // Cube decoded storage intentionally has process lifetime: theme/font
+    // static destruction order must not invalidate their backing pointers.
 }
 
 bool Assets::FindPartition(Assets* assets) {
@@ -66,7 +81,13 @@ void Assets::UnApplyPartition() {
 }
 
 bool Assets::GetAssetData(const std::string& name, void*& ptr, size_t& size) {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    // Legacy SR consumers use this spelling; the stored namespace is absolute.
+    const char* path = name == "index.json" ? "/index.json" : name.c_str();
+    return cube_assets::Find(bundled_data_, bundled_count_, path, ptr, size);
+#else
     return strategy_ ? strategy_->GetAssetData(this, name, ptr, size) : false;
+#endif
 }
 
 bool Assets::LoadSrmodelsFromIndex(Assets* assets, cJSON* root) {
@@ -139,7 +160,7 @@ static bool ValidCubeCBinTextFont(const void* data, size_t size) {
     // Loader replaces first two callbacks only. Other pointers must be null.
     if (u32(8) || u32(28) || u32(32)) return false;
     size_t dsc = u32(24);
-    if (!within(dsc, 0, 24)) return false;
+    if (dsc % 4 || !within(dsc, 0, 24)) return false;
     uint16_t flags = u16(dsc + 18);
     size_t count = flags & 0x1ff;
     if (!count || ((flags >> 9) & 0xf) != 4 || !(flags & 0x2000) ||
@@ -152,7 +173,7 @@ static bool ValidCubeCBinTextFont(const void* data, size_t size) {
     if (!within(dsc, u32(dsc), 1) || !within(dsc, u32(dsc + 4), 16) ||
         !within(dsc, u32(dsc + 8), count * 20) ||
         !within(dsc, u32(dsc + 12), 16) ||
-        bitmap >= glyphs || glyphs >= cmaps || (cmaps - glyphs) % 16) return false;
+        glyphs % 4 || cmaps % 4 || kern % 4 || bitmap >= glyphs || glyphs >= cmaps || (cmaps - glyphs) % 16) return false;
     size_t glyph_count = (cmaps - glyphs) / 16;
     if (glyph_count > 65536) return false;
 
@@ -176,15 +197,16 @@ static bool ValidCubeCBinTextFont(const void* data, size_t size) {
                 if (bytes[cmaps + ids + j] > max_ofs) max_ofs = bytes[cmaps + ids + j];
             }
         } else if (type == 3 || type == 1) { // SPARSE_TINY / SPARSE_FULL
-            if (!unicode || !list_count || !within(cmaps, unicode, list_count * 2)) return false;
+            if (!unicode || unicode % 2 || !list_count || !within(cmaps, unicode, list_count * 2)) return false;
             for (size_t j = 0; j < list_count; ++j) {
-                if (u16(cmaps + unicode + 2 * j) >= length) return false;
+                if (u16(cmaps + unicode + 2 * j) >= length ||
+                    (j && u16(cmaps + unicode + 2 * j) <= u16(cmaps + unicode + 2 * (j - 1)))) return false;
             }
             if (type == 3) {
                 if (ids) return false;
                 max_ofs = list_count - 1;
             } else {
-                if (!ids || !within(cmaps, ids, list_count * 2)) return false;
+                if (!ids || ids % 2 || !within(cmaps, ids, list_count * 2)) return false;
                 for (size_t j = 0; j < list_count; ++j) {
                     size_t ofs = u16(cmaps + ids + 2 * j);
                     if (ofs > max_ofs) max_ofs = ofs;
@@ -216,10 +238,74 @@ static bool ValidCubeCBinTextFont(const void* data, size_t size) {
     return true;
 }
 
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+// Upstream cbin_font_create dereferences unchecked allocations. Cube boot must
+// fail closed on OOM. The validator above admits only this pinned cbin layout.
+class CubeTextFont final : public LvglFont {
+public:
+    explicit CubeTextFont(const uint8_t* bytes) {
+        const auto* d = bytes + cube_assets::Read32(bytes + 24);
+        size_t count = (uint16_t(d[18]) | uint16_t(d[19]) << 8) & 0x1ff;
+        size_t total = sizeof(Storage) + count * sizeof(lv_font_fmt_txt_cmap_t);
+        storage_ = static_cast<Storage*>(heap_caps_calloc(1, total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!storage_) return;
+        auto& font = storage_->font;
+        auto& desc = storage_->desc;
+        std::memcpy(&font, bytes, sizeof(font));
+        std::memcpy(&desc, d, sizeof(desc));
+        font.get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt;
+        font.get_glyph_bitmap = lv_font_get_bitmap_fmt_txt;
+        font.dsc = &desc;
+        desc.glyph_bitmap = d + cube_assets::Read32(d);
+        desc.glyph_dsc = reinterpret_cast<const lv_font_fmt_txt_glyph_dsc_t*>(d + cube_assets::Read32(d + 4));
+        const auto* cmaps = d + cube_assets::Read32(d + 8);
+        auto* maps = reinterpret_cast<lv_font_fmt_txt_cmap_t*>(storage_ + 1);
+        desc.cmaps = maps;
+        for (size_t i = 0; i < count; ++i) {
+            const auto* c = cmaps + i * 20;
+            maps[i].range_start = cube_assets::Read32(c);
+            maps[i].range_length = uint16_t(c[4]) | uint16_t(c[5]) << 8;
+            maps[i].glyph_id_start = uint16_t(c[6]) | uint16_t(c[7]) << 8;
+            auto unicode = cube_assets::Read32(c + 8);
+            auto ids = cube_assets::Read32(c + 12);
+            maps[i].unicode_list = unicode ? reinterpret_cast<const uint16_t*>(cmaps + unicode) : nullptr;
+            maps[i].glyph_id_ofs_list = ids ? cmaps + ids : nullptr;
+            maps[i].list_length = uint16_t(c[16]) | uint16_t(c[17]) << 8;
+            maps[i].type = static_cast<lv_font_fmt_txt_cmap_type_t>(c[18]);
+        }
+        const auto* k = d + cube_assets::Read32(d + 12);
+        auto& kern = storage_->kern;
+        std::memcpy(&kern, k, sizeof(kern));
+        kern.class_pair_values = reinterpret_cast<const int8_t*>(k + cube_assets::Read32(k));
+        kern.left_class_mapping = k + cube_assets::Read32(k + 4);
+        kern.right_class_mapping = k + cube_assets::Read32(k + 8);
+        desc.kern_dsc = &kern;
+    }
+    ~CubeTextFont() override { heap_caps_free(storage_); }
+    const lv_font_t* font() const override { return storage_ ? &storage_->font : nullptr; }
+private:
+    struct Storage {
+        lv_font_t font;
+        lv_font_fmt_txt_dsc_t desc;
+        lv_font_fmt_txt_kern_classes_t kern;
+    };
+    Storage* storage_ = nullptr;
+};
+#endif
+
 bool Assets::LoadTextFont(void* data, size_t size) {
     auto display = Board::GetInstance().GetDisplay();
     DisplayLockGuard lock(display);
-    auto text_font = std::make_shared<LvglCBinFont>(data);
+    std::shared_ptr<LvglFont> text_font;
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    try {
+        text_font = std::make_shared<CubeTextFont>(static_cast<const uint8_t*>(data));
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+#else
+    text_font = std::make_shared<LvglCBinFont>(data);
+#endif
     if (text_font->font() == nullptr) {
         ESP_LOGE(TAG, "Failed to load text font");
         return false;
@@ -569,6 +655,9 @@ bool Assets::EmoteStrategy::Apply(Assets* assets, bool refresh_display_theme) {
 }
 
 bool Assets::Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback) {
+#if CONFIG_BOARD_TYPE_SENTIENT_CUBE
+    return false; // USB-only, immutable bundled assets.
+#else
     ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
 
     // Unmap the current assets partition
@@ -702,4 +791,5 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
     }
 
     return true;
+#endif
 }

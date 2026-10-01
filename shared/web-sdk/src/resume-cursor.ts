@@ -4,7 +4,7 @@
 // Tracks the highest-seen seq per gateway epoch so that:
 //   1. Binary frames can be deduped by their header seq (replay protection).
 //   2. JSON frames with a `seq` field can be deduped similarly.
-//   3. On reconnect, the cursor is sent via `stream.resume` so the gateway can
+//   3. On reconnect, the cursor is sent via `session.configure.resume` so the gateway can
 //      replay any frames the client missed during the outage.
 //
 // Design notes:
@@ -37,9 +37,9 @@ export interface ResumeCursorState {
    * dropped as a duplicate or already-applied replay.
    *
    * Rules:
-   *   - If epoch is provided and differs from cursor.epoch, reset lastSeq to 0
-   *     and update epoch. Then apply normally.
-   *   - seq === 0 means "no seq" — always pass through (legacy or non-seq frame).
+   *   - If a nonzero epoch is provided and differs from cursor.epoch, reset
+   *     lastSeq to 0 and update epoch, even when seq is 0.
+   *   - seq === 0 means "no seq" — always pass through without advancing lastSeq.
    *   - seq <= lastSeq → DROP (already applied or replay overlap).
    *   - seq > lastSeq → APPLY, advance lastSeq.
    */
@@ -58,15 +58,14 @@ export function createResumeCursor(): ResumeCursorState {
     },
 
     tryApply(seq: number, incomingEpoch?: number): boolean {
-      // No seq field — always pass through.
-      if (seq === 0) return true;
-
-      // Epoch transition: new gateway epoch resets the sequence space.
+      // Epoch transition applies even to unsequenced coordination frames.
       if (incomingEpoch !== undefined && incomingEpoch !== 0 && incomingEpoch !== epoch) {
         epoch = incomingEpoch;
         lastSeq = 0;
       }
 
+      // No seq field — always pass through without advancing the watermark.
+      if (seq === 0) return true;
       if (seq <= lastSeq) return false; // duplicate / replay
       lastSeq = seq;
       return true;

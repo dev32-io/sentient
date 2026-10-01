@@ -615,13 +615,14 @@ final class NotificationIntegrationTests: XCTestCase {
     @MainActor
     func testSessionLogoutBoundaryAwaitsPrepareButNotNetworkAndSerializesCallers() async {
         let prepareStarted = expectation(description: "prepare started")
+        let revokeStarted = expectation(description: "revoke started")
         let preparation = SuspendedLogoutPreparation(started: prepareStarted)
         var events: [String] = []
         let boundary = SessionLogoutBoundary(
             prepare: { _ in await preparation.wait() },
             finalizePreparation: { _ in events.append("finalize") },
             clearAuth: { events.append("auth") },
-            startRevoke: { events.append("revoke-started") }
+            startRevoke: { events.append("revoke-started"); revokeStarted.fulfill() }
         )
 
         boundary.run { events.append("teardown") }
@@ -629,7 +630,7 @@ final class NotificationIntegrationTests: XCTestCase {
         await fulfillment(of: [prepareStarted], timeout: 2)
         XCTAssertTrue(events.isEmpty)
         preparation.complete(true)
-        await Task.yield()
+        await fulfillment(of: [revokeStarted], timeout: 2)
         XCTAssertEqual(events, ["finalize", "teardown", "auth", "revoke-started"])
     }
 

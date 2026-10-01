@@ -15,10 +15,18 @@ import { type UserId, assertUserId } from "../user-auth/user-id.js";
 // not the other would have been a silent divergence at every call site. One
 // vocabulary, one place (plan 2026-08-07-tool-permissions task 2b).
 
+/** Server-validated device provenance. Never populated from session.configure metadata. */
+export interface CubeOrigin {
+  readonly kind: "cube";
+  readonly deviceId: string;
+  readonly generation: number;
+}
+
 export interface UserPrincipal {
   readonly userId: UserId;
   readonly role: UserRole;
   readonly householdId: string;
+  readonly origin?: CubeOrigin;
 }
 
 export function createUserPrincipal(userId: string, role: UserRole, householdId: string): UserPrincipal {

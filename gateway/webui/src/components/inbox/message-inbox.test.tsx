@@ -30,6 +30,7 @@ function sessions(ok = true): UseSessions {
     error: signal(null),
     deleteFailureCount: signal(0),
     currentId: signal(null),
+    viewerId: signal(null),
     load: vi.fn(),
     search: vi.fn(),
     switchTo: vi.fn().mockResolvedValue(ok),

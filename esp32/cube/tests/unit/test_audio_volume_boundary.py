@@ -33,6 +33,7 @@ class AudioVolumeBoundaryTest(unittest.TestCase):
 #include <algorithm>
 #include <cassert>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
@@ -55,7 +56,7 @@ struct AudioCodec {
     void SetOutputVolume(int);
 };
 struct BoxAudioCodec : AudioCodec {
-    std::mutex data_if_mutex_;
+    std::shared_mutex data_if_mutex_;
     int output_dev_ = 0;
     bool output_enabled_ = false;
     void SetOutputVolume(int);

@@ -185,15 +185,9 @@ function createChunkQueue(signal: AbortSignal): ChunkQueue {
 /** The provider yields "opus" today (local-tts-provider.ts's LIVE_ENCODING).
  *  The wire contract admits exactly "opus" | "pcm", so narrow here rather
  *  than widening the frame schema. */
-function toWireEncoding(raw: string, turnId: string): "opus" | "pcm" {
-  if (raw === "opus") return "opus";
-  if (raw === "pcm") return "pcm";
-  log.warn("turn-voice.audio.unknown-encoding", {
-    turnId,
-    encoding: raw,
-    reason: "provider encoding outside the wire contract — declaring pcm",
-  });
-  return "pcm";
+function toWireEncoding(raw: string): "opus" | "pcm" {
+  if (raw === "opus" || raw === "pcm") return raw;
+  throw new Error("unsupported provider audio encoding");
 }
 
 async function drainAudio(
@@ -205,6 +199,7 @@ async function drainAudio(
   const { sink, echoGuard, sessionId } = deps;
   const beganAtMs = Date.now();
   let started = false;
+  let encoding: "opus" | "pcm" | null = null;
   let frameCount = 0;
   let bytesSent = 0;
 
@@ -215,14 +210,17 @@ async function drainAudio(
     }
     for await (const frame of frames) {
       if (signal.aborted) return;
+      const frameEncoding = toWireEncoding(frame.encoding);
+      if (encoding !== null && frameEncoding !== encoding)
+        throw new Error("provider audio encoding changed within bracket");
       if (!started) {
+        sink.audioStart(turnId, frameEncoding, frame.sampleRate);
         started = true;
+        encoding = frameEncoding;
         // Suppress the mic for the AEC convergence window at the exact
         // moment audio starts leaving — not when synthesis started, which
         // may have been queued behind a previous turn.
         echoGuard.onTtsStart(turnId);
-        const encoding = toWireEncoding(frame.encoding, turnId);
-        sink.audioStart(turnId, encoding, frame.sampleRate);
         log.info("turn-voice.audio.start", {
           sessionId,
           turnId,
@@ -251,12 +249,17 @@ async function drainAudio(
         elapsedMs: Date.now() - beganAtMs,
       });
     }
-  } catch (err: unknown) {
+  } catch {
+    if (started && !signal.aborted) {
+      // Done closes receipt, not playback: let the produced prefix drain.
+      // User cancellation owns its own terminal.
+      sink.audioDone(turnId);
+    }
     log.warn("turn-voice.drain.failed", {
       sessionId,
       turnId,
       frameCount,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: "audio stream failed",
     });
   } finally {
     if (signal.aborted) {
@@ -344,6 +347,7 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
         } finally {
           // Only ever drop THIS turn's entry: `cancelAudio` may already have
           // cleared the map and a newer turn may already own its own slot.
+          queue.close();
           if (draining.get(turnId) === audio) draining.delete(turnId);
         }
       })();

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 // sentient_ui_controller.cc
 //
-// State-machine + setter implementation. Real LVGL widget creation lives in
-// toggle_button_screen.cc (Task 3.2). This translation unit holds the
-// state-update fanout and bridges the C-API to LVGL via forward declarations.
+// Project board, SDK and audio events into shared ViewHost. Platform adapters
+// stay here/in toggle_button_screen.cc; rendering/player live in ui-shared.
 //
 // Device-state polling: Application::state_machine_ is private so
 // AddStateChangeListener is not directly callable from board code. We use
@@ -19,11 +18,12 @@
 // SentientCubeBoard ctor returns.
 
 #include "sentient_ui_controller.h"
-#include "sentient_creds.h"  // SENTIENT_DEVICE_ID, baked at build time
+#include "cube_hardware.h"
 
 // VERIFY UPSTREAM: confirm application.h is on the include path as "application.h"
 // (it lives in upstream/main/ which is listed in INCLUDE_DIRS).
 #include "application.h"
+#include "assets.h"
 #include "device_state.h"  // VERIFY UPSTREAM: DeviceState enum + kDeviceState* values
 #include "esp32_devtool/companion.h" // esp32_devtool_companion_checkpoint — HIL marker emitter
 #include "test_screen.h"   // sentient_test_screen_build (Phase 2 shared UI)
@@ -35,64 +35,55 @@
 #include <esp_netif.h>
 #include <esp_log.h>
 #include <esp_lvgl_port.h>
+#include <esp_timer.h>
 #include <string.h>
 #include <cstdio>     // std::printf / std::fflush for `>>> READY` boot marker
 
+static_assert(sizeof(kCubeUiTaskName) <= configMAX_TASK_NAME_LEN,
+              "UI task name must fit without FreeRTOS truncation");
 static const char* TAG = "sentient.cube.ui";
 static const char* CHECKPOINT_TAG = "sentient.cube.checkpoints";
 
-// Current locally-tracked UI state.
-static sentient_ui_state_t g_state = SENTIENT_UI_DISABLED;
-
-// Guards one-time poll task creation.
+// Small latest-state mailbox: producers never wait for LVGL (including audio
+// callbacks). Poll retries projection after snapshot/render lock contention.
+static portMUX_TYPE g_signal_mux = portMUX_INITIALIZER_UNLOCKED;
+static CubeSignals g_signals;
+static int g_volume_percent = 0;
+static int g_battery_percent = 0; // Unknown until board reports; empty silhouette.
+static int64_t g_volume_until_us = 0;
 static bool g_poll_started = false;
+static int g_boot_result = 0; // 0 pending, 1 ready, -1 failed. Retried by projector.
+extern "C" void toggle_button_screen_finish_boot(bool ready);
+extern "C" void toggle_button_screen_suspend(void);
 
-// ---------------------------------------------------------------------------
-// Forward declarations — implemented in toggle_button_screen.cc (Task 3.2).
-// ---------------------------------------------------------------------------
-extern "C" {
-void toggle_button_screen_create(void);
-void toggle_button_screen_apply_state(sentient_ui_state_t state);
-void toggle_button_screen_set_status_hint(const char* text);
-void toggle_button_screen_set_transcript(const char* text);
+bool sentient_cube_read_asset(void*, const char* name, const uint8_t*& data, size_t& size) {
+    void* ptr = nullptr;
+    if (!Assets::GetInstance().GetAssetData(name, ptr, size)) return false;
+    data = static_cast<const uint8_t*>(ptr);
+    return true;
 }
+extern "C" void toggle_button_screen_create(void);
+extern "C" void toggle_button_screen_apply_scene(CubeScene scene);
+extern "C" void toggle_button_screen_volume(int percent);
+extern "C" void toggle_button_screen_battery(int percent, bool charging, bool low);
+extern "C" void toggle_button_screen_pairing(const char* qr, const char* locator, const char* proof);
 
-// ---------------------------------------------------------------------------
-// Device-state → UI-state mapping
-// VERIFY UPSTREAM: confirm kDeviceState* enum names match device_state.h.
-// Current upstream enum (SHA b72945a):
-//   kDeviceStateUnknown, kDeviceStateStarting, kDeviceStateWifiConfiguring,
-//   kDeviceStateIdle, kDeviceStateConnecting, kDeviceStateListening,
-//   kDeviceStateSpeaking, kDeviceStateUpgrading, kDeviceStateActivating,
-//   kDeviceStateAudioTesting, kDeviceStateFatalError
-// ---------------------------------------------------------------------------
-
-struct UiMapping {
-    sentient_ui_state_t ui_state;
-    const char* hint;
-};
-
-static UiMapping map_device_state(DeviceState ds) {
-    switch (ds) {
-        case kDeviceStateIdle:
-            return {SENTIENT_UI_READY, ""};
-        case kDeviceStateListening:
-            return {SENTIENT_UI_LISTENING, ""};
-        case kDeviceStateSpeaking:
-            return {SENTIENT_UI_READY, ""};
-        case kDeviceStateAudioTesting:
-            return {SENTIENT_UI_DISABLED, "Audio test"};
-        case kDeviceStateWifiConfiguring:
-        case kDeviceStateConnecting:
-        case kDeviceStateStarting:
-        case kDeviceStateActivating:
-        case kDeviceStateUpgrading:
-            return {SENTIENT_UI_DISABLED, "Reaching home\xe2\x80\xa6"};  // UTF-8 ellipsis
-        case kDeviceStateFatalError:
-        case kDeviceStateUnknown:
-        default:
-            return {SENTIENT_UI_DISABLED, "Can't reach home"};
-    }
+static void project_latest(const sentient::cube::CubePresentation& presentation = {}) {
+    if (!lvgl_port_lock(50)) return;
+    portENTER_CRITICAL(&g_signal_mux);
+    if (g_signals.volume && esp_timer_get_time() >= g_volume_until_us)
+        g_signals.volume = false;
+    CubeSignals signals = g_signals;
+    int volume = g_volume_percent;
+    int battery = g_battery_percent;
+    int boot_result = g_boot_result;
+    portEXIT_CRITICAL(&g_signal_mux);
+    if (boot_result) toggle_button_screen_finish_boot(boot_result > 0);
+    toggle_button_screen_volume(volume);
+    toggle_button_screen_battery(battery, signals.charging, signals.low_battery);
+    toggle_button_screen_pairing(presentation.qr.c_str(), presentation.locator.c_str(), presentation.proof.c_str());
+    toggle_button_screen_apply_scene(cube_scene(signals));
+    lvgl_port_unlock();
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +161,7 @@ static void wifi_event_handler(void* /*arg*/, esp_event_base_t event_base,
         // Emit both so HIL tests can assert ws.disconnected without touching
         // xiaozhi protocol internals.
         esp32_devtool_companion_checkpoint("wifi.disconnected");
+        sentient_cube_set_wifi(false);
         esp32_devtool_companion_checkpoint("ws.disconnected");
     }
 }
@@ -178,6 +170,7 @@ static void ip_event_handler(void* /*arg*/, esp_event_base_t event_base,
                              int32_t event_id, void* /*event_data*/) {
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         esp32_devtool_companion_checkpoint("wifi.connected");
+        sentient_cube_set_wifi(true);
     }
 }
 
@@ -204,8 +197,7 @@ static void try_register_wifi_handlers() {
         return;
     }
     g_wifi_handlers_registered = true;
-    ESP_LOGI(CHECKPOINT_TAG, "wifi_handlers_registered device_id="
-             SENTIENT_DEVICE_ID);
+    ESP_LOGI(CHECKPOINT_TAG, "wifi_handlers_registered");
 }
 
 // ---------------------------------------------------------------------------
@@ -227,21 +219,30 @@ static void poll_state_task(void* /*arg*/) {
         DeviceState now = Application::GetInstance().GetDeviceState();
 
         if (now != last) {
-            UiMapping m = map_device_state(now);
-            ESP_LOGI(TAG, "device_state device_id=" SENTIENT_DEVICE_ID
-                     " prev=%d next=%d ui=%d hint='%s'",
-                     (int)last, (int)now, (int)m.ui_state, m.hint);
-
+            ESP_LOGD(TAG, "device_state prev=%d next=%d", (int)last, (int)now);
             emit_state_transition_checkpoints(last, now);
-
-            sentient_cube_set_state(m.ui_state);
-            // The Phase-6 status_hint is now driven directly by the cube-sdk
-            // callbacks in application.cc (sdk:/cognition:/playback: prefixes)
-            // so the operator can read live event flow. The device-state poll
-            // keeps owning the button color/animation but does not overwrite
-            // the hint here — otherwise the 250ms tick races the SDK events.
             last = now;
         }
+        // Event registration can follow first GOT_IP; association probe
+        // recovers that missed edge and keeps offline distinct from WS failure.
+        wifi_ap_record_t ap;
+        bool wifi = sentient::cube::CubeHardware::Get().WifiConnected() &&
+                    esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+        bool connected = Application::GetInstance().IsAudioChannelOpened();
+        bool capturing = now == kDeviceStateListening;
+        auto hardware = sentient::cube::CubeHardware::Get().Presentation();
+        bool setup = hardware.setup;
+        portENTER_CRITICAL(&g_signal_mux);
+        g_signals.wifi = wifi;
+        g_signals.connected = connected;
+        g_signals.capturing = capturing;
+        g_signals.setup = setup;
+        g_signals.pairing = hardware.pairing;
+        g_signals.account_attention = hardware.account_attention;
+        // SDK cognition/playback callbacks own those flags; idle is not
+        // proof that processing or decoded playback has ended.
+        portEXIT_CRITICAL(&g_signal_mux);
+        project_latest(hardware);
 
         vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -254,67 +255,90 @@ static void poll_state_task(void* /*arg*/) {
 extern "C" {
 
 void sentient_cube_create_toggle_button_screen(void) {
-    ESP_LOGI(TAG, "create_screen device_id=" SENTIENT_DEVICE_ID);
+    ESP_LOGI(TAG, "create_screen");
     // SetupUI already holds this recursive port mutex; do not look up Board
     // here (its display is still being constructed).
     if (!lvgl_port_lock(0)) return;
     toggle_button_screen_create();
-    toggle_button_screen_apply_state(g_state);
     lvgl_port_unlock();
+    project_latest();
 
     if (!g_poll_started) {
         g_poll_started = true;
-        // Stack 6144 bytes: 3 KB was sized for the original simple poll loop
-        // BEFORE Phase 6a added the 28 pt Montserrat transcript label +
-        // multi-line wrap on toggle_button_screen. First-render glyph paths
-        // through LVGL on a state transition push stack past 3 KB and trip
-        // the FreeRTOS overflow guard ("sentient-ui-pol" overflow seen on
-        // 2026-05-15 once the devtool companion added more concurrent boot
-        // pressure). Priority 1 (just above idle) keeps UI updates
-        // responsive without starving audio tasks.
+        // Keep the measured 6144-byte poll stack and low priority so
+        // LVGL updates do not starve audio tasks.
         BaseType_t ret = xTaskCreate(
             poll_state_task,
-            "sentient-ui-poll",
+            kCubeUiTaskName,
             6144,
             nullptr,
             tskIDLE_PRIORITY + 1,
             nullptr);
         if (ret != pdPASS) {
-            ESP_LOGE(TAG, "poll_task_create_failed device_id=" SENTIENT_DEVICE_ID);
+            ESP_LOGE(TAG, "poll_task_create_failed");
         } else {
-            ESP_LOGI(TAG, "poll_task_started device_id=" SENTIENT_DEVICE_ID);
+            ESP_LOGI(TAG, "poll_task_started");
         }
     }
 }
 
-void sentient_cube_set_state(sentient_ui_state_t state) {
-    if (!lvgl_port_lock(0)) return;
-    if (state != g_state) {
-        ESP_LOGI(TAG, "set_state device_id=" SENTIENT_DEVICE_ID
-                 " prev=%d next=%d", (int)g_state, (int)state);
-        g_state = state;
-        toggle_button_screen_apply_state(state);
-    }
-    lvgl_port_unlock();
+void sentient_cube_finish_boot(bool assets_ready) {
+    portENTER_CRITICAL(&g_signal_mux);
+    if (!g_boot_result) g_boot_result = assets_ready ? 1 : -1;
+    portEXIT_CRITICAL(&g_signal_mux);
+    project_latest();
 }
 
-void sentient_cube_set_status_hint(const char* text) {
-    if (!lvgl_port_lock(0)) return;
-    ESP_LOGD(TAG, "set_status_hint device_id=" SENTIENT_DEVICE_ID);
-    toggle_button_screen_set_status_hint(text ? text : "");
-    lvgl_port_unlock();
+void sentient_cube_set_wifi(bool value) {
+    portENTER_CRITICAL(&g_signal_mux);
+    g_signals.wifi = value;
+    portEXIT_CRITICAL(&g_signal_mux);
 }
 
-void sentient_cube_set_transcript(const char* text) {
-    if (!lvgl_port_lock(0)) return;
-    ESP_LOGD(TAG, "set_transcript device_id=" SENTIENT_DEVICE_ID);
-    toggle_button_screen_set_transcript(text ? text : "");
-    lvgl_port_unlock();
+void sentient_cube_set_processing(bool value) {
+    portENTER_CRITICAL(&g_signal_mux);
+    g_signals.processing = value;
+    portEXIT_CRITICAL(&g_signal_mux);
+}
+
+void sentient_cube_set_playback(bool value) {
+    portENTER_CRITICAL(&g_signal_mux);
+    g_signals.playback = value;
+    portEXIT_CRITICAL(&g_signal_mux);
+}
+
+void sentient_cube_set_sleep(bool value) {
+    portENTER_CRITICAL(&g_signal_mux);
+    g_signals.asleep = value;
+    portEXIT_CRITICAL(&g_signal_mux);
+}
+
+void sentient_cube_set_battery(bool charging, bool low) {
+    portENTER_CRITICAL(&g_signal_mux);
+    g_signals.charging = charging;
+    g_signals.low_battery = low;
+    portEXIT_CRITICAL(&g_signal_mux);
+}
+
+void sentient_cube_set_battery_level(int percent) {
+    portENTER_CRITICAL(&g_signal_mux);
+    g_battery_percent = percent;
+    portEXIT_CRITICAL(&g_signal_mux);
+}
+
+void sentient_cube_show_volume(int percent) {
+    int64_t until = esp_timer_get_time() + 1500000;
+    portENTER_CRITICAL(&g_signal_mux);
+    g_volume_percent = percent;
+    g_volume_until_us = until;
+    g_signals.volume = true;
+    portEXIT_CRITICAL(&g_signal_mux);
 }
 
 void sentient_cube_show_test_screen(void) {
     if (!lvgl_port_lock(0)) return;
-    ESP_LOGI(TAG, "show_test_screen device_id=" SENTIENT_DEVICE_ID);
+    ESP_LOGI(TAG, "show_test_screen");
+    toggle_button_screen_suspend();
     sentient_test_screen_build();
     lvgl_port_unlock();
 }

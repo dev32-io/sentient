@@ -25,6 +25,8 @@ enum Route: Hashable {
     case history
     case scheduledInbox
     case settings
+    case cube
+    case cubePage(CubePage)
 
     // ── Settings · Soul group ──
     case settingsMemory
@@ -52,4 +54,15 @@ enum Route: Hashable {
 
     // ── Settings · Support group ──
     case settingsDiagnostics
+}
+
+// Cube lifetime follows this same path for header and native interactive Back.
+extension Route {
+    var cubePage: CubePage? {
+        switch self {
+        case .cube: .devices
+        case .cubePage(let page): page
+        default: nil
+        }
+    }
 }

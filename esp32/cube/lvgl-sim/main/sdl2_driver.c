@@ -9,17 +9,16 @@
 #include <string.h>
 #include <SDL.h>
 
-#include "lvgl/lvgl.h"
+#include <lvgl.h>
 
 static SDL_Window*    s_window     = NULL;
 static SDL_Renderer*  s_renderer   = NULL;
 static SDL_Texture*   s_texture    = NULL;
 static lv_display_t*  s_display    = NULL;
 static lv_indev_t*    s_indev      = NULL;
-// LVGL's RGB565 framebuffer. Hoisted to file scope so the snapshot path
-// in main.c can read the pixels directly (SDL_RenderReadPixels does not
-// work under SDL_VIDEODRIVER=dummy). Intentionally not freed on
-// shutdown — process exit reclaims it.
+// LVGL's RGB565 framebuffer. Snapshot reads pixels directly because
+// SDL_RenderReadPixels does not work under SDL_VIDEODRIVER=dummy.
+// Shutdown frees it after views have been destroyed.
 static uint8_t*       s_fb         = NULL;
 static int            s_fb_width   = 0;
 static int            s_fb_height  = 0;
@@ -32,7 +31,9 @@ static void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
     int w = area->x2 - area->x1 + 1;
     int h = area->y2 - area->y1 + 1;
     SDL_Rect r = { area->x1, area->y1, w, h };
-    SDL_UpdateTexture(s_texture, &r, px_map, w * 2);
+    // DIRECT mode supplies full framebuffer, including its full-width stride.
+    SDL_UpdateTexture(s_texture, &r, px_map + (area->y1 * s_fb_width + area->x1) * 2,
+                      s_fb_width * 2);
     SDL_RenderClear(s_renderer);
     SDL_RenderCopy(s_renderer, s_texture, NULL, NULL);
     SDL_RenderPresent(s_renderer);
@@ -110,6 +111,9 @@ void sentient_sim_sdl2_shutdown(void) {
     if (s_texture)  SDL_DestroyTexture(s_texture);
     if (s_renderer) SDL_DestroyRenderer(s_renderer);
     if (s_window)   SDL_DestroyWindow(s_window);
+    if (s_indev) { lv_indev_delete(s_indev); s_indev = NULL; }
+    if (s_display) { lv_display_delete(s_display); s_display = NULL; }
+    free(s_fb); s_fb = NULL;
     SDL_Quit();
 }
 

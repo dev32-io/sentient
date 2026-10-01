@@ -1,29 +1,21 @@
 # ESP32 Cube Testing — Details
 
-## Transport ownership
+## Host checks
 
-Use the provided HIL fixtures and `esp32-devtool`; do not add mocks for hardware
-transport or hand-written pyserial access. The daemon owns USB-CDC. A test must
-not have `cube_dut` and `serial_dut` read the same port concurrently: coordinate
-through the fixture/session contract, or use the daemon ring and command result
-instead of a second reader.
+Source `scripts/env.sh`, then use `python3 -m pytest -q esp32/cube/tests/unit` for the offline suite. `unittest discover` alone misses pytest-style functions. Some checks require the reviewed local ESP-IDF sources, C++ compiler, Pillow, OpenSSL and `rsvg-convert`; consult the test's actual inputs. Build-only and host tests do not prove hardware behavior.
 
-`cube_dut.cmd("state")` exercises the USB verb registry. Use `serial_dut` only
-for the fixture-supported checkpoint path, with generous timeouts for WiFi/WS
-reconnects. After an asynchronous action, wait for its checkpoint before making
-a state assertion; avoid asserting transient `CONNECTING` state immediately
-following `button.toggle`.
+Test current wire contracts, state transitions, resource/security boundaries and regressions. Historical HIL uses retired toggle/protocol assumptions; reconcile each case before execution rather than treating the old matrix as current authority.
 
-For gateway assertions, record the log position before the action and search
-only newly received lines. UDP log relay is optional (manifest port 9000 and
-may be disabled), so tests should use the supported USB/ring path when relay
-availability is not part of the behavior under test.
+## Device transport and completion
 
-The HTTP screenshot surface is `GET /screenshot`, exercised through
-`esp32-devtool screenshot`; there is no `ui.snapshot` USB verb. Keep UI simulator
-checks separate from device smoke: a green simulator run never replaces a
-required device test.
+Use `esp32-devtool` on explicitly approved local hardware. Daemon owns USB-CDC. Existing HIL `serial_dut` opens raw pyserial with no handoff; do not combine it with daemon-backed `cube_dut` or commands, and do not open another monitor. Consume available checkpoints through the daemon ring instead.
 
-Run host/unit and fixture checks without hardware where possible. Hardware smoke,
-flash, and physical recovery require explicit hardware availability and should
-not be improvised in a non-hardware validation pass.
+Command acceptance is not asynchronous completion. Wait for observable target state with a bounded deadline; do not infer capture, enrollment or gateway readiness from a `mark` checkpoint, elapsed time or a transient `CONNECTING` state. Current shipping UI uses press/release capture, not tap-to-toggle.
+
+For approved gateway assertions, inspect only bounded new sanitized diagnostics. Do not collect transcripts, prompts, audio or secrets. Project manifest is `esp32/cube/devtool/boards/cube.yaml`; UDP relay is currently disabled in manifest/debug defaults, with port 9000 reserved if enabled. USB/ring is the default diagnostic path.
+
+HTTP screenshot is `GET /screenshot` through `esp32-devtool screenshot`, not a `ui.snapshot` USB verb. Never bypass bootstrap screenshot refusal. Tree dumps are not a safe replacement: they include label text, including populated hidden pairing labels. Do not use tree/transcript diagnostics with protected or real-user content; see [agent console details](agent-console-details.md).
+
+The current simulator renders only the 466x466 diagnostic test screen, not shipping 480x480 companion views. Even shared shipping-view simulation cannot establish physical touch, microphone, speaker, panel timing or memory behavior.
+
+Hardware smoke, flash, fault injection and recovery require explicit local target availability/approval. Do not improvise them during host validation; read [flash discipline](flash-discipline-details.md).

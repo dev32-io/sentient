@@ -1,56 +1,56 @@
 # esp32/cube/scripts/
 
-Use pinned `esp32-devtool` after sourcing repository `scripts/env.sh`; legacy device-side scripts and HIL runbooks are not current authority.
+Use pinned `esp32-devtool` after sourcing repository `scripts/env.sh`.
+Account/device authority, destination and Wi-Fi use [authenticated BLE enrollment](../docs/ble-protocol.md); no account-token or Wi-Fi build helper is needed.
 
-`bake-creds.sh` is an **offline, explicit** debug-only provisioning extension.
-It retires when device pairing lands. No arguments fails closed. Generic
-`esp32-devtool flash` does **not** invoke provisioning; run
-`esp32-devtool bake-creds --input /absolute/path/to/private.json` separately.
-Never flash compile-only placeholder image. Device access and temporary debug
-LAN HTTP exposure need explicit approval.
+## Flash a cube
 
-Create an operator-owned JSON file outside repo, mode `0600`, with exactly:
+Install `uv` and ESP-IDF 5.5.2 once, plug in your cube with a USB data cable, then run:
 
-```json
-{
-  "WIFI_SSID": "test-network",
-  "WIFI_PSK": "synthetic-password",
-  "PASETO_TOKEN": "v4.local.<fixture-user-session-token>",
-  "DEVICE_ID": "cube-test-1",
-  "GATEWAY_HOST": "cube-gateway.local",
-  "GATEWAY_WS_PORT": 443,
-  "GATEWAY_WS_PATH": "/api/v1/ws",
-  "TRUSTED_CERT_PATH": "/absolute/path/to/outward-public-leaf.pem"
-}
+```sh
+uv run esp32/cube/scripts/flash.py
 ```
 
-Alternatively, for a device already configured with WiFi in NVS, replace **both**
-`WIFI_SSID` and `WIFI_PSK` with `"PRESERVE_WIFI": true`. Exactly one mode is
-required: WiFi pair or literal `true`; mixed, missing, or false modes fail.
-Preserve mode emits `SENTIENT_PRESERVE_WIFI 1` and no WiFi strings in header;
-board does not call `AddSsid`, so existing WiFi settings remain untouched.
-Explicit WiFi mode emits `SENTIENT_PRESERVE_WIFI 0` and seeds WiFi as before.
-Preserve mode cannot supply WiFi if device lacks stored credentials; existing
-WiFi config flow applies then.
+No flags, device paths, or separate environment setup. Python dependencies are resolved by `uv`; the wizard works from any directory when launched with its full path. A custom ESP-IDF installation can be selected with `IDF_PATH`.
 
-Fields are examples, not usable credentials. Supply existing authorized local
-fixture-user token from approved provisioning flow; script never mints tokens,
-reads `.e2e-testing`, contacts services, or chooses an IP. Host must be LAN
-RFC1918 IPv4 or `.local` DNS; certificate must be valid now and cover host in
-SAN. Supply certificate **actually served by cube-facing TLS proxy**, not
-upstream loopback cert. Firmware accepts only `wss://` and verifies hostname. This provisioning script
-remains debug-only; no approved prod provisioning flow exists.
+The wizard guides you through:
 
-Run `bash esp32/cube/scripts/bake-creds.sh --input /absolute/path/to/private.json`
-(or append `--profile debug`). Input values never belong in CLI arguments.
-Success replaces gitignored `firmware/main/sentient_creds.h` and
-`sentient_dev_gateway.crt`, each mode `0600`; only then is compile-only
-placeholder header replaced. If header publication fails, script restores prior
-certificate (or removes newly created one). If rollback itself fails, inspect
-both outputs before building. **Reconfigure then rebuild after baking**
-(`idf.py reconfigure && idf.py build` from firmware dir): CMake discovers
-certificate embedding at configure time. Verify rebuilt image before any
-approved flash. Baking alone does not change any previously built or flashed
-image. Runtime certificate trust and hostname verification are enabled; device
-verification still requires approved LAN exposure and disposable local user.
-Offline tests: `python3 -m unittest discover -s esp32/cube/tests/unit`.
+1. **Find your cube** — automatically selects a single compatible USB device; multiple devices get a numbered menu. If none appear, plug in a cube and press Enter to rescan.
+2. **Choose firmware** — Release for everyday use, or Debug for development. Explanations appear beside each choice.
+3. **Confirm** — review the selected device/profile and answer Yes. Default is No; quitting/EOF before confirmation never flashes. USB identity is checked again before starting.
+4. **Install** — status spinner while building/flashing; clear success or failure. Release also runs the strip audit.
+5. **Check the display** — confirm setup or the companion is visible. A successful write alone is not a verified boot; an unconfirmed display stops the wizard. Then optionally flash another cube, with fresh discovery and confirmation.
+
+USB IDs identify compatible ESP32 devices, not a proven cube model. Connect only cubes, or use the shown serial/USB details to identify the intended one. No path typing is needed. Use one wizard at a time: profiles share build output.
+
+The wizard pins this checkout's cube manifest and delegates hardware operations to `esp32-devtool`, which owns serial-daemon shutdown/restart. It never opens a serial reader, erases all flash, or bakes credentials. Existing Wi-Fi/enrollment storage is preserved; new cubes need Bluetooth enrollment through the app.
+
+Release maps to the existing `prod` profile, excludes the development certificate, and uses public CA trust. Its strip audit runs against the freshly built ELF after flashing. Release has no debug companion: successful transfer/audit is **not** boot verification; check the display. Debug verifies settled application or healthy BLE setup readiness and must use a trusted development network with matching TLS trust (below).
+
+Do not unplug during installation. There is no automatic rollback; a failed/interrupted flash requires inspection and possibly USB recovery, not blind retry. The wizard stops on failure. Never use on production devices without explicit per-device authorization.
+
+### Black screen after flashing
+
+The current IDF profiles already request `hard_reset` after flashing. This resets the ESP32, not necessarily the battery-backed power controller. Release has no USB diagnostic command handler; another software `restart` cannot recover firmware that never started.
+
+First try tapping the screen to wake it. Once our firmware has initialized the PMIC, **hold PWR about four seconds, release, then press PWR briefly** for hardware power-off/on. Use **PWR**, not BOOT (download mode). This is implemented by AXP2101 registers `0x22=0x06` and `0x27=0x10`, independent of application scheduling. See [board button definitions](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-2.16) and [AXP2101 datasheet pages 30–31](https://files.waveshare.com/wiki/common/X-power-AXP2101_SWcharge_V1.0.pdf). Button recovery has not been physically verified on the reported battery-equipped unit; earlier firmware or boot failure before PMIC initialization can leave different settings.
+
+A USB disconnect alone leaves battery power present. Button power-off/on is not guaranteed to clear every retained PMIC fault; do not infer the black-screen cause from a successful flash. If the screen stays black, stop for hardware-owner diagnosis rather than repeatedly flashing or automatically shutting down the PMIC.
+
+## Development TLS trust
+
+Explicitly supply the trusted PEM certificate for the approved cube-facing TLS endpoint as gitignored `firmware/main/sentient_dev_gateway.crt`. For example, from repository root:
+
+```sh
+install -m 0600 /absolute/path/to/approved-trust.pem esp32/cube/firmware/main/sentient_dev_gateway.crt
+```
+
+Do not scrape a live endpoint, mint an account token, or overwrite an existing operator file without approval. Existing private `sentient_creds.h` is no longer a build input; preserve it and other operator files.
+
+Debug embeds the supplied certificate when present; otherwise it uses the ESP CA bundle. HTTPS enrollment/renewal and WSS both retain certificate/date/hostname verification. Supply trust appropriate for the endpoint selected through BLE enrollment; a mismatched or invalid certificate fails TLS, never falls back to unverified transport.
+
+Prod sets `CONFIG_SENTIENT_PROD_BUILD=y` and neither embeds nor uses the development certificate, even while the private file remains present. Release retains CA-bundle verification. No TLS bypass exists.
+
+Reconfigure and rebuild after changing trust inputs; file presence is evaluated by CMake. Use separate debug/prod sdkconfig files and audit immediately after prod build; see [build profiles](../docs/build-profiles.md). Build success does not verify device TLS or authorize flashing. Device access/debug LAN HTTP exposure require separate approval.
+
+Offline checks: `python3 -m pytest -q esp32/cube/tests/unit` after sourcing `scripts/env.sh`. `unittest discover` misses pytest-style function tests.

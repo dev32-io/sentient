@@ -5,6 +5,7 @@
 #include <freertos/event_groups.h>
 #include <driver/i2s_std.h>
 
+#include <atomic>
 #include <vector>
 #include <string>
 #include <functional>
@@ -12,13 +13,8 @@
 #include "board.h"
 
 #define AUDIO_CODEC_DMA_DESC_NUM 6
-// 120 frames/desc (was 240). 240 @ 24kHz × 4-slot-16bit × 6 desc = 11.5 KB
-// of internal SRAM per RX chain. Post-Phase-6a (transcript labels, devtool
-// companion, SentientWsProtocol, TLS pinning) the free SRAM at IDLE is
-// ~13 KB / 2.5 KB min — esp_codec_dev_open's i2s_tdm_set_slot reconfig
-// allocates a fresh descriptor chain before freeing the boot-init chain,
-// needs ~2× headroom, OOMs, panics. Halving frame count cuts each chain
-// to ~5.7 KB. Latency cost: 5 ms/buffer at 24 kHz — imperceptible.
+// 120 frames/descriptor: 5 ms at the Cube's 24 kHz hardware rate.
+// Keep DMA sizing unchanged; codec adapter must propagate reconfiguration errors.
 #define AUDIO_CODEC_DMA_FRAME_NUM 120
 
 class AudioCodec {
@@ -31,7 +27,7 @@ public:
     virtual void EnableInput(bool enable);
     virtual void EnableOutput(bool enable);
 
-    virtual void OutputData(std::vector<int16_t>& data);
+    virtual bool OutputData(std::vector<int16_t>& data);
     virtual bool InputData(std::vector<int16_t>& data);
     virtual void Start();
 
@@ -52,8 +48,8 @@ protected:
 
     bool duplex_ = false;
     bool input_reference_ = false;
-    bool input_enabled_ = false;
-    bool output_enabled_ = false;
+    std::atomic<bool> input_enabled_ = false;
+    std::atomic<bool> output_enabled_ = false;
     int input_sample_rate_ = 0;
     int output_sample_rate_ = 0;
     int input_channels_ = 1;
