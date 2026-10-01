@@ -5,7 +5,7 @@
 // no real provider/network I/O, `services` is never touched by these two
 // branches so a cast stub is sufficient.
 
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { UserRole } from "@sentient/protocol";
@@ -142,8 +142,7 @@ function stubRuntime(): StubRuntime {
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
 
-/** Matches `session.input_arbitration_window_ms` in these fixtures. Small so a
- *  case that must land OUTSIDE the window does not pay for it in wall clock. */
+/** Matches fixture policy; time-sensitive cases control Date.now explicitly. */
 const ARBITRATION_WINDOW_MS = 30;
 
 /** A draft key shaped exactly as session-id.ts mints them (`d_` + 32 hex). */
@@ -1572,10 +1571,16 @@ describe("ws-handlers routing — two windows, one turn", () => {
         services,
       );
 
-    await send(a, "start a turn");
-    // Past the arbitration window — a real second speaker, not a race.
-    await new Promise((resolve) => setTimeout(resolve, ARBITRATION_WINDOW_MS + 20));
-    await send(b, "and mention the seagulls");
+    const now = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await send(a, "start a turn");
+      // Past the arbitration window, independent of runner speed.
+      clock.mockReturnValue(now + ARBITRATION_WINDOW_MS + 1);
+      await send(b, "and mention the seagulls");
+    } finally {
+      clock.mockRestore();
+    }
 
     expect(spy.submits()).toBe(2); // B was ACCEPTED, not refused
     expect(spy.turnsStarted()).toBe(1); // …and steered, rather than forking
@@ -1617,9 +1622,14 @@ describe("ws-handlers routing — two windows, one turn", () => {
         services,
       );
 
-    // Both inside the arbitration window — a genuine race, so B loses.
-    await send(a, "first", "p-a");
-    await send(b, "same instant", "p-b");
+    // Both inside the arbitration window, even if asynchronous work takes longer.
+    const clock = spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      await send(a, "first", "p-a");
+      await send(b, "same instant", "p-b");
+    } finally {
+      clock.mockRestore();
+    }
 
     expect(commandFrames(b)).toContainEqual(
       expect.objectContaining({ type: "command.rejected", reason: "session_busy", pendingId: "p-b" }),
