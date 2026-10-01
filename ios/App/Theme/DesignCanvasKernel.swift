@@ -1154,11 +1154,14 @@ struct DesignCanvasKernel: View, Animatable {
         case .contact:
             drawShadow(recipe.contact, in: &context, faceRect: faceRect)
         case .linearFace:
-            context.fill(facePath, with: .linearGradient(
-                Gradient(colors: [recipe.linearTop, recipe.linearBottom]),
-                startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
-                endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
-            ))
+            // CSS positions backgrounds in the padding box but paints through
+            // the border box. ShapeStyle preserves perceptual spatial mixing.
+            let paddingRect = faceRect.insetBy(dx: DesignMetrics.hairline, dy: DesignMetrics.hairline)
+            context.fill(facePath, with: .style(.linearGradient(
+                Gradient(colors: [recipe.linearTop, recipe.linearBottom]).colorSpace(.perceptual),
+                startPoint: .top,
+                endPoint: .bottom
+            ).in(paddingRect)))
         case .radialConcavity:
             drawRadial(in: &context, faceRect: faceRect, facePath: facePath, recipe: recipe)
         case .insideBorder:
@@ -1219,13 +1222,14 @@ struct DesignCanvasKernel: View, Animatable {
     ) {
         var radial = context
         radial.clip(to: facePath)
+        let paddingRect = faceRect.insetBy(dx: DesignMetrics.hairline, dy: DesignMetrics.hairline)
         let center = CGPoint(
-            x: faceRect.minX + faceRect.width * DesignMaterialAdapter.slateRadialCenterX,
-            y: faceRect.minY + faceRect.height * DesignMaterialAdapter.slateRadialCenterY
+            x: paddingRect.minX + paddingRect.width * DesignMaterialAdapter.slateRadialCenterX,
+            y: paddingRect.minY + paddingRect.height * DesignMaterialAdapter.slateRadialCenterY
         )
         let radius = CGSize(
-            width: faceRect.width * DesignMaterialAdapter.slateRadialScale.width,
-            height: faceRect.height * DesignMaterialAdapter.slateRadialScale.height
+            width: paddingRect.width * DesignMaterialAdapter.slateRadialScale.width,
+            height: paddingRect.height * DesignMaterialAdapter.slateRadialScale.height
         )
         guard radius.width > 0, radius.height > 0 else { return }
 
@@ -1249,12 +1253,12 @@ struct DesignCanvasKernel: View, Animatable {
         radial.scaleBy(x: radius.width, y: radius.height)
         radial.fill(
             Path(CGRect(x: -1, y: -1, width: 2, height: 2)),
-            with: .radialGradient(
-                Gradient(stops: stops),
-                center: .zero,
+            with: .style(.radialGradient(
+                Gradient(stops: stops).colorSpace(.perceptual),
+                center: .center,
                 startRadius: DesignMaterialAdapter.slateRadialStartRadiusFraction,
                 endRadius: DesignMaterialAdapter.slateRadialEndRadiusFraction
-            )
+            ).in(CGRect(x: -1, y: -1, width: 2, height: 2)))
         )
     }
 

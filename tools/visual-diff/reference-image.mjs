@@ -17,12 +17,25 @@ export async function readPngSize(path) {
   };
 }
 
+// Full authority path, not a reusable frame basename.
 export function caseIdFromReference(path) {
-  return basename(path, extname(path));
+  const normalized = resolve(path).split(sep).join("/");
+  const match = /\/design\/prototype\/([^/]+)\/handoff\/(static\/[^/]+|recordings\/[^/]+\/[^/]+)\.png$/.exec(normalized);
+  if (!match) throw new Error(`Expected a canonical handoff PNG: ${path}`);
+  return `${match[1]}/${match[2]}`;
+}
+
+export function fixtureIdFromReference(path) {
+  const id = caseIdFromReference(path);
+  const parts = id.split("/");
+  const leaf = parts.at(-1);
+  if (parts[1] === "static") return leaf;
+  const recording = parts[2].replace(/^sentient-avatar--/, "sentient-identity--");
+  return `${recording}--${leaf}`;
 }
 
 export function defaultActualPath(referencePath, platform) {
-  return resolve("build", "visual-captures", platform, basename(referencePath));
+  return resolve("build", "visual-captures", platform, `${caseIdFromReference(referencePath)}.png`);
 }
 
 export async function assertDisposableOutput(referencePath, outputPath, platform) {

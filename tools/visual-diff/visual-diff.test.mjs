@@ -11,7 +11,7 @@ function harness(result) {
     dependencies: {
       compare: async () => result,
       compositeImage: async () => {},
-      measureVisiblePixels: async () => ({ visiblePixelCount: 2_400, canvasPixelCount: 5_000 }),
+      measureVisiblePixels: async () => ({ visiblePixelCount: 2_400, canvasPixelCount: 5_000, shapeDiffCount: 0 }),
       stdout: (line) => stdout.push(line),
       stderr: (line) => stderr.push(line),
     },
@@ -74,4 +74,26 @@ test("fails only when the visible-pixel percentage exceeds a configured gate", a
     1,
   );
   assert.equal(JSON.parse(output.stdout[0]).withinLimit, false);
+});
+
+test("gates unrounded 0.204, 1.004, and 5.254 percent, not display rounding", async () => {
+  for (const [count, max] of [[204, 0.2], [1004, 1], [5254, 5.25]]) {
+    const output = harness({ match: false, reason: "pixel-diff", diffCount: count });
+    output.dependencies.measureVisiblePixels = async () => ({ visiblePixelCount: 100000, canvasPixelCount: 100000, shapeDiffCount: 0 });
+    const code = await runVisualDiff(["ref.png", "build/visual-captures/test/actual.png", "--max-diff-percentage", String(max)], output.dependencies);
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(output.stdout[0]).diffPercentage, count / 1000);
+  }
+});
+
+test("opaque substitution, empty paint, and unknown alpha measurement cannot pass a gate", async () => {
+  for (const measurement of [
+    { visiblePixelCount: 100, canvasPixelCount: 100, shapeDiffCount: 100 },
+    { visiblePixelCount: 0, canvasPixelCount: 100, shapeDiffCount: 0 },
+    { visiblePixelCount: 100, canvasPixelCount: 100 },
+  ]) {
+    const output = harness({ match: true });
+    output.dependencies.measureVisiblePixels = async () => measurement;
+    assert.equal(await runVisualDiff(["ref.png", "build/visual-captures/test/actual.png", "--max-diff-percentage", "4.25"], output.dependencies), 1);
+  }
 });

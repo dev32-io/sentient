@@ -13,7 +13,7 @@
     "measurement": {
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["applicable", "value", "unit", "result"], "properties": { "applicable": { "const": true }, "value": { "type": "number", "minimum": 0 }, "unit": { "enum": ["css-px", "pt"] }, "result": { "enum": ["pass", "needs-review"] } } },
-        { "type": "object", "additionalProperties": false, "required": ["applicable", "reason"], "properties": { "applicable": { "const": false }, "reason": { "type": "string", "minLength": 1 } } }
+        { "type": "object", "additionalProperties": false, "required": ["applicable", "reason"], "properties": { "applicable": { "enum": [false, "unknown"] }, "reason": { "type": "string", "minLength": 1 } } }
       ]
     },
     "entry": {

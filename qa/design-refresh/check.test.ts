@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { sourceIdentity, sha256 } from "../../tools/visual-diff/evidence.mjs";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { inventorySchema } from "./contracts.ts";
 import { assertImplementationInventoryClosed, discoverReachability, findPrototypeRuntimeReferences, validateAssetCopy, validateInventory, validateMatrix, validateVisualManifest } from "./check.ts";
@@ -110,7 +112,7 @@ describe("design refresh inventory checker", () => {
     await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("render evidence does not cover configurations");
   });
 
-  it("accepts reviewed evidence with sidecar-backed render coverage", async () => {
+  it("rejects legacy sidecars with synthetic bytes and no provenance", async () => {
     const root = await tempRoot();
     const evidenceRoot = "qa/web/evidence/design-refresh";
     await mkdir(resolve(root, evidenceRoot), { recursive: true });
@@ -149,7 +151,74 @@ describe("design refresh inventory checker", () => {
       minimumTarget: { applicable: false, reason: "The loading surface has no interactive target." },
       focus: { applicable: false, reason: "The loading surface has no focusable control." },
     };
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("missing capture provenance");
+  });
+
+  it("closes only fresh production images with consistent passing observations; unknown and failures stay open", async () => {
+    const root = await tempRoot();
+    execFileSync("git", ["init", "-q", root]);
+    const inventory = inventorySchema.parse(await current("inventory.json"));
+    inventory.rows = [inventory.rows[0]!];
+    const row = inventory.rows[0]!;
+    row.requiredConfigurations = [row.requiredConfigurations[0]!];
+    const manifest = await current("visual-review.json");
+    manifest.entries = [manifest.entries[0]];
+    const entry = manifest.entries[0];
+    entry.configurations = row.requiredConfigurations;
+    entry.status = "reviewed";
+    entry.reviewerNotes = "Reviewed disposable production fixture.";
+    entry.measurements = {
+      overflow: { applicable: true, value: 0, unit: "css-px", result: "pass" },
+      minimumTarget: { applicable: false, reason: "No interactive target." },
+      focus: { applicable: false, reason: "No focusable control." },
+    };
+    await mkdir(dirname(resolve(root, row.implementationPath)), { recursive: true });
+    await writeFile(resolve(root, row.implementationPath), "// synthetic source\n");
+    execFileSync("git", ["add", "."], { cwd: root });
+    const prefix = "qa/web/evidence/design-refresh/";
+    await mkdir(resolve(root, prefix), { recursive: true });
+    const actual = prefix + "actual.png";
+    await writeFile(resolve(root, actual), await Bun.file(resolve(repoRoot, "design/prototype/foundation-components/handoff/static/action-button--primary--rest.png")).arrayBuffer());
+    const provenancePath = prefix + "provenance.json";
+    const provenance = {
+      version: 1, platform: "web", origin: "production-component", inventoryId: row.id,
+      implementationPath: row.implementationPath, fixtureId: row.id, capturedAt: new Date().toISOString(),
+      sourceSha256: await sourceIdentity(root, "web"), actualSha256: await sha256(resolve(root, actual)),
+      actualPath: actual, dimensions: { width: 312, height: 176 }, runtime: { browser: "test" },
+      viewport: { width: 156, height: 88, scale: 2 }, configuration: { id: entry.configurations[0], fontSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", themeSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      measurements: { overflow: 0, minimumTarget: null, focus: 0 },
+    };
+    await writeFile(resolve(root, provenancePath), JSON.stringify(provenance));
+    const sidecar = prefix + "capture.json";
+    const doc = {
+      version: 1, kind: "design-refresh-visual-evidence", platform: "web", inventoryIds: [row.id],
+      captures: [{ configuration: entry.configurations[0], path: actual, provenancePath }],
+      observations: [{ inventoryId: row.id, configuration: entry.configurations[0], overflow: 0, minimumTarget: null as number | null, focusableCount: 0 as number | null }],
+    };
+    await writeFile(resolve(root, sidecar), JSON.stringify(doc));
+    entry.evidencePaths = [sidecar, actual, provenancePath];
     await expect(validateVisualManifest(root, manifest, inventory)).resolves.toBeDefined();
+    for (const measure of [
+      { applicable: true, value: 0, unit: "css-px", result: "needs-review" },
+      { applicable: "unknown", reason: "Native measurement unavailable." },
+    ]) {
+      entry.measurements.overflow = measure;
+      await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("failed/unknown");
+    }
+    entry.measurements.overflow = { applicable: true, value: 0, unit: "css-px", result: "pass" };
+    doc.observations[0]!.overflow = 999;
+    doc.observations[0]!.minimumTarget = 0;
+    await writeFile(resolve(root, sidecar), JSON.stringify(doc));
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("observations disagree");
+    doc.observations[0]!.overflow = 0;
+    doc.observations[0]!.focusableCount = null;
+    await writeFile(resolve(root, sidecar), JSON.stringify(doc));
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("unknown measurements");
+    doc.observations[0]!.focusableCount = 0;
+    doc.observations[0]!.minimumTarget = null;
+    await writeFile(resolve(root, sidecar), JSON.stringify(doc));
+    await writeFile(resolve(root, row.implementationPath), "// changed source\n");
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("Stale/source-incompatible");
   });
 
   it("accepts only explicit local loopback fixture targets", () => {

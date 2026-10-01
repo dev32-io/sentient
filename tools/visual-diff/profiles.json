@@ -1,0 +1,22 @@
+{
+  "ios": {
+    "threshold": 0.02,
+    "maxDiffPercentage": 4.25,
+    "status": "pilot-calibrated-not-library-certified",
+    "provenance": {
+      "caseId": "foundation-components/static/action-button--primary--rest",
+      "referenceSha256": "06ad73c4bb5fd4ec3405ca67ca622c3f14ea449ebbb660da311fb2ecbb3a190c",
+      "nativeCaptureSha256": "772b9cc5d50cd6fb26b98c540b77916083d5efe2feddc5b4edf2bcfb7aed95b6",
+      "materialSourceSha256": "d00759e45a3d1b4ceee1b1070a9839b152bb30e8915bfebfb151c9f066a0708b",
+      "runtime": "iPhone 16 / iOS Simulator 26.5 / Xcode 26.5 / 2x / bundled fonts / Dusk",
+      "viewport": { "width": 621, "height": 88, "cropX": 233, "cropWidth": 156 },
+      "actualDiffPercentage": 3.911,
+      "repeat": "after-1, after-2, final byte-identical",
+      "seededFaults": "1px shift 5.007; 2px shift 6.485; face+12RGB 43.445; white2px rim 4.651; missing lower shadow 16.495; half shadow 7.043; ink-24RGB 4.554",
+      "heldOut": "down2px 11.167; face blue+16 31.643; both fail frozen profile",
+      "decision": "User accepted pragmatic cross-platform font/grid limits; initial <=1% aspiration not achieved. No text masks, registration or relaxed pixel tolerance. AA ignored. Small/local defects may fit global budget; visual and semantic review still required. Extend calibration per family/OS, never infer library parity."
+    }
+  },
+  "web": { "threshold": 0.56, "maxDiffPercentage": 0.2, "status": "unvalidated-seeded-false-passes" },
+  "android": { "threshold": 0.56, "maxDiffPercentage": 0.2, "status": "unvalidated" }
+}

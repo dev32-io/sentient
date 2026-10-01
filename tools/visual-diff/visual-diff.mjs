@@ -22,7 +22,7 @@ Options:
   -h, --help                    Show this help.
 
 Images are compared on the selected background with anti-aliasing ignored by
-default. Remaining color differences above the reviewed 0.56 tolerance are counted.
+default. Remaining color differences above the selected tolerance (default 0.56, unvalidated) are counted.
 The reported percentage uses the union of non-transparent input pixels
 as its denominator, so transparent canvas padding cannot dilute the result.
 The command writes one compact JSON report to stdout. Invocation, decode, and
@@ -171,6 +171,7 @@ export async function runVisualDiff(argv, dependencies = {}) {
 			antialiasingIgnored: input.antialiasing,
 			background: input.background,
 			percentageBasis: "visible-alpha-union",
+			mode: input.maxDiffPercentage === undefined ? "report-only" : "numeric-gate-not-parity",
 		};
 		if (result.match || result.reason === "pixel-diff") {
 			const measurement = await measureVisiblePixels(input.referencePath, input.actualPath);
@@ -178,7 +179,11 @@ export async function runVisualDiff(argv, dependencies = {}) {
 			report.diffCount = diffCount;
 			report.diffPercentage = measurement.visiblePixelCount === 0
 				? 0
-				: Number(((diffCount / measurement.visiblePixelCount) * 100).toFixed(2));
+				: 100 * diffCount / measurement.visiblePixelCount;
+			report.shapeDiffCount = measurement.shapeDiffCount;
+			report.shapeDiffPercentage = measurement.visiblePixelCount === 0 ? 0
+				: 100 * measurement.shapeDiffCount / measurement.visiblePixelCount;
+			report.alphaAbsoluteDifference = measurement.alphaAbsoluteDifference;
 			report.visiblePixelCount = measurement.visiblePixelCount;
 			report.canvasPixelCount = measurement.canvasPixelCount;
 			if (!result.match) report.canvasDiffPercentage = result.diffPercentage;
@@ -192,7 +197,10 @@ export async function runVisualDiff(argv, dependencies = {}) {
 
 		let exitCode = result.reason === "file-not-exists" ? 2 : 0;
 		if (input.maxDiffPercentage !== undefined) {
-			const withinLimit = result.match || (result.reason === "pixel-diff" && report.diffPercentage <= input.maxDiffPercentage);
+			const withinLimit = (result.match || result.reason === "pixel-diff")
+				&& report.visiblePixelCount > 0
+				&& 100 * report.diffCount <= input.maxDiffPercentage * report.visiblePixelCount
+				&& 100 * report.shapeDiffCount <= input.maxDiffPercentage * report.visiblePixelCount;
 			report.maxDiffPercentage = input.maxDiffPercentage;
 			report.withinLimit = withinLimit;
 			if (!withinLimit && exitCode === 0) exitCode = 1;

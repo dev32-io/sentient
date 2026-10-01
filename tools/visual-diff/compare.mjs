@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { defaultActualPath } from "./reference-image.mjs";
+import { validateEvidence } from "./evidence.mjs";
+import { caseIdFromReference, defaultActualPath } from "./reference-image.mjs";
 
-const PLATFORM_PROFILES = Object.freeze({
-  web: { threshold: 0.56, maxDiffPercentage: 0.2 },
-  ios: { threshold: 0.035, maxDiffPercentage: 5.25 },
-  android: { threshold: 0.56, maxDiffPercentage: 0.2 },
-});
+import PLATFORM_PROFILES from "./profiles.json" with { type: "json" };
 
 function usage() {
   return "Usage: compare --platform <web|ios|android> --reference <png>";
@@ -125,7 +123,13 @@ if (input) {
       ? ["node", ["tools/visual-diff/capture-web.mjs", "--reference", input.referencePath, "--output", actualPath]]
       : ["bash", [`scripts/design/capture-${input.platform}-visual-diff.sh`, input.referencePath, actualPath]];
     const captureExit = await run(capture[0], capture[1]);
+    if (captureExit === 0 && input.platform !== "android") {
+      const evidence = JSON.parse(await readFile(actualPath + ".evidence.json", "utf8"));
+      await validateEvidence(process.cwd(), evidence, { reference: input.referencePath, actual: actualPath, platform: input.platform });
+    }
     const profile = PLATFORM_PROFILES[input.platform];
+    if (input.platform === "ios" && profile.provenance.caseId !== caseIdFromReference(input.referencePath)) console.error("iOS profile calibrated only on primary REST; this family/runtime needs calibration and review.");
+    if (input.platform !== "ios") console.error(`${input.platform} 0.56 profile is unvalidated; seeded material defects false-pass. Numeric pass is not parity.`);
     const diffArguments = [
       "tools/visual-diff/visual-diff.mjs",
       input.referencePath,

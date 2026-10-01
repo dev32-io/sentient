@@ -3,10 +3,12 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { basename, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
-import { assertDisposableOutput, caseIdFromReference, defaultActualPath, readPngSize } from "./reference-image.mjs";
+import { assertDisposableOutput, caseIdFromReference, fixtureIdFromReference, defaultActualPath, readPngSize } from "./reference-image.mjs";
+
+import { beginEvidence, finishEvidence, fontThemeIdentity } from "./evidence.mjs";
 
 const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
@@ -20,16 +22,6 @@ const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // the wider frame below is only needed for controls whose hover/press face translates.
 const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "empty-state", "filter-bar", "inline-secret-editor", "loading-state", "local-navigation", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-editor", "settings-group", "text-area", "text-field", "toast", "toggle", "user-avatar", "validated-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
-const SENTIENT_IDENTITY_VARIANTS = new Set([
-  "idle",
-  "thinking",
-  "responding",
-  "idle-to-thinking",
-  "thinking-to-responding",
-  "responding-to-idle",
-  "thinking-loop",
-  "responding-loop",
-]);
 
 function targetSelector(caseId) {
   if (caseId.startsWith("chip--")) return ".snt-chip";
@@ -144,8 +136,8 @@ async function localFontCss() {
   return rules.join("\n");
 }
 
-function captureCaseId(referencePath) {
-  const frameCaseId = caseIdFromReference(referencePath);
+export function captureCaseId(referencePath) {
+  const frameCaseId = fixtureIdFromReference(referencePath);
   if (frameCaseId === "no-results--empty") return "no-results--default--empty";
   if (frameCaseId === "filter-bar--default") return "filter-bar--default--rest";
   const filterSelection = /^filter-bar--(ready|shared|offline)-selected$/.exec(frameCaseId);
@@ -155,14 +147,6 @@ function captureCaseId(referencePath) {
   if (frameCaseId === "results-list--page-1--compact") return "results-list--default--compact-page-1";
   if (frameCaseId === "results-list--loading-more") return "results-list--default--loading-more";
   if (frameCaseId === "results-list--appended") return "results-list--default--appended";
-  const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|local-navigation--general-to-privacy|pin-entry--complete-to-success|apply-bar--dirty-to-done|toast--open)$/.test(recordingId)) {
-    return `${recordingId}--${frameCaseId}`;
-  }
-  const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
-  if (sentientRecording && SENTIENT_IDENTITY_VARIANTS.has(sentientRecording[1])) {
-    return `sentient-identity--${sentientRecording[1]}--${frameCaseId}`;
-  }
   return frameCaseId;
 }
 
@@ -202,7 +186,7 @@ function isApplyBarTransition(caseId) {
   return /^apply-bar--dirty-to-done--frame-\d+--\d+ms$/.test(caseId);
 }
 
-function visualDiffTransitionTimeMs(caseId) {
+export function visualDiffTransitionTimeMs(caseId) {
   const checkboxMatch = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
   if (checkboxMatch) return Number(checkboxMatch[1]);
   const chipMatch = /^chip--unselected-to-selected--frame-\d+--(\d+)ms$/.exec(caseId);
@@ -540,6 +524,7 @@ async function capture() {
     throw new Error(`Reference canvas must be divisible by the handoff ${HANDOFF_SCALE}x scale: ${referenceSize.width}x${referenceSize.height}`);
   }
   const frame = captureFrame(caseId, referenceSize);
+  await beginEvidence(repositoryRoot, input.referencePath, input.outputPath, "web");
 
   let server;
   let browser;
@@ -629,7 +614,17 @@ async function capture() {
       scale: "device",
       ...(clip ? { clip } : {}),
     });
-    console.log(JSON.stringify({ platform: "web", caseId, referenceSize, actualPath: input.outputPath }));
+    await finishEvidence(repositoryRoot, input.referencePath, input.outputPath, "web", {
+      fixtureId: caseId, origin: "source-fixture", runtime: { browser: browser.version(), engine: "chromium" },
+      viewport: { ...frame.viewport, scale: HANDOFF_SCALE }, clip: clip ?? null,
+      configuration: { locale: "en-US", theme: "Dusk", colorSpace: "sRGB", ...await fontThemeIdentity(repositoryRoot, "web") },
+      motion: { kind: transitionTimeMs === undefined ? "static" : "state-checkpoint", trajectoryEvidence: false,
+        requestedTimeMs: transitionTimeMs ?? identityKeyframeTimeMs ?? null, measuredTimeMs: null,
+        fixedViewport: !frame.normalizeTranslatedPaint, cropFollowing: !!frame.normalizeTranslatedPaint,
+        animationsDisabled: transitionTimeMs === undefined && !isLoadingStateActiveCase(caseId) },
+      measurements: { overflow: null, minimumTarget: null, focus: null },
+    });
+    console.log(JSON.stringify({ platform: "web", caseId: caseIdFromReference(input.referencePath), fixtureId: caseId, referenceSize, actualPath: input.outputPath }));
     await context.close();
   } finally {
     if (browser) await browser.close();
@@ -637,10 +632,12 @@ async function capture() {
   }
 }
 
-try {
-  await capture();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  console.error(usage());
-  process.exitCode = 2;
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try {
+    await capture();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.error(usage());
+    process.exitCode = 2;
+  }
 }

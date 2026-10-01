@@ -398,7 +398,6 @@ enum VisualDiffFixtureRegistry {
             .first
             .map(String.init)
         let component = componentID.flatMap { components[$0] }
-            ?? components.values.first { $0.cases[caseID] != nil }
         guard let component else {
             return .missingAuthority(
                 VisualDiffFixtureSkip(caseID: caseID, reason: .unknownComponent)
@@ -418,6 +417,28 @@ enum VisualDiffFixtureRegistry {
             return .missingAuthority(
                 VisualDiffFixtureSkip(caseID: caseID, reason: reason)
             )
+        }
+    }
+
+    // Export routing/applicability, not captured or passed coverage.
+    static func inventory() -> [[String: String]] {
+        components.keys.sorted().flatMap { componentID in
+            registrations(for: componentID).map { registration in
+                var row = [
+                    "fixtureId": registration.fixture.caseID,
+                    "componentId": componentID,
+                    "stateId": registration.fixture.stateID,
+                    "variantId": registration.fixture.variantID,
+                ]
+                switch registration.applicability {
+                case .supported:
+                    row["applicability"] = "supported"
+                case .missingAuthority(let reason):
+                    row["applicability"] = "missing"
+                    row["reason"] = String(describing: reason)
+                }
+                return row
+            }
         }
     }
 
@@ -2666,7 +2687,7 @@ private enum SegmentedControlFixtureCatalog {
     ]
 
     private static let motionConfigurations: [String: VisualDiffSegmentedMotionRenderConfiguration] = [
-        "frame-000--0000ms": VisualDiffSegmentedMotionRenderConfiguration(
+        "segmented-control--comfortable-to-compact--frame-000--0000ms": VisualDiffSegmentedMotionRenderConfiguration(
             title: "View density",
             options: densityOptions,
             initialSelection: "comfortable",
@@ -2674,7 +2695,7 @@ private enum SegmentedControlFixtureCatalog {
             visualHeight: DesignMetrics.actionButtonVisualHeight,
             frameTime: 0
         ),
-        "frame-001--0055ms": VisualDiffSegmentedMotionRenderConfiguration(
+        "segmented-control--comfortable-to-compact--frame-001--0055ms": VisualDiffSegmentedMotionRenderConfiguration(
             title: "View density",
             options: densityOptions,
             initialSelection: "comfortable",
@@ -2682,7 +2703,7 @@ private enum SegmentedControlFixtureCatalog {
             visualHeight: DesignMetrics.actionButtonVisualHeight,
             frameTime: 0.055
         ),
-        "frame-002--0110ms": VisualDiffSegmentedMotionRenderConfiguration(
+        "segmented-control--comfortable-to-compact--frame-002--0110ms": VisualDiffSegmentedMotionRenderConfiguration(
             title: "View density",
             options: densityOptions,
             initialSelection: "comfortable",
@@ -2690,7 +2711,7 @@ private enum SegmentedControlFixtureCatalog {
             visualHeight: DesignMetrics.actionButtonVisualHeight,
             frameTime: 0.11
         ),
-        "frame-003--0165ms": VisualDiffSegmentedMotionRenderConfiguration(
+        "segmented-control--comfortable-to-compact--frame-003--0165ms": VisualDiffSegmentedMotionRenderConfiguration(
             title: "View density",
             options: densityOptions,
             initialSelection: "comfortable",
@@ -2698,7 +2719,7 @@ private enum SegmentedControlFixtureCatalog {
             visualHeight: DesignMetrics.actionButtonVisualHeight,
             frameTime: 0.165
         ),
-        "frame-004--0220ms": VisualDiffSegmentedMotionRenderConfiguration(
+        "segmented-control--comfortable-to-compact--frame-004--0220ms": VisualDiffSegmentedMotionRenderConfiguration(
             title: "View density",
             options: densityOptions,
             initialSelection: "comfortable",
@@ -2734,7 +2755,7 @@ private enum SegmentedControlFixtureCatalog {
                 caseID: caseID,
                 componentID: "segmented-control",
                 variantID: "comfortable-to-compact",
-                stateID: caseID
+                stateID: caseID.replacingOccurrences(of: "segmented-control--comfortable-to-compact--", with: "")
             ),
             applicability: .supported
         )

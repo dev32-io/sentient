@@ -60,6 +60,7 @@ export const inventorySchema = z.object({
 const measure = z.discriminatedUnion("applicable", [
   z.object({ applicable: z.literal(true), value: z.number().nonnegative(), unit: z.enum(["css-px", "pt"]), result: z.enum(["pass", "needs-review"]) }),
   z.object({ applicable: z.literal(false), reason: nonEmpty }),
+  z.object({ applicable: z.literal("unknown"), reason: nonEmpty }),
 ]);
 
 export const visualReviewEntrySchema = z.object({
@@ -83,13 +84,13 @@ export const visualEvidenceDocumentSchema = z.object({
   kind: z.literal("design-refresh-visual-evidence"),
   platform: z.enum(platforms),
   inventoryIds: z.array(z.string().regex(/^(web|ios)\./)).min(1),
-  captures: z.array(z.object({ configuration: nonEmpty, path: sourcePath })).min(1),
+  captures: z.array(z.object({ configuration: nonEmpty, path: sourcePath, provenancePath: sourcePath.optional() })).min(1),
   observations: z.array(z.object({
     inventoryId: z.string().regex(/^(web|ios)\./),
     configuration: nonEmpty,
-    overflow: z.number().nonnegative(),
+    overflow: z.number().nonnegative().nullable(),
     minimumTarget: z.number().nonnegative().nullable(),
-    focusableCount: z.number().int().nonnegative(),
+    focusableCount: z.number().int().nonnegative().nullable(),
   })).min(1),
 });
 
