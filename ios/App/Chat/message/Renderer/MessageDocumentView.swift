@@ -32,9 +32,9 @@ private final class MessageSelectionRect: UITextSelectionRect {
 
 /// Promoted R0 native input owner. All geometry comes from retained CoreText
 /// layout, including measurement. No finalization mode or secondary renderer.
-class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
+class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate, UIScrollViewDelegate, UIContextMenuInteractionDelegate, UITextInteractionDelegate {
     var state = MessageDocumentState() { didSet {
-        if oldValue !== state { lastDocument = nil; activeTable = nil; selectionEdge.stop() }
+        if oldValue !== state { stopTableMotion(); lastDocument = nil; activeTable = nil; selectionEdge.stop() }
         rebuild()
     } }
     var document: MessageDocument { state.document }
@@ -54,7 +54,8 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
     private var mediaTasks: [URL: Task<Void, Never>] = [:]
     private var images: [URL: UIImage] = [:]
     private var failedImages: Set<URL> = []
-    private var tableButtons: [UUID: UIView & UIContentView] = [:]
+    private var tableScrolls: [UUID: UIScrollView] = [:]
+    private lazy var tableMenu = UIContextMenuInteraction(delegate: self)
     var onLayoutChange: (() -> Void)?
     var onSelectionChange: (() -> Void)?
     /// Host supplies visible rect in this view's window coordinate space.
@@ -72,8 +73,8 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         set { state.selection = newValue?.value }
     }
     private var lastWidth: CGFloat = 0
-    private var panStart: CGFloat = 0
-    private lazy var tablePan = UIPanGestureRecognizer(target: self, action: #selector(panTable(_:)))
+    private lazy var documentTap = UITapGestureRecognizer(target: self, action: #selector(activateLink(_:)))
+    private var retainingSelectionOnDetach = false
     private let interaction = UITextInteraction(for: .nonEditable)
     // UITextInteraction installs its display interaction on both tested OSes.
     // Reuse it: installing another duplicates native highlights and grabbers.
@@ -104,23 +105,50 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         accessibilityIdentifier = "message-document"
         accessibilityTraits = .staticText
         interaction.textInput = self
+        interaction.delegate = self
         addInteraction(interaction)
         for gesture in interaction.gesturesForFailureRequirements {
             gesture.addTarget(self, action: #selector(nativeGestureChanged(_:)))
         }
-        tablePan.delegate = self
-        addGestureRecognizer(tablePan)
+        addInteraction(tableMenu)
         pointerObserver.cancelsTouchesInView = false
         pointerObserver.delaysTouchesBegan = false
         pointerObserver.delaysTouchesEnded = false
         pointerObserver.sample = { [weak self] point in self?.observePointer(point) }
-        let linkTap = UITapGestureRecognizer(target: self, action: #selector(activateLink(_:)))
-        linkTap.cancelsTouchesInView = false
-        addGestureRecognizer(linkTap)
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: MessageDocumentView, _: UITraitCollection) in
+        documentTap.cancelsTouchesInView = false
+        documentTap.delegate = self
+        addGestureRecognizer(documentTap)
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitDisplayScale.self, UITraitAccessibilityContrast.self]) { (view: MessageDocumentView, _: UITraitCollection) in
             view.rebuild()
         }
     }
+    override func willMove(toWindow newWindow: UIWindow?) {
+        retainingSelectionOnDetach = newWindow == nil
+        super.willMove(toWindow: newWindow)
+    }
+
+    func prepareForUnmount() {
+        retainingSelectionOnDetach = true
+        stopTableMotion()
+        selectionEdge.stop()
+    }
+
+    func dismissSelection() {
+        selectionEdge.stop()
+        tableMenu.dismissMenu()
+        selectedTextRange = nil
+        if isFirstResponder { _ = resignFirstResponder() }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned && !retainingSelectionOnDetach {
+            selectionEdge.stop()
+            if selection != nil { selectedTextRange = nil }
+        }
+        return resigned
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         // Native grabbers may live in a window overlay rather than the text
@@ -133,6 +161,7 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
             if !measurement { window?.addGestureRecognizer(pointerObserver) }
         }
         if window == nil {
+            stopTableMotion()
             streamingCaret.layer.removeAllAnimations()
             mediaTasks.values.forEach { $0.cancel() }; mediaTasks.removeAll(); images.removeAll(); failedImages.removeAll()
         } else { loadMedia(); updateStreamingCaret() }
@@ -141,6 +170,10 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         selectionEdge.nativeGestureChanged(gesture.state, id: ObjectIdentifier(gesture))
     }
     private func observePointer(_ point: CGPoint?) {
+        if let point, selectionEdge.pointer == nil,
+           layout?.tables.contains(where: { $0.rect.contains(convert(point, from: window)) }) == true {
+            stopTableMotion()
+        }
         var anchor: Int?
         if let point, selectionEdge.pointer == nil, let selection {
             // Use public native handle geometry, not gesture/view class names.
@@ -151,7 +184,10 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
                 let x = a.convert(a.bounds, to: window), y = b.convert(b.bounds, to: window)
                 return hypot(x.midX - point.x, x.midY - point.y) < hypot(y.midX - point.x, y.midY - point.y)
             }
-            if let handle { anchor = handle.direction.contains(.leading) ? NSMaxRange(selection.value) : selection.value.location }
+            if let handle {
+                stopTableMotion()
+                anchor = handle.direction.contains(.leading) ? NSMaxRange(selection.value) : selection.value.location
+            }
         }
         selectionEdge.sample(point, handleAnchor: anchor)
     }
@@ -189,7 +225,9 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
     func rebuild() {
         guard bounds.width > 0 else { return }
         lastWidth = bounds.width
-        if let lastDocument, lastDocument.source != document.source { selectionEdge.remap(from: lastDocument, to: document) }
+        if let lastDocument, lastDocument.source != document.source || lastDocument.literal != document.literal {
+            selectionEdge.remap(from: lastDocument, to: document)
+        }
         lastDocument = document
         let previous = layout
         layout = state.measure(width: bounds.width, traits: traitCollection)
@@ -208,50 +246,52 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         let ids = Set(layout?.reading.map(\.id) ?? [])
         readingByID = readingByID.filter { ids.contains($0.key) }
         let tableIDs = Set(layout?.tables.map(\.id) ?? [])
-        for (id, button) in tableButtons where !tableIDs.contains(id) { button.removeFromSuperview(); tableButtons[id] = nil }
+        for (id, scroll) in tableScrolls where !tableIDs.contains(id) {
+            scroll.delegate = nil
+            removeGestureRecognizer(scroll.panGestureRecognizer)
+            scroll.removeFromSuperview()
+            tableScrolls[id] = nil
+        }
         if !measurement {
             for table in layout?.tables ?? [] {
-                let configuration = UIHostingConfiguration {
-                    Self.tableButtonContent(category: self.traitCollection.preferredContentSizeCategory) {
-                        [weak self, id = table.id] in self?.copyTableMarkdown(id: id)
-                    }
-                }.margins(.all, 0)
-                let button: UIView & UIContentView
-                if let existing = tableButtons[table.id] {
-                    button = existing
-                    button.configuration = configuration
-                } else {
-                    button = configuration.makeContentView()
-                    button.insetsLayoutMarginsFromSafeArea = false
-                    tableButtons[table.id] = button
-                    addSubview(button)
+                let scroll = tableScrolls[table.id] ?? UIScrollView()
+                if scroll.superview == nil {
+                    scroll.backgroundColor = .clear
+                    scroll.isOpaque = false
+                    scroll.showsHorizontalScrollIndicator = false
+                    scroll.showsVerticalScrollIndicator = false
+                    scroll.bounces = false
+                    scroll.contentInsetAdjustmentBehavior = .never
+                    scroll.isUserInteractionEnabled = false
+                    scroll.accessibilityElementsHidden = true
+                    scroll.delegate = self
+                    tableScrolls[table.id] = scroll
+                    insertSubview(scroll, at: 0)
+                    // Keep touch hit ownership on the sole UITextInput. A
+                    // descendant UIScrollView hit swallows native word selection.
+                    // UIKit still owns this recognizer and all deceleration.
+                    addGestureRecognizer(scroll.panGestureRecognizer)
                 }
-                button.frame = table.toolsRect
+                let offset = CGPoint(x: clampedTableOffset(tableOffset(id: table.id), table: table), y: 0)
+                if previous !== layout || scroll.frame != table.rect || scroll.contentOffset != offset {
+                    scroll.delegate = nil
+                    scroll.setContentOffset(scroll.contentOffset, animated: false)
+                    scroll.frame = table.rect
+                    scroll.contentSize = CGSize(width: scroll.bounds.width + maximumTableOffset(table), height: table.rect.height)
+                    scroll.contentOffset = offset
+                    scroll.delegate = self
+                }
+                state.tableOffsets[table.id] = max(0, scroll.contentOffset.x)
             }
         }
         loadMedia()
         invalidateIntrinsicContentSize()
         setNeedsDisplay()
+        selectionDisplay?.isActivated = selection?.isEmpty == false
         selectionDisplay?.setNeedsSelectionUpdate()
         updateStreamingCaret()
         if previous !== layout { onLayoutChange?() }
         selectionEdge.geometryChanged()
-    }
-
-    /// Only the canonical control is hosted; document text remains CoreText.
-    /// Layout uses this same control to reserve its Dynamic Type fitting height.
-    static func tableButtonContent(
-        category: UIContentSizeCategory, action: @escaping () -> Void
-    ) -> some View {
-        DesignActionButton(title: "Copy table", role: .quiet,
-                           accessibilityId: "chat-copy-table", fillsWidth: false, action: action)
-            .accessibilityLabel("Copy table as Markdown")
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .fixedSize(horizontal: false, vertical: true)
-            .dynamicTypeSize(DynamicTypeSize(category) ?? .large)
-            // toolsRect is already in host geometry; screen safe-area padding
-            // must not change a partially visible control's content size.
-            .ignoresSafeArea()
     }
 
     private func loadMedia() {
@@ -278,10 +318,30 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         return images[url] == nil ? "Loading image" : nil
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === documentTap else { return true }
+        guard !selectionEdge.isHandlingSelection else { return false }
+        let point = touch.location(in: self)
+        if let selection, !selection.isEmpty {
+            // A tap on selected text belongs to the native edit menu. Only
+            // unselected document content uses this existing local tap path.
+            return !selectionRects(for: selection).contains { $0.rect.contains(point) }
+        }
+        return link(at: point) != nil
+    }
+
+    private func link(at point: CGPoint) -> URL? {
+        guard lines.contains(where: {
+            let p = origin($0)
+            return CGRect(x: p.x, y: p.y, width: CGFloat(CTLineGetTypographicBounds($0.text, nil, nil, nil)), height: $0.height).contains(point)
+        }), let position = closestPosition(to: point) as? MessageTextPosition else { return nil }
+        return document.runs.first { NSLocationInRange(position.index, $0.range) && $0.link != nil }?.link
+    }
+
     @objc private func activateLink(_ gesture: UITapGestureRecognizer) {
-        guard selection?.isEmpty != false, let position = closestPosition(to: gesture.location(in: self)) as? MessageTextPosition,
-              let link = document.runs.first(where: { NSLocationInRange(position.index, $0.range) && $0.link != nil })?.link else { return }
-        openLink?(link)
+        let url = link(at: gesture.location(in: self))
+        if selection != nil { dismissSelection() }
+        if let url { openLink?(url) }
     }
 
     func table(at point: CGPoint) -> MessageDocumentLayout.Table? {
@@ -289,9 +349,20 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
     }
     func activateTable(at point: CGPoint) { if let table = table(at: point) { activeTable = table.id } }
     func tableOffset(id: UUID) -> CGFloat { state.tableOffsets[id] ?? 0 }
+    private var tableDisplayScale: CGFloat { max(1, traitCollection.displayScale) }
+    private func maximumTableOffset(_ table: MessageDocumentLayout.Table) -> CGFloat {
+        // Give UIKit a reachable pixel-aligned edge. Round outward, never hide
+        // the last fractional pixel of CoreText content behind an early cue cutoff.
+        ceil(max(0, table.contentWidth - table.rect.width) * tableDisplayScale) / tableDisplayScale
+    }
+    private func clampedTableOffset(_ offset: CGFloat, table: MessageDocumentLayout.Table) -> CGFloat {
+        // Layout measurement clamps retained offsets to its unquantized extent.
+        // Map that terminal value to the same edge used by native scrolling.
+        offset >= max(0, table.contentWidth - table.rect.width) ? maximumTableOffset(table) : max(0, offset)
+    }
     func tableCanScrollRight(id: UUID) -> Bool {
         guard let table = layout?.tables.first(where: { $0.id == id }) else { return false }
-        return tableOffset(id: id) < table.contentWidth - table.rect.width
+        return (tableOffset(id: id) * tableDisplayScale).rounded() < (maximumTableOffset(table) * tableDisplayScale).rounded()
     }
     func tableRect(id: UUID) -> CGRect { layout?.tables.first { $0.id == id }?.rect ?? .zero }
     func scrollTable(id: UUID, direction: UIAccessibilityScrollDirection) -> Bool {
@@ -301,23 +372,102 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: measuredHeight) }
 
     func setTableOffset(_ offset: CGFloat) {
-        guard let activeTable else { return }
-        state.tableOffsets[activeTable] = min(max(0, offset), max(0, tableWidth - tableRect.width))
+        guard let activeTable, let table = layout?.tables.first(where: { $0.id == activeTable }) else { return }
+        state.tableOffsets[activeTable] = clampedTableOffset(offset, table: table)
+        if let scroll = tableScrolls[activeTable] {
+            scroll.setContentOffset(CGPoint(x: tableOffset, y: 0), animated: false)
+            state.tableOffsets[activeTable] = max(0, scroll.contentOffset.x)
+        }
         setNeedsDisplay()
         selectionDisplay?.setNeedsSelectionUpdate()
     }
     var remainingLeft: Bool { tableOffset > 0 }
-    var remainingRight: Bool { tableOffset < tableWidth - tableRect.width }
+    var remainingRight: Bool { activeTable.map { tableCanScrollRight(id: $0) } ?? false }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard gestureRecognizer === tablePan else { return true }
-        activateTable(at: tablePan.location(in: self))
-        let v = tablePan.velocity(in: self)
-        return tableRect.contains(tablePan.location(in: self)) && abs(v.x) > abs(v.y)
+        guard let scroll = tableScrolls.values.first(where: { $0.panGestureRecognizer === gestureRecognizer }) else {
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+        let velocity = scroll.panGestureRecognizer.velocity(in: self)
+        return scroll.frame.contains(gestureRecognizer.location(in: self))
+            && scroll.contentSize.width > scroll.bounds.width
+            && abs(velocity.x) > abs(velocity.y) && !selectionEdge.isHandlingSelection
     }
-    @objc private func panTable(_ pan: UIPanGestureRecognizer) {
-        if pan.state == .began { panStart = tableOffset }
-        setTableOffset(panStart - pan.translation(in: self).x)
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard let id = tableScrolls.first(where: { $0.value === scrollView })?.key else { return }
+        activeTable = id
+        state.tableOffsets[id] = max(0, scrollView.contentOffset.x)
+        setNeedsDisplay()
+        refreshSelectionGeometry()
     }
+
+    func stopTableMotion() {
+        for (id, scroll) in tableScrolls {
+            scroll.delegate = nil
+            scroll.setContentOffset(scroll.contentOffset, animated: false)
+            state.tableOffsets[id] = max(0, scroll.contentOffset.x)
+            scroll.delegate = self
+        }
+    }
+
+    /// Actual typographic text (including interior spaces), not the broad cell
+    /// hit region used by native caret positioning in padding.
+    func tableBackground(at point: CGPoint) -> UUID? {
+        guard !selectionEdge.isHandlingSelection,
+              let table = layout?.tables.first(where: { $0.rect.contains(point) }) else { return nil }
+        for line in lines where line.table == table.id {
+            let p = origin(line)
+            let width = CGFloat(CTLineGetTypographicBounds(line.text, nil, nil, nil))
+            if CGRect(x: p.x, y: p.y, width: width, height: line.height).contains(point) { return nil }
+        }
+        for picture in layout?.pictures ?? [] where picture.table == table.id {
+            if picture.rect.offsetBy(dx: -tableOffset(id: table.id), dy: 0).contains(point) { return nil }
+        }
+        return table.id
+    }
+
+    func interactionShouldBegin(_ interaction: UITextInteraction, at point: CGPoint) -> Bool {
+        selectionEdge.isHandlingSelection || tableBackground(at: point) == nil
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                               configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard let id = tableBackground(at: location) else { return nil }
+        stopTableMotion()
+        return UIContextMenuConfiguration(identifier: id as NSUUID, previewProvider: nil) { [weak self] _ in
+            UIMenu(children: [UIAction(title: "Copy entire table", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                self?.copyTableMarkdown(id: id)
+            }])
+        }
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                               previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        tablePreview(configuration)
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                               previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        tablePreview(configuration)
+    }
+
+    private func tablePreview(_ configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        guard let id = configuration.identifier as? UUID, let window else { return nil }
+        let viewport = selectionViewportInWindow?() ?? window.bounds
+        let rect = tableRect(id: id).intersection(convert(viewport.intersection(window.bounds), from: window))
+        guard !rect.isNull, !rect.isEmpty,
+              let snapshot = resizableSnapshotView(from: rect, afterScreenUpdates: false, withCapInsets: .zero) else { return nil }
+        // A long message must not become the context menu's whole-view preview.
+        // Snapshot only this visible table slice, bounded by the host viewport.
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = UIColor(DuskColors.bgSunk)
+        parameters.visiblePath = UIBezierPath(roundedRect: CGRect(origin: .zero, size: rect.size), cornerRadius: Radii.sm)
+        snapshot.layer.cornerRadius = Radii.sm
+        snapshot.clipsToBounds = true
+        return UITargetedPreview(view: snapshot, parameters: parameters,
+                                 target: UIPreviewTarget(container: self, center: CGPoint(x: rect.midX, y: rect.midY)))
+    }
+
     private func origin(_ line: MessageDocumentLayout.Line) -> CGPoint {
         CGPoint(x: line.origin.x - (line.table.map { state.tableOffsets[$0] ?? 0 } ?? 0), y: line.origin.y)
     }
@@ -326,14 +476,29 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         UIColor(DuskColors.bgSunk).setFill()
         for well in layout.wells { UIBezierPath(roundedRect: well, cornerRadius: Radii.sm).fill() }
         for run in document.runs where run.style.contains(.code) && !document.blocks.contains(where: { $0.kind == .code && NSIntersectionRange($0.range, run.range).length > 0 }) {
+            context.saveGState()
+            if let table = lines.first(where: { NSIntersectionRange($0.range, run.range).length > 0 })?.table {
+                UIBezierPath(roundedRect: tableRect(id: table), cornerRadius: Radii.sm).addClip()
+            }
             for selection in selectionRects(for: MessageTextRange(run.range)) { context.fill(selection.rect) }
+            context.restoreGState()
         }
         UIColor(DuskColors.lineSoft).setFill()
         for rule in layout.rules { context.fill(rule) }
-        for (marker, point) in layout.markers { (marker as NSString).draw(at: point, withAttributes: [.font: layout.bodyFont, .foregroundColor: UIColor(DuskColors.ink2)]) }
+        for marker in layout.markers {
+            if let image = marker.image {
+                let scale = marker.faceSize / DesignMetrics.checkboxSize
+                let overflow = DesignMaterialAdapter.smallControlMaximumOverflow * scale
+                image.draw(in: CGRect(x: marker.point.x - overflow, y: marker.point.y - overflow,
+                                      width: image.size.width * scale, height: image.size.height * scale))
+            } else {
+                (marker.label as NSString).draw(at: marker.point, withAttributes: [.font: layout.bodyFont, .foregroundColor: UIColor(DuskColors.ink2)])
+            }
+        }
         for table in layout.tables {
             let offset = tableOffset(id: table.id)
-            context.saveGState(); context.clip(to: table.rect)
+            context.saveGState()
+            UIBezierPath(roundedRect: table.rect, cornerRadius: Radii.sm).addClip()
             UIColor(DuskColors.bgSunk).setFill(); context.fill(table.rect)
             UIColor(DuskColors.lineSoft).setStroke()
             for cell in table.cells { context.stroke(cell.offsetBy(dx: -offset, dy: 0), width: 0.5) }
@@ -341,7 +506,7 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         }
         for line in lines {
             context.saveGState()
-            if let table = line.table { context.clip(to: tableRect(id: table)) }
+            if let table = line.table { UIBezierPath(roundedRect: tableRect(id: table), cornerRadius: Radii.sm).addClip() }
             let point = origin(line)
             context.textMatrix = .identity
             context.translateBy(x: point.x, y: point.y + line.baseline)
@@ -352,16 +517,21 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
         }
         UIColor(DuskColors.ink2).setStroke()
         for run in document.runs where run.style.contains(.strike) {
+            context.saveGState()
+            if let table = lines.first(where: { NSIntersectionRange($0.range, run.range).length > 0 })?.table {
+                UIBezierPath(roundedRect: tableRect(id: table), cornerRadius: Radii.sm).addClip()
+            }
             for selection in selectionRects(for: MessageTextRange(run.range)) {
                 context.move(to: CGPoint(x: selection.rect.minX, y: selection.rect.midY))
                 context.addLine(to: CGPoint(x: selection.rect.maxX, y: selection.rect.midY))
             }
             context.setLineWidth(1); context.strokePath()
+            context.restoreGState()
         }
         for picture in layout.pictures {
             context.saveGState()
             let rect = picture.rect.offsetBy(dx: -(picture.table.map { tableOffset(id: $0) } ?? 0), dy: 0)
-            if let table = picture.table { context.clip(to: tableRect(id: table)) }
+            if let table = picture.table { UIBezierPath(roundedRect: tableRect(id: table), cornerRadius: Radii.sm).addClip() }
             UIColor(DuskColors.bgSunk).setFill(); context.fill(rect)
             if let url = picture.media.url, let image = images[url] {
                 let scale = min(rect.width / image.size.width, rect.height / image.size.height)
@@ -372,14 +542,31 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
             }
             context.restoreGState()
         }
-        for table in layout.tables {
-            let offset = tableOffset(id: table.id)
-            for (show, x, reverse) in [(offset > 0, table.rect.minX, false), (offset < table.contentWidth - table.rect.width, table.rect.maxX - 12, true)] where show {
+        // Fade moving content into its own surface; blank well stays unchanged.
+        // Native endpoint predicates own visibility (including pixel tolerance).
+        let surface = UIColor(DuskColors.bgSunk)
+        let colors = [surface.cgColor, surface.withAlphaComponent(0).cgColor] as CFArray
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+            for table in layout.tables {
+                let width = min(Space.xxl * layout.bodyFont.pointSize / DesignTextRole.body.baseSize, table.rect.width / 2)
                 context.saveGState()
-                context.clip(to: CGRect(x: x, y: table.rect.minY, width: 12, height: table.rect.height))
-                let colors = [UIColor.black.withAlphaComponent(0.25).cgColor, UIColor.clear.cgColor] as CFArray
-                let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
-                context.drawLinearGradient(gradient, start: CGPoint(x: reverse ? x + 12 : x, y: 0), end: CGPoint(x: reverse ? x : x + 12, y: 0), options: [])
+                // Protect only horizontal perimeter decoration, not clipped
+                // glyphs/images at the sides. Content is already round-clipped;
+                // source-atop keeps its destination alpha/silhouette unchanged.
+                let inset = max(0.5, 1 / tableDisplayScale)
+                context.clip(to: CGRect(x: bounds.minX, y: table.rect.minY + inset,
+                    width: bounds.width, height: max(0, table.rect.height - inset * 2)))
+                context.setBlendMode(.sourceAtop)
+                if tableOffset(id: table.id) > 0 {
+                    context.drawLinearGradient(gradient,
+                        start: CGPoint(x: table.rect.minX, y: table.rect.midY),
+                        end: CGPoint(x: table.rect.minX + width, y: table.rect.midY), options: [])
+                }
+                if tableCanScrollRight(id: table.id) {
+                    context.drawLinearGradient(gradient,
+                        start: CGPoint(x: table.rect.maxX, y: table.rect.midY),
+                        end: CGPoint(x: table.rect.maxX - width, y: table.rect.midY), options: [])
+                }
                 context.restoreGState()
             }
         }
@@ -394,7 +581,7 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
                 let end = document.graphemeBoundary(NSMaxRange(range.value))
                 selection = MessageTextRange(NSRange(location: min(start, end), length: abs(end - start)))
             } else { selection = nil }
-            selectionDisplay?.isActivated = selection != nil
+            selectionDisplay?.isActivated = selection?.isEmpty == false
             selectionDisplay?.setNeedsSelectionUpdate()
             inputDelegate?.selectionDidChange(self)
             onSelectionChange?()
@@ -538,10 +725,8 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
     }
     override var accessibilityElements: [Any]? {
         get {
-            guard let window else { return [] }
-            let viewport = selectionViewportInWindow?() ?? window.bounds
+            guard window != nil else { return [] }
             let entries: [(CGFloat, Any)] = readingElements.filter { !$0.accessibilityFrame.isEmpty }.map { ($0.accessibilityFrame.minY, $0) }
-                + tableButtons.values.filter { !$0.isHidden && !$0.convert($0.bounds, to: window).intersection(viewport).isEmpty }.map { (UIAccessibility.convertToScreenCoordinates($0.bounds, in: $0).minY, $0) }
             return entries.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
         set {}
@@ -575,7 +760,7 @@ class MessageDocumentView: UIView, UITextInput, UIGestureRecognizerDelegate {
     }
     override func copy(_ sender: Any?) {
         guard let selection else { return }
-        UIPasteboard.general.string = document.plain(in: selection.value)
+        UIPasteboard.general.string = document.clipboardText(in: selection.value)
     }
     override func selectAll(_ sender: Any?) {
         selectedTextRange = MessageTextRange(NSRange(location: 0, length: length))

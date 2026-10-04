@@ -12,7 +12,6 @@ import SwiftUI
 import MobileData
 
 struct VoiceFishScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
     let onOpenEditor: ((FishVoiceEntry) -> Void)?
     let editorEntry: FishVoiceEntry?
@@ -21,17 +20,21 @@ struct VoiceFishScreen: View {
     @State private var filtersExpanded = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void, onOpenEditor: ((FishVoiceEntry) -> Void)? = nil, editorEntry: FishVoiceEntry? = nil) {
-        self.settings = settings
+        self.init(viewModel: VoiceFishViewModel(settings: settings), onBack: onBack, onOpenEditor: onOpenEditor, editorEntry: editorEntry)
+    }
+
+    init(viewModel: VoiceFishViewModel, onBack: @escaping () -> Void, onOpenEditor: ((FishVoiceEntry) -> Void)? = nil, editorEntry: FishVoiceEntry? = nil) {
         self.onBack = onBack
         self.onOpenEditor = onOpenEditor
         self.editorEntry = editorEntry
-        _vm = State(initialValue: VoiceFishViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
         SettingsPageScaffold(
             title: "Clone from Fish", screenId: "settings-voice-fish",
-            onBack: onBack, backAccessibilityId: "settings-voice-fish-back"
+            onBack: { if !vm.cloning { onBack() } }, allowsInteractiveBack: !vm.cloning,
+            backAccessibilityId: "settings-voice-fish-back"
         ) {
             noticeBanner
             if vm.phase == .disabled {
@@ -45,6 +48,7 @@ struct VoiceFishScreen: View {
                 content
             }
         }
+        .disabled(vm.cloning)
         .task {
             if let editorEntry { vm.select(editorEntry) }
             else { await vm.load() }
@@ -248,7 +252,8 @@ struct VoiceFishScreen: View {
                 accessibilityId: "settings-voice-fish-clone-submit",
                 action: vm.clone
             )
-            DesignActionButton(title: "Cancel", role: .quiet, accessibilityId: "settings-voice-fish-clone-cancel") {
+            DesignActionButton(title: "Cancel", role: .quiet, state: vm.cloning ? .disabled : .normal, accessibilityId: "settings-voice-fish-clone-cancel") {
+                guard !vm.cloning else { return }
                 editorEntry == nil ? vm.cancelSelect() : onBack()
             }
         }

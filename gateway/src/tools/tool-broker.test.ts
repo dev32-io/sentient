@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ALL_TOOLS_PERMISSION_KEY, NATIVE_TOOL_SERVER_KEY, mcpCatalogSchema } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, NATIVE_TOOL_SERVER_KEY, catalogTools, mcpCatalogSchema } from "@sentient/config";
 import type {
   InboundScanConfig,
   McpCatalog,
@@ -8,8 +8,13 @@ import type {
   ToolPermissionMap,
 } from "@sentient/config";
 import type { ImpactTier, Result, UserRole } from "@sentient/protocol";
+import { textOnlyFixtureTools } from "../../../qa/design-refresh/text-only-tools.ts";
 import { createAccessManager } from "../access/access-manager.js";
 import type { Capability } from "../access/capability.js";
+import { PrivateScheduleResource } from "../access/private-schedule-resource.js";
+import { createMcpCatalogHandler } from "../api/handlers/mcp-catalog.js";
+import { foundationProductToolMetadata } from "../bootstrap/product-tool-metadata.js";
+import { composeProductToolProviders } from "../bootstrap/product-tool-providers.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { createGatewayLogger } from "../logging/logger.js";
 import type { DeepMemoryClient, Hit } from "../memory/deep-memory-client.js";
@@ -22,8 +27,13 @@ import type { InboundGate, RiskAccumulator } from "../security/inbound-gate.js";
 import { scanContent } from "../security/injection-scanner.js";
 import type { RiskEvent, RiskLevel } from "../security/risk-accumulator.js";
 import type { SessionStore } from "../store/session-store.js";
+import { loadShippedCatalog } from "../testing/shipped-catalog.js";
+import { createAttachmentTools } from "./attachment-tools.js";
+import { delegateTaskDefinition } from "./delegate-task.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
 import { buildMemoryTools } from "./memory-tools.js";
+import { resolveToolPermission } from "./resolve-tool-permission.js";
+import { createSkillTools } from "./skill-tools.js";
 import type { BackgroundToolRunner, NativeToolRunner } from "./tool-broker.js";
 import { createToolBroker } from "./tool-broker.js";
 import { ConfirmUnavailableError } from "./tool-types.js";
@@ -1915,6 +1925,148 @@ function nativeBroker(opts: {
 }
 
 describe("ToolBroker — foreground-native tools", () => {
+  it("SECURITY: text-only fixture denies current contributors, unlike empty and native-only maps", async () => {
+    const catalog = loadShippedCatalog();
+    let adapterCalls = 0;
+    const unused = (): never => {
+      adapterCalls++;
+      throw new Error("text-only fixture reached an adapter");
+    };
+    const natives = composeProductToolProviders(undefined, {
+      scheduled: {
+        schedules: { create: unused, patch: unused, delete: unused, list: unused, cards: unused },
+        resource: new PrivateScheduleResource(accessManager.grant(principal, "schedule-private")),
+      },
+    });
+    for (const [name, runner] of createSkillTools(
+      { list: unused, read: unused, write: unused, remove: unused },
+      {
+        scan: scanContent,
+        knownTools: new Set(),
+        maxBodyChars: 2000,
+      },
+    ))
+      natives.set(name, runner);
+    for (const runner of buildMemoryTools({ storeFor: unused, scan: scanContent, cfg: MEMORY_CFG, principal })) {
+      natives.set(runner.definition.name, runner);
+    }
+    const [attachment] = createAttachmentTools({
+      capability: { ...accessManager.grant(principal, "attachment-store"), resource: "attachment-store" },
+      sessionId: "synthetic-session",
+      store: { findAttachment: unused },
+      storage: {
+        async *read() {
+          yield unused();
+        },
+      },
+      parser: { parse: unused },
+      resolveVision: unused,
+      gate: { screen: unused, getRiskLevel: () => "none" },
+      limits: { maxPages: 2, maxTextBytes: 100, maxTextChars: 100, maxQuestionChars: 40, maxEdge: 800 },
+    });
+    if (!attachment) throw new Error("attachment contributor missing");
+    natives.set(attachment.definition.name, attachment);
+    let profile = profileFixture({});
+    const profileStore: ProfileStore = {
+      get: async () => ({ ok: true, value: profile }),
+      save: unused,
+      remove: unused,
+    };
+    const handler = createMcpCatalogHandler({
+      catalog,
+      hermesBuiltinTools: [],
+      profileStore,
+      tokens: {
+        validate: async () => ({ ok: true, value: { userId: principal.userId, issuedAt: 0, expiresAt: 9999999999 } }),
+      },
+      users: {
+        get: async () => ({
+          ok: true,
+          value: {
+            userId: principal.userId,
+            role: principal.role,
+            displayName: "Synthetic",
+            pinHash: "unused",
+            avatarTint: "sage",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            credentialsValidFrom: "",
+          },
+        }),
+      },
+    });
+    const response = await handler(
+      new Request("http://localhost/api/v1/mcp-catalog", { headers: { authorization: "Bearer synthetic" } }),
+    );
+    expect(response.status).toBe(200);
+    const tools = textOnlyFixtureTools(await response.json());
+    const mcp = fakeMcp(
+      catalogTools(catalog).map((tool) => ({
+        serverName: tool.server,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: {},
+        tier: tool.tier,
+        productGroup: tool.productGroup,
+        defaultExposure: tool.defaultExposure,
+      })),
+    );
+    const broker = createToolBroker({
+      mcp,
+      catalog,
+      store: fakeStore(),
+      capability,
+      sessionId: "synthetic-session",
+      nativeTools: natives,
+      backgroundTools: new Map([[delegateTaskDefinition.name, { definition: delegateTaskDefinition, run: unused }]]),
+      config: toolsConfig,
+      toolPermissions: createToolPermissionsReader({ profileStore, userId: principal.userId }),
+      requestConfirm: unused,
+    });
+    await broker.ready();
+    expect(broker.definitions().map((tool) => tool.name)).toEqual([attachment.definition.name]);
+    profile = profileFixture({ native: { "*": "off" } });
+    await broker.ready();
+    const nativeOnlyNames = broker.definitions().map((tool) => tool.name);
+    expect(nativeOnlyNames).not.toContain(attachment.definition.name);
+    expect(nativeOnlyNames).toContain(delegateTaskDefinition.name);
+    expect(nativeOnlyNames).toContain("skill_list");
+    expect(nativeOnlyNames).toContain("scheduled_message_list");
+    profile = profileFixture(tools.permissions);
+    await broker.ready();
+    expect(broker.definitions()).toEqual([]);
+    // Required coverage is independent of catalog count: current runner groups
+    // and foundation metadata must all be explicit off, including unmounted adapters.
+    for (const def of [...natives.values()].map((runner) => runner.definition).concat(delegateTaskDefinition)) {
+      expect(tools.permissions?.[def.productGroup ?? NATIVE_TOOL_SERVER_KEY]?.[ALL_TOOLS_PERMISSION_KEY]).toBe("off");
+    }
+    for (const meta of foundationProductToolMetadata()) {
+      expect(
+        resolveToolPermission({
+          toolName: meta.name,
+          tier: meta.tier,
+          productGroup: meta.productGroup,
+          defaultExposure: meta.defaultExposure,
+          storedPermissions: tools.permissions,
+          roleTemplate: {},
+        }).permission,
+      ).toBe("off");
+    }
+    const [mcpTool] = catalogTools(catalog);
+    if (!mcpTool) throw new Error("shipped MCP contributor missing");
+    for (const [name, args] of [
+      [attachment.definition.name, { attachmentId: `att_${"b".repeat(32)}`, question: "synthetic" }],
+      [delegateTaskDefinition.name, { agent: "hermes", taskPrompt: "synthetic" }],
+      [mcpTool.name, {}],
+    ] as const) {
+      const result = await broker.dispatch(makeInvocation({ name, args }));
+      if ("taskId" in result) throw new Error("text-only fixture started background work");
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("turned off");
+    }
+    expect(adapterCalls).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
   it("advertises a read-tier native tool to an adult", async () => {
     const { broker } = nativeBroker({ role: "adult", natives: [nativeRunner({ name: "skill_list", tier: "read" })] });
     await broker.ready();

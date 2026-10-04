@@ -21,7 +21,7 @@ struct ForceUpdateView: View {
                             if !versionName.isEmpty {
                                 Text("Version \(versionName)")
                                     .designText(.supporting)
-                                    .foregroundStyle(DuskColors.ink3)
+                                    .foregroundStyle(DuskColors.ink2)
                             }
                             DesignActionButton(
                                 title: "Update now",

@@ -6,12 +6,14 @@ export interface ConfirmDeleteDialogProps {
   title: string;
   onConfirm(): void;
   onClose(): void;
+  returnFocusRef?: { current: HTMLElement | null };
 }
 
 export function ConfirmDeleteDialog({
   title,
   onConfirm,
   onClose,
+  returnFocusRef,
 }: ConfirmDeleteDialogProps): JSX.Element {
   const truncated = title.length > 60 ? `${title.slice(0, 60)}…` : title;
   return (
@@ -19,6 +21,7 @@ export function ConfirmDeleteDialog({
       title="Delete chat?"
       description="This permanently removes the conversation, including its messages. This can't be undone."
       onClose={onClose}
+      {...(returnFocusRef ? { returnFocusRef } : {})}
       footer={
         <>
           <ActionButton variant="quiet" className="app-dialog__btn app-dialog__btn--ghost" onClick={onClose}>Cancel</ActionButton>

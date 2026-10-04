@@ -119,6 +119,11 @@ struct VoiceCaptureGestureHost: UIViewRepresentable {
 
         func attach(to view: UIView) {
             view.addGestureRecognizer(recognizer)
+#if C_COMPOSER_FIXTURE
+            MainActor.assumeIsolated {
+                ComposerGestureProbe.shared.install(gesture, in: view, geometry: geometry)
+            }
+#endif
         }
 
         func update(
@@ -127,6 +132,13 @@ struct VoiceCaptureGestureHost: UIViewRepresentable {
         ) {
             self.gesture = gesture
             self.geometry = geometry
+#if C_COMPOSER_FIXTURE
+            MainActor.assumeIsolated {
+                if let view = recognizer.view {
+                    ComposerGestureProbe.shared.install(gesture, in: view, geometry: geometry)
+                }
+            }
+#endif
         }
 
         @objc private func handleRecognizer(_ recognizer: UIGestureRecognizer) {
@@ -135,6 +147,11 @@ struct VoiceCaptureGestureHost: UIViewRepresentable {
                 locationInWindow: recognizer.location(in: view.window),
                 targetGeometryInWindow: geometry.targetGeometry(in: view)
             )
+#if C_COMPOSER_FIXTURE
+            MainActor.assumeIsolated {
+                ComposerGestureProbe.shared.record("recognizer-\(recognizer.state.rawValue)")
+            }
+#endif
             switch recognizer.state {
             case .began:
                 gesture.onBegin(sample)

@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { useRef } from "preact/hooks";
 import type { ChatAttachment } from "../../types.ts";
 import { Dialog } from "../common/dialog.tsx";
 
@@ -94,6 +95,7 @@ function PreviewTrigger({
   asset?: AttachmentAsset | undefined;
   onPreview?: ((attachment: ChatAttachment) => void) | undefined;
 }): JSX.Element {
+  const mouseStart = useRef<{ x: number; y: number } | null>(null);
   const content = <AttachmentContent metadata={metadata} asset={asset} />;
   if (!onPreview) return <div class="message-attachment__preview-trigger">{content}</div>;
   return (
@@ -101,7 +103,20 @@ function PreviewTrigger({
       type="button"
       class="message-attachment__preview-trigger"
       aria-label={`Preview ${metadata.displayName}`}
-      onClick={() => onPreview(attachment)}
+      onMouseDown={(event) => {
+        mouseStart.current = { x: event.clientX, y: event.clientY };
+      }}
+      onClick={(event) => {
+        const start = mouseStart.current;
+        mouseStart.current = null;
+        const selection = event.currentTarget.ownerDocument.getSelection();
+        // A text drag can emit click on release; leave clicks/keyboard activation native.
+        if (
+          event.detail > 0 && start && (start.x !== event.clientX || start.y !== event.clientY) &&
+          selection && !selection.isCollapsed && event.currentTarget.contains(selection.anchorNode)
+        ) return;
+        onPreview(attachment);
+      }}
     >
       {content}
     </button>
@@ -138,7 +153,7 @@ export function AttachmentCards({
             )}
             {asset?.error && <span class="message-attachment__status" role="status">File unavailable</span>}
             {hasActions && (
-              <div class="message-attachment__actions">
+              <div class="message-attachment__actions" data-copy-ignore>
                 {attachment.kind === "local" && attachment.status === "uploading" && attachment.onCancel && (
                   <button type="button" onClick={attachment.onCancel}>Cancel</button>
                 )}

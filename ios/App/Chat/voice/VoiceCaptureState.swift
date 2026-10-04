@@ -14,14 +14,19 @@ enum VoiceCaptureState: String, Equatable, Sendable {
 struct VoiceCapturePresentationState: Equatable, Sendable {
     let state: VoiceCaptureState
     let disabled: Bool
+    var retainedLiveState: VoiceCaptureState? = nil
 
     var isTransitioning: Bool { state == .transitioning }
     var isDisabled: Bool { disabled || state == .disabled || isTransitioning }
-    var isAuto: Bool { state == .auto && !isDisabled }
-    var isHolding: Bool { state == .hold && !isDisabled }
+    // Input lock must not become an idle-size target while shared authority settles.
+    private var liveState: VoiceCaptureState {
+        isTransitioning ? (retainedLiveState ?? .idle) : state
+    }
+    var isAuto: Bool { liveState == .auto && !disabled }
+    var isHolding: Bool { liveState == .hold && !disabled }
     var isExpanded: Bool { isHolding || isAuto }
     var showsWaveform: Bool { isExpanded }
-    var showsTargetDeck: Bool { isHolding }
+    var showsTargetDeck: Bool { state == .hold && !isDisabled }
     var showsFailureNotice: Bool { state == .denied || state == .failed }
 
     var primaryLabel: String {

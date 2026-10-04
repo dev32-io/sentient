@@ -57,6 +57,7 @@ final class MessageSelectionEdge {
     private var armedAnchor: Int?
     private var activeGesture: ObjectIdentifier?
     private var cancelled = false
+    var isHandlingSelection: Bool { anchor != nil || armedAnchor != nil }
     var isRunning: Bool { link?.isEnabled == true }
     var onMotion: ((CGPoint, Int, CGFloat, CGFloat) -> Void)?
 

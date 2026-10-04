@@ -71,6 +71,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
@@ -101,6 +103,7 @@ class SdkVoice internal constructor(
     private val onUplinkBeginTerminal: (CaptureToken) -> Boolean,
     private val onUplinkTerminal: (CaptureToken, CaptureTerminal) -> Unit,
     private val onUplinkForceLocalTerminal: (Long) -> Unit = { _ -> },
+    private val onCaptureStartFailed: (CaptureToken) -> Unit = {},
     private val scope: CoroutineScope,
     private val createCaptureId: () -> String = { randomCaptureId() },
     // Dedicated SERIAL dispatcher OFF the orchestrator scope: guarantees the
@@ -137,6 +140,19 @@ class SdkVoice internal constructor(
     val audioState: StateFlow<VoiceAudioState> =
         voiceAudio?.state
             ?: MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
+
+    // The owner-scope observer and voice lane may see the same loss in either order.
+    // Retain the exact snapshot, not its value: a later equal Error is a new failure.
+    private val audioLossMutex = Mutex()
+    private var reconciledAudioLoss: VoiceAudioState? = null
+
+    internal suspend fun reconcileAudioLoss(state: VoiceAudioState, cancel: () -> Unit) {
+        audioLossMutex.withLock {
+            if (state !== audioState.value || state === reconciledAudioLoss) return
+            reconciledAudioLoss = state
+            cancel()
+        }
+    }
 
     /** Aggregate mic energy for native waveform rendering; never exposes PCM. */
     val micLevels: StateFlow<MicLevelEnvelope> =
@@ -214,7 +230,7 @@ class SdkVoice internal constructor(
     private var requestedCapture: CaptureToken? = null
     @Volatile private var acceptsCaptureRequests = true
     @Volatile private var forceClosedGeneration = 0L
-    private var nextCaptureGeneration = 0L
+    @Volatile private var nextCaptureGeneration = 0L
     private val allocatedCaptureIds = mutableSetOf<String>()
 
     // Last-applied VoiceAudioPath (mirrors micOn/playbackOn — updated only inside
@@ -302,6 +318,9 @@ class SdkVoice internal constructor(
         requestedCapture = token
         commands.trySend(Cmd.Configure(mic = true, playback = playback, turnMode = turnMode, path = derivePath(true, turnMode), capture = token))
     }
+
+    internal fun isCurrentCaptureGeneration(generation: Long): Boolean =
+        generation == nextCaptureGeneration && generation > forceClosedGeneration
 
     /** Existing release semantics commit; explicit cancellation is distinct. */
     fun requestStop() = requestTerminal(CaptureTerminal.Commit, playbackOn)
@@ -471,16 +490,27 @@ class SdkVoice internal constructor(
             // tracked path resets to Duplex alongside — the next mic-rising edge (or an
             // explicit arm) re-derives/re-supplies it, so no stale Manual/Duplex lingers
             // against a torn-down engine.
-            val phase = voiceAudio?.state?.value?.phase
-            if (phase == Phase.Error) {
-                log.warn("configure-error-reset-lane", mapOf("mic" to targetMic, "playback" to c.playback, "path" to targetPath.name, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
-                if (micRising && capture != null && onUplinkBeginTerminal(capture)) {
-                    onUplinkTerminal(capture, CaptureTerminal.Cancel)
-                } else if (micFalling && capture != null) {
-                    onUplinkTerminal(capture, c.terminal ?: CaptureTerminal.Cancel)
+            val state = voiceAudio?.state?.value
+            if (state?.phase == Phase.Error) {
+                audioLossMutex.withLock {
+                    // Fence delayed observer delivery even for route-invalidated failures.
+                    if (micRising && capture != null) reconciledAudioLoss = state
+                    log.warn("configure-error-reset-lane", mapOf("mic" to targetMic, "playback" to c.playback, "path" to targetPath.name))
+                    if (micRising && capture != null) {
+                        // The Error observer (or a release while configure was suspended) may
+                        // already own Terminating. Complete that same token regardless of who
+                        // claimed it: a failed start is always discard, never a commit.
+                        onUplinkBeginTerminal(capture)
+                        onUplinkTerminal(capture, CaptureTerminal.Cancel)
+                    } else if (micFalling && capture != null) {
+                        onUplinkTerminal(capture, c.terminal ?: CaptureTerminal.Cancel)
+                    }
+                    micOn = false; playbackOn = false; currentPath = VoiceAudioPath.Duplex
+                    if (requestedCapture == capture) requestedCapture = null
+                    if (micRising && capture != null && isCurrentCaptureGeneration(capture.generation)) {
+                        onCaptureStartFailed(capture)
+                    }
                 }
-                micOn = false; playbackOn = false; currentPath = VoiceAudioPath.Duplex
-                if (requestedCapture == capture) requestedCapture = null
                 c.ack?.complete(false)
                 return@runCatching
             }

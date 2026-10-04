@@ -3,11 +3,15 @@ package io.sentient.mobiledata.usecase
 import io.sentient.mobiledata.data.ConversationRepository
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.sdk.ConnectionState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 
 /**
  * Owns the WHEN of the optimistic outbox drain. The cache stays VM-owned and is
@@ -36,7 +40,12 @@ class SendMessageUseCase(
     /** Wake the VM for connection, authority, or queue changes even if READY is unchanged.
      * Cache mutation stays in the collecting VM's scope (MainActor on Swift). */
     fun observeReadiness(cache: OutboundCache, connection: Flow<ConnectionState>): Flow<Unit> =
-        combine(connection, authorizedId, authorizedRouteGeneration, transportGeneration, cache.pending) { _, _, _, _, _ -> Unit }
+        merge(
+            combine(connection, authorizedId, authorizedRouteGeneration, transportGeneration, cache.pending) { _, _, _, _, _ -> Unit },
+            conversation.liveEvents.filterIsInstance<SdkEvent.CommandRejected>().map { rejection ->
+                cache.recordRejection(rejection)
+            },
+        )
 
     /** Fire an outbound message immediately. Enqueue/optimism is the VM's OutboundCache. */
     operator fun invoke(text: String, pendingId: String, attachmentIds: List<String> = emptyList()) =
@@ -52,6 +61,7 @@ class SendMessageUseCase(
      * on reconnect is safe — the gateway dedups by pendingId.
      */
     fun flushIfReady(cache: OutboundCache, status: SdkStatus) {
+        cache.applyRejections()
         if (status != SdkStatus.READY) {
             log.info("flush-skipped", mapOf("reason" to "not-ready", "status" to status))
             return

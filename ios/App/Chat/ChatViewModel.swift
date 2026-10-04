@@ -20,13 +20,14 @@
 // the main actor; the for-await resumes on the calling actor.
 // ---------------------------------------------------------------------------
 import Foundation
+import os
 import ImageIO
 import MobileData
 import UIKit
 import UniformTypeIdentifiers
 
 struct AttachmentTransferState: Equatable {
-    enum Phase { case ready, uploading, failed, cancelled }
+    enum Phase { case queued, ready, uploading, failed, cancelled }
     let phase: Phase
     var progress: Double = 0
 }
@@ -49,7 +50,7 @@ func pendingAttachmentProjection(
             PendingAttachmentPresentation(
                 attachments: send.attachments,
                 previews: previews.filter { ids.contains($0.key) },
-                transfers: transfers.filter { ids.contains($0.key) }
+                transfers: Dictionary(uniqueKeysWithValues: send.attachments.map { ($0.id, transfers[$0.id] ?? AttachmentTransferState(phase: .queued)) })
             )
         )
     })
@@ -207,6 +208,8 @@ final class ChatViewModel: ObservableObject {
     /// Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Exposed
     /// for the keep-screen-on derivation below (and its reason logging in ChatView).
     @Published private(set) var talkMode: TalkMode = .idle
+    @Published var captureFailure: SdkEvent.CaptureStartFailed?
+    var captureFailureId: String? { captureFailure?.captureId }
     @Published private(set) var micLevels: [Float] = Array(repeating: 0, count: 32)
 
     /// Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is
@@ -231,6 +234,7 @@ final class ChatViewModel: ObservableObject {
     private let previewAttachment: (String) async throws -> Data
     private let saveDraftText: ((String?, String?, String) async throws -> NativeDraft?)?
     private let importDraftAttachment: ((String?, String?, NativeDraftAttachmentImport) async throws -> NativeDraft)?
+    private let prepareDraftAttachment: (AttachmentImportItem) async throws -> AttachmentImportItem
     private let uploadPendingAttachments: ((NativePendingSend, KotlinLong?, (String, KotlinLong, KotlinLong) -> Void) async throws -> [AttachmentRef])?
     private let cancelPendingSend: (NativePendingSend) async throws -> NativeDraft
     private let acknowledgeReceipt: (String, String) async throws -> NativeSendReconciliationResult
@@ -243,11 +247,47 @@ final class ChatViewModel: ObservableObject {
     /// init() for OutboundCache's all-default Kotlin constructor, so the factory hands
     /// Swift the same system-clock + default-timeout cache Android gets from OutboundCache().
     private let cache = createOutboundCache()
+    @Published private(set) var routeActivationSuspended = false
+    private var awaitingRouteProjection = false
+    private var retainedRouteSessionId: String?
+
+    /// Keep original timeline/editor visible while SDK authorizes another route.
+    /// Editing and local persistence continue; no command may borrow destination authority.
+    func suspendRouteForActivation() {
+        guard !editorRetired, !routeActivationSuspended else { return }
+        if !awaitingRouteProjection {
+            retainedRouteSessionId = routeSessionId ?? component.existingSessionId
+        }
+        routeActivationSuspended = true
+        awaitingRouteProjection = true
+        chatTask?.cancel()
+        coldReplaceTask?.cancel()
+        permissionTask?.cancel()
+        acceptanceTask?.cancel()
+        pendingSendTask?.cancel()
+    }
+
+    func restoreRouteAfterActivation() {
+        guard !editorRetired, routeActivationSuspended else { return }
+        component.restoreChatRoute(cache: cache, sessionId: retainedRouteSessionId, draftId: routeDraftId)
+        routeActivationSuspended = false
+        resumeRouteProjectionIfReady()
+    }
+
+    private func resumeRouteProjectionIfReady() {
+        guard awaitingRouteProjection, !routeActivationSuspended,
+              component.canDrainPending(cache: cache) else { return }
+        awaitingRouteProjection = false
+        startChatCollecting()
+        startColdReplaceCollecting()
+        startPermissionCollecting()
+    }
 
     private var chatTask: Task<Void, Never>?
     private var outboundTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var talkModeTask: Task<Void, Never>?
+    private var captureFailureTask: Task<Void, Never>?
     private var micLevelsTask: Task<Void, Never>?
     private var coldReplaceTask: Task<Void, Never>?
     private var sweepTask: Task<Void, Never>?
@@ -271,7 +311,96 @@ final class ChatViewModel: ObservableObject {
     private var lastAttachmentImportFailureGeneration: Int?
     private var acknowledgedAttachmentImportFailureGeneration: Int?
     private var pendingSendTask: Task<Void, Never>?
-    private var pendingSendAwaitingAnchor = false
+    private var acceptanceTask: Task<Void, Never>?
+    private var pendingSnapshotTask: Task<Void, Never>?
+    private let editorId = UUID().uuidString
+    private var editorRetired = false
+    private var draftRestoreSettled = false
+    private var editorRevision = 0
+    private var activePendingId: String?
+    private var editingPending = false
+    private var retryPendingIds: Set<String> = []
+    @Published private var durablePending: [NativePendingSend] = []
+    @Published private var blockedPendingIds: Set<String> = []
+    @Published private(set) var preparingSend = false
+
+    private var selectedPending: [NativePendingSend] {
+        durablePending.filter {
+            (routeDraftId != nil && $0.draftId == routeDraftId) ||
+            (routeSessionId != nil && $0.sessionId == routeSessionId)
+        }
+    }
+
+    var pendingMessages: [PendingMessage] {
+        let confirmed = Set(state.model.committed.compactMap(\.pendingId))
+        let transport = Dictionary(uniqueKeysWithValues: cache.pending.value.map { ($0.id, $0) })
+        return selectedPending.filter { !confirmed.contains($0.pendingId) }.map { send in
+            if let cached = transport[send.pendingId] { return cached }
+            let needsRetry = blockedPendingIds.contains(send.pendingId) ||
+                (send.attempted && activePendingId != send.pendingId)
+            return PendingMessage(
+                id: send.pendingId, text: send.text,
+                status: needsRetry ? .failed : .queued,
+                sentAtMs: nil, attachmentIds: [],
+                deliveryState: needsRetry ? .unknown : .queued, rejectionReason: nil
+            )
+        }
+    }
+
+    private func startPendingSnapshotCollecting() {
+        guard let drafts = component.drafts else { return }
+        pendingSnapshotTask = Task { [weak self] in
+            for await snapshot in drafts.snapshot {
+                guard let self, !Task.isCancelled, !self.editorRetired else { return }
+                self.durablePending = snapshot.pendingSends
+                self.drainPending()
+            }
+        }
+    }
+
+    private func drainPending() {
+        guard !editorRetired, !routeActivationSuspended, !editingPending, draftRestoreSettled,
+              receiptAcknowledgmentTasks.isEmpty, pendingSendTask == nil,
+              let head = selectedPending.first,
+              !blockedPendingIds.contains(head.pendingId),
+              !cache.pending.value.contains(where: { $0.id == head.pendingId }),
+              component.canDrainPending(cache: cache),
+              !head.attempted || retryPendingIds.contains(head.pendingId) else { return }
+        startPendingUpload(head)
+    }
+
+    /// True route retirement, not temporary SwiftUI disappearance.
+    func retireEditor() {
+        guard !editorRetired else { return }
+        editorRetired = true
+        component.drafts?.retireEditor(editorId: editorId)
+        invalidateDraftMutations()
+        draftMutationBarrier.cancelAll()
+        receiptRouteFence &+= 1
+        acceptanceTask?.cancel()
+        pendingSnapshotTask?.cancel()
+        pendingSendGeneration = nil
+        pendingSendTask?.cancel()
+        draftSaveTask?.cancel()
+        draftRestoreTask?.cancel()
+        chatTask?.cancel()
+        connectionTask?.cancel()
+        outboundTask?.cancel()
+        coldReplaceTask?.cancel()
+        sweepTask?.cancel()
+        sessionChangesTask?.cancel()
+        discardedDraftsTask?.cancel()
+        receiptAcknowledgmentTasks.values.forEach { $0.cancel() }
+        talkModeTask?.cancel()
+        captureFailureTask?.cancel()
+        micLevelsTask?.cancel()
+        reopenFailedTask?.cancel()
+        permissionTask?.cancel()
+        permissionTimeoutTask?.cancel()
+        draftAttachmentPreviewTasks.values.forEach { $0.cancel() }
+        attachmentPreviewTasks.values.forEach { $0.cancel() }
+        attachmentDownloadTasks.values.forEach { $0.cancel() }
+    }
     private var pendingSendGeneration: UUID?
     private var draftAttachmentPreviewTasks: [String: Task<Void, Never>] = [:]
     private var attachmentPreviewTasks: [String: Task<Void, Never>] = [:]
@@ -327,7 +456,7 @@ final class ChatViewModel: ObservableObject {
 
     var pendingAttachmentPresentations: [String: PendingAttachmentPresentation] {
         pendingAttachmentProjection(
-            pending: component.drafts?.snapshot.value.pendingSends ?? [],
+            pending: selectedPending,
             previews: draftAttachmentPreviews,
             transfers: attachmentTransfers
         )
@@ -373,6 +502,7 @@ final class ChatViewModel: ObservableObject {
         previewAttachment: ((String) async throws -> Data)? = nil,
         saveDraftText: ((String?, String?, String) async throws -> NativeDraft?)? = nil,
         importDraftAttachment: ((String?, String?, NativeDraftAttachmentImport) async throws -> NativeDraft)? = nil,
+        prepareDraftAttachment: @escaping (AttachmentImportItem) async throws -> AttachmentImportItem = AttachmentDNGImport.prepareIfNeeded,
         uploadPendingAttachments: ((NativePendingSend, KotlinLong?, (String, KotlinLong, KotlinLong) -> Void) async throws -> [AttachmentRef])? = nil,
         cancelPendingSend: ((NativePendingSend) async throws -> NativeDraft)? = nil,
         onDraftRouteChanged: @escaping (String, String, String?) -> Void = { _, _, _ in },
@@ -384,8 +514,9 @@ final class ChatViewModel: ObservableObject {
         }
         self.saveDraftText = saveDraftText
         self.importDraftAttachment = importDraftAttachment
+        self.prepareDraftAttachment = prepareDraftAttachment
         self.uploadPendingAttachments = uploadPendingAttachments
-        self.cancelPendingSend = cancelPendingSend ?? { try await component.cancelPendingSend(pending: $0) }
+        self.cancelPendingSend = cancelPendingSend ?? { try await component.cancelPendingSendIntoEmptyEditor(pending: $0) }
         self.acknowledgeReceipt = acknowledgeReceipt ?? { pendingId, sessionId in
             guard let drafts = component.drafts else { throw CocoaError(.fileReadNoSuchFile) }
             return try await drafts.acknowledge(pendingId: pendingId, sessionId: sessionId)
@@ -410,10 +541,21 @@ final class ChatViewModel: ObservableObject {
         outboundTask = Task { [weak self] in
             for await _ in outbound {
                 guard let self else { return }
+                // This stream includes route-generation changes, including remote delete.
+                // Delivery-time filtering alone cannot revoke an already visible notice.
+                if let failure = self.captureFailure,
+                   !self.component.isCaptureStartFailureCurrent(event: failure) {
+                    self.captureFailure = nil
+                }
+                guard !Task.isCancelled, !self.editorRetired else { return }
+                guard !self.routeActivationSuspended else { continue }
+                self.resumeRouteProjectionIfReady()
                 self.component.flushOutbound(cache: self.cache)
+                self.drainPending()
             }
         }
         startTalkModeCollecting()
+        startCaptureFailureCollecting()
         startMicLevelsCollecting()
         startColdReplaceCollecting()
         startPeriodicSweep()
@@ -421,12 +563,15 @@ final class ChatViewModel: ObservableObject {
         startPermissionCollecting()
         startSessionChangesCollecting()
         startDiscardedDraftCollecting()
+        startPendingSnapshotCollecting()
         restoreDraft()
     }
 
     // ── Public actions ────────────────────────────────────────────────────────
 
     func updateDraft(_ text: String) {
+        guard !editorRetired, text != draftText else { return }
+        editorRevision &+= 1
         let target = draftMutationTarget()
         draftEdited = true
         draftText = text
@@ -446,7 +591,7 @@ final class ChatViewModel: ObservableObject {
             count: items.count,
             source: .combined(items),
             prepare: { items },
-            onReject: { [weak self] in self?.removeOwnedTemporaryFiles(items) }
+            onReject: { Self.removeOwnedTemporaryFiles(items) }
         )
     }
 
@@ -512,7 +657,7 @@ final class ChatViewModel: ObservableObject {
         count: Int,
         source: AttachmentImportSource,
         prepare: @escaping () async throws -> [AttachmentImportItem],
-        onReject: () -> Void = {}
+        onReject: @escaping () -> Void = {}
     ) {
         let target = draftMutationTarget()
         let remaining = AttachmentImportPolicy.remaining(
@@ -525,7 +670,7 @@ final class ChatViewModel: ObservableObject {
             logAttachmentImport(stage: .admission, source: source, count: count, code: .empty)
             return
         }
-        guard pendingSendTask == nil || pendingSendAwaitingAnchor else {
+        guard !editorRetired, !preparingSend, !editingPending else {
             onReject()
             let generation = recordAttachmentImportFailure()
             presentAttachmentImportAlert(
@@ -588,6 +733,7 @@ final class ChatViewModel: ObservableObject {
         nextAttachmentImportGeneration += 1
         let generation = nextAttachmentImportGeneration
         let failureKnownWhenQueued = lastAttachmentImportFailureGeneration
+        draftEdited = true
         pendingAttachmentImportCount += count
         draftMutationBarrier.enqueue { [weak self] in
             var outstandingReservations = count
@@ -600,7 +746,7 @@ final class ChatViewModel: ObservableObject {
             var baselineDraftIds: Set<String>? = nil
             var routeIsActive: (@MainActor () -> Bool)?
             defer { self?.pendingAttachmentImportCount -= outstandingReservations }
-            guard let self, self.isCurrentDraftMutationTarget(target) else { return }
+            guard let self, self.isCurrentDraftMutationTarget(target) else { onReject(); return }
             do {
                 self.logAttachmentImport(
                     stage: .preparation,
@@ -641,7 +787,7 @@ final class ChatViewModel: ObservableObject {
                         diagnosticType = nil
                         stage = .metadata
                         let saved = try await withAttachmentSecurityScope(item.url) {
-                            let preparedItem = try await AttachmentDNGImport.prepareIfNeeded(item)
+                            let preparedItem = try await self.prepareDraftAttachment(item)
                             defer {
                                 for url in preparedItem.ownedTemporaryURLs.subtracting(item.ownedTemporaryURLs) {
                                     try? FileManager.default.removeItem(at: url)
@@ -653,6 +799,8 @@ final class ChatViewModel: ObservableObject {
                                 count: count,
                                 code: .start
                             )
+                            try Task.checkCancellation()
+                            guard self.isCurrentDraftMutationTarget(target) else { throw CancellationError() }
                             let values = try preparedItem.url.resourceValues(forKeys: [.contentTypeKey, .nameKey])
                             let mediaType = preparedItem.mediaType
                                 ?? values.contentType.flatMap(Self.attachmentMediaType(for:))
@@ -691,7 +839,8 @@ final class ChatViewModel: ObservableObject {
                             let saved = if let importDraftAttachment = self.importDraftAttachment {
                                 try await importDraftAttachment(expectedDraftId, expectedSessionId, source)
                             } else {
-                                try await drafts.importAttachment(
+                                try await drafts.importEditorAttachment(
+                                    editorId: self.editorId,
                                     draftId: expectedDraftId,
                                     sessionId: expectedSessionId,
                                     source: source
@@ -821,19 +970,34 @@ final class ChatViewModel: ObservableObject {
             return
         }
         let target = draftMutationTarget()
-        guard pendingSendTask == nil || pendingSendAwaitingAnchor,
+        guard !editorRetired, !preparingSend,
               let drafts = component.drafts,
               let draftId = target.draftId else { return }
         draftSaveTask?.cancel()
         draftMutationBarrier.enqueue { [weak self] in
             guard let self, !Task.isCancelled else { return }
             do {
+                guard self.isCurrentDraftMutationTarget(target) else { return }
                 let saved = try await drafts.removeAttachment(draftId: draftId, attachmentId: id)
+                guard self.isCurrentDraftMutationTarget(target) else { return }
                 self.draftAttachments = saved.attachments
             } catch {
                 self.draftSaveError = "Attachment couldn't be removed."
             }
         }
+    }
+
+    func editPendingAttachment(_ id: String, pendingId: String) {
+        guard let pending = selectedPending.first(where: {
+            $0.pendingId == pendingId && $0.attachments.contains { $0.id == id }
+        }) else { return }
+        reconcileFrozenAttempt(pending, removing: nil)
+    }
+
+    func cancelAttachmentUpload(_ id: String, pendingId: String) {
+        guard attachmentTransfers[id]?.phase == .uploading,
+              selectedPending.contains(where: { $0.pendingId == pendingId && $0.attachments.contains { $0.id == id } }) else { return }
+        cancelPendingUpload(pendingId)
     }
 
     func editPendingAttachment(_ id: String) {
@@ -903,7 +1067,14 @@ final class ChatViewModel: ObservableObject {
     }
 
     func cancelAttachmentUpload(_ id: String) {
-        guard pendingSendTask != nil else { return }
+        guard let pending = frozenPending(containing: id) else { return }
+        cancelPendingUpload(pending.pendingId)
+    }
+
+    private func cancelPendingUpload(_ pendingId: String) {
+        guard !editorRetired, !routeActivationSuspended,
+              activePendingId == pendingId, pendingSendTask != nil else { return }
+        blockedPendingIds.insert(pendingId)
         pendingSendTask?.cancel()
     }
 
@@ -911,11 +1082,16 @@ final class ChatViewModel: ObservableObject {
         guard let pending = component.drafts?.snapshot.value.pendingSends.first(where: { send in
             send.attachments.contains(where: { $0.id == id })
         }) else { return }
+        guard selectedPending.first?.pendingId == pending.pendingId else { return }
+        blockedPendingIds.remove(pending.pendingId)
+        retryPendingIds.insert(pending.pendingId)
+        cache.remove(id: pending.pendingId)
         startPendingUpload(pending)
+        component.ensureConnected()
     }
 
     func flushDraft() {
-        guard pendingSendTask == nil || pendingSendAwaitingAnchor else { return }
+        guard !editorRetired, !preparingSend else { return }
         draftSaveTask?.cancel()
         let text = draftText
         let target = draftMutationTarget()
@@ -923,6 +1099,20 @@ final class ChatViewModel: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             _ = await self.saveDraft(text, target: target)
         }
+    }
+
+    /// Persist latest edits and retire in the same actor turn. Supersession retains the editor.
+    func saveAndRetireEditor(isCurrent: @escaping @MainActor () -> Bool) async -> Bool {
+        while !editorRetired && !Task.isCancelled && isCurrent() {
+            let revision = editorRevision
+            guard await saveDraftBeforeNavigation() else { return false }
+            guard !editorRetired, !Task.isCancelled, isCurrent() else { return false }
+            if editorRevision == revision {
+                retireEditor()
+                return true
+            }
+        }
+        return false
     }
 
     func saveDraftBeforeNavigation() async -> Bool {
@@ -947,70 +1137,46 @@ final class ChatViewModel: ObservableObject {
     /// Capture route authority, then wait outside durable draft mutation work. The short barrier
     /// section only persists the captured payload and creates one idempotent pending send.
     func send(_ text: String) {
-        guard pendingSendTask == nil,
+        guard !editorRetired, !routeActivationSuspended, !editingPending, !preparingSend,
               !text.isEmpty || !draftAttachments.isEmpty || pendingAttachmentImportCount > 0 else { return }
         draftSaveTask?.cancel()
         let knownImportFailure = lastAttachmentImportFailureGeneration
         let initialTarget = draftMutationTarget()
+        let revision = editorRevision
         let expectedGeneration = component.outboundRouteGeneration.value
-        let sendGeneration = UUID()
-        pendingSendGeneration = sendGeneration
-        pendingSendAwaitingAnchor = true
-        pendingSendTask = Task { [weak self] in
+        preparingSend = true
+        acceptanceTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.finishPendingSend(sendGeneration) }
+            defer { self.preparingSend = false; self.acceptanceTask = nil }
             do {
-                let mintKey = try await self.component.awaitDraftSendAnchor(
-                    expectedGeneration: expectedGeneration
-                )
-                guard !Task.isCancelled else { throw CancellationError() }
-                self.pendingSendAwaitingAnchor = false
+                let mintKey = try await self.component.awaitDraftSendAnchor(expectedGeneration: expectedGeneration)
+                try Task.checkCancellation()
                 let frozen: NativePendingSend? = try await self.draftMutationBarrier.perform { [weak self] in
-                    guard let self, !Task.isCancelled,
-                          !text.isEmpty || !self.draftAttachments.isEmpty else { return nil }
-                    guard let target = self.sendTarget(initial: initialTarget) else { return nil }
-                    guard self.lastAttachmentImportFailureGeneration == knownImportFailure else {
-                        _ = await self.saveDraft(
-                            text,
-                            target: target,
-                            clearErrorOnSuccess: false,
-                            reportFailure: false
-                        )
-                        return nil
-                    }
-                    return try await self.freezePendingSend(
-                        text,
-                        target: target,
-                        mintKey: mintKey,
-                        expectedGeneration: expectedGeneration
-                    )
+                    guard let self, !self.editorRetired,
+                          let target = self.sendTarget(initial: initialTarget),
+                          self.lastAttachmentImportFailureGeneration == knownImportFailure else { return nil }
+                    return try await self.freezePendingSend(text, target: target, mintKey: mintKey,
+                        expectedGeneration: expectedGeneration, editorRevision: revision)
                 }
-                guard let pending = frozen else { return }
-                try await self.uploadAndEnqueue(pending, sendGeneration: sendGeneration)
+                guard !self.editorRetired else { return }
+                guard frozen != nil else {
+                    _ = try? await self.draftMutationBarrier.perform { [weak self] in
+                        guard let self, self.isCurrentDraftMutationTarget(initialTarget) else { return false }
+                        return await self.saveDraft(self.editorRevision == revision ? text : self.draftText,
+                            target: self.draftMutationTarget(), clearErrorOnSuccess: false)
+                    }
+                    return
+                }
+                self.durablePending = self.component.drafts?.snapshot.value.pendingSends ?? []
+                self.drainPending()
             } catch is CancellationError {
             } catch {
-                guard self.pendingSendGeneration == sendGeneration else { return }
-                if self.isSendAnchorUnavailable(error) {
-                    // A failed anchor must not lose the tapped text. This save-only operation
-                    // remains fenced by the target captured for the send; it never re-mints a
-                    // discarded draft. It is still serialized with draft writes, so block
-                    // competing imports while this durable save is in flight.
-                    self.pendingSendAwaitingAnchor = false
-                    if let target = self.sendTarget(initial: initialTarget) {
-                        _ = try? await self.draftMutationBarrier.perform { [weak self] in
-                            guard let self, !Task.isCancelled else { return false }
-                            return await self.saveDraft(
-                                text,
-                                target: target,
-                                clearErrorOnSuccess: false,
-                                reportFailure: false
-                            )
-                        }
-                    }
+                guard self.isCurrentDraftMutationTarget(initialTarget) else { return }
+                _ = try? await self.draftMutationBarrier.perform { [weak self] in
+                    guard let self, self.isCurrentDraftMutationTarget(initialTarget) else { return false }
+                    return await self.saveDraft(self.draftText, target: self.draftMutationTarget())
                 }
-                guard self.pendingSendGeneration == sendGeneration else { return }
-                self.draftSaveError = "Message is saved locally but couldn't be sent yet."
-                self.log.warn("draft.send-failed code=local-storage")
+                self.draftSaveError = "Message couldn't be accepted yet. Draft retained; retry when connected."
             }
         }
     }
@@ -1018,7 +1184,15 @@ final class ChatViewModel: ObservableObject {
     /// Re-queue a FAILED message and verify connectivity. Shared drain keeps its id.
     func retry(_ pendingId: String) {
         log.info("retry pendingId=\(pendingId)")
-        cache.retry(id: pendingId)
+        if let pending = selectedPending.first, pending.pendingId == pendingId {
+            blockedPendingIds.remove(pendingId)
+            retryPendingIds.insert(pendingId)
+            if cache.pending.value.contains(where: { $0.id == pendingId }) {
+                cache.retry(id: pendingId)
+            } else {
+                startPendingUpload(pending)
+            }
+        }
         // Verify the socket rather than trusting a possibly-stale READY: a dead socket
         // after a silent path change still reports READY, so a bare re-send would fail
         // again. ensureConnected() probes (READY→ping→reconnect-if-dead) or reconnects.
@@ -1028,7 +1202,9 @@ final class ChatViewModel: ObservableObject {
     /// Composer capture intents are semantic UI commands. Capture IDs, terminals,
     /// stale isolation, and wire frames remain entirely inside KMP.
     func voiceIntent(_ intent: VoiceCaptureIntent) {
+        guard !editorRetired, !routeActivationSuspended, !awaitingRouteProjection else { return }
         log.info("voice.intent type=\(String(describing: intent))")
+        if intent == .holdStart || intent == .enterAuto { captureFailure = nil }
         switch intent {
         case .holdStart: component.holdStart()
         case .sendHeld: component.sendHeld()
@@ -1050,6 +1226,7 @@ final class ChatViewModel: ObservableObject {
 
     /// UI Stop — idempotent hard interrupt of the active cycle + audio.
     func interrupt() {
+        guard !editorRetired, !routeActivationSuspended, !awaitingRouteProjection else { return }
         component.interrupt()
     }
 
@@ -1095,6 +1272,7 @@ final class ChatViewModel: ObservableObject {
     /// wire; the dialog itself is dismissed by `dismissPermissionPrompt()`, called
     /// alongside this from the same button tap (see ChatPermissionAlert.permissionPrompt).
     func respondPermission(_ requestId: String, approved: Bool) {
+        guard !editorRetired, !routeActivationSuspended, !awaitingRouteProjection else { return }
         log.info("permission.response requestId=\(requestId) approved=\(approved)")
         component.respondToPermission(requestId: requestId, approved: approved)
     }
@@ -1110,12 +1288,14 @@ final class ChatViewModel: ObservableObject {
         chatTask = Task { [weak self] in
             guard let self else { return }
             for await model in self.component.observeChat.invoke(pending: pendingFlow) {
+                guard !Task.isCancelled else { return }
                 self.applyChat(model)
             }
         }
     }
 
     func applyChat(_ model: ChatModel) {
+        guard !editorRetired, !routeActivationSuspended, !awaitingRouteProjection else { return }
         // Reconcile: drop optimistic entries whose committed echo arrived. Driven by the
         // LIVE echo (model.reconciledPendingIds) from the in-memory timeline — NOT
         // model.committed.pendingId (the committed twin may carry it null).
@@ -1146,7 +1326,10 @@ final class ChatViewModel: ObservableObject {
             }
             let acknowledge = acknowledgeReceipt
             receiptAcknowledgmentTasks[id] = Task { [weak self] in
-                defer { self?.receiptAcknowledgmentTasks[id] = nil }
+                defer {
+                    self?.receiptAcknowledgmentTasks[id] = nil
+                    self?.drainPending()
+                }
                 for attempt in 0..<Self.receiptAcknowledgmentMaxAttempts {
                     guard !Task.isCancelled, routeIsCurrent() else { return }
                     do {
@@ -1169,6 +1352,8 @@ final class ChatViewModel: ObservableObject {
                             guard let draftId = result.draftId else { return }
                             self.routeSessionId = sessionId
                             self.onDraftRouteChanged(draftId, draftId, sessionId)
+                            self.durablePending = self.component.drafts?.snapshot.value.pendingSends ?? []
+                            self.drainPending()
                             return
                         }
 
@@ -1238,9 +1423,13 @@ final class ChatViewModel: ObservableObject {
         let restoreEpoch = draftMutationEpoch
         draftRestoreTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                self.draftRestoreSettled = true
+                self.drainPending()
+            }
             do {
                 let snapshot = try await drafts.restore()
-                guard self.draftMutationEpoch == restoreEpoch else { return }
+                guard !self.editorRetired, self.draftMutationEpoch == restoreEpoch else { return }
                 let draft = self.routeDraftId.flatMap { id in snapshot.drafts.first { $0.id == id } }
                     ?? self.routeSessionId.flatMap { id in snapshot.drafts.first { $0.sessionId == id } }
                 if let draft, !self.discardedDraftIds.contains(draft.id) {
@@ -1249,28 +1438,13 @@ final class ChatViewModel: ObservableObject {
                         self.draftText = draft.text
                         self.draftAttachments = draft.attachments
                     }
-                    if !self.draftEdited,
-                       snapshot.pendingSends.allSatisfy({ $0.draftId != draft.id }),
-                       let touched = try await drafts.saveText(
-                           draftId: draft.id,
-                           sessionId: draft.sessionId,
-                           text: draft.text
-                       ) {
-                        self.routeDraftId = touched.id
-                    }
+
                 }
-                for pending in snapshot.pendingSends where
-                    (self.routeDraftId != nil && pending.draftId == self.routeDraftId) ||
-                    (self.routeSessionId != nil && pending.sessionId == self.routeSessionId) {
-                    self.pendingAttachments = pending.attachments
-                    if pending.attachments.isEmpty {
-                        self.cache.enqueue(id: pending.pendingId, text: pending.text, attachmentIds: [])
-                    } else {
-                        self.startPendingUpload(pending)
-                    }
-                }
+                self.durablePending = snapshot.pendingSends
+                self.drainPending()
             } catch is CancellationError {
             } catch {
+                guard !self.editorRetired, self.draftMutationEpoch == restoreEpoch else { return }
                 self.draftSaveError = "Saved draft couldn't be loaded."
                 self.log.warn("draft.restore-failed code=local-storage")
             }
@@ -1446,8 +1620,11 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func startPendingUpload(_ pending: NativePendingSend) {
-        guard pendingSendTask == nil else { return }
-        pendingSendAwaitingAnchor = false
+        guard !editorRetired, !routeActivationSuspended, !editingPending, draftRestoreSettled, receiptAcknowledgmentTasks.isEmpty,
+              pendingSendTask == nil, component.canDrainPending(cache: cache),
+              selectedPending.first?.pendingId == pending.pendingId else { return }
+        retryPendingIds.remove(pending.pendingId)
+        activePendingId = pending.pendingId
         let sendGeneration = UUID()
         pendingSendGeneration = sendGeneration
         pendingSendTask = Task { [weak self] in
@@ -1456,10 +1633,13 @@ final class ChatViewModel: ObservableObject {
             do {
                 try await self.uploadAndEnqueue(pending, sendGeneration: sendGeneration)
             } catch is CancellationError {
+                guard !self.editorRetired else { return }
+                self.blockedPendingIds.insert(pending.pendingId)
             } catch {
                 guard self.pendingSendGeneration == sendGeneration else { return }
+                self.blockedPendingIds.insert(pending.pendingId)
                 self.attachmentTransfers = failingActiveUploads(self.attachmentTransfers)
-                self.draftSaveError = "One or more files couldn't be uploaded. Retry each failed file."
+                self.draftSaveError = "One or more files couldn't be uploaded. Retry this message upload."
             }
         }
     }
@@ -1468,19 +1648,29 @@ final class ChatViewModel: ObservableObject {
         let generation = component.outboundRouteGeneration.value
         let sessionId = routeSessionId
         let draftId = routeDraftId
-        pendingAttachments = pending.attachments
-        for file in pending.attachments {
-            attachmentTransfers[file.id] = AttachmentTransferState(phase: .uploading)
-        }
+        pendingAttachments = selectedPending.flatMap(\.attachments)
+        for file in pending.attachments { attachmentTransfers[file.id] = AttachmentTransferState(phase: .queued) }
+        let fileStates = OSAllocatedUnfairLock(initialState: [String: Bool]())
         do {
+            try await component.drafts?.markAttempted(pendingId: pending.pendingId)
+            try Task.checkCancellation()
             let upload = uploadPendingAttachments ?? { [self] pending, expectedGeneration, onProgress in
-                try await self.component.uploadPendingAttachments(
+                try await self.component.uploadPendingAttachmentsWithState(
                     pending: pending,
                     expectedRouteGeneration: expectedGeneration,
-                    onProgress: onProgress
+                    onProgress: onProgress,
+                    onFileState: { [weak self] id, uploaded in
+                        fileStates.withLock { $0[id] = uploaded.boolValue }
+                        Task { @MainActor in
+                            guard let self, !self.editorRetired, self.pendingSendGeneration == sendGeneration else { return }
+                            self.attachmentTransfers[id] = AttachmentTransferState(
+                                phase: uploaded.boolValue ? .ready : .uploading,
+                                progress: uploaded.boolValue ? 1 : 0)
+                        }
+                    }
                 )
             }
-            let refs = try await upload(
+            let refs: [AttachmentRef] = pending.attachments.isEmpty ? [] : try await upload(
                 pending,
                 generation
             ) { [weak self] id, sent, total in
@@ -1519,6 +1709,19 @@ final class ChatViewModel: ObservableObject {
             cache.enqueue(id: pending.pendingId, text: pending.text, attachmentIds: refs.map { $0.attachmentId })
         } catch {
             if pendingSendGeneration == sendGeneration {
+                // Callback tasks may still be waiting for MainActor. Final response facts win.
+                for (id, uploaded) in fileStates.withLock({ $0 }) {
+                    attachmentTransfers[id] = AttachmentTransferState(
+                        phase: uploaded ? .ready : (error is CancellationError ? .cancelled : .failed),
+                        progress: uploaded ? 1 : 0)
+                }
+                if error is CancellationError {
+                    // Sequential upload leaves siblings queued. Cancelling this attempt settles
+                    // those files too, without touching another pending message's waiting files.
+                    for file in pending.attachments where attachmentTransfers[file.id]?.phase == .queued {
+                        attachmentTransfers[file.id] = AttachmentTransferState(phase: .cancelled)
+                    }
+                }
                 attachmentTransfers = error is CancellationError
                     ? cancellingActiveUploads(attachmentTransfers)
                     : failingActiveUploads(attachmentTransfers)
@@ -1530,17 +1733,18 @@ final class ChatViewModel: ObservableObject {
     private func finishPendingSend(_ sendGeneration: UUID) {
         guard pendingSendGeneration == sendGeneration else { return }
         pendingSendGeneration = nil
-        pendingSendAwaitingAnchor = false
         pendingSendTask = nil
+        activePendingId = nil
     }
 
     private func freezePendingSend(
         _ text: String,
         target: DraftMutationTarget,
         mintKey: String,
-        expectedGeneration: KotlinLong?
+        expectedGeneration: KotlinLong?,
+        editorRevision acceptedEditorRevision: Int
     ) async throws -> NativePendingSend? {
-        guard let drafts = component.drafts else {
+        guard component.drafts != nil else {
             draftSaveError = "Draft storage is unavailable. Message was not sent."
             return nil
         }
@@ -1558,17 +1762,24 @@ final class ChatViewModel: ObservableObject {
             return nil
         }
         routeDraftId = draft.id
-        let pending = try await component.beginDraftSend(
+        let pending = try await component.acceptDraftSend(
             draftId: draft.id,
+            expectedRevision: draft.revision,
             mintKey: mintKey,
             expectedGeneration: expectedGeneration
         )
-        _ = try await drafts.clearSubmittedDraft(draftId: draft.id)
-        draftText = ""
-        pendingAttachments = pending.attachments
+        guard isCurrentDraftMutationTarget(target), component.outboundRouteGeneration.value == expectedGeneration else { return pending }
+        invalidateDraftMutations()
+        draftEdited = true
+        draftSaveTask?.cancel()
+        if editorRevision == acceptedEditorRevision { draftText = "" }
         draftAttachments = []
-        acknowledgedAttachmentImportFailureGeneration = lastAttachmentImportFailureGeneration
+        pendingAttachments = (component.drafts?.snapshot.value.pendingSends ?? []).flatMap(\.attachments)
         draftSaveError = nil
+        if !draftText.isEmpty {
+            _ = await saveDraft(draftText, target: draftMutationTarget())
+        }
+        acknowledgedAttachmentImportFailureGeneration = lastAttachmentImportFailureGeneration
         log.info("send len=\(text.count) pendingId=\(pending.pendingId) attachmentCount=\(pending.attachments.count)")
         return pending
     }
@@ -1645,7 +1856,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func isCurrentDraftMutationTarget(_ target: DraftMutationTarget) -> Bool {
-        guard target.epoch == draftMutationEpoch else { return false }
+        guard !editorRetired, target.epoch == draftMutationEpoch else { return false }
         if let draftId = target.draftId {
             return !discardedDraftIds.contains(draftId)
         }
@@ -1660,11 +1871,6 @@ final class ChatViewModel: ObservableObject {
         return initial.draftId == nil ? draftMutationTarget() : initial
     }
 
-    private func isSendAnchorUnavailable(_ error: Error) -> Bool {
-        if error is NativeSendAnchorUnavailableException { return true }
-        return ((error as NSError).kotlinException as? NativeSendAnchorUnavailableException) != nil
-    }
-
     private func persistDraftText(
         _ text: String,
         target: DraftMutationTarget
@@ -1672,14 +1878,15 @@ final class ChatViewModel: ObservableObject {
         if let saveDraftText {
             return try await saveDraftText(target.draftId, target.sessionId, text)
         }
-        return try await component.drafts?.saveText(
+        return try await component.drafts?.saveEditorText(
+            editorId: editorId,
             draftId: target.draftId,
             sessionId: target.sessionId,
             text: text
         )
     }
 
-    private func removeOwnedTemporaryFiles(_ items: [AttachmentImportItem]) {
+    private static func removeOwnedTemporaryFiles(_ items: [AttachmentImportItem]) {
         for url in Set(items.flatMap(\.ownedTemporaryURLs)) {
             try? FileManager.default.removeItem(at: url)
         }
@@ -1692,23 +1899,55 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func reconcileFrozenAttempt(_ pending: NativePendingSend, removing attachmentId: String?) {
+        guard selectedPending.first?.pendingId == pending.pendingId else {
+            draftSaveError = "Finish earlier queued message before editing this one."
+            return
+        }
+        guard !editorRetired, !routeActivationSuspended, !editingPending, draftText.isEmpty, draftAttachments.isEmpty, pendingAttachmentImportCount == 0, !preparingSend else {
+            draftSaveError = "Save or send current draft before editing a queued message."
+            return
+        }
+        let revision = editorRevision
+        editingPending = true
         invalidateDraftMutations()
+        let target = draftMutationTarget()
+        let uploadTask = pendingSendTask
+        activePendingId = nil
+        blockedPendingIds.insert(pending.pendingId)
         pendingSendGeneration = nil
-        pendingSendAwaitingAnchor = false
         pendingSendTask?.cancel()
         pendingSendTask = nil
         draftSaveTask?.cancel()
         draftMutationBarrier.enqueue { [weak self] in
             guard let self, !Task.isCancelled, let drafts = self.component.drafts else { return }
+            defer {
+                self.editingPending = false
+                self.durablePending = drafts.snapshot.value.pendingSends
+                self.drainPending()
+            }
+            await uploadTask?.value
+            guard self.isCurrentDraftMutationTarget(target) else { return }
             do {
                 var draft = try await self.cancelPendingSend(pending)
-                guard draft.sessionId == pending.sessionId else { throw CocoaError(.coderInvalidValue) }
+                guard self.isCurrentDraftMutationTarget(target), draft.sessionId == pending.sessionId else { return }
+                if self.editorRevision != revision {
+                    _ = try await drafts.preserveRestoredDraft(editorId: self.editorId, draftId: draft.id,
+                        expectedRevision: draft.revision, nextText: self.draftText)
+                    self.cache.remove(id: pending.pendingId)
+                    self.draftSaveError = "Current draft kept. Edited message is available in saved drafts."
+                    return
+                }
                 self.cache.remove(id: pending.pendingId)
-                self.pendingAttachments = []
-                self.attachmentTransfers = [:]
+                self.clearPendingPresentation(ownedAttachmentIds: Set(pending.attachments.map(\.id)))
                 self.releasePinnedAttachmentPreviews(for: pending.pendingId)
                 if let attachmentId {
                     draft = try await drafts.removeAttachment(draftId: draft.id, attachmentId: attachmentId)
+                }
+                guard self.isCurrentDraftMutationTarget(target) else { return }
+                if self.editorRevision != revision {
+                    _ = try await drafts.preserveRestoredDraft(editorId: self.editorId, draftId: draft.id,
+                        expectedRevision: draft.revision, nextText: self.draftText)
+                    return
                 }
                 self.routeDraftId = draft.id
                 self.routeSessionId = draft.sessionId
@@ -1740,12 +1979,12 @@ final class ChatViewModel: ObservableObject {
     }
 
     func applyDiscardedDraft(_ draftId: String) {
+        guard !editorRetired else { return }
         guard discardedDraftIds.insert(draftId).inserted else { return }
         guard routeDraftId == draftId ||
                 (routeDraftId == nil && routeSessionId != nil && hasUnresolvedDraftMutation) else { return }
         invalidateDraftMutations()
         pendingSendGeneration = nil
-        pendingSendAwaitingAnchor = false
         pendingSendTask?.cancel()
         pendingSendTask = nil
         // Keep visible text for an in-flight send/error retry, but detach it from
@@ -1765,6 +2004,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func applySessionChange(_ event: SessionsChangeEvent) {
+        guard !editorRetired else { return }
         guard case .deleted(let deleted) = onEnum(of: event),
               deleted.sessionId == routeSessionId else { return }
         receiptRouteFence += 1
@@ -1774,7 +2014,6 @@ final class ChatViewModel: ObservableObject {
         receiptAcknowledgmentFailures.removeAll()
         invalidateDraftMutations()
         pendingSendGeneration = nil
-        pendingSendAwaitingAnchor = false
         pendingSendTask?.cancel()
         pendingSendTask = nil
         component.rebindAfterRemoteDelete(cache: cache)
@@ -1798,6 +2037,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func applyConnection(_ conn: ConnectionState) {
+        guard !editorRetired else { return }
         connection = conn
         log.debug("connection status=\(conn.status.name)")
         // Sweep unacked timeouts on every connection event (idempotent; guarded so we
@@ -1818,6 +2058,22 @@ final class ChatViewModel: ObservableObject {
                 self.micLevels = envelope.values.map(\.floatValue)
             }
         }
+    }
+
+    private func startCaptureFailureCollecting() {
+        captureFailureTask = Task { [weak self] in
+            guard let self else { return }
+            for await failure in self.component.captureStartFailures {
+                guard !Task.isCancelled else { return }
+                self.applyCaptureFailure(failure)
+            }
+        }
+    }
+
+    func applyCaptureFailure(_ failure: SdkEvent.CaptureStartFailed) {
+        guard !editorRetired else { return }
+        guard component.isCaptureStartFailureCurrent(event: failure) else { return }
+        captureFailure = failure
     }
 
     private func startTalkModeCollecting() {
@@ -1865,6 +2121,7 @@ final class ChatViewModel: ObservableObject {
         coldReplaceTask = Task { [weak self] in
             guard let self else { return }
             for await _ in self.component.observeChat.coldHistoryReplaceSignal() {
+                guard !Task.isCancelled, !self.routeActivationSuspended, !self.awaitingRouteProjection else { return }
                 self.component.observeChat.onColdHistoryReplace(cache: self.cache)
             }
         }
@@ -1903,12 +2160,14 @@ final class ChatViewModel: ObservableObject {
         permissionTask = Task { [weak self] in
             guard let self else { return }
             for await prompts in self.component.permissions {
+                guard !Task.isCancelled else { return }
                 self.applyPermissionPrompts(prompts)
             }
         }
     }
 
     private func applyPermissionPrompts(_ prompts: [PermissionPrompt]) {
+        guard !editorRetired, !routeActivationSuspended, !awaitingRouteProjection else { return }
         let current = pendingPermission
         let next = prompts.first
         // Same head as we already show ⇒ this emission was about something further
@@ -1958,10 +2217,13 @@ final class ChatViewModel: ObservableObject {
     /// Single teardown path for THIS VM: cancel collection tasks ONLY. The SDK /
     /// socket are owned by UserSession and MUST survive a conversation switch.
     deinit {
+        acceptanceTask?.cancel()
+        pendingSnapshotTask?.cancel()
         chatTask?.cancel()
         connectionTask?.cancel()
         outboundTask?.cancel()
         talkModeTask?.cancel()
+        captureFailureTask?.cancel()
         micLevelsTask?.cancel()
         coldReplaceTask?.cancel()
         sweepTask?.cancel()

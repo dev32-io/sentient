@@ -17,15 +17,9 @@ class SdkConversationRepository(private val sdk: SentientSdk) : ConversationRepo
     override fun send(text: String, pendingId: String, attachmentIds: List<String>) =
         sdk.sendText(text, pendingId, attachmentIds)
 
-    /**
-     * Accumulating fold of every pendingId carried on a committed entry of the SDK's
-     * in-memory timeline (the live-echo reconcile source). Cold scan: each collector
-     * restarts from the StateFlow's current value, which already holds the full
-     * committed history, so every echoed pendingId to date is captured; the
-     * accumulation pins each id once seen across later emissions. A COLD REST history
-     * snapshot carries no pendingId — those entries are reconciled by the usecase's
-     * cold-replace drop, not by this set.
-     */
+    /** Cold collectors start with current history; both REST and live preserve pendingId. */
     override val echoedPendingIds: Flow<Set<String>> =
-        sdk.timeline.scan(emptySet()) { acc, list -> acc + list.mapNotNull { it.pendingId } }
+        sdk.timeline.scan(emptySet()) { acc, list ->
+            acc + list.filter { it.role == "user" && it.sessionId != null }.mapNotNull { it.pendingId }
+        }
 }

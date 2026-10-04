@@ -5,6 +5,6 @@
 - Catch failures at process or adapter boundaries. Expected domain failures use typed values; external calls have cancellation and bounded waits.
 - Test at stable boundaries: wire contracts, state machines, security controls, and regressions. Avoid tests coupled to internal wiring or incidental presentation.
 - Never log secrets or user content. Use sanitized structured fields such as ids, types, sizes, state transitions, and reasons.
-- Local E2E uses the real local stack. Production is observational-only without explicit per-action approval.
+- Local E2E uses the real local stack; verified local-dev testing and user/test-data changes need no repeated approval. Preserve the persistent `test` account: never delete it or include it in disposable-fixture cleanup; restore temporary settings after tests. Account/model and private credential location: `agents/docs/e2e-testing-details.md`. Production remains observational-only without explicit per-action approval.
 
 When a rule is unclear, read `agents/docs/error-handling-details.md`, `agents/docs/logging-details.md`, `agents/docs/testing-details.md`, or `agents/docs/e2e-testing-details.md` for the applicable repository-specific detail.

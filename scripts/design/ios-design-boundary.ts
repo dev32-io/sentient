@@ -49,10 +49,6 @@ const IOS_DESIGN_SCOPE_PREFIXES = ["ios/App/Theme/", "ios/App/Settings/", "ios/A
 /** Existing specialized product visuals that remain outside this library. */
 export const IOS_DESIGN_TRANSITIONAL_ALLOWLIST: readonly IosDesignTransitionalEntry[] = [
   {
-    path: "ios/App/Theme/MarkdownDuskTheme.swift",
-    reason: "MarkdownUI adapter shared with the excluded Chat surface",
-  },
-  {
     path: "ios/App/Settings/Voice/VoiceRowView.swift",
     reason: "voice preview row keeps its specialized play/select/delete composition",
   },
@@ -140,7 +136,7 @@ const COMPATIBILITY_DELEGATES: Readonly<Record<string, readonly string[]>> = {
   RowSlider: ["DesignSlider"],
   RowToggle: ["DesignToggleRow"],
   SettingsCard: ["DesignCard"],
-  SoulLoadingRow: ["DesignProgress"],
+  SoulLoadingRow: ["AsyncNotice"],
   SoulInlineError: ["AsyncNotice"],
   SoulNoticeBanner: ["AsyncNotice"],
   SoulApplyingBanner: ["AsyncNotice"],

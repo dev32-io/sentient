@@ -1,5 +1,8 @@
-import type { RefObject } from "preact";
+import { type RefObject, createContext } from "preact";
 import { useLayoutEffect } from "preact/hooks";
+
+// Standalone Markdown remains selectable; inside a bubble only its frame owns selection.
+export const BubbleSelectionOwner = createContext(false);
 
 const BLOCKS = new Set([
   "P",
@@ -81,9 +84,14 @@ function pointAt(projection: Projection, offset: number): [Node, number] | undef
   return span ? [span.node, Math.max(0, Math.min(offset - span.start, span.end - span.start))] : undefined;
 }
 
+function copyIgnored(node: Node): boolean {
+  const element = node instanceof Element ? node : node.parentElement;
+  return Boolean(element?.closest("[data-copy-ignore]"));
+}
+
 function ownedSelection(root: HTMLElement, clamp = false): Selection | null {
   const selection = root.ownerDocument.getSelection();
-  if (!selection?.anchorNode || !root.contains(selection.anchorNode)) return null;
+  if (!selection?.anchorNode || !root.contains(selection.anchorNode) || copyIgnored(selection.anchorNode)) return null;
   if (selection.focusNode && !root.contains(selection.focusNode)) {
     if (!clamp) return null;
     const projection = messageProjection(root);
@@ -124,9 +132,9 @@ function mappedOffset(old: string, next: string, offset: number): number {
   return Math.min(offset, next.length - suffix);
 }
 
-export function useMessageSelection(root: RefObject<HTMLDivElement>): void {
+export function useMessageSelection(root: RefObject<HTMLDivElement>, enabled = true): void {
   // Capture before Preact's DOM diff, not after it invalidates native endpoints.
-  const element = root.current;
+  const element = enabled ? root.current : null;
   const selection = element && ownedSelection(element);
   const old = element && selection ? messageProjection(element) : null;
   const saved =
@@ -148,18 +156,25 @@ export function useMessageSelection(root: RefObject<HTMLDivElement>): void {
   });
   useLayoutEffect(() => {
     const current = root.current;
-    if (!current) return;
+    if (!current || !enabled) return;
     const document = current.ownerDocument;
     const bound = () => {
       ownedSelection(current, true);
     };
+    // Editors own native Copy/Select All even while a bubble range is retained.
+    const editing = (event: Event) =>
+      [event.target, document.activeElement].some(
+        (target) => target instanceof Element && target.closest("input, textarea, select, [contenteditable]"),
+      );
     const copy = (event: ClipboardEvent) => {
+      if (editing(event)) return;
       const text = selectedMessageText(current);
       if (text === null || !event.clipboardData) return;
       event.clipboardData.setData("text/plain", text);
       event.preventDefault();
     };
     const selectAll = (event: KeyboardEvent) => {
+      if (editing(event) || (document.activeElement && copyIgnored(document.activeElement))) return;
       const selection =
         ownedSelection(current, true) ?? (current.contains(document.activeElement) ? document.getSelection() : null);
       if (!selection || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
@@ -179,7 +194,7 @@ export function useMessageSelection(root: RefObject<HTMLDivElement>): void {
       document.removeEventListener("copy", copy);
       document.removeEventListener("keydown", selectAll);
     };
-  }, [root]);
+  }, [root, enabled]);
 }
 
 export function tableMarkdown(table: HTMLTableElement): string {

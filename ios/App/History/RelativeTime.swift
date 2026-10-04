@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // RelativeTime — date-group + compact relative-time labels for session rows.
 //
-// Mirrors the Android history/RelativeTime.kt exactly: date-bucket grouping
+// Local-calendar date-bucket grouping
 // (Today / Yesterday / Last 7 days / Older) plus a compact per-row relative
 // label ("2h ago", "3d ago") for the row's secondary line. Pure functions over
 // epoch-ms; no platform clock import — keeping them pure makes them trivially
@@ -20,20 +20,20 @@ enum RelativeTime {
     private static let dayMs: Int64 = 86_400_000
     private static let hourMs: Int64 = 3_600_000
     private static let minuteMs: Int64 = 60_000
-    private static let weekDays: Int64 = 7
 
     /// True when a timestamp is the unknown sentinel (0) or otherwise non-positive.
     static func isUnknown(_ ms: Int64) -> Bool { ms <= 0 }
 
-    /// Date-bucket label for the list group header. Matches Android dateGroupLabel.
-    static func dateGroupLabel(nowMs: Int64, lastActiveMs: Int64) -> String {
+    /// Local calendar days, not elapsed 24-hour intervals (DST days vary).
+    static func dateGroupLabel(nowMs: Int64, lastActiveMs: Int64, calendar: Calendar = .current) -> String {
         if isUnknown(lastActiveMs) { return unknown }
-        let today = nowMs / dayMs
-        let day = lastActiveMs / dayMs
-        switch true {
-        case day == today: return "Today"
-        case day == today - 1: return "Yesterday"
-        case today - day < weekDays: return "Last 7 days"
+        let today = calendar.startOfDay(for: Date(timeIntervalSince1970: Double(nowMs) / 1_000))
+        let day = calendar.startOfDay(for: Date(timeIntervalSince1970: Double(lastActiveMs) / 1_000))
+        let days = calendar.dateComponents([.day], from: day, to: today).day ?? 0
+        switch days {
+        case ...0: return "Today"
+        case 1: return "Yesterday"
+        case 2..<7: return "Last 7 days"
         default: return "Older"
         }
     }

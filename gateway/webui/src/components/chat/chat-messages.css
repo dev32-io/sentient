@@ -65,6 +65,7 @@
   background: color-mix(in oklab, var(--color-paper) 72%, transparent);
 }
 .message-attachment__preview-trigger {
+  user-select: text;
   width: 100%;
   min-width: 0;
   display: grid;
@@ -107,6 +108,7 @@
 }
 .message-attachment__actions,
 .message-attachment-preview__actions {
+  user-select: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

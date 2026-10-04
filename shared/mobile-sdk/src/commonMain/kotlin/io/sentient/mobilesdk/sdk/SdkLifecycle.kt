@@ -107,6 +107,7 @@ class SdkLifecycle(
     private val onProtocolError: ((SentientError) -> Unit)? = null,
     /** Debug-only fault hooks; null unless devFaultsEnabled. Threaded into WsTransport + Handshake. */
     private val faultHooks: FaultHooks? = null,
+    private val onCommandRejected: ((ServerMessage.CommandRejected) -> Unit)? = null,
 ) {
     private var transport: WsTransport? = null
     private var session: WebSocketSession? = null
@@ -260,10 +261,10 @@ class SdkLifecycle(
             // A REFUSED COMMAND, said out loud rather than dropped. WARN because
             // it always means a user action did not happen; the reason names
             // whether retrying is the right move.
-            is ServerMessage.CommandRejected -> log.warn(
-                "command.rejected",
-                mapOf("code" to "server-command-rejected"),
-            )
+            is ServerMessage.CommandRejected -> {
+                log.warn("command.rejected", mapOf("code" to "server-command-rejected"))
+                onCommandRejected?.invoke(msg)
+            }
             // Explicit activation owns requestId-less errors while its sole command is
             // in flight. Otherwise unavailable belongs to reconnect re-establishment.
             is ServerMessage.SessionsError ->

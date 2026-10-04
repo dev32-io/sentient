@@ -1,30 +1,26 @@
-// ---------------------------------------------------------------------------
-// PendingBubble — optimistic user-side bubble while the outbox entry is in
-// QUEUED or FAILED state. There is NO "sent" state: the bubble is reconciled
-// AWAY (cache.remove) on its committed echo, never promoted to a "✓ sent" chip.
-//
-// MessageBubbleShell owns the shared user-row geometry, avatar, material,
-// metadata, width, and accessibility. This view supplies only plain-text
-// outbox content and its retry/status footer.
-//
-// accessibilityIdentifiers: msg-status-queued / msg-status-failed — mirrors
-// Android testTags.
-// ---------------------------------------------------------------------------
+// One outgoing subtree from durable pending snapshot through committed receipt.
+// Queue authority stays above this view; only the decorative face fades.
 import SwiftUI
 import UIKit
 import MobileData
 
 struct PendingBubble: View {
-    let msg: PendingMessage
+    var msg: PendingMessage? = nil
+    var committedMessage: ChatMessage? = nil
     var userName: String = "You"
     var attachments: [NativeDraftAttachment] = []
     var attachmentPreviews: [String: UIImage] = [:]
+    var attachmentPreviewFailures: Set<String> = []
     var attachmentTransfers: [String: AttachmentTransferState] = [:]
     var onPreviewAttachment: (String) -> Void = { _ in }
     var onRetryAttachment: (String) -> Void = { _ in }
+    var onEditAttachment: (String) -> Void = { _ in }
+    var onCancelAttachment: (String) -> Void = { _ in }
     var onRetry: () -> Void = {}
+    var onRenderedHeightStateChange: ((Bool) -> Void)?
     var measurement = false
     var rendererState: MessageDocumentState?
+    var imageCache: MarkdownImageCache?
     var selectionViewportInWindow: (() -> CGRect)?
     var requestSelectionScroll: ((CGFloat) -> CGFloat)?
     var onSelectionBegin: (() -> Void)?
@@ -37,38 +33,52 @@ struct PendingBubble: View {
         MessageBubbleShell(
             role: .user,
             name: userName,
-            timestamp: nil,
+            timestamp: committedMessage?.ts,
             isStreaming: false,
-            cutoffLabel: nil,
+            cutoffLabel: messageCutoffLabel(for: committedMessage?.cutoffKind),
             index: index,
             total: total,
-            continuation: false,
             avatarMode: .idle,
-            metadataMuted: true
+            accessibilityIdentifier: "message-bubble-\(index)",
+            pending: committedMessage == nil
         ) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 MessageDocumentSurface(
-                    source: msg.text, literal: true, state: rendererState,
+                    source: committedMessage?.content ?? msg?.text ?? "", literal: committedMessage == nil, state: rendererState,
+                    imageCache: imageCache,
                     measurement: measurement,
                     selectionViewportInWindow: selectionViewportInWindow,
                     requestSelectionScroll: requestSelectionScroll,
-                    onSelectionBegin: onSelectionBegin
+                    onSelectionBegin: onSelectionBegin,
+                    onReady: onRenderedHeightStateChange
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if attachments.isEmpty, !msg.attachmentIds.isEmpty {
+                if attachments.isEmpty, committedMessage == nil, let msg, !msg.attachmentIds.isEmpty {
                     Text("\(msg.attachmentIds.count) attachment\(msg.attachmentIds.count == 1 ? "" : "s")")
                         .font(Typo.ui(TypeScale.sm))
                         .foregroundStyle(DuskColors.ink3)
                         .textSelection(.enabled)
                 }
-                ForEach(attachments, id: \.id) { attachment in
-                    PendingAttachmentSummary(
-                        attachment: attachment,
-                        preview: attachmentPreviews[attachment.id],
-                        transfer: attachmentTransfers[attachment.id],
-                        onPreview: { onPreviewAttachment(attachment.id) },
-                        onRetry: { onRetryAttachment(attachment.id) }
-                    )
+                // Frozen order is validated by the upload handoff. Keep preview
+                // slots mounted when local ids become authoritative server ids.
+                ForEach(0..<(committedMessage?.attachments.count ?? attachments.count), id: \.self) { index in
+                    if let file = attachment(at: index) {
+                        PendingAttachmentSummary(
+                            id: file.id, displayName: file.name, mediaType: file.type, mediaKind: file.kind, sizeBytes: file.size,
+                            preview: attachmentPreviews[file.id],
+                            previewFailed: attachmentPreviewFailures.contains(file.id),
+                            committed: committedMessage != nil,
+                            failedMessage: msg?.status == .failed,
+                            transfer: committedMessage == nil ? attachmentTransfers[file.id] : nil,
+                            onPreview: { onPreviewAttachment(file.id) },
+                            onRetry: { onRetryAttachment(file.id) },
+                            onEdit: { onEditAttachment(file.id) },
+                            onCancel: { onCancelAttachment(file.id) }
+                        )
+                    }
+                }
+                if let label = messageCutoffLabel(for: committedMessage?.cutoffKind) {
+                    MessageCutoffMarker(label: label, index: index)
                 }
             }
         } footer: {
@@ -76,12 +86,25 @@ struct PendingBubble: View {
         }
     }
 
+    private func attachment(at index: Int) -> (id: String, name: String, type: String, kind: String?, size: Int64)? {
+        if let committedMessage {
+            guard committedMessage.attachments.indices.contains(index) else { return nil }
+            let file = committedMessage.attachments[index]
+            return (file.attachmentId, file.displayName, file.contentType, file.mediaKind, file.size)
+        }
+        guard attachments.indices.contains(index) else { return nil }
+        let file = attachments[index]
+        return (file.id, file.displayName, file.mediaType, nil, file.sizeBytes)
+    }
+
     // ── Status chip ──────────────────────────────────────────────────────────
 
     @ViewBuilder
     private var statusChip: some View {
-        if msg.status == .queued {
-            chipLabel("Sending…", color: DuskColors.ink3)
+        if committedMessage != nil {
+            EmptyView()
+        } else if msg?.status == .queued {
+            chipLabel(pendingStatus, color: DuskColors.ink3)
                 .accessibilityIdentifier("msg-status-queued")
         } else {
             // FAILED — tappable retry chip.
@@ -92,6 +115,12 @@ struct PendingBubble: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("msg-status-failed")
         }
+    }
+
+    private var pendingStatus: String {
+        if attachmentTransfers.values.contains(where: { $0.phase == .uploading }) { return "Uploading attachments…" }
+        if attachmentTransfers.values.contains(where: { $0.phase == .queued }) { return "Waiting to upload" }
+        return "Sending…"
     }
 
     private func chipLabel(_ text: String, color: Color, actionable: Bool = false) -> some View {
@@ -105,68 +134,78 @@ struct PendingBubble: View {
 }
 
 private struct PendingAttachmentSummary: View {
-    let attachment: NativeDraftAttachment
+    let id: String
+    let displayName: String
+    let mediaType: String
+    let mediaKind: String?
+    let sizeBytes: Int64
     let preview: UIImage?
+    let previewFailed: Bool
+    let committed: Bool
+    let failedMessage: Bool
     let transfer: AttachmentTransferState?
     let onPreview: () -> Void
     let onRetry: () -> Void
+    let onEdit: () -> Void
+    let onCancel: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: Space.sm) {
+        VStack(alignment: .leading, spacing: Space.sm) {
             Button(action: onPreview) {
-                HStack(alignment: .center, spacing: Space.sm) {
-                    if let preview {
-                        Image(uiImage: preview)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 44, height: 44)
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    } else {
-                        Image(systemName: attachment.mediaType.hasPrefix("image/") ? "photo" : "doc.text")
-                            .foregroundStyle(DuskColors.accent)
-                            .frame(width: 44, height: 44)
-                            .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(attachment.displayName)
-                            .font(Typo.ui(TypeScale.sm, .semibold))
-                            .foregroundStyle(DuskColors.ink)
-                            .lineLimit(2)
-                            .textSelection(.enabled)
-                        Text("\(attachment.mediaType.uppercased()) · \(ByteCountFormatter.string(fromByteCount: attachment.sizeBytes, countStyle: .file))")
-                            .font(Typo.ui(TypeScale.xs))
-                            .foregroundStyle(DuskColors.ink3)
-                            .lineLimit(1)
-                            .textSelection(.enabled)
-                    }
-                    Spacer(minLength: 0)
-                }
+                MessageAttachmentContent(
+                    displayName: displayName,
+                    detail: "\(mediaKind?.capitalized ?? mediaType.split(separator: "/").last?.capitalized ?? "File") · \(ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file))",
+                    isImage: mediaKind == "image" || mediaType.hasPrefix("image/") || mediaType == "application/vnd.sentient.live-photo+zip",
+                    iconName: mediaKind == "image" || mediaType.hasPrefix("image/") ? "photo" : mediaKind == "pdf" ? "doc.richtext" : "doc.text",
+                    preview: preview,
+                    uploadProgress: transfer?.phase == .uploading ? transfer?.progress : nil
+                )
+                .textSelection(.enabled)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open attachment \(attachment.displayName)")
-            .accessibilityIdentifier("pending-attachment-\(attachment.id)")
+            .accessibilityLabel("Open attachment \(displayName)")
+            .accessibilityValue(transfer?.phase == .uploading
+                ? "Uploading, \(Int((transfer?.progress ?? 0) * 100)) percent"
+                : preview == nil && previewFailed ? "Preview unavailable" : "")
+            .accessibilityIdentifier(committed ? "attachment-\(id)" : "pending-attachment-\(id)")
             transferStatus
+            if !committed {
+                if transfer?.phase == .uploading {
+                    DesignTextButton(title: "Cancel upload", accessibilityId: "pending-attachment-cancel-\(id)", action: onCancel)
+                        .accessibilityHint("Stops this upload attempt. Does not retract a sent message.")
+                } else if failedMessage || transfer?.phase == .failed || transfer?.phase == .cancelled {
+                    DesignTextButton(title: "Edit message", accessibilityId: "pending-attachment-edit-\(id)", action: onEdit)
+                        .accessibilityHint("Restore queued message only when current draft is empty.")
+                }
+            }
         }
     }
 
     @ViewBuilder
     private var transferStatus: some View {
         switch transfer?.phase {
+        case .queued:
+            Text("Waiting to upload")
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
         case .uploading:
-            Text("Uploading")
-                .font(Typo.ui(TypeScale.xs))
-                .foregroundStyle(DuskColors.ink3)
+            Text("Uploading · \(Int((transfer?.progress ?? 0) * 100))%")
+                .font(Typo.ui(TypeScale.sm))
+                .monospacedDigit()
+                .lineLimit(1)
+                .foregroundStyle(DuskColors.ink2)
+                .accessibilityIdentifier("pending-attachment-progress-\(id)")
         case .failed:
-            Button("Retry upload", action: onRetry)
-                .font(Typo.ui(TypeScale.xs, .semibold))
-                .foregroundStyle(DuskColors.stop)
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("pending-attachment-retry-\(attachment.id)")
+            DesignTextButton(title: "Retry message upload", accessibilityId: "pending-attachment-retry-\(id)", action: onRetry)
         case .cancelled:
             Text("Upload cancelled")
-                .font(Typo.ui(TypeScale.xs))
-                .foregroundStyle(DuskColors.ink3)
-        case .ready, nil:
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        case .ready:
+            Text("Uploaded · awaiting message confirmation")
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        case nil:
             EmptyView()
         }
     }

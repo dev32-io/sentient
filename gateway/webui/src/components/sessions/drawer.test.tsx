@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { options as preactOptions } from "preact";
 import type { SessionRow } from "@sentient/protocol";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { useEffect, useState } from "preact/hooks";
@@ -279,6 +280,118 @@ describe("History drawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Chat options" }));
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+  });
+
+  it.each(["Cancel", "Escape"])("handles first-frame Delete %s before passive focus setup", async (dismissal) => {
+    const sessions = sessionsFixture();
+    const view = render(<Harness sessions={sessions} />);
+    const history = screen.getByRole("button", { name: "Open history" });
+    history.focus();
+    fireEvent.click(history);
+    const options = screen.getByRole("button", { name: "Chat options" });
+    options.focus();
+    fireEvent.click(options);
+    const menuDelete = screen.getByRole("menuitem", { name: "Delete" });
+    expect(document.activeElement).toBe(menuDelete);
+    const frame = preactOptions.requestAnimationFrame;
+    preactOptions.requestAnimationFrame = () => {};
+    // jsdom otherwise permits the not-yet-cleaned-up RowMenu listener to
+    // focus an inert row. Native browsers reject that focus attempt.
+    const nativeFocus = HTMLElement.prototype.focus;
+    const focus = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, config?: FocusOptions) {
+      if (!this.closest("[inert]")) nativeFocus.call(this, config);
+    });
+    try {
+      // Commit the real RowMenu → Drawer → ConfirmDeleteDialog path without
+      // act/fireEvent flushing initial Dialog effects before the next action.
+      menuDelete.click();
+      await Promise.resolve();
+      const dialog = screen.getByRole("dialog", { name: "Delete chat?" });
+      const focusAtOpen = document.activeElement;
+      const isolationAtOpen = options.closest("[inert]");
+      const restored = vi.fn(() => expect(options.closest("[inert]")).toBeNull());
+      options.addEventListener("focus", restored);
+      if (dismissal === "Cancel") {
+        const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+        cancel.focus(); // Native mouse click moves focus before invoking onClick.
+        cancel.click();
+      } else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await Promise.resolve();
+      expect(screen.queryByRole("dialog", { name: "Delete chat?" })).toBeNull();
+      expect(document.activeElement).toBe(options);
+      expect(restored).toHaveBeenCalledOnce();
+      expect(dialog.contains(focusAtOpen)).toBe(true);
+      expect(isolationAtOpen).not.toBeNull();
+      expect(sessions.delete).not.toHaveBeenCalled();
+      expect(menuDelete.isConnected).toBe(false);
+      expect(screen.getByRole("dialog", { name: "Past chats" })).toBeTruthy();
+    } finally {
+      view.unmount();
+      focus.mockRestore();
+      if (frame) preactOptions.requestAnimationFrame = frame;
+      else delete preactOptions.requestAnimationFrame;
+    }
+  });
+
+  it.each(["Cancel", "Escape"])("returns focus to Chat options after Delete %s, then lets History close", async (dismissal) => {
+    const sessions = sessionsFixture();
+    render(<Harness sessions={sessions} />);
+    const history = screen.getByRole("button", { name: "Open history" });
+    history.focus();
+    fireEvent.click(history);
+    const options = screen.getByRole("button", { name: "Chat options" });
+    options.focus();
+    fireEvent.click(options);
+    const menuDelete = screen.getByRole("menuitem", { name: "Delete" });
+    expect(document.activeElement).toBe(menuDelete);
+    fireEvent.click(menuDelete);
+    const dialog = screen.getByRole("dialog", { name: "Delete chat?" });
+    expect(menuDelete.isConnected).toBe(false);
+    expect(options.closest("[inert]")).not.toBeNull();
+    const restored = vi.fn(() => expect(options.closest("[inert]")).toBeNull());
+    options.addEventListener("focus", restored);
+    if (dismissal === "Cancel") fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    else fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete chat?" })).toBeNull();
+      expect(document.activeElement).toBe(options);
+    });
+    expect(restored).toHaveBeenCalledOnce();
+    expect(sessions.delete).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Past chats" })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(history));
+  });
+
+  it.each(["immediate", "deferred"])("returns confirmed Delete to History close with %s row removal", async (timing) => {
+    const sessions = sessionsFixture();
+    let finish!: () => void;
+    const deletion = new Promise<void>((resolve) => { finish = resolve; });
+    vi.mocked(sessions.delete).mockImplementation(async (id) => {
+      if (timing === "deferred") await deletion;
+      sessions.items.value = sessions.items.value.filter((row) => row.sessionId !== id);
+    });
+    render(<Harness sessions={sessions} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open history" }));
+    const options = screen.getByRole("button", { name: "Chat options" });
+    options.focus();
+    fireEvent.click(options);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    const close = screen.getByRole("button", { name: "Close past chats", hidden: true });
+    const restored = vi.fn(() => expect(close.closest("[inert]")).toBeNull());
+    close.addEventListener("focus", restored);
+    const oldTargetFocus = vi.spyOn(options, "focus");
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete chat?" })).getByRole("button", { name: "Delete", exact: true }));
+    await waitFor(() => expect(document.activeElement).toBe(close));
+    expect(restored).toHaveBeenCalledOnce();
+    expect(oldTargetFocus).not.toHaveBeenCalled();
+    expect(sessions.delete).toHaveBeenCalledExactlyOnceWith("session-1");
+    finish();
+    await waitFor(() => expect(options.isConnected).toBe(false));
+    expect(screen.queryByRole("dialog", { name: "Delete chat?" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Past chats" })).toBeTruthy();
+    expect(document.activeElement).toBe(close);
+    oldTargetFocus.mockRestore();
   });
 
   it.each(["Earlier chat", "New chat"])("guards %s before effects, blocks duplicates and navigates only after success", async (label) => {

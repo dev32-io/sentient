@@ -1,10 +1,13 @@
 package io.sentient.mobiledata.outbox
 
 import io.sentient.mobilesdk.util.Clock
+import io.sentient.mobilesdk.protocol.SdkEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.time.Clock as KtClock
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.getAndUpdate
 
 /**
  * In-memory optimistic-send queue for ONE conversation. Stateful by nature (it IS the
@@ -12,16 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * [routeGeneration] binds it to that VM's route request; connection-scoped send
  * authority still lives outside this cache.
  *
- * There is NO "sent" state. An entry is QUEUED until its committed echo arrives, at
- * which point the VM [remove]s it. Reconcile is driven by the LIVE echo's
- * [echoedPendingIds] (in-memory; no DB). Committed entries from a cold REST snapshot
- * carry pendingId=null, so the live echo — not committed.pendingId — is the reconcile
- * source. The only terminal-visible state is FAILED
- * (disconnect or unacked-timeout), which a [retry] re-queues.
- *
- * FSM per id:
- *   QUEUED → (markSent: sentAtMs set, still QUEUED) → removed on echo
- *          | FAILED (disconnect OR unacked-timeout via sweepTimeouts) → retry → QUEUED
+ * Committed live or REST user receipts remove entries. Scheduling is ATTEMPTED,
+ * receipt timeout is UNKNOWN, and an exact command refusal is REJECTED. Neither
+ * a timeout nor a refusal proves an earlier attempt was never committed.
  *
  * Send once per connection attempt; authority/voice emissions must not resend.
  * Reconnect clears the attempt guard, preserving pendingId and timeout timestamps.
@@ -37,6 +33,21 @@ class OutboundCache(
 ) {
     private val queue = LinkedHashMap<String, PendingMessage>()
     private val sentOnConnection = mutableSetOf<String>()
+    // Flow upstream (including the Swift bridge) need not run on the VM's actor.
+    // Only this mailbox is cross-context; queue mutations remain in flush's caller.
+    private val rejections = MutableStateFlow<List<SdkEvent.CommandRejected>>(emptyList())
+
+    internal fun recordRejection(rejection: SdkEvent.CommandRejected) {
+        if (rejection.command == "text.input" && rejection.pendingId != null) {
+            rejections.update { it + rejection }
+        }
+    }
+
+    internal fun applyRejections() {
+        rejections.getAndUpdate { emptyList() }.forEach { rejection ->
+            rejection.pendingId?.let { markRejected(it, rejection.reason) }
+        }
+    }
 
     private var sentTransportGeneration: Long? = null
 
@@ -83,13 +94,13 @@ class OutboundCache(
     fun queued(): List<PendingMessage> = queue.values.filter { it.status == MessageStatus.QUEUED }
 
     /**
-     * Mark an entry as sent (handed to the transport). Records [sentAtMs] for the
+     * Mark a scheduled dispatch attempt, not a proven socket write. Records [sentAtMs] for the
      * unacked-timeout sweep; the entry stays QUEUED for display. The committed echo
      * removes it via [remove].
      */
     fun markSent(id: String) {
         sentOnConnection += id
-        transition(id) { it.copy(sentAtMs = clock.nowMs()) }
+        transition(id) { it.copy(sentAtMs = clock.nowMs(), deliveryState = PendingDeliveryState.ATTEMPTED) }
     }
 
     /**
@@ -97,7 +108,19 @@ class OutboundCache(
      * failed; the gateway dedups by pendingId so a retry re-send is safe.
      */
     fun markFailed(id: String) = transition(id) {
-        if (it.status == MessageStatus.QUEUED) it.copy(status = MessageStatus.FAILED) else it
+        if (it.status == MessageStatus.QUEUED) it.copy(
+            status = MessageStatus.FAILED,
+            deliveryState = if (it.sentAtMs == null) PendingDeliveryState.QUEUED else PendingDeliveryState.UNKNOWN,
+        ) else it
+    }
+
+    /** Refuse only this scheduled message. Unsent and unrelated rows stay untouched. */
+    fun markRejected(id: String, reason: String) = transition(id) {
+        if (it.sentAtMs != null) it.copy(
+            status = MessageStatus.FAILED,
+            deliveryState = PendingDeliveryState.REJECTED,
+            rejectionReason = reason,
+        ) else it
     }
 
     /**
@@ -107,7 +130,7 @@ class OutboundCache(
     fun retry(id: String) = transition(id) {
         if (it.status == MessageStatus.FAILED) {
             sentOnConnection -= id
-            it.copy(status = MessageStatus.QUEUED, sentAtMs = null)
+            it.copy(status = MessageStatus.QUEUED, sentAtMs = null, deliveryState = PendingDeliveryState.QUEUED, rejectionReason = null)
         } else it
     }
 
@@ -124,7 +147,7 @@ class OutboundCache(
         for ((id, msg) in queue.entries.toList()) {
             val sentAt = msg.sentAtMs ?: continue
             if (msg.status == MessageStatus.QUEUED && now - sentAt > unackedTimeoutMs) {
-                queue[id] = msg.copy(status = MessageStatus.FAILED)
+                queue[id] = msg.copy(status = MessageStatus.FAILED, deliveryState = PendingDeliveryState.UNKNOWN)
                 changed = true
             }
         }
@@ -137,14 +160,7 @@ class OutboundCache(
         if (queue.remove(id) != null) publish()
     }
 
-    /**
-     * Drop EVERY still-present entry (QUEUED or FAILED). Called on a COLD history
-     * replace: an authoritative REST history snapshot carries NO pendingId, so the
-     * normal reconcile-by-pendingId can't drop the optimistic copy. After a cold
-     * replace every remaining optimistic entry is either now represented in the
-     * authoritative history or was already swept to FAILED — keeping it would paint
-     * a duplicate bubble, so wipe the cache. No-op (no publish) when already empty.
-     */
+    /** Explicit route deletion only; never use history replacement as proof of receipt. */
     fun dropPending() {
         if (queue.isEmpty()) return
         queue.clear()

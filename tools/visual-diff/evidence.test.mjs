@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { PNG } from "pngjs";
-import { beginEvidence, finishEvidence, validateEvidence } from "./evidence.mjs";
+import { beginEvidence, finishEvidence, sourceIdentity, validateEvidence } from "./evidence.mjs";
 import { joinCoverage } from "./coverage.mjs";
 
 const authority = "design/prototype/foundation-components/handoff/static/action-button--primary--rest.png";
@@ -16,7 +16,7 @@ test("evidence rejects stale sources, changed PNGs, wrong identities and generic
     execFileSync("git", ["init", "-q", root]);
     const source = join(root, "ios/App/Example.swift");
     const reference = join(root, authority);
-    const actual = join(root, "actual.png");
+    const actual = join(root, "build/visual-captures/ios/actual.png");
     await mkdir(join(root, "ios/App"), { recursive: true });
     await mkdir(join(root, "design/prototype/foundation-components/handoff/static"), { recursive: true });
     await writeFile(source, "// source v1\n");
@@ -25,6 +25,7 @@ test("evidence rejects stale sources, changed PNGs, wrong identities and generic
     png.data.fill(255);
     const bytes = PNG.sync.write(png);
     await writeFile(reference, bytes);
+    await mkdir(join(root, "build/visual-captures/ios"), { recursive: true });
     await writeFile(actual, bytes);
     await beginEvidence(root, reference, actual, "ios");
     const metadata = {
@@ -50,7 +51,10 @@ test("evidence rejects stale sources, changed PNGs, wrong identities and generic
     await assert.rejects(() => finishEvidence(root, reference, actual, "ios", metadata), /changed during capture/);
     await writeFile(source, "// source v1\n");
     await writeFile(reference, Buffer.concat([await readFile(reference), Buffer.from("changed")]));
-    await assert.rejects(() => validateEvidence(root, evidence, expected), /Reference identity\/hash/);
+    await assert.rejects(() => validateEvidence(root, evidence, expected), /Stale\/source-incompatible/);
+    // Untracked reference resources now bind source identity too. Refresh only
+    // that field to independently exercise the reference hash boundary.
+    await assert.rejects(async () => validateEvidence(root, { ...evidence, sourceSha256: await sourceIdentity(root, "ios") }, expected), /Reference identity\/hash/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

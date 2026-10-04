@@ -70,6 +70,7 @@ struct MessageListScrollTests {
         }
 
         // Verify each chronology row, without assuming all three fit one viewport.
+        var previouslySelectedState: MessageDocumentState?
         collection.delegate?.scrollViewWillBeginDragging?(collection)
         for index in 1...3 {
             let path = IndexPath(item: index, section: 0)
@@ -82,6 +83,10 @@ struct MessageListScrollTests {
             let document = try #require(descendants(cell).compactMap { $0 as? MessageDocumentView }.first)
             #expect(descendants(collection).compactMap { $0 as? WKWebView }.isEmpty)
             document.selectAll(nil)
+            if let previouslySelectedState, previouslySelectedState !== document.state {
+                #expect(previouslySelectedState.selection == nil, "Selection ownership transfers even when previous row was recycled")
+            }
+            previouslySelectedState = document.state
             document.copy(nil)
             #expect(UIPasteboard.general.string == document.document.plain)
             #expect(document.state.layout === document.state.measure(width: document.bounds.width, traits: document.traitCollection))
@@ -357,6 +362,149 @@ struct MessageListScrollTests {
         #expect(abs(frame.minY - expectedSendMinY(in: collection, priorContent: origin != .empty)) <= 1)
     }
 
+    @Test(arguments: DynamicTypeSetting.allCases)
+    fileprivate func measuredFloatingHeaderGatesTallSendAndKeepsPaintBelowControls(dynamicType: DynamicTypeSetting) async throws {
+        let scheduler = HeldMessagePositionScheduler()
+        let harness = try Harness(
+            messages: [],
+            pending: [PendingMessage(id: "header-first", text: Array(repeating: Self.readerDetail, count: 20).joined(separator: "\n"), status: .queued, sentAtMs: nil)],
+            dynamicType: dynamicType, floatingHeader: true, headerMeasurementReady: false,
+            initialExistingHistory: false, positionScheduler: scheduler.schedule
+        )
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1, timeout: 10)
+        scheduler.runAll()
+        #expect(collection.alpha == 0, "Unmeasured header is not a zero-clearance landing")
+        #expect(!harness.model.historyLoading)
+        harness.model.headerMeasurementReady = true
+        try await waitUntil(timeout: 3) {
+            harness.host.view.layoutIfNeeded()
+            scheduler.runAll()
+            return collection.alpha == 1
+        }
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1, rowID: "chat-user-row-header-first")
+        scheduler.runAll()
+        let header = try #require(harness.model.headerFrame)
+        let drawable = collection.convert(collection.bounds, to: harness.window)
+        #expect(abs(drawable.minY - header.minY) <= 1)
+        #expect(drawable.height > header.height * 2)
+        let cell = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == "chat-user-row-header-first" })
+        #expect(cell.convert(cell.bounds, to: harness.window).minY >= header.maxY - 1)
+        let document = try #require(descendants(cell).compactMap { $0 as? MessageDocumentView }.first)
+        #expect(document.convert(document.bounds, to: harness.window).minY >= header.maxY - 1)
+        #expect(abs(try #require(document.selectionViewportInWindow?()).minY - header.maxY) <= 1)
+
+        // Native user scrolling can paint inside the control band; it is not clipped/reserved.
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        collection.contentOffset.y += header.height + 80
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1)
+        scheduler.runAll()
+        #expect(cell.convert(cell.bounds, to: harness.window).minY < header.maxY)
+        let accessible = document.accessibleFrame(for: document.bounds)
+        let screenHeaderBottom = UIAccessibility.convertToScreenCoordinates(header, in: harness.window).maxY
+        #expect(!accessible.isEmpty && accessible.minY >= screenHeaderBottom - 1)
+        let readingOffset = collection.contentOffset.y
+        harness.model.headerExtraClearance = 24
+        try await waitUntil(timeout: 3) {
+            harness.host.view.layoutIfNeeded()
+            scheduler.runAll()
+            return (harness.model.headerFrame?.height ?? 0) > header.height + 20
+        }
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1)
+        scheduler.runAll()
+        #expect(abs(collection.contentOffset.y - readingOffset) <= 1)
+    }
+
+    @Test func floatingHeaderTopOnlyChangesKeepContextKeyboardAndReaderOwnership() async throws {
+        let harness = try Harness(messages: Self.readerHistory, floatingHeader: true, initialExistingHistory: true)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        #expect(abs(collection.contentOffset.y - maximumOffset(of: collection)) <= 1, "History still opens at bottom")
+        let drawableSize = collection.bounds.size
+        harness.model.pending = [PendingMessage(id: "header-context", text: "Context send", status: .queued, sentAtMs: nil)]
+        try await settle(collection, hostView: harness.host.view, minimumItems: 26, rowID: "chat-user-row-header-context")
+        let native = try #require(collection as? MessageUICollectionView)
+        let measured = native.measuredRowCount
+        harness.model.headerExtraClearance = 30
+        try await settle(collection, hostView: harness.host.view, minimumItems: 26, rowID: "chat-user-row-header-context")
+        #expect(collection.bounds.size == drawableSize)
+        #expect(native.measuredRowCount == measured, "Top-only geometry must not remeasure history")
+        #expect(abs(try mountedCellFrame(id: "chat-user-row-header-context", in: collection).minY
+            - expectedSendMinY(in: collection, priorContent: true)) <= 1)
+        let sendY = try mountedCellFrame(id: "chat-user-row-header-context", in: collection).minY
+        let screen = collection.convert(collection.bounds, to: nil)
+        postKeyboardFrame(CGRect(x: screen.minX, y: screen.maxY - 220, width: screen.width, height: 220))
+        try await settle(collection, hostView: harness.host.view, minimumItems: 26, rowID: "chat-user-row-header-context")
+        #expect(abs(try mountedCellFrame(id: "chat-user-row-header-context", in: collection).minY - sendY) <= 1)
+        postKeyboardFrame(CGRect(x: screen.minX, y: screen.maxY, width: screen.width, height: 220))
+
+        // Same-speaker quick echo is a continuation whose paint starts above its cell.
+        harness.model.messages.append(Self.message(id: "preceding-user", role: "user", content: "Earlier user"))
+        harness.model.messages.append(Self.message(id: "header-echo", role: "user", content: "Context send", pendingID: "header-context"))
+        harness.model.pending = []
+        try await settle(collection, hostView: harness.host.view, minimumItems: 27, rowID: "chat-user-row-header-context")
+        let echo = try mountedCellFrame(id: "chat-user-row-header-context", in: collection)
+        let paintedTop = echo.minY + BubbleLayout.continuationPullup(width: collection.bounds.width)
+        #expect(abs(paintedTop - expectedSendMinY(in: collection, priorContent: true)) <= 1)
+
+        position(collection, at: .middle)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 27)
+        let offset = collection.contentOffset.y
+        harness.model.headerExtraClearance = 0
+        harness.model.messages.append(Self.message(id: "header-stream", role: "assistant", content: Self.readerDetail, streaming: true))
+        try await settle(collection, hostView: harness.host.view, minimumItems: 28)
+        #expect(abs(collection.contentOffset.y - offset) <= 1, "Header + stream cannot reacquire send ownership")
+        let readingCell = try #require(collection.visibleCells.min {
+            abs($0.frame.midY - collection.bounds.midY) < abs($1.frame.midY - collection.bounds.midY)
+        })
+        let readingY = readingCell.convert(readingCell.bounds, to: harness.window).minY
+        harness.host.additionalSafeAreaInsets.top = 18
+        try await settle(collection, hostView: harness.host.view, minimumItems: 28)
+        let header = try #require(harness.model.headerFrame)
+        let drawable = collection.convert(collection.bounds, to: harness.window)
+        #expect(abs(collection.adjustedContentInset.top - max(0, header.maxY - drawable.minY)) <= 1)
+        #expect(abs(readingCell.convert(readingCell.bounds, to: harness.window).minY - readingY) <= 1)
+    }
+
+    @Test func floatingHeaderNewTranscriptWithoutSendIdentityStartsBelowControls() async throws {
+        let harness = try Harness(
+            messages: [Self.message(id: "new-transcript", role: "user", content: "Restored content")],
+            floatingHeader: true, initialExistingHistory: false
+        )
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2, timeout: 10)
+        let header = try #require(harness.model.headerFrame)
+        let cell = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == "chat-user-row-new-transcript" })
+        #expect(abs(collection.contentOffset.y - minimumOffset(of: collection)) <= 1)
+        #expect(cell.convert(cell.bounds, to: harness.window).minY >= header.maxY - 1)
+    }
+
+    @Test func floatingHeaderShortHistoryRotationAndReservedNoticeUseActualOverlap() async throws {
+        let harness = try Harness(messages: [Self.message(id: "short-header-history", role: "assistant", content: "Short history")], floatingHeader: true, initialExistingHistory: true)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2, timeout: 10)
+        #expect(abs(collection.contentOffset.y - minimumOffset(of: collection)) <= 1)
+        for size in [CGSize(width: 733, height: 393), CGSize(width: 320, height: 640)] {
+            harness.window.frame.size = size
+            harness.host.view.frame = harness.window.bounds
+            try await settle(collection, hostView: harness.host.view, minimumItems: 2)
+            let header = try #require(harness.model.headerFrame)
+            let cell = try #require(collection.cellForItem(at: IndexPath(item: 1, section: 0)))
+            #expect(cell.convert(cell.bounds, to: harness.window).minY >= header.maxY - 1)
+        }
+        harness.model.reservedNotice = true
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2)
+        let header = try #require(harness.model.headerFrame)
+        let drawable = collection.convert(collection.bounds, to: harness.window)
+        #expect(drawable.minY > header.maxY, "Notice stays reserved below controls")
+        #expect(harness.model.topOcclusion == 0, "Reserved header must not be charged twice")
+        #expect(collection.contentInset.top == 0)
+    }
+
     @Test func floatingComposerOcclusionKeepsFullViewportAndAddsScrollableClearance() async throws {
         let harness = try Harness(messages: Self.readerHistory)
         defer { harness.close() }
@@ -449,6 +597,258 @@ struct MessageListScrollTests {
         #expect(abs(collection.contentOffset.y - offset) < 1)
     }
 
+    @Test func mountedFloatingControlsKeepDrawableTranscriptAndReadableLandings() async throws {
+        let harness = try Harness(messages: Self.readerHistory)
+        harness.model.floatingHeader = true
+        harness.model.floatingComposer = true
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count, timeout: 10)
+        let overlays = try #require(harness.model.overlays)
+        let dock = try #require(harness.model.composerFrame)
+        let viewport = collection.convert(collection.bounds, to: nil)
+        #expect(viewport.maxY >= dock.maxY - 1, "Composer overlays full drawable collection, not a shortened list")
+        #expect(abs(collection.adjustedContentInset.top - overlays.topClearance) <= 1)
+        #expect(collection.adjustedContentInset.bottom >= overlays.bottomClearance)
+        let oldBounds = collection.bounds.size
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        collection.setContentOffset(CGPoint(x: 0, y: collection.contentOffset.y - 70), animated: false)
+        harness.host.view.layoutIfNeeded()
+        try await DisplayFrameWaiter.next()
+        let band = overlays.bottomBand.offsetBy(dx: viewport.minX, dy: viewport.minY)
+        #expect(collection.visibleCells.contains { $0.convert($0.bounds, to: nil).intersects(band) },
+                "Real rows, not synthetic tail, must remain drawable beneath the floating dock fade")
+        #expect(collection.bounds.size == oldBounds)
+        #expect(collection.visibleCells.allSatisfy { $0.alpha == 1 }, "Transcript fades must not fade native row content or actions themselves")
+        let document = try #require(collection.visibleCells.flatMap { descendants($0) }.compactMap { $0 as? MessageDocumentView }.first)
+        let readable = try #require(document.selectionViewportInWindow?())
+        #expect(readable.maxY <= dock.minY - TranscriptOverlayGeometry.spill + 1)
+    }
+
+    // Painted test marks belong to a real scrolling row, not the stationary
+    // overlay or synthetic tail. Two offsets invert the stripe at every sample;
+    // pixel differences therefore measure transmission through the composed UI.
+    @Test(arguments: ["normal", "expanded", "large-type", "keyboard"])
+    func composedComposerFadeKeepsMovingUnderlayVisible(configuration: String) async throws {
+        let harness = try Harness(messages: [Self.message(id: "fade-marked-row", role: "user",
+            content: Array(repeating: Self.readerDetail, count: 60).joined(separator: "\n"))],
+            dynamicType: configuration == "large-type" ? .accessibility : .normal,
+            floatingHeader: true)
+        harness.window.frame.size = CGSize(width: 393, height: 852)
+        harness.model.floatingComposer = true
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2, timeout: 10)
+        if configuration == "expanded" {
+            let collapsed = try #require(harness.model.composerFrame)
+            harness.model.composerDraft = Array(repeating: "Synthetic expanded composer", count: 6).joined(separator: "\n")
+            try await waitUntil(timeout: 3) {
+                (harness.model.composerFrame?.height ?? 0) > collapsed.height + 20
+            }
+        }
+        if configuration == "keyboard" {
+            let editor = try #require(descendants(harness.host.view).compactMap { $0 as? UITextView }.first)
+            let native = try #require(collection as? MessageUICollectionView)
+            let before = try #require(harness.model.composerFrame)
+            // Layout reaches its destination before the keyboard presentation
+            // animation does. Pixel witnesses must wait for actual completion.
+            var keyboardShown = false
+            let observer = NotificationCenter.default.addObserver(forName: UIResponder.keyboardDidShowNotification,
+                object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { keyboardShown = true }
+                }
+            defer { NotificationCenter.default.removeObserver(observer) }
+            #expect(editor.becomeFirstResponder())
+            try await waitUntil(timeout: 3) {
+                keyboardShown && native.keyboardOverlap > 0
+                    && (harness.model.composerFrame?.minY ?? before.minY) < before.minY
+            }
+        }
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2)
+        let dock = try #require(harness.model.composerFrame)
+        let overlays = try #require(harness.model.overlays)
+        let viewport = collection.convert(collection.bounds, to: harness.window)
+        let layout = try #require(collection.collectionViewLayout as? ExactMessageLayout)
+        let rowIndex = try #require(layout.rowFrames.indices.max(by: {
+            layout.rowFrames[$0].height < layout.rowFrames[$1].height
+        }))
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        collection.setContentOffset(CGPoint(x: 0, y: layout.rowFrames[rowIndex].minY + 100), animated: false)
+        harness.host.view.layoutIfNeeded()
+        try await DisplayFrameWaiter.next()
+        let cell = try #require(collection.cellForItem(at: IndexPath(item: rowIndex, section: 0)))
+        let marks = ComposerFadeRowMarks(frame: CGRect(x: 0, y: 36,
+            width: cell.bounds.width, height: viewport.height + 160))
+        marks.isUserInteractionEnabled = false
+        cell.addSubview(marks)
+        defer { marks.removeFromSuperview() }
+        #expect(marks.frame.maxY < cell.bounds.height, "Marks stay inside actual row, not blank tail")
+        let markedFrame = marks.convert(marks.bounds, to: harness.window)
+        #expect(markedFrame.minY < dock.minY - 24 && markedFrame.maxY > dock.maxY)
+        #expect(viewport.maxY >= dock.maxY - 1)
+        let startOffset = collection.contentOffset.y
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.preferredRange = .standard
+        func capture() -> UIImage {
+            UIGraphicsImageRenderer(bounds: harness.window.bounds, format: format).image { _ in
+                harness.window.drawHierarchy(in: harness.window.bounds, afterScreenUpdates: true)
+            }
+        }
+        var painted: [UIImage] = []
+        var references: [UIImage] = []
+        for step in 0...1 {
+            collection.setContentOffset(CGPoint(x: 0, y: startOffset + CGFloat(step * 16)), animated: false)
+            harness.host.view.layoutIfNeeded()
+            try await DisplayFrameWaiter.next()
+            #expect(abs(collection.contentOffset.y - startOffset - CGFloat(step * 16)) < 1)
+            #expect(harness.model.composerFrame == dock, "Only underlay moves")
+            #expect(abs(marks.convert(marks.bounds, to: harness.window).minY - markedFrame.minY + CGFloat(step * 16)) < 1)
+            painted.append(capture())
+            Attachment.record(painted[step], named: "composer-fade-\(configuration)-offset-\(step).png", as: .png)
+            harness.model.paintsTranscriptFades = false
+            harness.host.view.layoutIfNeeded()
+            try await DisplayFrameWaiter.next()
+            references.append(capture())
+            Attachment.record(references[step], named: "composer-fade-\(configuration)-reference-\(step).png", as: .png)
+            harness.model.paintsTranscriptFades = true
+            harness.host.view.layoutIfNeeded()
+            try await DisplayFrameWaiter.next()
+        }
+        func difference(_ first: UIImage, _ second: UIImage, x: CGFloat, y: CGFloat) throws -> Int {
+            let a = try #require(first.cgImage), b = try #require(second.cgImage)
+            let ad = try #require(a.dataProvider?.data), bd = try #require(b.dataProvider?.data)
+            let ap = try #require(CFDataGetBytePtr(ad)), bp = try #require(CFDataGetBytePtr(bd))
+            let ax = Int(x), ay = Int(y)
+            try #require(ax >= 0 && ax < a.width && ay >= 0 && ay < a.height)
+            try #require(a.width == b.width && a.height == b.height)
+            let ai = ay * a.bytesPerRow + ax * a.bitsPerPixel / 8
+            let bi = ay * b.bytesPerRow + ax * b.bitsPerPixel / 8
+            return (0..<min(4, a.bitsPerPixel / 8)).reduce(0) { $0 + abs(Int(ap[ai + $1]) - Int(bp[bi + $1])) }
+        }
+        func transmission(x: CGFloat, y: CGFloat) throws -> Double {
+            let reference = try difference(references[0], references[1], x: x, y: y)
+            #expect(reference > 20, "Visible marked underlay required even with composer shadows")
+            return Double(try difference(painted[0], painted[1], x: x, y: y)) / Double(max(1, reference))
+        }
+        let x = viewport.minX + 2 // Exposed gutter, not opaque editor face.
+        let upper = try transmission(x: x, y: dock.minY - 22)
+        let middle = try transmission(x: x, y: dock.minY - 12)
+        let lower = try transmission(x: x, y: dock.minY - 2)
+        #expect(upper > middle + 0.12 && middle > lower + 0.12,
+                "Contrast must progressively fall across exposed fixed ramp")
+        let gutter = try transmission(x: x, y: dock.minY + 14)
+        #expect(gutter > 0.15 && gutter < 0.6, "Gutter stays faded, never opaque")
+        let corner = try transmission(x: viewport.minX + 10, y: dock.minY + 9)
+        #expect(corner > 0.1 && corner < 0.65, "Rounded face corner retains moving underlay")
+        #expect(try difference(painted[0], painted[1], x: viewport.midX, y: dock.maxY - 24) < 4,
+                "Opaque composer face must reject moving row marks")
+        let centralY = viewport.minY + overlays.topClearance + 12
+        #expect(centralY < dock.minY - 24)
+        for step in 0...1 {
+            #expect(try difference(painted[step], references[step], x: viewport.midX, y: centralY) < 4,
+                    "Readable central content remains unchanged")
+        }
+        Attachment.record("viewport=\(viewport), dock=\(dock), markedRow=\(markedFrame), inset=\(collection.adjustedContentInset), safeArea=\(harness.window.safeAreaInsets), offsets=\(startOffset),\(startOffset + 16), transmission=\(upper),\(middle),\(lower),\(gutter),\(corner)",
+                          named: "composer-fade-\(configuration)-geometry.txt")
+    }
+
+    @Test(arguments: [false, true])
+    func wideTableAfterSendPreservesContextAndRemainsReachable(afterKeyboardDismissal: Bool) async throws {
+        let prompt = "Synthetic table 970a. Reply ONLY a markdown table with 12 columns named Column01 through Column12 and 3 rows. Every cell must contain the unbroken string SyntheticLongCell970a. No prose."
+        let history = [
+            Self.message(id: "table-prior-user", role: "user", content: "Synthetic C 970a. Reply only OK."),
+            Self.message(id: "table-prior-reply", role: "assistant", content: "OK."),
+        ]
+        let harness = try Harness(messages: history, floatingHeader: true, initialExistingHistory: true)
+        harness.window.frame.size = CGSize(width: 393, height: 852)
+        harness.model.floatingComposer = true
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 3)
+        if afterKeyboardDismissal {
+            let editor = try #require(descendants(harness.host.view).compactMap { $0 as? UITextView }.first)
+            let native = try #require(collection as? MessageUICollectionView)
+            let dockBefore = try #require(harness.model.composerFrame)
+            #expect(editor.becomeFirstResponder())
+            try await waitUntil(timeout: 3) {
+                native.keyboardOverlap > 0 && (harness.model.composerFrame?.minY ?? dockBefore.minY) < dockBefore.minY
+            }
+            #expect(editor.resignFirstResponder())
+            try await waitUntil(timeout: 3) {
+                native.keyboardOverlap == 0 && abs((harness.model.composerFrame?.minY ?? 0) - dockBefore.minY) <= 1
+            }
+            try await settle(collection, hostView: harness.host.view, minimumItems: 3)
+        }
+        harness.model.pending = [PendingMessage(id: "table-send", text: prompt, status: .queued, sentAtMs: nil)]
+        try await settle(collection, hostView: harness.host.view, minimumItems: 4, rowID: "chat-user-row-table-send")
+        let sendY = try mountedCellFrame(id: "chat-user-row-table-send", in: collection).minY
+        #expect(abs(sendY - expectedSendMinY(in: collection, priorContent: true)) <= 1)
+        harness.model.messages.append(Self.message(id: "table-echo", role: "user", content: prompt, pendingID: "table-send"))
+        harness.model.pending = []
+        try await settle(collection, hostView: harness.host.view, minimumItems: 4)
+        let header = "| " + (1...12).map { String(format: "Column%02d", $0) }.joined(separator: " | ") + " |\n"
+        let separator = "| " + Array(repeating: "---", count: 12).joined(separator: " | ") + " |\n"
+        let row = "| " + Array(repeating: "SyntheticLongCell970a", count: 12).joined(separator: " | ") + " |\n"
+        for count in 1...3 {
+            harness.model.messages = history + [
+                Self.message(id: "table-echo", role: "user", content: prompt, pendingID: "table-send"),
+                Self.message(id: "table-reply", role: "assistant", content: header + separator + String(repeating: row, count: count), streaming: true),
+            ]
+            try await settle(collection, hostView: harness.host.view, minimumItems: 5, requireRenderedMarkdown: true)
+            #expect(abs(try mountedCellFrame(id: "chat-user-row-table-send", in: collection).minY - sendY) <= 1)
+        }
+        harness.model.messages[3] = Self.message(id: "table-reply", role: "assistant", content: header + separator + String(repeating: row, count: 3))
+        try await settle(collection, hostView: harness.host.view, minimumItems: 5, requireRenderedMarkdown: true)
+        let document = try #require(collection.visibleCells.flatMap { descendants($0) }.compactMap { $0 as? MessageDocumentView }.first { !$0.subviews.compactMap { $0 as? UIScrollView }.isEmpty })
+        let table = try #require(document.subviews.compactMap { $0 as? UIScrollView }.first)
+        let dock = try #require(harness.model.composerFrame)
+        let tableFrame = table.convert(table.bounds, to: nil)
+        Attachment.record(UIGraphicsImageRenderer(bounds: harness.window.bounds).image { _ in
+            harness.window.drawHierarchy(in: harness.window.bounds, afterScreenUpdates: true)
+        }, named: "table-context-rest.png", as: .png)
+        Attachment.record("sendY=\(sendY), expected=\(expectedSendMinY(in: collection, priorContent: true)), table=\(tableFrame), dock=\(dock), viewport=\(collection.convert(collection.bounds, to: nil)), inset=\(collection.adjustedContentInset), offset=\(collection.contentOffset)", named: "table-context-geometry.txt")
+        // This response exceeds space BELOW the intentional 20% send placement.
+        // Reproduce the E2E witness without assuming this is bottom-follow intent.
+        #expect(tableFrame.maxY > dock.minY)
+        let contextOffset = collection.contentOffset.y
+        for fraction: CGFloat in [0.5, 1, 0] {
+            table.setContentOffset(CGPoint(x: (table.contentSize.width - table.bounds.width) * fraction, y: 0), animated: false)
+            try await settle(collection, hostView: harness.host.view, minimumItems: 5)
+            #expect(abs(collection.contentOffset.y - contextOffset) <= 1)
+        }
+        // Distinguish retained send ownership from an accidental .reading switch:
+        // owned context repositions with measured header geometry; reading would
+        // preserve its old screen anchor instead. Native table offsets are not pans.
+        harness.model.headerExtraClearance = 20
+        try await waitUntil(timeout: 3) { (harness.model.headerFrame?.height ?? 0) >= 80 }
+        try await settle(collection, hostView: harness.host.view, minimumItems: 5)
+        #expect(abs(try mountedCellFrame(id: "chat-user-row-table-send", in: collection).minY
+            - expectedSendMinY(in: collection, priorContent: true)) <= 1)
+        harness.model.headerExtraClearance = 0
+        try await waitUntil(timeout: 3) { (harness.model.headerFrame?.height ?? 100) < 80 }
+        try await settle(collection, hostView: harness.host.view, minimumItems: 5)
+
+        // Readable-bottom intent is explicitly requested by vertical navigation.
+        // It must reach every last-row glyph above dock + spill, without shrinking
+        // drawable bounds or deleting the send's reserve preemptively.
+        let drawable = collection.bounds.size
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        collection.setContentOffset(CGPoint(x: 0, y: minimumOffset(of: collection) + maximumTravel(of: collection)), animated: false)
+        collection.delegate?.scrollViewDidEndDragging?(collection, willDecelerate: false)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 5)
+        #expect(table.convert(table.bounds, to: nil).maxY <= dock.minY - TranscriptOverlayGeometry.spill + 1)
+        #expect(collection.bounds.size == drawable)
+        Attachment.record(UIGraphicsImageRenderer(bounds: harness.window.bounds).image { _ in
+            harness.window.drawHierarchy(in: harness.window.bounds, afterScreenUpdates: true)
+        }, named: "table-readable-bottom.png", as: .png)
+        let readingOffset = collection.contentOffset.y
+        harness.model.messages[3] = Self.message(id: "table-reply", role: "assistant", content: header + separator + String(repeating: row, count: 4), streaming: true)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 5, requireRenderedMarkdown: true)
+        #expect(abs(collection.contentOffset.y - readingOffset) <= 1, "Later growth must not override explicit reading")
+    }
+
+    // Uses system Reduce Motion; run on disposable simulator with each OS setting.
     @Test func pendingCommitKeepsActualMountedRowAnchor() async throws {
         let harness = try Harness(messages: Self.readerHistory)
         defer { harness.close() }
@@ -465,6 +865,10 @@ struct MessageListScrollTests {
             minimumItems: Self.readerHistory.count + 1, rowID: "chat-user-row-\(id)"
         )
         let before = try mountedCellFrame(id: "chat-user-row-\(id)", in: collection).minY
+        let pendingCell = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == "chat-user-row-\(id)" })
+        let document = try #require(descendants(pendingCell).compactMap { $0 as? MessageDocumentView }.first)
+        let native = try #require(collection as? MessageUICollectionView)
+        let entrances = native.entranceAnimationCount
         harness.model.messages.append(Self.message(
             id: "echo", role: "user", content: "Reconciled send", pendingID: id
         ))
@@ -475,6 +879,33 @@ struct MessageListScrollTests {
         )
 
         #expect(abs(try mountedCellFrame(id: "chat-user-row-\(id)", in: collection).minY - before) <= 1)
+        let committedCell = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == "chat-user-row-\(id)" })
+        #expect(committedCell === pendingCell)
+        #expect(descendants(committedCell).compactMap { $0 as? MessageDocumentView }.first === document)
+        #expect(native.entranceAnimationCount == entrances)
+    }
+
+    @Test func firstReceiptInsertsDateWithoutRemountingSelectedOutgoingDocument() async throws {
+        let id = "first-receipt-selection"
+        let harness = try Harness(messages: [], pending: [PendingMessage(id: id, text: "Select this send", status: .queued, sentAtMs: nil)])
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 1, rowID: "chat-user-row-\(id)")
+        let pendingCell = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == "chat-user-row-\(id)" })
+        let document = try #require(descendants(pendingCell).compactMap { $0 as? MessageDocumentView }.first)
+        document.selectAll(nil) // Selection revokes owned-send positioning.
+        let selection = document.state.selection
+        let before = pendingCell.convert(pendingCell.bounds, to: nil).minY
+        harness.model.messages = [Self.message(id: "echo-date", role: "user", content: "Select this send", pendingID: id)]
+        harness.model.pending = []
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2, rowID: "chat-user-row-\(id)")
+        let committedCell = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == "chat-user-row-\(id)" })
+        #expect(committedCell === pendingCell)
+        #expect(descendants(committedCell).compactMap { $0 as? MessageDocumentView }.first === document)
+        #expect(document.state.selection == selection)
+        #expect(abs(committedCell.convert(committedCell.bounds, to: nil).minY - before) <= 1)
+        document.copy(nil)
+        #expect(UIPasteboard.general.string == "Select this send")
     }
 
     @Test func newRowsAnimateOnceWhileEchoAndStreamingRevisionsKeepIdentity() async throws {
@@ -749,28 +1180,79 @@ struct MessageListScrollTests {
     }
 
     @Test(arguments: [false, true])
-    func explicitNewChatFirstSendTopAlignsIncludingQuickEcho(quickEcho: Bool) async throws {
-        let harness = try Harness(messages: [], initialExistingHistory: false)
+    func explicitNewChatFirstSendKeepsLeadingDateReadableIncludingQuickEcho(quickEcho: Bool) async throws {
+        let harness = try Harness(messages: [], floatingHeader: true, initialExistingHistory: false)
         defer { harness.close() }
         let collection = try await mountedCollection(in: harness.host.view)
         let id = "explicit-new-send"
-        if quickEcho {
-            harness.model.messages = [Self.message(
-                id: "quick-echo", role: "user", content: Self.readerDetail, pendingID: id
-            )]
-        } else {
-            harness.model.pending = [PendingMessage(
-                id: id, text: Self.readerDetail, status: .queued, sentAtMs: nil
-            )]
+        let text = Array(repeating: Self.readerDetail, count: 20).joined(separator: "\n")
+        let echo = Self.message(id: "quick-echo", role: "user", content: text, pendingID: id)
+        if !quickEcho {
+            harness.model.pending = [PendingMessage(id: id, text: text, status: .queued, sentAtMs: nil)]
+            try await settle(collection, hostView: harness.host.view, minimumItems: 1,
+                             rowID: "chat-user-row-\(id)", timeout: 10)
+            #expect(abs(try mountedCellFrame(id: "chat-user-row-\(id)", in: collection).minY
+                - usableViewportFrame(of: collection).minY) <= 1, "Pending has no leading date yet")
         }
-        try await settle(
-            collection, hostView: harness.host.view, minimumItems: 1,
-            rowID: "chat-user-row-\(id)", timeout: 10
-        )
-        #expect(abs(
-            try mountedCellFrame(id: "chat-user-row-\(id)", in: collection).minY
-                - usableViewportFrame(of: collection).minY
-        ) <= 1)
+        harness.model.messages = [echo]
+        harness.model.pending = []
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2,
+                         rowID: "chat-user-row-\(id)", timeout: 10)
+        let header = try #require(harness.model.headerFrame)
+        let date = try #require(collection.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let dateFrame = date.convert(date.bounds, to: harness.window)
+        let message = try mountedCellFrame(id: "chat-user-row-\(id)", in: collection)
+        let dateInViewport = try mountedCellFrame(at: IndexPath(item: 0, section: 0), in: collection)
+        #expect(dateFrame.minY >= header.maxY - 1, "Initial date, not only bubble, must clear controls")
+        #expect(abs(dateInViewport.minY - usableViewportFrame(of: collection).minY) <= 1)
+        #expect(message.minY >= dateInViewport.maxY)
+        #expect(message.height > usableViewportFrame(of: collection).height, "Tall send still lands at its readable start")
+
+        if !quickEcho {
+            harness.model.reservedNotice = true
+            try await settle(collection, hostView: harness.host.view, minimumItems: 2,
+                             rowID: "chat-user-row-\(id)")
+            #expect(harness.model.topOcclusion == 0)
+            #expect(abs(try mountedCellFrame(at: IndexPath(item: 0, section: 0), in: collection).minY
+                - usableViewportFrame(of: collection).minY) <= 1,
+                "Reserved notices remove overlap, not the send's readable date")
+            harness.model.reservedNotice = false
+            try await settle(collection, hostView: harness.host.view, minimumItems: 2,
+                             rowID: "chat-user-row-\(id)")
+        }
+
+        // Only owned landing reserves the lead-in; manual reading may draw under controls.
+        collection.delegate?.scrollViewWillBeginDragging?(collection)
+        collection.contentOffset.y += date.bounds.height / 2
+        try await settle(collection, hostView: harness.host.view, minimumItems: 2)
+        #expect(date.convert(date.bounds, to: harness.window).minY < header.maxY)
+    }
+
+    @Test func floatingHeaderNextDaySendPreservesDateWhenContextIsSmallerThanLeadIn() async throws {
+        let harness = try Harness(messages: Self.readerHistory, floatingHeader: true, initialExistingHistory: true)
+        defer { harness.close() }
+        let collection = try await mountedCollection(in: harness.host.view)
+        try await settle(collection, hostView: harness.host.view, minimumItems: 25, timeout: 10)
+        harness.window.frame.size.height = 320
+        harness.host.view.frame = harness.window.bounds
+        try await settle(collection, hostView: harness.host.view, minimumItems: 25)
+        let context = usableViewportFrame(of: collection).height * 0.20
+        harness.model.messages.append(Self.message(
+            id: "next-day", role: "user", content: "Next day send", pendingID: "next-day",
+            timestamp: Self.today + 86_400_000
+        ))
+        try await settle(collection, hostView: harness.host.view, minimumItems: 27,
+                         rowID: "chat-user-row-next-day", timeout: 10)
+        let date = try mountedCellFrame(at: IndexPath(item: 25, section: 0), in: collection)
+        let message = try mountedCellFrame(id: "chat-user-row-next-day", in: collection)
+        #expect(message.minY - date.minY > context, "Fixture exercises measured lead-in exceeding contextual placement")
+        #expect(abs(date.minY - usableViewportFrame(of: collection).minY) <= 1)
+        let screen = collection.convert(collection.bounds, to: nil)
+        postKeyboardFrame(CGRect(x: screen.minX, y: screen.maxY - 60, width: screen.width, height: 60))
+        try await settle(collection, hostView: harness.host.view, minimumItems: 27,
+                         rowID: "chat-user-row-next-day")
+        #expect(abs(try mountedCellFrame(id: "chat-user-row-next-day", in: collection).minY - message.minY) <= 1)
+        postKeyboardFrame(CGRect(x: screen.minX, y: screen.maxY, width: screen.width, height: 60))
     }
 
     @Test func newerPublicationInheritsInitialBottomIntentUntilDeferredApply() async throws {
@@ -1580,7 +2062,8 @@ struct MessageListScrollTests {
             collection, hostView: harness.host.view, minimumItems: Self.readerHistory.count + 2,
             rowID: "chat-user-row-batch-2"
         )
-        #expect(abs(try mountedCellFrame(id: "chat-user-row-batch-2", in: collection).minY - before) <= 1)
+        let after = try mountedCellFrame(id: "chat-user-row-batch-2", in: collection).minY
+        #expect(abs(after - before) <= 1, "before=\(before), after=\(after), offset=\(collection.contentOffset.y)")
     }
 
     @Test func shortSendKeepsTailDuringDragThenRetiresOnlySafeReserve() async throws {
@@ -1703,6 +2186,7 @@ struct MessageListScrollTests {
                 }
             }
             if itemCount >= minimumItems,
+               collection.layer.animationKeys()?.isEmpty != false,
                renderedMarkdownReady,
                collection.bounds.height > 0,
                hasPublishedContent,
@@ -1854,10 +2338,11 @@ struct MessageListScrollTests {
         role: String,
         content: String = readerDetail,
         pendingID: String? = nil,
-        streaming: Bool = false
+        streaming: Bool = false,
+        timestamp: Int64? = nil
     ) -> ChatMessage {
         ChatMessage(
-            ts: today, role: role, content: content,
+            ts: timestamp ?? today, role: role, content: content,
             streaming: streaming, cutoffKind: nil, turnId: id,
             replyId: role == "assistant" ? id : nil, pendingId: pendingID, entryId: id
         )
@@ -1929,6 +2414,27 @@ private final class MessageListScrollModel: ObservableObject {
     @Published var pending: [PendingMessage]
     @Published var historyLoading = false
     @Published var bottomOcclusion: CGFloat = 0
+    @Published var floatingHeader = false
+    @Published var floatingComposer = false
+    @Published var composerDraft = ""
+    @Published var paintsTranscriptFades = true
+    @Published var composerFrame: CGRect?
+    @Published var headerMeasurementReady = true
+    @Published var headerExtraClearance: CGFloat = 0
+    @Published var headerFrame: CGRect?
+    @Published var transcriptFrame: CGRect?
+    @Published var reservedNotice = false
+
+    var overlays: TranscriptOverlayGeometry? {
+        guard let transcriptFrame, let headerFrame, let composerFrame else { return nil }
+        return TranscriptOverlayGeometry(viewport: transcriptFrame, header: headerFrame, composer: composerFrame)
+    }
+    var topOcclusion: CGFloat? {
+        if floatingComposer { return overlays?.topClearance }
+        guard floatingHeader else { return 0 }
+        guard headerMeasurementReady, let headerFrame, let transcriptFrame else { return nil }
+        return max(0, min(transcriptFrame.height, headerFrame.maxY - transcriptFrame.minY))
+    }
     @Published var attachmentPreviews: [String: UIImage] = [:]
     @Published var attachmentPreviewFailures: Set<String> = []
     @Published var attachmentFiles: [String: URL] = [:]
@@ -1973,6 +2479,50 @@ private struct MessageListScrollFixture: View {
     let dynamicType: DynamicTypeSize
 
     var body: some View {
+        GeometryReader { _ in
+            ZStack(alignment: .bottom) {
+                transcriptColumn
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                if model.floatingComposer {
+                    Composer(tasks: [], ttsEnabled: true, talkMode: .idle, micLevels: [0],
+                        voiceDisabled: true, canInterrupt: false, draftText: model.composerDraft,
+                        onDraftChange: { _ in }, onSend: { _ in }, onVoiceIntent: { _ in },
+                        onTtsToggle: {}, onInterrupt: {}, onFocusGained: {})
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { model.composerFrame = $0 }
+                }
+            }
+            .overlay(alignment: .top) {
+                if model.floatingHeader {
+                    ChatTitleBar(onOpenPanel: {}, onOpenInbox: {}, onNewChat: {})
+                        .padding(.bottom, model.headerExtraClearance)
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { model.headerFrame = $0 }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .duskTheme()
+        }
+        .environment(\.dynamicTypeSize, dynamicType)
+    }
+
+    private var transcriptColumn: some View {
+        VStack(spacing: 0) {
+            if model.reservedNotice {
+                Color.clear.frame(height: model.headerFrame?.height ?? 0)
+                ShellNoticeRegion(availableHeight: 500) {
+                    Button("Retry recovery", action: {}).padding()
+                }
+            }
+            transcript
+                .overlay(alignment: .topLeading) {
+                    if model.floatingComposer, model.paintsTranscriptFades, let overlays = model.overlays {
+                        TranscriptFades(geometry: overlays)
+                    }
+                }
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { model.transcriptFrame = $0 }
+        }
+    }
+
+    private var transcript: some View {
         MessageList(
             messages: model.messages,
             pending: model.pending,
@@ -1982,7 +2532,8 @@ private struct MessageListScrollFixture: View {
             attachmentDownloadFailures: model.attachmentDownloadFailures,
             onVisibleAttachmentPreviewIdsChange: model.visibleAttachmentIdsChanged,
             historyLoading: model.historyLoading,
-            bottomOcclusion: model.bottomOcclusion,
+            bottomOcclusion: model.floatingComposer ? (model.overlays?.bottomClearance ?? 0) : model.bottomOcclusion,
+            topOcclusion: model.topOcclusion,
             initialExistingHistory: model.initialExistingHistory,
             imageLoader: model.imageLoader,
             positionScheduler: model.positionScheduler,
@@ -2006,6 +2557,8 @@ private final class Harness {
         messages: [ChatMessage],
         pending: [PendingMessage] = [],
         dynamicType: DynamicTypeSetting = .normal,
+        floatingHeader: Bool = false,
+        headerMeasurementReady: Bool = true,
         initialExistingHistory: Bool? = nil,
         imageLoader: any NetworkImageLoader = DefaultNetworkImageLoader.shared,
         positionScheduler: @escaping MessagePositionScheduler = {
@@ -2020,6 +2573,8 @@ private final class Harness {
             imageLoader: imageLoader,
             positionScheduler: positionScheduler
         )
+        model.floatingHeader = floatingHeader
+        model.headerMeasurementReady = headerMeasurementReady
         host = UIHostingController(rootView: MessageListScrollFixture(model: model, dynamicType: dynamicType.swiftUI))
         host.traitOverrides.preferredContentSizeCategory = dynamicType.uiKit
         window = UIWindow(windowScene: scene)
@@ -2086,4 +2641,15 @@ private final class HeldMessagePositionScheduler {
 private enum MessageListScrollTestError: Error {
     case collectionMissing
     case geometryDidNotSettle
+}
+
+/// Synthetic full-width row marks intentionally cover gutters/corners where
+/// ordinary bubble text rarely reaches. Lives inside a native scrolling cell.
+private final class ComposerFadeRowMarks: UIView {
+    override func draw(_ rect: CGRect) {
+        for stripe in 0..<Int(ceil(bounds.height / 16)) {
+            (stripe.isMultiple(of: 2) ? UIColor.white : UIColor.black).setFill()
+            UIRectFill(CGRect(x: 0, y: CGFloat(stripe * 16), width: bounds.width, height: 16))
+        }
+    }
 }

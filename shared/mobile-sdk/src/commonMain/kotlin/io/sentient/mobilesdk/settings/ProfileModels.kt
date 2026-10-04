@@ -51,6 +51,7 @@ data class ProfileV1(
     val compression: ProfileCompression,
     val advanced: ProfileAdvanced,
     val auxiliaryModels: ProfileAuxiliaryModels? = null,
+    val memory: ProfileMemory = ProfileMemory(spark = true, dreaming = true),
 )
 
 /**
@@ -82,6 +83,7 @@ data class ProfileV1PutBody(
     val compression: ProfileCompression,
     val advanced: ProfileAdvanced,
     val auxiliaryModels: ProfileAuxiliaryModels? = null,
+    val memory: ProfileMemory = ProfileMemory(spark = true, dreaming = true),
 )
 
 /**
@@ -106,6 +108,7 @@ fun ProfileV1.toPutBody(): ProfileV1PutBody = ProfileV1PutBody(
     compression = compression,
     advanced = advanced,
     auxiliaryModels = auxiliaryModels,
+    memory = memory,
 )
 
 @Serializable
@@ -123,6 +126,10 @@ data class ProfileVoiceRef(val provider: String, val id: String)
 
 @Serializable
 data class ProfileAudio(val ttsEnabled: Boolean, val channel: String)
+
+/** Memory preferences round-trip on every profile write; defaults match legacy gateway profiles. */
+@Serializable
+data class ProfileMemory(val spark: Boolean, val dreaming: Boolean)
 
 @Serializable
 data class ProfilePersona(val template: String, val overrides: String)

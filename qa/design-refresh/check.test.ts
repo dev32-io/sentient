@@ -1,10 +1,12 @@
+import * as childProcess from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { sourceIdentity, sha256 } from "../../tools/visual-diff/evidence.mjs";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { basename, dirname, join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { inventorySchema } from "./contracts.ts";
 import { assertImplementationInventoryClosed, discoverReachability, findPrototypeRuntimeReferences, validateAssetCopy, validateInventory, validateMatrix, validateVisualManifest } from "./check.ts";
 import { assertLoopbackFixtureTarget, withDisposableUser } from "./fixture.ts";
@@ -20,6 +22,7 @@ async function current(name: string): Promise<any> {
   return Bun.file(resolve(import.meta.dir, name)).json();
 }
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -156,6 +159,18 @@ describe("design refresh inventory checker", () => {
 
   it("closes only fresh production images with consistent passing observations; unknown and failures stay open", async () => {
     const root = await tempRoot();
+    // Bun 1.3.11 test subprocess pipes lose output here. Execute real Git with
+    // file-backed streams (as the CLI fixtures do), not fabricated enumeration.
+    const stdout = join(root, "git.stdout");
+    const stderr = join(root, "git.stderr");
+    const git = vi.spyOn(childProcess, "execFileSync").mockImplementation((command, args, options) => {
+      const result = Bun.spawnSync([command, ...(args as string[])], {
+        timeout: 30_000, ...(options as { cwd?: string; timeout?: number }),
+        stdout: Bun.file(stdout), stderr: Bun.file(stderr),
+      });
+      if (!result.success) throw new Error(`Fixture command failed: ${command} (status ${result.exitCode})`);
+      return readFileSync(stdout);
+    });
     execFileSync("git", ["init", "-q", root]);
     const inventory = inventorySchema.parse(await current("inventory.json"));
     inventory.rows = [inventory.rows[0]!];
@@ -197,6 +212,34 @@ describe("design refresh inventory checker", () => {
     };
     await writeFile(resolve(root, sidecar), JSON.stringify(doc));
     entry.evidencePaths = [sidecar, actual, provenancePath];
+    await expect(validateVisualManifest(root, manifest, inventory)).resolves.toBeDefined();
+    // Successful-but-empty Git enumeration cannot close even a valid manifest.
+    git.mockReturnValueOnce(Buffer.alloc(0));
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("Source enumeration unavailable or empty");
+    // All three evidence kinds get preflighted before any sidecar is read,
+    // regardless of ordering in evidencePaths.
+    const outside = await tempRoot();
+    await symlink(outside, resolve(root, prefix, "link"));
+    const originalPaths = [...entry.evidencePaths];
+    for (const path of originalPaths) {
+      const bytes = await readFile(resolve(root, path));
+      await writeFile(resolve(outside, basename(path)), bytes);
+      entry.evidencePaths = originalPaths.map(candidate => candidate === path ? prefix + "link/" + basename(path) : candidate);
+      await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("must stay under");
+      expect(await readFile(resolve(outside, basename(path)))).toEqual(bytes);
+      expect(await readFile(resolve(root, path))).toEqual(bytes);
+    }
+    entry.evidencePaths = originalPaths;
+    // A sibling-prefix and a redirected allowed root are not confinement.
+    const sibling = resolve(root, "qa/web/evidence/design-refresh-sibling");
+    await rename(resolve(root, prefix), sibling);
+    await symlink(sibling, resolve(root, prefix));
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("must stay under");
+    await rm(resolve(root, prefix));
+    await rename(sibling, resolve(root, prefix));
+    entry.evidencePaths = ["qa/web/evidence/design-refresh-sibling/actual.png"];
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("outside a design-refresh evidence root");
+    entry.evidencePaths = originalPaths;
     await expect(validateVisualManifest(root, manifest, inventory)).resolves.toBeDefined();
     for (const measure of [
       { applicable: true, value: 0, unit: "css-px", result: "needs-review" },

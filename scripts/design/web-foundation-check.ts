@@ -118,7 +118,6 @@ const CANONICAL_CHAT_STYLE_CLASSES = [
   "message-bubble",
   "message-bubble--continuation",
   "message-bubble--user",
-  "message-bubble__avatar-spacer",
   "message-bubble__body",
   "message-bubble__meta",
   "message-bubble__name",
@@ -141,6 +140,7 @@ const CANONICAL_CHAT_STYLE_CLASSES = [
 // legacy chat sheet.
 const LEGACY_GLOBAL_CHAT_STYLE_CLASSES = [
   ...CANONICAL_CHAT_STYLE_CLASSES,
+  "message-bubble__avatar-spacer", // Retired, not a required canonical selector.
   "tool-inline-detail",
   "tool-inline-detail__label",
   "tool-inline-detail__preview",

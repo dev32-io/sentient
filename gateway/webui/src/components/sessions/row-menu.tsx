@@ -85,7 +85,13 @@ export function RowMenu({ onDelete }: RowMenuProps): JSX.Element | null {
       </FoundationIconButton>
       {open && (
         <div ref={popRef} class={popClass} role="menu">
-          <ActionButton variant="destructive" className="row-menu__item row-menu__item--danger" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onDelete(); }}>
+          <ActionButton variant="destructive" className="row-menu__item row-menu__item--danger" role="menuitem" onClick={(event) => {
+            event.stopPropagation();
+            // The menu item disappears; let the dialog capture the durable opener.
+            triggerRef.current?.focus();
+            setOpen(false);
+            onDelete();
+          }}>
             <Icon name="trash" size={14} /> Delete
           </ActionButton>
         </div>

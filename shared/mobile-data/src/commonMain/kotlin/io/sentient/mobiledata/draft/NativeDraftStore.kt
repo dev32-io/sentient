@@ -68,7 +68,13 @@ data class NativePendingSend(
     val text: String,
     val attachments: List<NativeDraftAttachment>,
     val createdAt: Long,
-)
+    val acceptedOrder: Long = 0,
+    val attempted: Boolean = false,
+) {
+    constructor(pendingId: String, mintKey: String, surfaceId: String, draftId: String, draftRevision: Long,
+                sessionId: String?, text: String, attachments: List<NativeDraftAttachment>, createdAt: Long) :
+        this(pendingId, mintKey, surfaceId, draftId, draftRevision, sessionId, text, attachments, createdAt, 0, false)
+}
 
 data class NativeDeleteIntent(
     val sessionId: String,
@@ -151,6 +157,9 @@ interface NativeDraftStore {
         mintKey: String,
         surfaceId: String,
     ): NativePendingSend
+    suspend fun preserveRestoredDraft(draftId: String, expectedRevision: Long, nextText: String): NativeDraft
+    suspend fun markAttempted(pendingId: String)
+    suspend fun acceptSend(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String): NativePendingSend
     suspend fun reconcileSend(
         pendingId: String,
         result: NativeSendReconciliation,
@@ -306,7 +315,7 @@ class SqlDelightNativeDraftStore internal constructor(
         database.transaction {
             val current = queries.draftForId(scope.accountId, scope.normalizedGatewayId, draftId).executeAsOneOrNull()
             if (current?.revision != expectedRevision) throw NativeDraftConflictException(current?.let(::draft))
-            queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, draftId).executeAsOneOrNull()?.let {
+            queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, draftId).executeAsList().firstOrNull()?.let {
                 throw NativePendingSendConflictException(pending(it))
             }
             val owned = queries.attachmentsForDraft(scope.accountId, scope.normalizedGatewayId, draftId)
@@ -330,31 +339,55 @@ class SqlDelightNativeDraftStore internal constructor(
         return writes.withLock { preview.takeIf { !closed && previewSource(attachmentId) == source } }
     }
 
-    override suspend fun beginSend(
-        draftId: String,
-        expectedRevision: Long,
-        mintKey: String,
-        surfaceId: String,
-    ): NativePendingSend = writes.withLock {
+    override suspend fun preserveRestoredDraft(draftId: String, expectedRevision: Long, nextText: String): NativeDraft = writes.withLock {
+        database.transactionWithResult {
+            val row = queries.draftForId(scope.accountId, scope.normalizedGatewayId, draftId).executeAsOneOrNull()
+            if (row?.revision != expectedRevision) throw NativeDraftConflictException(row?.let(::draft))
+            val savedId = uuid()
+            val timestamp = now()
+            queries.insertDraft(scope.accountId, scope.normalizedGatewayId, savedId, null, row.text, 1L, timestamp, timestamp)
+            queries.attachmentsForDraft(scope.accountId, scope.normalizedGatewayId, draftId).executeAsList()
+                .forEachIndexed { index, file -> insertDraftAttachment(savedId, attachment(file), index) }
+            queries.deleteDraftAttachments(scope.accountId, scope.normalizedGatewayId, draftId)
+            queries.updateDraft(row.session_id, nextText, row.revision + 1L, timestamp, scope.accountId, scope.normalizedGatewayId, draftId)
+            draft(queries.draftForId(scope.accountId, scope.normalizedGatewayId, draftId).executeAsOne())
+        }
+    }
+
+    override suspend fun markAttempted(pendingId: String) = writes.withLock {
+        queries.markPendingAttempted(scope.accountId, scope.normalizedGatewayId, pendingId)
+        Unit
+    }
+
+    override suspend fun beginSend(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String): NativePendingSend =
+        freeze(draftId, expectedRevision, mintKey, surfaceId, false)
+
+    override suspend fun acceptSend(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String): NativePendingSend =
+        freeze(draftId, expectedRevision, mintKey, surfaceId, true)
+
+    private suspend fun freeze(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String, advance: Boolean): NativePendingSend = writes.withLock {
         require(mintKey.isNotBlank())
         require(surfaceId.isNotBlank())
         database.transactionWithResult {
             val row = queries.draftForId(scope.accountId, scope.normalizedGatewayId, draftId).executeAsOneOrNull()
             if (row?.revision != expectedRevision) throw NativeDraftConflictException(row?.let(::draft))
-            queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, draftId).executeAsOneOrNull()?.let {
-                val current = pending(it)
-                if (current.surfaceId == surfaceId && current.draftRevision == expectedRevision) {
-                    return@transactionWithResult current
+            queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, draftId).executeAsList()
+                .firstOrNull { it.draft_revision == expectedRevision }?.let {
+                    val existing = pending(it)
+                    if (existing.surfaceId != surfaceId) throw NativePendingSendConflictException(existing)
+                    return@transactionWithResult existing
                 }
-                throw NativePendingSendConflictException(current)
-            }
             val pendingId = uuid()
             queries.insertPendingSend(
                 scope.accountId, scope.normalizedGatewayId, pendingId, mintKey, surfaceId, draftId,
-                row.revision, row.session_id, row.text, now(),
+                row.revision, row.session_id, row.text, now(), queries.nextAcceptedOrder().executeAsOne(),
             )
             queries.attachmentsForDraft(scope.accountId, scope.normalizedGatewayId, draftId).executeAsList()
                 .forEach { insertPendingAttachment(pendingId, it) }
+            if (advance) {
+                queries.deleteDraftAttachments(scope.accountId, scope.normalizedGatewayId, draftId)
+                queries.updateDraft(row.session_id, "", row.revision + 1L, now(), scope.accountId, scope.normalizedGatewayId, draftId)
+            }
             pending(queries.pendingSendForId(scope.accountId, scope.normalizedGatewayId, pendingId).executeAsOne())
         }
     }
@@ -379,6 +412,7 @@ class SqlDelightNativeDraftStore internal constructor(
                 .executeAsOneOrNull()
             var restored: NativeDraft? = null
             if (result == NativeSendReconciliation.ACKNOWLEDGED) {
+                queries.bindPendingSession(acknowledgedSessionId, scope.accountId, scope.normalizedGatewayId, send.draft_id)
                 if (current?.revision == send.draft_revision) {
                     queries.attachmentsForDraft(scope.accountId, scope.normalizedGatewayId, send.draft_id)
                         .executeAsList()
@@ -490,7 +524,7 @@ class SqlDelightNativeDraftStore internal constructor(
         val paths = queries.attachmentsForDraft(scope.accountId, scope.normalizedGatewayId, row.draft_id)
             .executeAsList().map { it.local_path }.toMutableList()
         queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, row.draft_id)
-            .executeAsOneOrNull()?.let { send ->
+            .executeAsList().forEach { send ->
                 queries.pendingAttachments(scope.accountId, scope.normalizedGatewayId, send.pending_id)
                     .executeAsList().mapTo(paths) { it.local_path }
                 queries.deletePendingAttachments(scope.accountId, scope.normalizedGatewayId, send.pending_id)
@@ -505,37 +539,29 @@ class SqlDelightNativeDraftStore internal constructor(
     private fun detachSessionDraft(sessionId: String) {
         val row = queries.draftForSession(scope.accountId, scope.normalizedGatewayId, sessionId)
             .executeAsOneOrNull() ?: return
-        val send = queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, row.draft_id)
-            .executeAsOneOrNull()
-        val isUnchangedDraft = send != null && row.revision == send.draft_revision
-        val isSendClearedDraft = send != null && row.revision == send.draft_revision + 1L && row.text.isBlank()
-        if (send != null) {
-            val pendingAttachments = queries.pendingAttachments(
-                scope.accountId, scope.normalizedGatewayId, send.pending_id,
-            ).executeAsList()
-            if (!isUnchangedDraft && !isSendClearedDraft && (send.text.isNotBlank() || pendingAttachments.isNotEmpty())) {
-                val detachedId = uuid()
+        val sends = queries.pendingSendForDraft(scope.accountId, scope.normalizedGatewayId, row.draft_id).executeAsList()
+        var text = row.text
+        var reusedEditor = false
+        val editorEmpty = row.text.isBlank() && currentAttachmentCount(row.draft_id) == 0
+        for (send in sends) {
+            val unchanged = row.revision == send.draft_revision
+            val reuse = !reusedEditor && (unchanged || editorEmpty)
+            val detachedId = if (reuse) row.draft_id else uuid()
+            if (reuse) {
+                reusedEditor = true
+                text = send.text
+            } else {
                 val timestamp = now()
-                queries.insertDraft(
-                    scope.accountId, scope.normalizedGatewayId, detachedId, null, send.text,
-                    1L, timestamp, timestamp,
-                )
-                pendingAttachments.forEachIndexed { index, attachment ->
-                    insertDraftAttachment(detachedId, attachment(attachment), index)
-                }
+                queries.insertDraft(scope.accountId, scope.normalizedGatewayId, detachedId, null, send.text, 1L, timestamp, timestamp)
             }
-            if (isSendClearedDraft) {
-                pendingAttachments.forEachIndexed { index, attachment ->
-                    insertDraftAttachment(row.draft_id, attachment(attachment), index)
-                }
+            if (!unchanged || !reuse) {
+                queries.pendingAttachments(scope.accountId, scope.normalizedGatewayId, send.pending_id).executeAsList()
+                    .forEachIndexed { index, file -> insertDraftAttachment(detachedId, attachment(file), index) }
             }
             queries.deletePendingAttachments(scope.accountId, scope.normalizedGatewayId, send.pending_id)
             queries.deletePendingSend(scope.accountId, scope.normalizedGatewayId, send.pending_id)
         }
-        queries.updateDraft(
-            null, if (isSendClearedDraft) send.text else row.text, row.revision + 1L, now(),
-            scope.accountId, scope.normalizedGatewayId, row.draft_id,
-        )
+        queries.updateDraft(null, text, row.revision + 1L, now(), scope.accountId, scope.normalizedGatewayId, row.draft_id)
     }
 
     private fun draft(row: Native_draft): NativeDraft = NativeDraft(
@@ -560,6 +586,8 @@ class SqlDelightNativeDraftStore internal constructor(
         attachments = queries.pendingAttachments(scope.accountId, scope.normalizedGatewayId, row.pending_id)
             .executeAsList().map(::attachment),
         createdAt = row.created_at,
+        acceptedOrder = row.accepted_order,
+        attempted = row.attempted != 0L,
     )
 
     private fun attachment(row: Native_draft_attachment) = NativeDraftAttachment(

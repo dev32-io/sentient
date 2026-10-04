@@ -346,9 +346,9 @@ struct QAFoundationCatalog: View {
                 }
             }
 
-            QACatalogSpecimen("Typography", contract: "Fraunces · DM Sans · JetBrains Mono") {
+            QACatalogSpecimen("Typography", contract: "DM Sans · JetBrains Mono") {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Display / Fraunces 22").font(Typo.display(TypeScale.xl, .medium))
+                    Text("Display / DM Sans 22").font(Typo.display(TypeScale.xl, .medium))
                     Text("Body / DM Sans 15").font(Typo.ui(TypeScale.base))
                     Text("Supporting / DM Sans 12.5").font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2)
                     Text("Telemetry / JetBrains Mono 11").font(Typo.mono(TypeScale.xs)).foregroundStyle(DuskColors.accent)

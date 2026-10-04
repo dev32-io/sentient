@@ -1,10 +1,10 @@
 import { type ComponentChildren, type JSX, createElement } from "preact";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type MarkdownImages, renderMarkdown } from "../../lib/render-markdown.ts";
 import type { ChatAttachment } from "../../types.ts";
 import { ActionButton } from "../common/foundation/buttons.tsx";
 import { type AttachmentAsset, attachmentKey } from "./attachment-cards.tsx";
-import { tableMarkdown, useMessageSelection } from "./message-selection.ts";
+import { BubbleSelectionOwner, tableMarkdown, useMessageSelection } from "./message-selection.ts";
 
 /** No new media loader: only this bubble's already-authorized attachment assets.
  * Markdown uses the existing preview endpoint; rendering uses its owned blob.
@@ -108,7 +108,7 @@ function elements(node: Node, inPre = false): ComponentChildren {
 
 export function RichMarkdown({ text, images }: { text: string; images?: MarkdownImages | undefined }): JSX.Element {
   const root = useRef<HTMLDivElement>(null);
-  useMessageSelection(root);
+  useMessageSelection(root, !useContext(BubbleSelectionOwner));
   const children = useMemo(() => {
     const template = document.createElement("template");
     template.innerHTML = renderMarkdown(text, images);

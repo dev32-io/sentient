@@ -85,6 +85,7 @@ struct SecretKeyRow: View {
         } else if let onSetActive {
             DesignTextButton(
                 title: "Select",
+                state: isSaving ? .disabled : .normal,
                 accessibilityId: "settings-secret-\(idKey)-active",
                 action: onSetActive
             )
@@ -93,6 +94,7 @@ struct SecretKeyRow: View {
             DesignActionButton(
                 title: hasKey ? "Replace key" : "Set key",
                 role: .secondary,
+                state: isSaving ? .disabled : .normal,
                 accessibilityId: "settings-secret-\(idKey)-update",
                 fillsWidth: false,
                 action: onStartEdit
@@ -109,7 +111,8 @@ struct SecretKeyRow: View {
                 prompt: "Paste new key",
                 text: $draft,
                 accessibilityId: "settings-secret-\(idKey)-input",
-                autoFocus: true
+                autoFocus: true,
+                isEnabled: !isSaving
             )
             Text("Write-only: the stored key cannot be viewed. Saving a replacement does not validate it.")
                 .designText(.supporting)
@@ -134,6 +137,7 @@ struct SecretKeyRow: View {
         DesignActionButton(
             title: "Cancel",
             role: .quiet,
+            state: isSaving ? .disabled : .normal,
             accessibilityId: "settings-secret-\(idKey)-cancel",
             fillsWidth: fillsWidth,
             action: onCancel
@@ -178,6 +182,7 @@ struct SecretUrlRow: View {
         .padding(.vertical, Space.sm)
         .onChange(of: isEditing) { _, editing in if !editing { draft = "" } }
         .privacySensitive()
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-secret-custom-baseurl")
     }
 
@@ -188,7 +193,8 @@ struct SecretUrlRow: View {
                 prompt: "https://api.example.com/v1",
                 text: $draft,
                 accessibilityId: "settings-secret-custom-baseurl-input",
-                keyboard: .URL
+                keyboard: .URL,
+                isEnabled: !isSaving
             )
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
@@ -199,7 +205,7 @@ struct SecretUrlRow: View {
                     accessibilityId: "settings-secret-custom-baseurl-save",
                     action: { onSave(draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 )
-                DesignTextButton(title: "Cancel", action: onCancel)
+                DesignTextButton(title: "Cancel", state: isSaving ? .disabled : .normal, action: onCancel)
             }
         }
     }
@@ -212,6 +218,7 @@ struct SecretUrlRow: View {
                 .accessibilityLabel(hasValue ? "Base URL stored; not validated" : "No base URL stored")
             DesignTextButton(
                 title: "Update base URL",
+                state: isSaving ? .disabled : .normal,
                 accessibilityId: "settings-secret-custom-baseurl-update",
                 action: onStartEdit
             )

@@ -28,10 +28,26 @@ final class VoiceAddViewModel {
     private(set) var previewingTake = false
 
     // Form fields (name/description hard-capped; over-cap input can't be typed).
-    var name = ""
-    var description = ""
-    var tags: [String] = []
-    var language = ""
+    private var nameDraft: String = ""
+    var name: String {
+        get { nameDraft }
+        set { if !submitting { nameDraft = newValue } }
+    }
+    private var descriptionDraft: String = ""
+    var description: String {
+        get { descriptionDraft }
+        set { if !submitting { descriptionDraft = newValue } }
+    }
+    private var tagsDraft: [String] = []
+    var tags: [String] {
+        get { tagsDraft }
+        set { if !submitting { tagsDraft = newValue } }
+    }
+    private var languageDraft: String = ""
+    var language: String {
+        get { languageDraft }
+        set { if !submitting { languageDraft = newValue } }
+    }
 
     private(set) var audioData: Data?
     private(set) var uploadedName: String?
@@ -39,7 +55,7 @@ final class VoiceAddViewModel {
     var notice: String?
     private(set) var done = false
 
-    private let settings: SettingsComponent?
+    private let createVoice: ((String, Data, String, [String], String) async throws -> SentientResult<VoiceCreateResult>)?
     private let recorder: any VoiceRecording
     private let player: any VoiceSamplePlaying
     private let permission: any VoicePermissionProviding
@@ -49,7 +65,11 @@ final class VoiceAddViewModel {
     private let log = AppLog("settings", "voice-add-vm")
 
     init(settings: SettingsComponent) {
-        self.settings = settings
+        self.createVoice = { name, audio, description, tags, language in
+            try await settings.voices.create(
+                name: name, audioWav: audio.toKotlinByteArray(), description: description, tags: tags, language: language
+            )
+        }
         self.recorder = VoiceRecorder()
         self.player = VoiceSamplePlayer()
         self.permission = SystemVoicePermissionProvider()
@@ -63,9 +83,10 @@ final class VoiceAddViewModel {
         recorder: any VoiceRecording,
         player: any VoiceSamplePlaying,
         permission: any VoicePermissionProviding,
-        settingsOpener: any VoiceSettingsOpening
+        settingsOpener: any VoiceSettingsOpening,
+        createVoice: ((String, Data, String, [String], String) async throws -> SentientResult<VoiceCreateResult>)? = nil
     ) {
-        self.settings = nil
+        self.createVoice = createVoice
         self.recorder = recorder
         self.player = player
         self.permission = permission
@@ -83,6 +104,7 @@ final class VoiceAddViewModel {
     // ── Record flow ──
 
     func selectMode(_ next: Mode) {
+        guard !submitting else { return }
         guard mode != next else { return }
         timerTask?.cancel()
         recorder.discard()
@@ -97,6 +119,7 @@ final class VoiceAddViewModel {
 
     /// Record tapped from idle: gate mic permission, then begin capture.
     func onRecordTapped() {
+        guard !submitting else { return }
         switch permission.status() {
         case .granted:
             beginRecording()
@@ -131,6 +154,7 @@ final class VoiceAddViewModel {
 
     /// Stop capture, load the take into `audioData`, and enter review.
     func stopRecording() {
+        guard !submitting else { return }
         timerTask?.cancel()
         recorder.stop()
         audioData = recorder.recordedData()
@@ -146,6 +170,7 @@ final class VoiceAddViewModel {
     }
 
     func reRecord() {
+        guard !submitting else { return }
         player.stop()
         previewingTake = false
         recorder.discard()
@@ -155,6 +180,7 @@ final class VoiceAddViewModel {
 
     /// Play / stop the recorded take for the review check.
     func toggleTakePreview() {
+        guard !submitting else { return }
         guard let audioData else { return }
         if previewingTake {
             player.stop()
@@ -178,6 +204,7 @@ final class VoiceAddViewModel {
     // ── Upload flow ──
 
     func handlePicked(_ result: Result<URL, Error>) {
+        guard !submitting else { return }
         switch result {
         case .success(let url):
             copyPickedFile(url)
@@ -218,8 +245,11 @@ final class VoiceAddViewModel {
     // ── Submit ──
 
     func submit() {
-        guard canSubmit, let audioData, let settings else { return }
+        guard canSubmit, let audioData, let createVoice else { return }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let submittedDescription = description.trimmingCharacters(in: .whitespaces)
+        let submittedTags = tags
+        let submittedLanguage = language
         submitting = true
         player.stop()
         previewingTake = false
@@ -227,12 +257,8 @@ final class VoiceAddViewModel {
         Task {
             defer { submitting = false }
             do {
-                let result = try await settings.voices.create(
-                    name: trimmed,
-                    audioWav: audioData.toKotlinByteArray(),
-                    description: description.trimmingCharacters(in: .whitespaces),
-                    tags: tags,
-                    language: language
+                let result = try await createVoice(
+                    trimmed, audioData, submittedDescription, submittedTags, submittedLanguage
                 )
                 switch onEnum(of: result) {
                 case .success(let s):

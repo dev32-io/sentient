@@ -93,10 +93,62 @@ class ConversationHistoryConnectorTest {
         assertEquals("fresh from s2", (c.items()[0] as ConversationFeedItem.User).content)
     }
 
+    @Test
+    fun attached_replay_before_switch_ack_and_in_place_refetch_keep_target_receipts() {
+        val c = ConversationHistoryConnector()
+        val receipt = userItem("accepted").copy(entryId = "e1", pendingId = "p", sessionId = "B")
+        c.clearForSwitch()
+        c.handle(ServerMessage.SessionAttached(sessionId = "B", generation = 1))
+        c.handle(ServerMessage.ConversationEntry(receipt))
+        c.handle(ServerMessage.SessionSwitched(sessionId = "B", ts = 1))
+        c.replaceMirror(emptyList(), c.currentGeneration())
+        assertEquals(listOf(receipt), c.items())
+
+        val resumed = ConversationHistoryConnector()
+        val generation = resumed.bumpForRefetch("B") // Reconnect without a switched frame.
+        resumed.handle(ServerMessage.ConversationEntry(receipt))
+        resumed.replaceMirror(emptyList(), generation)
+        assertEquals(listOf(receipt), resumed.items())
+    }
+
+    @Test
+    fun delayed_snapshot_merges_current_target_tail_and_deduplicates_receipt() {
+        val c = ConversationHistoryConnector()
+        c.handle(ServerMessage.SessionSwitched(sessionId = "B", ts = 1))
+        val generation = c.currentGeneration()
+        val receipt = userItem("accepted", 3).copy(entryId = "e2", pendingId = "p", sessionId = "B")
+        c.handle(ServerMessage.ConversationEntry(receipt.copy(sessionId = "A", entryId = "wrong")))
+        c.handle(ServerMessage.ConversationEntry(receipt))
+        c.handle(ServerMessage.ConversationEntry(receipt))
+        c.handle(ServerMessage.ConversationEntry(assistantItem("answer", 4).copy(entryId = "e3"), turnId = "turn"))
+        c.replaceMirror(listOf(userItem("history").copy(entryId = "e1"), receipt), generation)
+        assertEquals(listOf("e1", "e2", "e3"), c.items().map { it.entryId })
+        assertEquals("p", (c.items()[1] as ConversationFeedItem.User).pendingId)
+        assertEquals("turn", (c.items()[2] as ConversationFeedItem.Assistant).turnId)
+    }
+
+    @Test
+    fun empty_history_failure_retains_live_receipt_but_route_intent_discards_old_tail_and_fetch() {
+        val c = ConversationHistoryConnector()
+        c.handle(ServerMessage.SessionSwitched(sessionId = "A", ts = 1))
+        val receipt = userItem("accepted").copy(entryId = "e1", pendingId = "p", sessionId = "A")
+        c.handle(ServerMessage.ConversationEntry(receipt))
+        c.replaceMirror(emptyList(), c.currentGeneration())
+        assertEquals(listOf(receipt), c.items())
+        val old = c.bumpForRefetch()
+        c.handle(ServerMessage.ConversationEntry(receipt))
+        c.clearForSwitch()
+        c.replaceMirror(listOf(receipt), old) // Old REST finishes before B ACK.
+        assertEquals(emptyList(), c.items())
+        c.handle(ServerMessage.SessionSwitched(sessionId = "B", ts = 2))
+        c.replaceMirror(emptyList(), c.currentGeneration())
+        assertEquals(emptyList(), c.items())
+    }
+
     // ── entry gate ────────────────────────────────────────────────────────────
 
     @Test
-    fun entry_between_session_switched_and_replaceMirror_is_dropped() {
+    fun unscoped_entry_between_session_switched_and_replaceMirror_is_dropped() {
         val c = ConversationHistoryConnector()
         c.replaceMirror(listOf(userItem("a", ts = 1)), c.currentGeneration())
         c.handle(ServerMessage.SessionSwitched(sessionId = "s2", ts = 2))
@@ -136,7 +188,7 @@ class ConversationHistoryConnectorTest {
         c.clearForNewChat()
         c.handle(ServerMessage.SessionCreated(sessionId = "s1", ts = 1))
         assertEquals("s1" to c.currentGeneration(), requested)
-        c.handle(ServerMessage.ConversationEntry(assistantItem("straggler")))
+        c.handle(ServerMessage.ConversationEntry(userItem("straggler").copy(sessionId = "old")))
         assertEquals(emptyList(), c.items())
 
         c.replaceMirror(listOf(committed), c.currentGeneration())

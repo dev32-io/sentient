@@ -519,7 +519,20 @@ struct VoiceCaptureControlTests {
         #expect(disabled.primaryLabel == "Voice unavailable while reconnecting")
     }
 
-    @Test func reducedMotionWaveUsesClampedPerBarLevels() {
+    @Test func terminalLockRetainsLivePodButNeverTargetsOrNewInput() {
+        for retained in [VoiceCaptureState.hold, .auto] {
+            let pending = VoiceCapturePresentationState(state: .transitioning, disabled: false, retainedLiveState: retained)
+            #expect(pending.isDisabled)
+            #expect(pending.isExpanded)
+            #expect(pending.showsWaveform)
+            #expect(!pending.showsTargetDeck)
+            #expect(VoiceCaptureReducer.activate(from: pending.state).intents.isEmpty)
+            let disconnected = VoiceCapturePresentationState(state: .transitioning, disabled: true, retainedLiveState: retained)
+            #expect(!disconnected.isExpanded)
+        }
+    }
+
+    @Test func liveWaveUsesClampedPerBarLevels() {
         let levels: [Float] = [-1, 0, 0.5, 2, .nan]
 
         #expect(PttWaveMetrics.levelScale(levels, at: 0) == PttWaveMetrics.levelFloor)
@@ -530,8 +543,8 @@ struct VoiceCaptureControlTests {
     }
 
     @Test func animatedWaveRetainsLevelAmplitude() {
-        let quiet = PttWaveMetrics.animatedScale([0], at: 0, time: 0.5)
-        let loud = PttWaveMetrics.animatedScale([1], at: 0, time: 0.5)
+        let quiet = PttWaveMetrics.animatedScale([0], at: 0, time: PttWaveMetrics.cycleDuration / 2)
+        let loud = PttWaveMetrics.animatedScale([1], at: 0, time: PttWaveMetrics.cycleDuration / 2)
 
         #expect(quiet == PttWaveMetrics.levelFloor)
         #expect(loud == 1)

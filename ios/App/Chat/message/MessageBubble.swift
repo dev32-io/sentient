@@ -1,12 +1,12 @@
 // MessageBubble — the committed/live message content composite.
 //
 // MessageBubble owns role-specific content only. MessageBubbleShell owns the
-// shared row geometry, avatar, material, metadata, grouping, and accessibility
+// shared row geometry, material, timestamp, grouping, and accessibility
 // contract used by both committed and pending user bubbles.
 //
 // Layout and behavior remain the established chat contract:
-//  - assistant content uses the Sentient mark on the leading edge and paper;
-//  - user content uses the user avatar on the trailing edge and sage-mixed paper;
+//  - assistant content uses leading alignment and paper;
+//  - user content uses trailing alignment and sage-mixed paper;
 //  - streaming assistant content shows the thinking pulse until revealed text
 //    arrives, then renders the data-layer substring directly;
 //  - committed content remains GFM Markdown with the Dusk theme and cutoff
@@ -19,11 +19,9 @@ struct MessageBubble: View {
     let message: ChatMessage
     let index: Int
     var total: Int = 1
-    var continuation = false
-    /// Avatar animation mode — only the live streaming assistant bubble animates;
-    /// committed bubbles pass `.idle`, mirroring the Android avatarMode.
+    /// Ongoing reply activity owns chrome, not a per-message avatar.
     var avatarMode: SentientIdentityState = .idle
-    /// Display name shown in the meta row above the bubble.
+    /// Speaker retained in semantic chronology, not a visual name row.
     var userName: String = "You"
     var attachmentPreviews: [String: UIImage] = [:]
     var attachmentPreviewFailures: Set<String> = []
@@ -48,7 +46,6 @@ struct MessageBubble: View {
             cutoffLabel: messageCutoffLabel(for: message.cutoffKind),
             index: index,
             total: total,
-            continuation: continuation,
             avatarMode: avatarMode,
             accessibilityIdentifier: isUser ? "message-bubble-\(index)" : "assistant-bubble"
         ) {
@@ -89,15 +86,22 @@ struct MessageBubble: View {
                         onPreview: { onPreviewAttachment(attachment.attachmentId) }
                     )
                 }
-                if messageCutoffLabel(for: message.cutoffKind) != nil { interruptedMarker }
+                if let label = messageCutoffLabel(for: message.cutoffKind) {
+                    MessageCutoffMarker(label: label, index: index)
+                }
             }
         }
     }
+}
 
-    private var interruptedMarker: some View {
+struct MessageCutoffMarker: View {
+    let label: String
+    let index: Int
+
+    var body: some View {
         HStack(spacing: Space.sm) {
             Circle().fill(DuskColors.clay).frame(width: 7, height: 7).accessibilityHidden(true)
-            Text(messageCutoffLabel(for: message.cutoffKind) ?? "")
+            Text(label)
                 .font(Typo.mono(TypeScale.sm))
                 .foregroundStyle(DuskColors.ink2)
         }
@@ -299,45 +303,13 @@ private struct MessageAttachmentCard: View {
 
     var body: some View {
         Button(action: onPreview) {
-            VStack(alignment: .leading, spacing: Space.sm) {
-                if let preview {
-                    Image(uiImage: preview)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 260)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: iconName)
-                        .font(.system(size: 30))
-                        .foregroundStyle(DuskColors.accent)
-                        .frame(maxWidth: .infinity, minHeight: 92, maxHeight: 92)
-                        .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .accessibilityHidden(true)
-                }
-                HStack(alignment: .top, spacing: Space.sm) {
-                    Image(systemName: iconName)
-                        .foregroundStyle(DuskColors.accent)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(attachment.displayName)
-                            .font(Typo.ui(TypeScale.sm, .semibold))
-                            .foregroundStyle(DuskColors.ink)
-                            .lineLimit(2)
-                        Text("\(attachment.mediaKind.uppercased()) · \(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))")
-                            .font(Typo.ui(TypeScale.xs))
-                            .foregroundStyle(DuskColors.ink3)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(Typo.ui(TypeScale.xs, .semibold))
-                        .foregroundStyle(DuskColors.ink3)
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(Space.sm)
-            .background(DuskColors.bg.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            MessageAttachmentContent(
+                displayName: attachment.displayName,
+                detail: "\(attachment.mediaKind.capitalized) · \(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))",
+                isImage: attachment.mediaKind == "image",
+                iconName: iconName,
+                preview: preview
+            )
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)

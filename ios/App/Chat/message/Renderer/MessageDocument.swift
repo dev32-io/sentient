@@ -3,7 +3,8 @@ import Foundation
 @_implementationOnly import cmark_gfm_extensions
 
 /// One bubble's logical UTF-16 address space. Markdown syntax is never part of
-/// range copy; cell separators are tabs, row/block separators are newlines.
+/// logical text; cell separators are tabs, row/block separators are newlines.
+/// Clipboard formatting is a separate export projection.
 struct MessageDocument {
     struct Style: OptionSet {
         let rawValue: Int
@@ -17,6 +18,10 @@ struct MessageDocument {
         let style: Style
         let link: URL?
     }
+    enum Indent: Hashable {
+        case list(Int)
+        case quote
+    }
     struct Block {
         enum Kind: Equatable {
             case paragraph, heading(Int), code, rule, table
@@ -26,6 +31,7 @@ struct MessageDocument {
         let range: NSRange
         let kind: Kind
         let depth: Int
+        var indents: [Indent] = []
         let quoted: Bool
         let marker: String?
         let cells: [[NSRange]]
@@ -114,22 +120,46 @@ struct MessageDocument {
 
     func tableMarkdown(id: UUID) -> String {
         guard let table = blocks.first(where: { $0.id == id && $0.kind == .table }), let header = table.cells.first else { return "" }
-        func row(_ cells: [NSRange]) -> String {
-            "| " + cells.map { plain(in: $0)
+        let rows = table.cells.map { cells in
+            cells.map { plain(in: $0)
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "|", with: "\\|")
                 .replacingOccurrences(of: "\n", with: "<br>")
-            }.joined(separator: " | ") + " |"
-        }
-        let separator = "| " + header.indices.map { index in
-            switch table.alignments.indices.contains(index) ? table.alignments[index] : 0 {
-            case 108: return ":---"
-            case 114: return "---:"
-            case 99: return ":---:"
-            default: return "---"
             }
-        }.joined(separator: " | ") + " |"
-        return ([row(header), separator] + table.cells.dropFirst().map(row)).joined(separator: "\n")
+        }
+        let widths = header.indices.map { column in
+            let alignment = table.alignments.indices.contains(column) ? table.alignments[column] : 0
+            let minimum = alignment == 99 ? 5 : (alignment == 108 || alignment == 114 ? 4 : 3)
+            return max(minimum, rows.map { $0[column].count }.max() ?? 0)
+        }
+        func row(_ cells: [String]) -> String {
+            "|" + cells.enumerated().map { column, cell in
+                cell + String(repeating: " ", count: widths[column] - cell.count)
+            }.joined(separator: "|") + "|"
+        }
+        let separators = header.indices.map { column in
+            let alignment = table.alignments.indices.contains(column) ? table.alignments[column] : 0
+            let left = alignment == 108 || alignment == 99
+            let right = alignment == 114 || alignment == 99
+            return (left ? ":" : "") + String(repeating: "-", count: widths[column] - (left ? 1 : 0) - (right ? 1 : 0)) + (right ? ":" : "")
+        }
+        return ([row(rows[0]), row(separators)] + rows.dropFirst().map(row)).joined(separator: "\n")
+    }
+
+    /// Replace only fully covered tables. Tokenization, retained selection and
+    /// source offsets continue to use the unchanged logical UTF-16 text.
+    func clipboardText(in range: NSRange) -> String {
+        let range = NSIntersectionRange(range, NSRange(location: 0, length: plain.utf16.count))
+        var cursor = range.location
+        var result = ""
+        for table in blocks where table.kind == .table && table.range.length > 0
+            && table.range.location >= range.location && NSMaxRange(table.range) <= NSMaxRange(range) {
+            result += plain(in: NSRange(location: cursor, length: table.range.location - cursor))
+            result += tableMarkdown(id: table.id)
+            cursor = NSMaxRange(table.range)
+        }
+        result += plain(in: NSRange(location: cursor, length: NSMaxRange(range) - cursor))
+        return result
     }
 
     static func permittedURL(_ string: String) -> URL? {
@@ -203,7 +233,7 @@ struct MessageDocument {
                 for child in children(node) { inline(child, style: next, link: kind(node) == "link" ? url(node) : link) }
             }
         }
-        func block(_ node: UnsafeMutablePointer<cmark_node>, depth: Int = 0, marker: String? = nil, quoted: Bool = false) {
+        func block(_ node: UnsafeMutablePointer<cmark_node>, depth: Int = 0, marker: String? = nil, quoted: Bool = false, indents: [Indent] = []) {
             let type = kind(node), sourceSpan = sourceRange(node)
             if type == "list" {
                 let ordered = cmark_node_get_list_type(node) == CMARK_ORDERED_LIST
@@ -211,13 +241,13 @@ struct MessageDocument {
                 for (index, child) in children(node).enumerated() {
                     let task = kind(child) == "tasklist"
                     let label = task ? (cmark_gfm_extensions_get_tasklist_item_checked(child) ? "☑" : "☐") : (ordered ? "\(start + index)." : "•")
-                    block(child, depth: depth + 1, marker: label, quoted: quoted)
+                    block(child, depth: depth + 1, marker: label, quoted: quoted, indents: indents + [.list(sourceSpan.location)])
                 }
                 return
             }
             if type == "item" || type == "tasklist" || type == "block_quote" || type == "document" {
                 for (index, child) in children(node).enumerated() {
-                    block(child, depth: depth + (type == "block_quote" ? 1 : 0), marker: index == 0 ? marker : nil, quoted: quoted || type == "block_quote")
+                    block(child, depth: depth + (type == "block_quote" ? 1 : 0), marker: index == 0 ? marker : nil, quoted: quoted || type == "block_quote", indents: indents + (type == "block_quote" ? [.quote] : []))
                 }
                 return
             }
@@ -249,7 +279,7 @@ struct MessageDocument {
                 blockKind = type == "heading" ? .heading(Int(cmark_node_get_heading_level(node))) : .paragraph
                 for child in children(node) { inline(child) }
             }
-            blocks.append(Block(id: UUID(), sourceRange: sourceSpan, range: NSRange(location: start, length: plain.utf16.count - start), kind: blockKind, depth: depth, quoted: quoted, marker: marker, cells: cells, alignments: alignments))
+            blocks.append(Block(id: UUID(), sourceRange: sourceSpan, range: NSRange(location: start, length: plain.utf16.count - start), kind: blockKind, depth: depth, indents: indents, quoted: quoted, marker: marker, cells: cells, alignments: alignments))
         }
         block(root)
     }

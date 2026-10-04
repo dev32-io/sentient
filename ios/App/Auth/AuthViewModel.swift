@@ -244,6 +244,7 @@ final class AuthViewModel: ObservableObject {
                 // Persist the server-authoritative display name for headers; it
                 // is separate from the identity used by the calendar namespace.
                 displayNameStore.save(response.user.displayName)
+                displayNameStore.saveAvatarTint(response.user.avatarTint)
                 isSubmitting = false
                 onAuthenticatedUser(authenticatedUserId)
                 connect()

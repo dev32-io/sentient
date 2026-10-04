@@ -21,6 +21,7 @@ struct VoiceRecordSection: View {
             case .denied: denied
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-voice-record-\(state.identifier)")
     }
 

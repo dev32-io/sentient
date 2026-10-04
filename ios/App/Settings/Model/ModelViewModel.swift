@@ -53,14 +53,7 @@ final class ModelViewModel {
         case failed(String)
     }
 
-    enum Save: Equatable {
-        case idle
-        case saving
-        case restarting
-        case alreadyApplying
-        case applied
-        case failed(String)
-    }
+    typealias Save = DesignApplyState
 
     private(set) var phase: Phase = .loading
     private(set) var save: Save = .idle
@@ -106,28 +99,56 @@ final class ModelViewModel {
     var browseProvider = ""
     var query = ""
 
+    // A successful PUT is not proof that the running configuration applied.
+    private(set) var hasPendingApply = false
+    private var baselineNeedsReload = false
+    private var loading = false
     private var original: ProfileV1?
-    private let settings: SettingsComponent
+    private let loadProfile: () async throws -> SentientResult<ProfileV1>
+    private let applyProfile: (ProfileMutationPutProfile, (any ApplyState) async -> Void) async -> Void
+    private let loadModelsRead: () async throws -> SentientResult<ModelCatalog>
+    private let applyOnly: ((any ApplyState) async -> Void) async -> Void
     private let log = AppLog("settings", "model-vm")
 
     init(settings: SettingsComponent) {
-        self.settings = settings
+        loadProfile = { try await settings.profileRepository.getProfile() }
+        applyOnly = { receive in
+            for await state in settings.applyProfileChange.applyOnly() { await receive(state) }
+        }
+        applyProfile = { mutation, receive in
+            for await state in settings.applyProfileChange.invoke(mutation: mutation) {
+                await receive(state)
+            }
+        }
+        loadModelsRead = { try await settings.profileRepository.listModels() }
+    }
+
+    init(
+        loadProfile: @escaping () async throws -> SentientResult<ProfileV1>,
+        loadModels: @escaping () async throws -> SentientResult<ModelCatalog>,
+        applyProfile: @escaping (ProfileMutationPutProfile, (any ApplyState) async -> Void) async -> Void,
+        applyOnly: @escaping ((any ApplyState) async -> Void) async -> Void
+    ) {
+        self.loadProfile = loadProfile
+        self.applyProfile = applyProfile
+        self.applyOnly = applyOnly
+        self.loadModelsRead = loadModels
     }
 
     var isMainModelDirty: Bool {
-        guard let o = original else { return false }
+        guard phase == .ready, let o = original else { return false }
         return draftModelId != o.model.id || draftProvider != o.model.provider
     }
 
     var isDirty: Bool {
-        guard let o = original else { return false }
+        guard phase == .ready, let o = original else { return false }
         return isMainModelDirty
             || titleModel != auxiliaryModelSelection(o.auxiliaryModels?.title)
             || dreamerModel != auxiliaryModelSelection(o.auxiliaryModels?.dreamer)
             || attachmentVisionModel != auxiliaryModelSelection(o.auxiliaryModels?.attachmentVision)
     }
 
-    var isApplying: Bool { save == .saving || save == .restarting }
+    var isApplying: Bool { save.isBusy }
 
     /// Distinct providers present in the catalog (sorted), for the segmented control.
     var providerOptions: [String] {
@@ -143,10 +164,29 @@ final class ModelViewModel {
         }
     }
 
-    func load() async {
+    func discard() {
+        guard phase == .ready, !isApplying, !baselineNeedsReload else { return }
+        guard let o = original else { return }
+        draftModelId = o.model.id
+        draftProvider = o.model.provider
+        titleModel = auxiliaryModelSelection(o.auxiliaryModels?.title)
+        dreamerModel = auxiliaryModelSelection(o.auxiliaryModels?.dreamer)
+        attachmentVisionModel = auxiliaryModelSelection(o.auxiliaryModels?.attachmentVision)
+        if !hasPendingApply { save = .idle }
+    }
+
+    func load(reconciling: Bool = false) async {
+        guard !Task.isCancelled, (reconciling || !isApplying), !loading else { return }
+        loading = true
+        phase = .loading
+        defer {
+            loading = false
+            if phase == .loading { phase = .failed("Couldn't confirm the saved profile. Reload before editing.") }
+        }
         log.info("load")
         do {
-            let profileResult = try await settings.profileRepository.getProfile()
+            let profileResult = try await loadProfile()
+            try Task.checkCancellation()
             switch onEnum(of: profileResult) {
             case .success(let s):
                 original = s.data
@@ -167,6 +207,8 @@ final class ModelViewModel {
                 phase = .failed(catalogError)
                 return
             }
+            try Task.checkCancellation()
+            baselineNeedsReload = false
             phase = .ready
             log.info("load.ready count=\(models.count)")
         } catch is CancellationError {
@@ -178,7 +220,7 @@ final class ModelViewModel {
 
     private func loadModels() async -> String? {
         do {
-            let result = try await settings.profileRepository.listModels()
+            let result = try await loadModelsRead()
             switch onEnum(of: result) {
             case .success(let s):
                 models = s.data.models
@@ -191,7 +233,7 @@ final class ModelViewModel {
                 return "Models are still loading. Try again."
             }
         } catch is CancellationError {
-            return nil
+            return "Loading was cancelled. Reload before editing."
         } catch {
             log.warn("load.models.threw")
             return "Couldn't load models."
@@ -199,6 +241,7 @@ final class ModelViewModel {
     }
 
     func select(_ entry: ModelEntry) {
+        guard phase == .ready, !isApplying else { return }
         draftModelId = entry.id
         draftProvider = entry.provider
     }
@@ -218,6 +261,7 @@ final class ModelViewModel {
     }
 
     func selectAuxiliary(_ entry: ModelEntry?, for runner: AuxiliaryRunner) {
+        guard phase == .ready, !isApplying else { return }
         let selection = entry.map { AuxiliaryModelSelection(provider: $0.provider, id: $0.id) }
         switch runner {
         case .title: titleModel = selection
@@ -227,26 +271,58 @@ final class ModelViewModel {
     }
 
     func save() async {
-        guard let o = original, isDirty else { return }
+        guard !Task.isCancelled, let o = original, isDirty, !isApplying, !baselineNeedsReload, !loading else { return }
+        save = .saving
         log.info("save.start model=\(draftModelId)")
         let next = nextProfile(from: o)
-        for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutProfile(previous: o, next: next.toPutBody())) {
-            switch onEnum(of: state) {
-            case .idle: break
-            case .saving: save = .saving
-            case .restarting: save = .restarting
-            case .ready:
-                log.info("save.ready")
-                await load()
-                save = .applied
-            case .alreadyApplying:
-                save = .alreadyApplying
-                log.warn("save.already-applying")
-            case .failed(let f):
-                save = .failed(f.error.userMessage)
-                log.warn("save.failed")
-            }
+        await applyProfile(ProfileMutationPutProfile(previous: o, next: next.toPutBody()), receiveApplyState)
+        finishInterruptedApply()
+    }
+
+    /// Retry runtime application only: never PUT an already-persisted draft again.
+    func retryApply() async {
+        guard !Task.isCancelled, hasPendingApply, !isApplying, !loading, !baselineNeedsReload, !isDirty else { return }
+        save = .restarting
+        await applyOnly(receiveApplyState)
+        finishInterruptedApply()
+    }
+
+    private func receiveApplyState(_ state: any ApplyState) async {
+        guard !Task.isCancelled else { return }
+        switch onEnum(of: state) {
+        case .idle: break
+        case .saving: save = .saving
+        case .restarting:
+            hasPendingApply = true
+            baselineNeedsReload = true
+            save = .restarting
+        case .ready:
+            hasPendingApply = false
+            await load(reconciling: true)
+            guard !Task.isCancelled else { return }
+            save = .applied
+        case .alreadyApplying:
+            save = .alreadyApplying
+            requireConfirmedBaseline()
+        case .failed(let failure):
+            save = .failed(failure.error.userMessage)
+            requireConfirmedBaseline()
         }
+    }
+
+    private func requireConfirmedBaseline() {
+        guard baselineNeedsReload else { return }
+        phase = .failed("The saved profile needs confirmation. Reload before editing or discarding; application may still be unresolved.")
+    }
+
+    private func finishInterruptedApply() {
+        guard save.isBusy else { return }
+        // Cancellation/early stream termination is not evidence of rollback,
+        // even if the PUT response was lost before Restarting reached Swift.
+        baselineNeedsReload = true
+        hasPendingApply = true
+        save = .failed("Application was interrupted. Reload to confirm the saved profile.")
+        requireConfirmedBaseline()
     }
 
     private func nextProfile(from o: ProfileV1) -> ProfileV1 {
@@ -264,7 +340,8 @@ final class ModelViewModel {
                 title: titleModel,
                 dreamer: dreamerModel,
                 attachmentVision: attachmentVisionModel
-            )
+            ),
+            memory: o.memory
         )
     }
 }

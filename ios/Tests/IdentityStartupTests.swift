@@ -239,6 +239,7 @@ final class IdentityStartupTests: XCTestCase {
         XCTAssertEqual(fixture.tokens.load(), "fresh")
         XCTAssertEqual(fixture.identity.load(), "server-user")
         XCTAssertEqual(fixture.names.load(), "Server User")
+        XCTAssertEqual(fixture.config.avatarTint, "sage")
     }
 
     func testColdInvalidCredentialReturnsLoginAndReportsOldAccountFence() async {
@@ -250,6 +251,7 @@ final class IdentityStartupTests: XCTestCase {
         XCTAssertEqual(result, .login)
         XCTAssertFalse(result.permitsDraftShell)
         XCTAssertEqual(fence, "wss://gateway.test/api/v1/ws|stored-user")
+        XCTAssertEqual(fixture.config.loginReason, .expired)
         XCTAssertNil(fixture.tokens.load())
     }
 
@@ -358,7 +360,7 @@ private final class StartupAuthFixture {
 
     func response(token: String, userId: String) -> AuthResponse {
         AuthResponse(token: token, user: AuthUser(
-            userId: userId, displayName: "Server User", role: "adult", isAdmin: false, avatarTint: "blue"
+            userId: userId, displayName: "Server User", role: "adult", isAdmin: false, avatarTint: "sage"
         ))
     }
 }

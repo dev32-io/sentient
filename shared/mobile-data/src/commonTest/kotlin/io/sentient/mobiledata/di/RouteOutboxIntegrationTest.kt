@@ -1,6 +1,15 @@
 package io.sentient.mobiledata.di
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
+import kotlinx.coroutines.CompletableDeferred
 import io.sentient.mobiledata.outbox.OutboundCache
+import io.sentient.mobiledata.outbox.PendingDeliveryState
 import io.sentient.mobilesdk.sdk.PlatformBundle
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
@@ -27,8 +36,166 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Real SDK -> ChatComponent -> VM-owned cache/collector, with only socket I/O faked. */
+/** Real SDK -> ChatComponent -> VM-owned cache/collector, with socket/REST I/O faked. */
 class RouteOutboxIntegrationTest {
+    @Test
+    fun fresh_restore_uses_semantic_identity_and_fences_stale_sibling_until_mint() = runTest {
+        val fixture = RouteFixture(this)
+        fixture.connect()
+        val retained = OutboundCache()
+        fixture.component.bindChatRoute(retained, null)
+        runCurrent()
+        suspend fun draft(key: String) {
+            val request = fixture.socket.sent.last { it["type"]?.jsonPrimitive?.content == "session.new" }
+            val id = request.getValue("requestId").jsonPrimitive.content
+            fixture.socket.frame("""{"type":"session.draft","requestId":"$id","draftKey":"$key","ts":1}""")
+            runCurrent()
+        }
+        draft("d_original")
+        assertEquals("d_original", fixture.sdk.outboundSessionId.value)
+        val existing = fixture.component.existingSessionId
+        assertNull(existing)
+        val sibling = OutboundCache()
+        fixture.component.bindChatRoute(sibling, "d_original", activate = false)
+        sibling.enqueue("stale", "synthetic")
+        val oldGeneration = retained.routeGeneration
+        val activation = async { fixture.sdk.switchSession("B") }
+        runCurrent()
+        fixture.socket.frame("""{"type":"session.attached","sessionId":"B","generation":1}""")
+        fixture.socket.frame("""{"type":"session.switched","sessionId":"B","ts":1}""")
+        activation.await()
+        assertEquals("B", fixture.component.existingSessionId)
+        fixture.component.restoreChatRoute(retained, existing, null)
+        assertNull(fixture.component.existingSessionId, "old B acknowledgement cannot describe new route")
+        assertTrue(retained.routeGeneration != oldGeneration)
+        assertEquals(oldGeneration, sibling.routeGeneration)
+        retained.enqueue("first", "synthetic")
+        fixture.component.flushOutbound(retained)
+        fixture.component.flushOutbound(sibling)
+        runCurrent()
+        assertTrue(fixture.socket.inputs().isEmpty())
+        assertEquals(listOf("B"), fixture.socket.sent.filter {
+            it["type"]?.jsonPrimitive?.content == "conversation.activate"
+        }.map { it.getValue("sessionId").jsonPrimitive.content })
+        draft("d_restored")
+        assertNull(fixture.component.existingSessionId)
+        fixture.component.flushOutbound(sibling)
+        fixture.component.flushOutbound(retained)
+        runCurrent()
+        assertEquals(listOf("first"), fixture.socket.inputs())
+        fixture.socket.frame("""{"type":"session.attached","sessionId":"minted","generation":2}""")
+        runCurrent()
+        assertNull(fixture.component.existingSessionId, "attachment alone does not acknowledge mint")
+        fixture.socket.frame("""{"type":"session.created","sessionId":"minted","ts":2}""")
+        runCurrent()
+        assertEquals("minted", fixture.component.existingSessionId)
+        fixture.component.flushOutbound(sibling)
+        assertEquals(listOf("first"), fixture.socket.inputs())
+        fixture.socket.incomingFrames.send(WsIncoming.Failure("drop"))
+        fixture.sdk.connection.first { it.status == SdkStatus.RECONNECTING }
+        assertNull(fixture.sdk.outboundSessionId.value)
+        assertEquals("minted", fixture.component.existingSessionId, "semantic ACK survives transport loss")
+    }
+
+    @Test
+    fun retained_editor_reclaims_original_route_without_borrowing_destination_or_reviving_sibling() = runTest {
+        for (destination in listOf("A", "B")) {
+            val fixture = RouteFixture(this)
+            fixture.connect()
+            val retained = OutboundCache()
+            fixture.component.bindChatRoute(retained, "A")
+            runCurrent()
+            fixture.socket.frame("""{"type":"session.attached","sessionId":"A","generation":1}""")
+            fixture.socket.frame("""{"type":"session.switched","sessionId":"A","ts":1}""")
+            runCurrent()
+            val sibling = OutboundCache()
+            fixture.component.bindChatRoute(sibling, "A", activate = false)
+            val originalGeneration = retained.routeGeneration
+            retained.enqueue("retained", "synthetic")
+            sibling.enqueue("stale", "synthetic")
+            val activation = async { fixture.sdk.switchSession(destination) }
+            runCurrent()
+            if (destination == "B") {
+                fixture.socket.frame("""{"type":"session.attached","sessionId":"B","generation":2}""")
+                fixture.socket.frame("""{"type":"session.switched","sessionId":"B","ts":2}""")
+            }
+            activation.await()
+            val destinationGeneration = fixture.sdk.outboundRouteGeneration.value
+            fixture.component.flushOutbound(retained)
+            assertTrue(fixture.socket.inputs().isEmpty())
+            fixture.component.restoreChatRoute(retained, "A", null)
+            assertTrue(retained.routeGeneration != originalGeneration)
+            assertTrue(retained.routeGeneration != destinationGeneration)
+            assertEquals(originalGeneration, sibling.routeGeneration)
+            assertEquals(listOf("retained"), retained.pending.value.map { it.id })
+            runCurrent()
+            if (destination == "B") {
+                fixture.component.flushOutbound(retained)
+                assertTrue(fixture.socket.inputs().isEmpty(), "restoration must await original-route ACK")
+                fixture.socket.frame("""{"type":"session.attached","sessionId":"A","generation":3}""")
+                fixture.socket.frame("""{"type":"session.switched","sessionId":"A","ts":3}""")
+                runCurrent()
+            }
+            fixture.component.flushOutbound(sibling)
+            fixture.component.flushOutbound(retained)
+            runCurrent()
+            assertEquals(listOf("retained"), fixture.socket.inputs())
+            assertEquals("A", fixture.sdk.currentSessionId.value)
+            assertEquals("A", fixture.sdk.outboundSessionId.value)
+            assertTrue(fixture.socket.sent.filter { it["type"]?.jsonPrimitive?.content == "text.input" }
+                .all { it["sessionId"]?.jsonPrimitive?.content == "A" })
+        }
+    }
+
+    @Test
+    fun switch_collectors_preserve_pending_until_merged_live_or_rest_receipt_even_on_rest_failure() = runTest {
+        for (historyFails in listOf(false, true)) {
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val rawHttp = HttpClient(MockEngine {
+                started.complete(Unit)
+                release.await()
+                respond(
+                    if (historyFails) "{}" else """{"items":[{"kind":"user","entryId":"e-rest","sessionId":"B","pendingId":"rest-only","ts":1,"channel":"text","content":"fixture"}],"total":1,"hasMore":false}""",
+                    if (historyFails) HttpStatusCode.InternalServerError else HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            })
+            val http = SessionsHttpClient(rawHttp, "wss://test/api/v1/ws", { "fixture-token" })
+            val fixture = RouteFixture(this, http)
+            fixture.connect()
+            val cache = OutboundCache()
+            fixture.component.bindChatRoute(cache, "B")
+            backgroundScope.launch { fixture.component.observeOutbound(cache).collect { fixture.component.flushOutbound(cache) } }
+            backgroundScope.launch {
+                fixture.component.observeChat.coldHistoryReplaceSignal().collect {
+                    fixture.component.observeChat.onColdHistoryReplace(cache)
+                }
+            }
+            backgroundScope.launch {
+                fixture.component.observeChat(cache.pending).collect { model -> model.reconciledPendingIds.forEach(cache::remove) }
+            }
+            cache.enqueue("live", "fixture")
+            cache.enqueue("rest-only", "fixture")
+            runCurrent()
+            fixture.socket.frame("""{"type":"session.attached","sessionId":"B","generation":1}""")
+            fixture.socket.frame("""{"type":"session.switched","sessionId":"B","ts":1}""")
+            started.await()
+            runCurrent()
+            assertEquals(listOf("live", "rest-only"), cache.pending.value.map { it.id })
+            val receipt = """{"type":"conversation.entry","item":{"kind":"user","entryId":"e-live","sessionId":"B","pendingId":"live","ts":2,"channel":"text","content":"fixture"}}"""
+            fixture.socket.frame(receipt)
+            fixture.socket.frame(receipt)
+            runCurrent()
+            release.complete(Unit)
+            fixture.sdk.timeline.first { rows -> rows.any { it.pendingId == "live" } }
+            runCurrent()
+            assertEquals(1, fixture.sdk.timeline.value.count { it.pendingId == "live" })
+            assertEquals(if (historyFails) listOf("rest-only") else emptyList(), cache.pending.value.map { it.id })
+            rawHttp.close()
+        }
+    }
+
     @Test
     fun lost_mint_completion_resolves_draft_on_configure_and_resends_once() = runTest {
         // A drop can precede attached too, or lose only the following created frame.
@@ -101,6 +268,11 @@ class RouteOutboxIntegrationTest {
         val cache = OutboundCache()
         fixture.component.bindChatRoute(cache, "B")
         backgroundScope.launch { fixture.component.observeOutbound(cache).collect { fixture.component.flushOutbound(cache) } }
+        backgroundScope.launch {
+            fixture.component.observeChat.coldHistoryReplaceSignal().collect {
+                fixture.component.observeChat.onColdHistoryReplace(cache)
+            }
+        }
         cache.enqueue("pending-B", "message")
         runCurrent()
         assertTrue(fixture.socket.inputs().isEmpty())
@@ -114,6 +286,18 @@ class RouteOutboxIntegrationTest {
         fixture.socket.frame("""{"type":"session.switched","sessionId":"B","ts":1}""")
         runCurrent()
         assertEquals(listOf("pending-B"), fixture.socket.inputs())
+        assertEquals("pending-B", cache.pending.value.single().id, "switch is not acceptance")
+        cache.enqueue("other-message", "fixture")
+        // Rejections without an exact text-input identity cannot settle another row.
+        fixture.socket.frame("""{"type":"command.rejected","command":"interrupt","reason":"session_busy","pendingId":"pending-B"}""")
+        fixture.socket.frame("""{"type":"command.rejected","command":"text.input","reason":"session_busy"}""")
+        runCurrent()
+        assertEquals(PendingDeliveryState.ATTEMPTED, cache.pending.value.first().deliveryState)
+        fixture.socket.frame("""{"type":"command.rejected","command":"text.input","reason":"session_busy","pendingId":"pending-B"}""")
+        runCurrent()
+        assertEquals(PendingDeliveryState.REJECTED, cache.pending.value.first().deliveryState)
+        assertEquals("session_busy", cache.pending.value.first().rejectionReason)
+        assertEquals(PendingDeliveryState.ATTEMPTED, cache.pending.value.last().deliveryState)
     }
 
     @Test
@@ -173,7 +357,7 @@ class RouteOutboxIntegrationTest {
     }
 }
 
-private class RouteFixture(private val scope: TestScope) {
+private class RouteFixture(private val scope: TestScope, historyClient: SessionsHttpClient? = null) {
     lateinit var socket: RouteSocket
     val sdk = SentientSdk(
         SdkConfig(gatewayWsUrl = "wss://test/api/v1/ws", allowSelfSignedDevHost = false, capabilities = emptyList()),
@@ -194,6 +378,7 @@ private class RouteFixture(private val scope: TestScope) {
             clock = Clock { 0L },
         ),
         scope.backgroundScope,
+        sessionsHttpClient = historyClient,
     )
     val component = ChatComponent(sdk)
 

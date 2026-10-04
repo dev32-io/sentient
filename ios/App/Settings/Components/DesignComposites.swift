@@ -2619,6 +2619,7 @@ struct AsyncNotice: View {
     // Existing retry callers keep the same label; contextual owners may name
     // an additive action without taking ownership away from their closure.
     var actionTitle = "Retry"
+    var actionAccessibilityId: String? = nil
     @Environment(\.layoutDirection) private var layoutDirection
 
     private var recipe: DesignNoticeRecipe {
@@ -2684,7 +2685,7 @@ struct AsyncNotice: View {
                 DesignActionButton(
                     title: actionTitle,
                     role: .quiet,
-                    accessibilityId: nil,
+                    accessibilityId: actionAccessibilityId,
                     action: retry
                 )
             }
@@ -2710,7 +2711,7 @@ struct AsyncNotice: View {
                 DesignActionButton(
                     title: actionTitle,
                     role: .quiet,
-                    accessibilityId: nil,
+                    accessibilityId: actionAccessibilityId,
                     fillsWidth: false,
                     action: retry
                 )
@@ -2741,7 +2742,7 @@ struct AsyncNotice: View {
                 DesignActionButton(
                     title: actionTitle,
                     role: actionRole,
-                    accessibilityId: nil,
+                    accessibilityId: actionAccessibilityId,
                     action: retry
                 )
             }
@@ -2865,15 +2866,6 @@ struct DesignActionFooter<Leading: View>: View {
     }
 }
 
-enum DesignApplyState: Equatable {
-    case idle
-    case saving
-    case restarting
-    case alreadyApplying
-    case applied
-    case failed(String)
-}
-
 private enum DesignApplyBarPhase: Equatable {
     case dirty
     case applying
@@ -2905,6 +2897,7 @@ struct DesignApplyBar: View {
     let onApply: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var markerPulse = false
 
     private var phase: DesignApplyBarPhase? {
@@ -2930,14 +2923,18 @@ struct DesignApplyBar: View {
                 bar(phase)
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings-apply-bar")
     }
 
     private func bar(_ phase: DesignApplyBarPhase) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: Space.lg) {
-                status(phase)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                actions(phase, fillsWidth: false)
+            if !dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: Space.lg) {
+                    status(phase)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    actions(phase, fillsWidth: false)
+                }
             }
             VStack(alignment: .leading, spacing: Space.md) {
                 status(phase)
@@ -2981,33 +2978,40 @@ struct DesignApplyBar: View {
                 )
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Space.xs) {
-                Text(phase == .done ? "Changes applied" : dirtyTitle)
+                Text(phase == .applying ? (state == .restarting ? "Applying configuration…" : "Saving…") : phase == .done ? "Changes applied" : dirtyTitle)
                     .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
                     .foregroundStyle(DuskColors.ink)
-                Text(phase == .done ? "The household preference is up to date." : dirtyDetail)
-                    .font(Typo.ui(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink2)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Text(phase == .done ? "The household preference is up to date." : dirtyDetail)
+                        .font(Typo.ui(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink2)
+                }
             }
             .accessibilityElement(children: .combine)
+            .accessibilityHint(dynamicTypeSize.isAccessibilitySize ? (phase == .done ? "The household preference is up to date." : dirtyDetail) : "")
         }
+        .accessibilityIdentifier("settings-apply-bar-status")
     }
 
     private func actions(_ phase: DesignApplyBarPhase, fillsWidth: Bool) -> some View {
-        HStack(spacing: Space.sm) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: Space.sm))
+            : AnyLayout(HStackLayout(spacing: Space.sm))
+        return layout {
             DesignActionButton(
                 title: "Discard",
                 role: .quiet,
-                state: isDirty ? .normal : .disabled,
+                state: state.canDiscard(isDirty: isDirty) ? .normal : .disabled,
                 accessibilityId: discardAccessibilityId,
                 fillsWidth: fillsWidth,
-                action: onDiscard
+                action: { if state.canDiscard(isDirty: isDirty) { onDiscard() } }
             )
             DesignActionButton(
-                title: phase == .applying ? "Applying…" : phase == .done ? "Applied" : "Apply changes",
-                state: phase == .dirty ? .normal : .disabled,
+                title: state.actionTitle(isDirty: isDirty),
+                state: state.canApply(isDirty: isDirty) ? .normal : .disabled,
                 accessibilityId: applyAccessibilityId,
                 fillsWidth: fillsWidth,
-                action: onApply
+                action: { if state.canApply(isDirty: isDirty) { onApply() } }
             )
         }
     }
@@ -3029,7 +3033,10 @@ private struct DesignApplyBarDockModifier: ViewModifier {
     let onDiscard: () -> Void
     let onApply: () -> Void
 
+    @State private var completionSettled = false
+
     private var isPresented: Bool {
+        if state == .applied && !isDirty && completionSettled { return false }
         if isDirty { return true }
         switch state {
         case .idle: return false
@@ -3052,6 +3059,12 @@ private struct DesignApplyBarDockModifier: ViewModifier {
                 .padding(.vertical, Space.sm)
                 .background(DuskColors.bg)
             }
+        }
+        .task(id: state) {
+            completionSettled = false
+            guard state == .applied else { return }
+            do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+            completionSettled = true
         }
     }
 }

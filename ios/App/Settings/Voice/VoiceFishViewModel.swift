@@ -45,8 +45,16 @@ final class VoiceFishViewModel {
 
     // Clone editor (revealed when an entry is picked; name prefilled from title).
     private(set) var selected: FishVoiceEntry?
-    var cloneName = ""
-    var cloneLanguage = ""
+    private var cloneNameDraft: String = ""
+    var cloneName: String {
+        get { cloneNameDraft }
+        set { if !cloning { cloneNameDraft = newValue } }
+    }
+    private var cloneLanguageDraft: String = ""
+    var cloneLanguage: String {
+        get { cloneLanguageDraft }
+        set { if !cloning { cloneLanguageDraft = newValue } }
+    }
     private(set) var cloneDescription = ""
     private(set) var cloneTags: [String] = []
     private(set) var cloning = false
@@ -55,14 +63,28 @@ final class VoiceFishViewModel {
 
     private var currentPage = 1
     private var searchTask: Task<Void, Never>?
-    private let settings: SettingsComponent
-    private let player = VoiceSamplePlayer()
+    private let browse: (String?, KotlinInt?) async throws -> FishResult<FishVoicePage>
+    private let cloneVoice: (String, CloneFromFishRequest) async throws -> FishResult<CloneFromFishResult>
+    private let player: any VoiceSamplePlaying
     private let log = AppLog("settings", "voice-fish-vm")
 
     private static let searchDebounceNanos: UInt64 = 300_000_000
 
     init(settings: SettingsComponent) {
-        self.settings = settings
+        browse = { try await settings.voices.fishBrowse(title: $0, page: $1) }
+        cloneVoice = { try await settings.voices.fishClone(fishVoiceId: $0, request: $1) }
+        player = VoiceSamplePlayer()
+        player.onFinished = { [weak self] in self?.playingId = nil }
+    }
+
+    init(
+        browse: @escaping (String?, KotlinInt?) async throws -> FishResult<FishVoicePage>,
+        cloneVoice: @escaping (String, CloneFromFishRequest) async throws -> FishResult<CloneFromFishResult>,
+        player: any VoiceSamplePlaying
+    ) {
+        self.browse = browse
+        self.cloneVoice = cloneVoice
+        self.player = player
         player.onFinished = { [weak self] in self?.playingId = nil }
     }
 
@@ -86,7 +108,7 @@ final class VoiceFishViewModel {
     private func fetchFirst(title: String?) async {
         phase = entries.isEmpty ? .loading : phase
         do {
-            let result = try await settings.voices.fishBrowse(title: title, page: nil)
+            let result = try await browse(title, nil)
             switch onEnum(of: result) {
             case .success(let s):
                 entries = s.value?.voices ?? []
@@ -116,10 +138,7 @@ final class VoiceFishViewModel {
         Task {
             defer { loadingMore = false }
             do {
-                let result = try await settings.voices.fishBrowse(
-                    title: title.isEmpty ? nil : title,
-                    page: KotlinInt(int: Int32(next))
-                )
+                let result = try await browse(title.isEmpty ? nil : title, KotlinInt(int: Int32(next)))
                 switch onEnum(of: result) {
                 case .success(let s):
                     guard let page = s.value else { return }
@@ -157,6 +176,7 @@ final class VoiceFishViewModel {
 
     /// Pick an entry to clone: reveal the editor prefilled from the entry.
     func select(_ entry: FishVoiceEntry) {
+        guard !cloning else { return }
         selected = entry
         cloneName = entry.title
         cloneLanguage = VoiceLanguages.normalize(entry.languages.first ?? "")
@@ -164,7 +184,7 @@ final class VoiceFishViewModel {
         cloneTags = Array(entry.tags.prefix(VoiceCaps.maxTags))
     }
 
-    func cancelSelect() { selected = nil }
+    func cancelSelect() { guard !cloning else { return }; selected = nil }
 
     func toggleGender(_ value: String) { selectedGenders = toggle(selectedGenders, value) }
     func toggleAge(_ value: String) { selectedAges = toggle(selectedAges, value) }
@@ -186,6 +206,9 @@ final class VoiceFishViewModel {
     func clone() {
         guard canClone, let entry = selected else { return }
         let name = cloneName.trimmingCharacters(in: .whitespaces)
+        let request = CloneFromFishRequest(
+            name: name, description: cloneDescription, tags: cloneTags, language: cloneLanguage
+        )
         cloning = true
         player.stop()
         playingId = nil
@@ -193,13 +216,7 @@ final class VoiceFishViewModel {
         Task {
             defer { cloning = false }
             do {
-                let request = CloneFromFishRequest(
-                    name: name,
-                    description: cloneDescription,
-                    tags: cloneTags,
-                    language: cloneLanguage
-                )
-                let result = try await settings.voices.fishClone(fishVoiceId: entry.id, request: request)
+                let result = try await cloneVoice(entry.id, request)
                 switch onEnum(of: result) {
                 case .success(let s):
                     log.info("clone.ok warning=\(s.value?.warning != nil)")

@@ -22,7 +22,11 @@ cleanup() {
   set +e
   if [[ -f "$CALENDAR_STATE" ]]; then bun run calendar:fixture cleanup --target "$TARGET" --state "$CALENDAR_STATE" || cleanup_rc=1; fi
   if [[ -f "$USER_STATE" ]]; then bun qa/design-refresh/fixture-control.ts cleanup --target "$TARGET" --state "$USER_STATE" || cleanup_rc=1; fi
-  rm -rf "$STATE_DIR"
+  if [[ -f "$USER_STATE" || -f "$CALENDAR_STATE" ]]; then
+    echo "fixture cleanup incomplete; retry state retained at $STATE_DIR" >&2
+  else
+    rm -rf "$STATE_DIR"
+  fi
   if [[ "$rc" -ne 0 ]]; then exit "$rc"; fi
   exit "$cleanup_rc"
 }

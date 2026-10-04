@@ -13,6 +13,31 @@ private class MutableClock(var nowMs: Long = 0L) : io.sentient.mobilesdk.util.Cl
 class OutboundCacheTest {
 
     @Test
+    fun attempt_timeout_refusal_and_retry_never_claim_confirmation() {
+        val clock = MutableClock()
+        val cache = OutboundCache(clock, 10)
+        cache.enqueue("a", "fixture")
+        cache.enqueue("b", "fixture")
+        cache.markSent("a")
+        assertEquals(PendingDeliveryState.ATTEMPTED, cache.pending.value[0].deliveryState)
+        clock.nowMs = 11
+        cache.sweepTimeouts()
+        assertEquals(PendingDeliveryState.UNKNOWN, cache.pending.value[0].deliveryState)
+        cache.markRejected("b", "session_busy") // No dispatch of b to reject.
+        assertEquals(PendingDeliveryState.QUEUED, cache.pending.value[1].deliveryState)
+        cache.markRejected("a", "session_busy")
+        assertEquals(PendingDeliveryState.REJECTED, cache.pending.value[0].deliveryState)
+        assertEquals("session_busy", cache.pending.value[0].rejectionReason)
+        cache.retry("a")
+        assertEquals(listOf("a", "b"), cache.pending.value.map { it.id })
+        assertEquals(PendingDeliveryState.QUEUED, cache.pending.value[0].deliveryState)
+        assertNull(cache.pending.value[0].rejectionReason)
+        cache.remove("a") // Receipt wins even after refusal/unknown.
+        cache.markRejected("a", "session_busy")
+        assertEquals(listOf("b"), cache.pending.value.map { it.id })
+    }
+
+    @Test
     fun enqueue_adds_queued() {
         val cache = OutboundCache()
         cache.enqueue("p1", "hi")

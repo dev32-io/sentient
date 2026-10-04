@@ -7,7 +7,7 @@
 // resolved gateway URL, and wires it to the three consumers:
 //   - force gate: status Available && mandatory → an OPAQUE full-screen
 //     ForceUpdateView overlay AHEAD of the chat content (non-bypassable).
-//   - optional banner: Available && !mandatory → a dismissible top overlay.
+//   - optional banner: Available && !mandatory → a reserved, dismissible notice.
 //   - Settings row: the model is threaded into UserSessionHost → SettingsSheet.
 //
 // COLD-START gate (lesson from the Android B5 task): the gate MUST be effective at
@@ -69,21 +69,14 @@ struct UpdateGate: View {
         )
     }
 
+    private var optionalBanner: UpdateBanner? {
+        guard case let .banner(version) = gateState else { return nil }
+        return UpdateBanner(versionName: version, onUpdate: { model.install() },
+                            onDismiss: { bannerDismissed = true })
+    }
+
     var body: some View {
-        UserSessionHost(appConfig: appConfig, updateModel: model)
-            // Optional banner: pinned top, dismissible. Mutually exclusive with the
-            // force gate (mandatory vs !mandatory), so only one ever shows.
-            .overlay(alignment: .top) {
-                if case let .banner(version) = gateState {
-                    UpdateBanner(
-                        versionName: version,
-                        onUpdate: { model.install() },
-                        onDismiss: { bannerDismissed = true }
-                    )
-                    .padding(.top, Space.sm)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
+        UserSessionHost(appConfig: appConfig, updateModel: model, optionalUpdateBanner: optionalBanner)
             // Force gate: opaque full-screen, AHEAD of chat, non-bypassable.
             .overlay {
                 if case let .forced(version) = gateState {

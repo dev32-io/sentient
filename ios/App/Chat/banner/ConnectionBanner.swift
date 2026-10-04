@@ -1,7 +1,6 @@
 // ---------------------------------------------------------------------------
-// ConnectionBanner — the connection-state pill that floats over the chat
-// surface, mirroring the webui ConnectionLostBanner (app.tsx) + .connection-
-// lost-banner styling (styles/components.css).
+// ConnectionBanner — canonical connection notice in the reserved shell region.
+// Transport state and retry authority remain shared SDK-owned.
 //
 // Two states, discriminated by STATUS (NOT by connectionLost alone). In the
 // mobile-sdk, `connectionLost` is true from the unexpected drop through the
@@ -62,7 +61,7 @@ enum ConnectionBannerState: Equatable {
     }
 }
 
-/// A floating status pill. Stateless: the case + reconnect action are injected.
+/// Stateless canonical notice; case and reconnect intent are injected.
 struct ConnectionBanner: View {
     let state: ConnectionBannerState
     /// Called by the .lost CTA. No-op-friendly for the .reconnecting case (unused).
@@ -79,114 +78,15 @@ struct ConnectionBanner: View {
         }
     }
 
-    // ── Connection lost (terminal) ──────────────────────────────────────────
-
     private var lostBanner: some View {
-        HStack(spacing: Space.md) {
-            Text(Self.lostText)
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink)
-            Button(action: onReconnect) {
-                Text(Self.reconnectCta)
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.bg)
-                    .padding(.horizontal, Space.sm)
-                    .padding(.vertical, Space.xs)
-                    .background(DuskColors.ink, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("connection-reconnect")
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.sm)
-        .background { ConnectionBannerSurface(kind: .error) }
-        // NOT .combine: the reconnect Button must stay independently addressable
-        // (connection-reconnect) for taps + tests; .contain keeps the container
-        // identified while preserving child elements.
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("connection-lost-banner")
+        AsyncNotice(kind: .error, title: Self.lostText, retry: onReconnect,
+                    accessibilityId: "connection-lost-banner", actionTitle: Self.reconnectCta,
+                    actionAccessibilityId: "connection-reconnect")
     }
-
-    // ── Reconnecting (mid-backoff) ──────────────────────────────────────────
 
     private var reconnectingBanner: some View {
-        HStack(spacing: Space.sm) {
-            ProgressView()
-                .controlSize(.small)
-                .tint(DuskColors.ink3)
-            Text(Self.reconnectingText)
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink2)
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.sm)
-        .background { ConnectionBannerSurface(kind: .info) }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("connection-reconnecting")
-    }
-}
-
-private struct ConnectionBannerSurface: View {
-    let kind: DesignNoticeKind
-
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    private var tint: Color {
-        kind == .error ? DuskColors.stop : DuskColors.sage
-    }
-
-    private var tintStrength: (leading: Double, trailing: Double) {
-        kind == .error ? (0.19, 0.07) : (0.10, 0.03)
-    }
-
-    var body: some View {
-        DesignCanvasSurfaceKernel(
-            shape: .capsule,
-            tier: .float,
-            increasedContrast: contrast == .increased
-        )
-        .overlay {
-            LinearGradient(
-                colors: [
-                    tint.opacity(tintStrength.leading),
-                    tint.opacity(tintStrength.trailing)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .clipShape(Capsule())
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
-// ── Host modifier ───────────────────────────────────────────────────────────
-
-private struct ConnectionStateModifier: ViewModifier {
-    let banner: ConnectionBannerState?
-    let onReconnect: () -> Void
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .top) {
-                if let banner {
-                    ConnectionBanner(state: banner, onReconnect: onReconnect)
-                        .padding(.top, Space.sm)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-            .animation(.easeInOut(duration: Motion.normal), value: banner)
-    }
-}
-
-extension View {
-    /// Attach connection-state banner. Auth expiry belongs to authenticated host.
-    func connectionState(
-        banner: ConnectionBannerState?,
-        onReconnect: @escaping () -> Void
-    ) -> some View {
-        modifier(ConnectionStateModifier(banner: banner, onReconnect: onReconnect))
+        AsyncNotice(kind: .loading, title: Self.reconnectingText,
+                    accessibilityId: "connection-reconnecting")
     }
 }
 

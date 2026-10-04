@@ -18,7 +18,6 @@ private let modeOptions: [(value: VoiceAddViewModel.Mode, label: String)] = [
 ]
 
 struct VoiceAddScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
 
     @State private var vm: VoiceAddViewModel
@@ -40,15 +39,19 @@ struct VoiceAddScreen: View {
     }
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: VoiceAddViewModel(settings: settings), onBack: onBack)
+    }
+
+    init(viewModel: VoiceAddViewModel, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _vm = State(initialValue: VoiceAddViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
         SettingsPageScaffold(
             title: "Add Voice", screenId: "settings-voice-add",
-            onBack: onBack, backAccessibilityId: "settings-voice-add-back"
+            onBack: { if !vm.submitting { onBack() } }, allowsInteractiveBack: !vm.submitting,
+            backAccessibilityId: "settings-voice-add-back"
         ) {
             noticeBanner
             VStack(alignment: .leading, spacing: Space.xs) {
@@ -67,6 +70,7 @@ struct VoiceAddScreen: View {
                     value: stage
                 )
         }
+        .disabled(vm.submitting)
         .onChange(of: vm.done) { _, done in if done { onBack() } }
         .onDisappear { vm.teardown() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in

@@ -25,39 +25,10 @@ struct ReopenFailedNoticeBanner: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            Text(noticeText)
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: TypeScale.xs, weight: .semibold))
-                    .foregroundStyle(DuskColors.ink3)
-                    .frame(width: ReopenFailedStyle.dismissHit, height: ReopenFailedStyle.dismissHit)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
-            .accessibilityIdentifier("banner-reopen-failed-dismiss")
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.xs)
-        .background {
-            ZStack {
-                Rectangle().fill(DuskColors.bgElev)
-                Rectangle().fill(DuskColors.line.opacity(ReopenFailedStyle.bgTint))
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("banner-reopen-failed")
+        AsyncNotice(kind: .warning, title: noticeText, retry: onDismiss,
+                    accessibilityId: "banner-reopen-failed", actionTitle: "Dismiss",
+                    actionAccessibilityId: "banner-reopen-failed-dismiss")
     }
-}
-
-private enum ReopenFailedStyle {
-    /// Subtle tint over the elevated surface.
-    static let bgTint: Double = 0.35
-    /// Dismiss button frame side (enlarged tap area).
-    static let dismissHit: CGFloat = 28
 }
 
 #Preview("Reopen failed notice") {

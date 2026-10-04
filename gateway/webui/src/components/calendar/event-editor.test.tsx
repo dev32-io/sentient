@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
+import { options } from "preact";
+import { useState } from "preact/hooks";
 import type {
   CalendarApi,
   CalendarEvent,
@@ -61,6 +63,46 @@ function recurringOccurrence(): CalendarOccurrence {
 }
 
 describe("EventEditor", () => {
+  it.each(["Escape", "Close"])("guards an initially empty draft edited before %s's next passive phase", async (dismissal) => {
+    const api = apiFixture();
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return open && <EventEditor mode="create" api={api} inputTimeZoneId="UTC" onClose={() => setOpen(false)} />;
+    }
+    const view = render(<Harness />);
+    const title = screen.getByRole("textbox", { name: "Event title" }) as HTMLInputElement;
+    expect(title.value).toBe("");
+    expect(document.activeElement).toBe(title);
+    // Native events + a render microtask, not fireEvent/act: those also flush
+    // passive effects and hide the committed-render → key-handler window.
+    const frame = options.requestAnimationFrame;
+    options.requestAnimationFrame = () => {};
+    try {
+      title.value = "Synthetic unsaved calendar title";
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+      if (dismissal === "Escape") title.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      else screen.getByRole("button", { name: "Close" }).click();
+      await Promise.resolve();
+      expect(screen.getByRole("dialog", { name: "Discard changes?" })).toBeTruthy();
+      expect(title.isConnected).toBe(true);
+      expect(title.value).toBe("Synthetic unsaved calendar title");
+      expect(api.create).not.toHaveBeenCalled();
+      expect(api.mutate).not.toHaveBeenCalled();
+      // Nested dismissal only closes confirmation; draft and title focus survive.
+      if (dismissal === "Escape") window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      else screen.getByRole("button", { name: "Keep editing" }).click();
+      await Promise.resolve();
+      expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+      expect(screen.getByRole("dialog", { name: "Add event" })).toBeTruthy();
+      expect(document.activeElement).toBe(title);
+    } finally {
+      view.unmount();
+      if (frame) options.requestAnimationFrame = frame;
+      else delete options.requestAnimationFrame;
+    }
+  });
+
   it("creates a complete all-day V2 payload with local draft ownership", async () => {
     const create = vi.fn(async () => ({ ok: true as const, value: createdEvent() }));
     const onClose = vi.fn();

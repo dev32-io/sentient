@@ -135,11 +135,12 @@ node tools/visual-diff/coverage.mjs > build/visual-captures/coverage.json
 # Capture exports full fixture-registry.json plus its source/hash provenance.
 node tools/visual-diff/coverage.mjs build/visual-captures/ios/fixture-registry.json \
   > build/visual-captures/coverage.json
-node --test tools/visual-diff/*.test.mjs
-bun test qa/design-refresh/check.test.ts
+bun run test:web-tooling # All scripts/design + qa/design-refresh tests, then visual-diff tests; also run by root ci.
 ```
 
 Inventory joins all 615 handoff authorities, 216 shipped iOS states and 213 baseline tracked source files plus newly added Swift source (some nonvisual). Without fresh native registry export, registered families are `needs-review`, absent families `missing`; never guessed case support. With export, `real-fixture` means routing/applicability only, **not capture/pass**. Shipped screen rows remain missing until actual row dispatch exists. Backend setup native-only states are explicitly listed; generic native adaptations do not imply native-only capability.
+
+Web reference capture embeds six native DM Sans/JetBrains Mono fonts from `ios/App/Resources/Fonts` plus three original Fraunces fonts from tool-owned `tools/visual-diff/fonts`. Fraunces is reference-only, not part of the native bundle. Both roots already belong to evidence source identity. Stage legitimate source deletions before capture; missing tracked inputs fail closed.
 
 Capture sidecars bind full authority/reference hashes, decoded image hash/dimensions, dirty tracked + relevant untracked source fingerprint, runtime, viewport/crop, state, font/theme identities, color-space policy and motion policy. Source changes during capture reject output. Validation rehashes sources/images/references; conservative scope may require recapture after unrelated changes. Native PNG export retains the calibrated standard-sRGB alpha correction. pngjs itself is not a color-management pipeline; arbitrary P3 input is not certified.
 

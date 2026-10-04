@@ -24,6 +24,54 @@ import kotlin.test.assertTrue
 
 class AttachmentsHttpClientTest {
     @Test
+    fun retired_owner_cannot_resolve_successor_token_after_held_upload() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var active = true
+        var token = "owner-a"
+        var tokenReads = 0
+        var requests = 0
+        val engine = MockEngine { request ->
+            requests++
+            assertEquals("Bearer owner-a", request.headers[HttpHeaders.Authorization])
+            started.complete(Unit)
+            release.await()
+            respond("""{"attachmentId":"att_0123456789abcdef0123456789abcdef","displayName":"fixture.txt","contentType":"text/plain","mediaKind":"text","size":3}""", HttpStatusCode.OK)
+        }
+        val client = AttachmentsHttpClient(HttpClient(engine), "wss://example.test/api/v1/ws",
+            token = { tokenReads++; token }, isOwnerActive = { active })
+        val first = async { uploadFixture(client) }
+        started.await()
+        active = false // Storage teardown remains held; successor replaces global token.
+        token = "owner-b"
+        release.complete(Unit)
+        first.await()
+        assertFailsWith<kotlinx.coroutines.CancellationException> { uploadFixture(client) }
+        assertFailsWith<kotlinx.coroutines.CancellationException> { client.preview("att") }
+        assertFailsWith<kotlinx.coroutines.CancellationException> { client.delete("att") }
+        assertEquals(1, requests)
+        assertEquals(1, tokenReads)
+        client.close()
+    }
+
+    @Test
+    fun retirement_during_token_resolution_and_close_both_fence_dispatch() = runBlocking {
+        var active = true
+        var reads = 0
+        var requests = 0
+        val client = AttachmentsHttpClient(HttpClient(MockEngine { requests++; respond("") }),
+            "wss://example.test/api/v1/ws", token = { reads++; active = false; "successor" },
+            isOwnerActive = { active })
+        assertFailsWith<kotlinx.coroutines.CancellationException> { uploadFixture(client) }
+        assertEquals(0, requests)
+        active = true
+        client.close()
+        assertFailsWith<kotlinx.coroutines.CancellationException> { uploadFixture(client) }
+        assertEquals(1, reads)
+        assertEquals(0, requests)
+    }
+
+    @Test
     fun upload_uses_authenticated_raw_body_contract_and_decodes_ref() = runBlocking {
         val engine = MockEngine { request ->
             assertEquals("Bearer token", request.headers[HttpHeaders.Authorization])

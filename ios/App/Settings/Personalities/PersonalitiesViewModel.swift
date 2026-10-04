@@ -85,6 +85,7 @@ final class PersonalitiesViewModel {
     /// Create a personality. Returns true on success so the caller can dismiss the
     /// create form. A blank name is rejected client-side (no request fired).
     func create(name: String, body: String) async -> Bool {
+        guard !isBusy else { return false }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             op = .failed("Name can't be empty.")
@@ -98,6 +99,8 @@ final class PersonalitiesViewModel {
     /// Fold one mutation's FSM; refetch the list on Ready. Never throws across the
     /// boundary — a failure sets `op = .failed(...)` and preserves the list.
     private func run(_ mutation: any ProfileMutation, label: String) async {
+        guard !isBusy else { return }
+        op = .saving
         for await state in settings.applyProfileChange.invoke(mutation: mutation) {
             switch onEnum(of: state) {
             case .idle: break

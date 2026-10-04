@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { FoundationIconButton } from "./foundation/buttons.tsx";
 import { XIcon } from "./icons/x.tsx";
 
@@ -14,6 +14,8 @@ export interface DialogProps {
   onClose(): void;
   width?: number;
   initialFocusRef?: { current: HTMLElement | null };
+  /** Read at close, after isolation releases; null retains the captured opener. */
+  returnFocusRef?: { current: HTMLElement | null };
   /** Background isolation is on by default; false is retained only as a compatibility escape hatch. */
   inertBackground?: boolean;
   /** Source-compatible spelling for callers that describe the backdrop. */
@@ -171,6 +173,7 @@ export function Dialog({
   onClose,
   width = 420,
   initialFocusRef,
+  returnFocusRef,
   inertBackground,
   backgroundInert,
   closeOnBackdrop,
@@ -198,18 +201,20 @@ export function Dialog({
     onClose();
   };
 
-  useEffect(() => {
+  // Capture the opener and establish modal behavior at commit, before input
+  // can arrive. Passive effects leave first-frame focus and stale-callback gaps.
+  useLayoutEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null;
     // One teardown boundary: a browser cannot focus a still-inert opener.
     // Release only our isolation tokens, retaining any enclosing dialog's.
     return () => {
       releaseIsolation.current?.();
       releaseIsolation.current = null;
-      focusElement(previousFocus);
+      focusElement(returnFocusRef?.current ?? previousFocus);
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const root = dialogRef.current;
       if (!root) return;
@@ -243,7 +248,7 @@ export function Dialog({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [closeOnBackdrop, closeOnEscape, dismissOnBackdrop, dismissOnEscape, onClose, onDismissRequest, onRequestClose, safeClose]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const target = initialFocusRef?.current;
     if (target) {
       target.focus();
@@ -256,7 +261,7 @@ export function Dialog({
     first?.focus();
   }, [initialFocusRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Update isolation policy without restoring focus while the dialog is open.
     // The lifetime effect above owns both isolation teardown and focus return.
     releaseIsolation.current?.();

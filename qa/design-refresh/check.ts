@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
+import { assertPathWithin } from "../../tools/visual-diff/reference-image.mjs";
 import { validateEvidence } from "../../tools/visual-diff/evidence.mjs";
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 import { e2eMatrixSchema, inventorySchema, visualEvidenceDocumentSchema, visualManifestSchema, type Inventory, type VisualManifest } from "./contracts.ts";
 
@@ -252,11 +253,17 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
     if (!row) throw new Error(`${entry.evidenceId}: unknown inventory row`);
     const coverage = new Set<string>();
     const measuredConfigurations = new Map<string, { overflow: number; minimumTarget: number | null; focusableCount: number }>();
+    // Preflight every image, observation and provenance path before reading any
+    // document: a sidecar can reference a later entry in evidencePaths.
     for (const path of entry.evidencePaths) {
-      if (!EVIDENCE_ROOTS.some((root) => path.startsWith(root))) throw new Error(`${entry.evidenceId}: evidence path is outside a design-refresh evidence root`);
+      const root = EVIDENCE_ROOTS.find((root) => path.startsWith(root));
+      if (!root) throw new Error(`${entry.evidenceId}: evidence path is outside a design-refresh evidence root`);
+      await assertPathWithin(resolve(await realpath(repoRoot), root), `${repoRoot}/${path}`);
+      if (!(await regularFile(repoRoot, path))) throw new Error(`${entry.evidenceId}: evidence must be a sanitized regular file: ${path}`);
+    }
+    for (const path of entry.evidencePaths) {
       const extension = extname(path).toLowerCase();
       if (!EVIDENCE_EXTENSIONS.has(extension)) throw new Error(`${entry.evidenceId}: prohibited evidence file type ${extension || "<none>"}`);
-      if (!(await regularFile(repoRoot, path))) throw new Error(`${entry.evidenceId}: evidence must be a sanitized regular file: ${path}`);
       const content = TEXT_EVIDENCE_EXTENSIONS.has(extension) ? await readFile(resolve(repoRoot, path), "utf8") : "";
       if (UNSAFE_EVIDENCE.some((pattern) => pattern.test(`${path}\n${content}`))) throw new Error(`${entry.evidenceId}: unsanitized evidence content`);
       if (extension !== ".json") continue;

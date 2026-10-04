@@ -80,6 +80,8 @@ struct HistorySidePanel: View {
             activeSessionId: activeSessionId,
             activeDraftId: activeDraftId,
             hasPermanentDeleteFailure: model.hasPermanentDeleteFailure,
+            unfilteredRowCount: historyEntries(sessions: model.sessions, drafts: model.drafts,
+                                               deleting: model.deleteIntents, matching: "").count,
             onSelect: onSelect,
             onNewChat: onNewChat,
             onSettings: onSettings,
@@ -106,6 +108,7 @@ struct HistorySidePanelContent: View {
     let activeSessionId: String?
     let activeDraftId: String?
     let hasPermanentDeleteFailure: Bool
+    let unfilteredRowCount: Int?
     let onSelect: (HistoryEntry) -> Void
     let onNewChat: () -> Void
     let onSettings: () -> Void
@@ -116,18 +119,20 @@ struct HistorySidePanelContent: View {
     let onAskDiscard: (HistoryEntry) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var searchFocused: Bool
 
     init(
         rows: [HistoryEntry], query: Binding<String>, loading: Bool, hasLoaded: Bool,
         hasError: Bool, isSearching: Bool, nowMs: Int64, userName: String,
         household: String, activeSessionId: String?, activeDraftId: String?,
-        hasPermanentDeleteFailure: Bool, onSelect: @escaping (HistoryEntry) -> Void,
+        hasPermanentDeleteFailure: Bool, unfilteredRowCount: Int? = nil, onSelect: @escaping (HistoryEntry) -> Void,
         onNewChat: @escaping () -> Void, onSettings: @escaping () -> Void,
         onRetry: @escaping () -> Void, onRetryDeletes: @escaping () -> Void,
         onAskRename: @escaping (HistoryEntry) -> Void,
         onAskDelete: @escaping (HistoryEntry) -> Void,
         onAskDiscard: @escaping (HistoryEntry) -> Void
     ) {
+        self.unfilteredRowCount = unfilteredRowCount
         self.rows = rows; _query = query; self.loading = loading; self.hasLoaded = hasLoaded
         self.hasError = hasError; self.isSearching = isSearching; self.nowMs = nowMs
         self.userName = userName; self.household = household; self.activeSessionId = activeSessionId
@@ -162,7 +167,7 @@ struct HistorySidePanelContent: View {
 
     private var presentation: HistoryListPresentation {
         historyListPresentation(
-            rowCount: rows.count,
+            rowCount: unfilteredRowCount ?? rows.count,
             loading: loading,
             hasLoaded: hasLoaded,
             hasError: hasError
@@ -171,33 +176,39 @@ struct HistorySidePanelContent: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                HistoryAccountHeader(name: userName, household: household, onSettings: onSettings)
-                searchField
-                pastChatsTitle
-                if hasPermanentDeleteFailure {
-                    SessionsDeleteFailureBanner(onRetry: onRetryDeletes)
-                        .padding(.horizontal, Space.md)
-                        .padding(.bottom, Space.xs)
-                } else if presentation == .staleContent {
-                    SessionsStaleBanner(onRetry: onRetry)
-                        .padding(.horizontal, Space.md)
-                        .padding(.bottom, Space.xs)
+            ScrollView {
+                VStack(spacing: 0) {
+                    HistoryAccountHeader(name: userName, household: household, onSettings: onSettings)
+                    searchField
+                    pastChatsTitle
+                    if hasPermanentDeleteFailure {
+                        SessionsDeleteFailureBanner(onRetry: onRetryDeletes)
+                            .padding(.horizontal, Space.md)
+                            .padding(.bottom, Space.xs)
+                    }
+                    if presentation == .staleContent {
+                        SessionsStaleBanner(onRetry: onRetry)
+                            .padding(.horizontal, Space.md)
+                            .padding(.bottom, Space.xs)
+                    }
+                    switch presentation {
+                    case .error:
+                        SessionsErrorEmpty(onRetry: onRetry)
+                        Spacer(minLength: 0)
+                    case .loading:
+                        historyLoadingSpinner
+                        Spacer(minLength: 0)
+                    case .empty:
+                        historyEmptyState
+                        Spacer(minLength: 0)
+                    case .content, .staleContent:
+                        if rows.isEmpty && isSearching { historyEmptyState }
+                        else { sessionList }
+                    }
                 }
-                switch presentation {
-                case .error:
-                    SessionsErrorEmpty(onRetry: onRetry)
-                    Spacer(minLength: 0)
-                case .loading:
-                    historyLoadingSpinner
-                    Spacer(minLength: 0)
-                case .empty:
-                    historyEmptyState
-                    Spacer(minLength: 0)
-                case .content, .staleContent:
-                    sessionList
-                }
+                .padding(.bottom, fabSize + Space.lg * 2)
             }
+            .scrollDismissesKeyboard(.interactively)
             fab
         }
         .background(DuskColors.bg)
@@ -214,7 +225,8 @@ struct HistorySidePanelContent: View {
             trailingPadding: Space.lg,
             title: "Search past chats",
             showsTitle: false,
-            showsSearchIcon: true
+            showsSearchIcon: true,
+            focused: $searchFocused
         )
         .autocorrectionDisabled()
         .textInputAutocapitalization(.never)
@@ -232,44 +244,50 @@ struct HistorySidePanelContent: View {
     }
 
     private var sessionList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Space.xs) {
-                ForEach(rows) { row in
-                    HistoryRow(
-                        row: row,
-                        nowMs: nowMs,
-                        isSelected: historyEntryIsSelected(
-                            row,
-                            activeSessionId: activeSessionId,
-                            activeDraftId: activeDraftId
-                        ),
-                        onSwitch: { onSelect(row) },
-                        onAskRename: { onAskRename(row) },
-                        onAskDelete: { onAskDelete(row) },
-                        onAskDiscard: { onAskDiscard(row) }
-                    )
-                    .transition(
-                        reduceMotion
-                            ? .identity
-                            : .asymmetric(
-                                insertion: .opacity.combined(with: .move(edge: .top)),
-                                removal: .identity
-                            )
-                    )
+        LazyVStack(alignment: .leading, spacing: Space.xs) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                let label = RelativeTime.dateGroupLabel(nowMs: nowMs, lastActiveMs: row.lastActiveAt)
+                if index == 0 || label != RelativeTime.dateGroupLabel(nowMs: nowMs, lastActiveMs: rows[index - 1].lastActiveAt) {
+                    Text(label == RelativeTime.unknown ? "Date unknown" : label)
+                        .designText(.supporting)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(DuskColors.ink2)
+                        .padding(.top, Space.md)
+                        .accessibilityAddTraits(.isHeader)
                 }
+                HistoryRow(
+                    row: row,
+                    nowMs: nowMs,
+                    isSelected: historyEntryIsSelected(
+                        row,
+                        activeSessionId: activeSessionId,
+                        activeDraftId: activeDraftId
+                    ),
+                    onSwitch: { onSelect(row) },
+                    onAskRename: { onAskRename(row) },
+                    onAskDelete: { onAskDelete(row) },
+                    onAskDiscard: { onAskDiscard(row) }
+                )
+                .transition(
+                    reduceMotion
+                        ? .identity
+                        : .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .identity
+                        )
+                )
             }
-            .padding(.horizontal, Space.md)
-            .padding(.bottom, fabSize + Space.lg * 2)
-            .animation(
-                DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
-                value: rows.map(\.id)
-            )
         }
+        .padding(.horizontal, Space.md)
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: rows.map(\.id)
+        )
     }
 
     @ViewBuilder private var historyEmptyState: some View {
         if isSearching {
-            HistorySearchNoMatchState()
+            HistorySearchNoMatchState(onClear: { query = ""; searchFocused = true })
                 .accessibilityIdentifier("history-no-match")
         } else {
             ContentUnavailableView {
@@ -282,11 +300,8 @@ struct HistorySidePanelContent: View {
     }
 
     private var historyLoadingSpinner: some View {
-        ProgressView()
-            .tint(DuskColors.accent)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, Space.xl)
-            .accessibilityIdentifier("history-loading")
+        AsyncNotice(kind: .loading, title: "Loading past chats", accessibilityId: "history-loading")
+            .padding(Space.md)
     }
 
     private var fab: some View {
@@ -344,6 +359,7 @@ private struct HistoryFABButtonStyle: ButtonStyle {
 /// separate from the genuine empty-history branch so loading, error, and
 /// new-chat behavior remain unchanged.
 struct HistorySearchNoMatchState: View {
+    var onClear: (() -> Void)? = nil
     var body: some View {
         HStack(alignment: .center, spacing: HistoryNoMatchLayout.contentGap) {
             Image(systemName: "magnifyingglass")
@@ -364,6 +380,10 @@ struct HistorySearchNoMatchState: View {
                 Text("No matching chats")
                     .font(Typo.ui(HistoryNoMatchLayout.titleSize, .semibold))
                     .foregroundStyle(DuskColors.ink)
+                if let onClear {
+                    DesignActionButton(title: "Clear search", role: .quiet,
+                                       accessibilityId: "history-clear-search", fillsWidth: false, action: onClear)
+                }
                 Text("Try another search.")
                     .font(Typo.ui(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink2)
@@ -376,7 +396,7 @@ struct HistorySearchNoMatchState: View {
         .designWell(cornerRadius: Radii.sm)
         .padding(.horizontal, HistoryNoMatchLayout.outerMargin)
         .padding(.bottom, HistoryNoMatchLayout.outerMargin)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: onClear == nil ? .combine : .contain)
         .accessibilityLabel("No matching chats")
         .accessibilityValue("Try another search.")
     }

@@ -596,6 +596,142 @@ class NativeDraftStorePersistenceTest {
         }
     }
 
+    @Test
+    fun `atomic acceptance advances editor and retains FIFO files across crash and receipts`() = runBlocking {
+        fixture().use { fixture ->
+            val opened = fixture.open()
+            val coordinator = NativeDraftCoordinator(opened.store)
+            var editor = coordinator.saveText(null, "session", "A")!!
+            editor = coordinator.importAttachment(editor.id, "session", NativeDraftAttachmentImport("fixture", "a.txt", "text/plain"))
+            val a = coordinator.acceptSend(editor.id, editor.revision, "anchor", "surface")
+            assertEquals("", coordinator.snapshot.value.drafts.single().text)
+            assertTrue(coordinator.snapshot.value.drafts.single().attachments.isEmpty())
+            assertFailsWith<NativeDraftConflictException> {
+                coordinator.acceptSend(editor.id, editor.revision, "anchor", "surface")
+            }
+            editor = coordinator.saveText(editor.id, "session", "B")!!
+            editor = coordinator.importAttachment(editor.id, "session", NativeDraftAttachmentImport("fixture", "b.txt", "text/plain"))
+            val b = coordinator.acceptSend(editor.id, editor.revision, "anchor", "surface")
+            editor = coordinator.saveText(editor.id, "session", "C")!!
+            val c = coordinator.acceptSend(editor.id, editor.revision, "anchor", "surface")
+            coordinator.saveText(editor.id, "session", "next draft")
+            coordinator.markAttempted(a.pendingId)
+            assertTrue(a.acceptedOrder < b.acceptedOrder && b.acceptedOrder < c.acceptedOrder)
+            opened.close()
+
+            val reopened = fixture.open()
+            val restored = NativeDraftCoordinator(reopened.store)
+            assertEquals(listOf(a.pendingId, b.pendingId, c.pendingId), restored.restore().pendingSends.map { it.pendingId })
+            assertTrue(restored.snapshot.value.pendingSends.first().attempted)
+            assertTrue(!restored.acknowledge(a.pendingId, "wrong-session").found)
+            assertTrue(restored.acknowledge(a.pendingId, "session").found)
+            assertTrue(!File(a.attachments.single().localPath).exists())
+            assertTrue(File(b.attachments.single().localPath).exists())
+            assertEquals("next draft", restored.snapshot.value.drafts.single().text)
+            assertEquals(listOf(b.pendingId, c.pendingId), restored.snapshot.value.pendingSends.map { it.pendingId })
+            restored.acknowledge(b.pendingId, "session")
+            restored.acknowledge(c.pendingId, "session")
+            assertEquals("next draft", restored.snapshot.value.drafts.single().text)
+            reopened.close()
+        }
+    }
+
+    @Test
+    fun `first receipt binds every queued snapshot without deleting successor editor`() = runBlocking {
+        fixture().use { fixture ->
+            val opened = fixture.open()
+            val coordinator = NativeDraftCoordinator(opened.store)
+            var editor = coordinator.saveText(null, null, "A")!!
+            val a = coordinator.acceptSend(editor.id, editor.revision, "anchor", "surface")
+            editor = coordinator.saveText(editor.id, null, "B")!!
+            val b = coordinator.acceptSend(editor.id, editor.revision, "anchor", "surface")
+            coordinator.acknowledge(a.pendingId, "minted-session")
+            assertEquals("minted-session", coordinator.snapshot.value.pendingSends.single().sessionId)
+            assertEquals(b.pendingId, coordinator.snapshot.value.pendingSends.single().pendingId)
+            assertEquals(editor.id, coordinator.snapshot.value.drafts.single().id)
+            opened.close()
+        }
+    }
+
+    @Test
+    fun `retired editor and occupied thaw cannot overwrite next draft`() = runBlocking {
+        fixture().use { fixture ->
+            val opened = fixture.open()
+            val coordinator = NativeDraftCoordinator(opened.store)
+            val draft = coordinator.saveEditorText("old", null, "session", "A")!!
+            val pending = coordinator.acceptSend(draft.id, draft.revision, "anchor", "surface")
+            coordinator.retireEditor("old")
+            coordinator.saveEditorText("new", draft.id, "session", "B")
+            assertEquals(null, coordinator.saveEditorText("old", draft.id, "session", "stale"))
+            assertFailsWith<NativeDraftConflictException> { coordinator.notCommittedIfEmpty(pending.pendingId) }
+            assertEquals("B", coordinator.snapshot.value.drafts.single().text)
+            assertEquals(pending.pendingId, coordinator.snapshot.value.pendingSends.single().pendingId)
+            coordinator.saveEditorText("new", draft.id, "session", "")
+            val restored = coordinator.notCommittedIfEmpty(pending.pendingId)!!
+            coordinator.preserveRestoredDraft("new", restored.id, restored.revision, "C")
+            assertEquals("C", coordinator.snapshot.value.drafts.single { it.sessionId == "session" }.text)
+            assertEquals("A", coordinator.snapshot.value.drafts.single { it.sessionId == null }.text)
+            opened.close()
+        }
+    }
+
+    @Test
+    fun `version one migration preserves pending identity files and allows second snapshot`() = runBlocking {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            DraftDatabase.Schema.create(driver)
+            driver.execute(null, "DROP TABLE native_pending_attachment", 0)
+            driver.execute(null, "DROP TABLE native_pending_send", 0)
+            driver.execute(null, """CREATE TABLE native_pending_send (
+                account_id TEXT NOT NULL, gateway_id TEXT NOT NULL, pending_id TEXT NOT NULL,
+                mint_key TEXT NOT NULL, surface_id TEXT NOT NULL, draft_id TEXT NOT NULL,
+                draft_revision INTEGER NOT NULL, session_id TEXT, text TEXT NOT NULL, created_at INTEGER NOT NULL,
+                PRIMARY KEY(account_id, gateway_id, pending_id), UNIQUE(account_id, gateway_id, draft_id))""", 0)
+            driver.execute(null, """CREATE TABLE native_pending_attachment (
+                account_id TEXT NOT NULL, gateway_id TEXT NOT NULL, pending_id TEXT NOT NULL,
+                attachment_id TEXT NOT NULL, display_name TEXT NOT NULL, media_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL, local_path TEXT NOT NULL, sort_order INTEGER NOT NULL,
+                PRIMARY KEY(account_id, gateway_id, pending_id, attachment_id),
+                FOREIGN KEY(account_id, gateway_id, pending_id) REFERENCES native_pending_send(account_id, gateway_id, pending_id) ON DELETE CASCADE)""", 0)
+            driver.execute(null, "INSERT INTO native_pending_send VALUES ('a','g','p','mint','surface','draft',1,'s','A',1234)", 0)
+            driver.execute(null, "INSERT INTO native_pending_attachment VALUES ('a','g','p','file','a.txt','text/plain',3,'/owned/a',0)", 0)
+            driver.execute(null, "INSERT INTO native_draft VALUES ('a','g','draft','s','A',1,1234,1234)", 0)
+            driver.execute(null, "INSERT INTO native_draft_attachment VALUES ('a','g','draft','file','a.txt','text/plain',3,'/owned/a',0)", 0)
+            DraftDatabase.Schema.migrate(driver, 1, 2)
+            val queries = DraftDatabase(driver).draftDatabaseQueries
+            val first = queries.pendingSendsForScope("a", "g").executeAsOne()
+            assertEquals("", queries.draftForId("a", "g", "draft").executeAsOne().text)
+            assertEquals(2L, queries.draftForId("a", "g", "draft").executeAsOne().revision)
+            assertEquals(1L, queries.pathReferenceCount("/owned/a", "/owned/a").executeAsOne())
+            assertEquals("p", first.pending_id)
+            assertEquals("mint", first.mint_key)
+            assertEquals(1L, first.attempted)
+            assertEquals("/owned/a", queries.pendingAttachments("a", "g", "p").executeAsOne().local_path)
+            queries.insertPendingSend("a", "g", "p2", "mint", "surface", "draft", 2, "s", "B", 1234, queries.nextAcceptedOrder().executeAsOne())
+            assertEquals(listOf("p", "p2"), queries.pendingSendForDraft("a", "g", "draft").executeAsList().map { it.pending_id })
+        } finally { driver.close() }
+    }
+
+    @Test
+    fun `failed editor advance rolls back pending acceptance and keeps owned files`() = runBlocking {
+        fixture().use { fixture ->
+            val opened = fixture.open()
+            val draft = opened.store.save(NativeDraftWrite(text = "A", attachments = emptyList()), null)
+            val attached = opened.store.importAttachment(draft.id, draft.revision,
+                NativeDraftAttachmentImport("fixture", "a.txt", "text/plain"))
+            opened.driver.execute(null, """CREATE TRIGGER fail_advance BEFORE UPDATE ON native_draft
+                BEGIN SELECT RAISE(ABORT, 'synthetic advance failure'); END""", 0)
+            assertFailsWith<Exception> { opened.store.acceptSend(attached.id, attached.revision, "anchor", "surface") }
+            assertTrue(opened.store.list().pendingSends.isEmpty())
+            assertEquals(attached, opened.store.list().drafts.single())
+            assertTrue(File(attached.attachments.single().localPath).exists())
+            opened.driver.execute(null, "DROP TRIGGER fail_advance", 0)
+            opened.store.acceptSend(attached.id, attached.revision, "anchor", "surface")
+            assertEquals(1, opened.store.list().pendingSends.size)
+            opened.close()
+        }
+    }
+
     private fun fixture(failingCopy: Boolean = false) = Fixture(failingCopy)
 
     private class Fixture(private val failingCopy: Boolean) : AutoCloseable {

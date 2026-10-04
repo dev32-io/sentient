@@ -172,19 +172,20 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertTrue(projections.allSatisfy { $0.contractRecipe == $0.role.contractRecipe })
     }
 
-    func testTypographyAdapterUsesGeneratedFamilyRoles() {
+    func testTypographyAdapterUsesUIFaceForNativeDisplayRoles() {
         func firstFamily(_ fallbackList: String) -> String {
             fallbackList.split(separator: ",", maxSplits: 1).first.map {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines)
             } ?? fallbackList
         }
 
-        XCTAssertEqual(DesignTypographyAdapter.displayFamily, firstFamily(MobileData.Fonts_.shared.display))
+        XCTAssertEqual(DesignTypographyAdapter.displayFamily, firstFamily(MobileData.Fonts_.shared.ui))
         XCTAssertEqual(DesignTypographyAdapter.uiFamily, firstFamily(MobileData.Fonts_.shared.ui))
         XCTAssertEqual(DesignTypographyAdapter.uiMediumFace, "DMSans-Medium")
         XCTAssertNotNil(UIFont(name: DesignTypographyAdapter.uiMediumFace, size: DesignMetrics.controlLabelSize))
         XCTAssertEqual(DesignTypographyAdapter.monoFamily, firstFamily(MobileData.Fonts_.shared.mono))
-        XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.displayFamily)
+        XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.uiFamily)
+        XCTAssertEqual(DesignTextRole.display.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.caption.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.body.family, DesignTypographyAdapter.uiFamily)

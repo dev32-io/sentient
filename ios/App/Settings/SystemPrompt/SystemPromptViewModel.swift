@@ -19,14 +19,7 @@ final class SystemPromptViewModel {
         case failed(String)
     }
 
-    enum Save: Equatable {
-        case idle
-        case saving
-        case restarting
-        case alreadyApplying
-        case applied
-        case failed(String)
-    }
+    typealias Save = DesignApplyState
 
     private(set) var phase: Phase = .loading
     private(set) var save: Save = .idle
@@ -35,22 +28,48 @@ final class SystemPromptViewModel {
     var draft = ""
     /// Whether the restore-default fetch is in flight (blocks the confirm dialog).
     private(set) var isRestoring = false
+    private(set) var restoreError: String?
 
     private var original = ""
-    private let settings: SettingsComponent
+    private let loadSoul: () async throws -> SentientResult<SoulDoc>
+    private let loadDefault: () async throws -> SentientResult<SoulDefaultDoc>
+    private let applySoul: (String, (any ApplyState) async -> Void) async -> Void
     private let log = AppLog("settings", "system-prompt-vm")
 
     init(settings: SettingsComponent) {
-        self.settings = settings
+        loadSoul = { try await settings.profileRepository.getSoul() }
+        loadDefault = { try await settings.profileRepository.getSoulDefault() }
+        applySoul = { content, receive in
+            for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutSoul(content: content)) {
+                await receive(state)
+            }
+        }
+    }
+
+    init(
+        loadSoul: @escaping () async throws -> SentientResult<SoulDoc>,
+        loadDefault: @escaping () async throws -> SentientResult<SoulDefaultDoc>,
+        applySoul: @escaping (String, (any ApplyState) async -> Void) async -> Void
+    ) {
+        self.loadSoul = loadSoul
+        self.loadDefault = loadDefault
+        self.applySoul = applySoul
     }
 
     var isDirty: Bool { phase == .ready && draft != original }
-    var isApplying: Bool { save == .saving || save == .restarting }
+    var isApplying: Bool { save.isBusy }
+
+    func discard() {
+        guard phase == .ready, !isApplying, !isRestoring else { return }
+        draft = original
+        restoreError = nil
+        save = .idle
+    }
 
     func load() async {
         log.info("load")
         do {
-            let result = try await settings.profileRepository.getSoul()
+            let result = try await loadSoul()
             switch onEnum(of: result) {
             case .success(let s):
                 original = s.data.content
@@ -72,32 +91,35 @@ final class SystemPromptViewModel {
 
     /// Fetch the canonical default template into the draft (does not persist).
     func restoreDefault() async {
+        guard !isApplying, !isRestoring else { return }
         log.info("restore-default.start")
         isRestoring = true
+        restoreError = nil
         defer { isRestoring = false }
         do {
-            let result = try await settings.profileRepository.getSoulDefault()
+            let result = try await loadDefault()
             switch onEnum(of: result) {
             case .success(let s):
                 draft = s.data.content
                 log.info("restore-default.applied len=\(draft.count)")
             case .failure(let f):
-                save = .failed(f.error.userMessage)
+                restoreError = f.error.userMessage
                 log.warn("restore-default.failed kind=\(f.error.kind)")
             case .loading:
                 break
             }
         } catch is CancellationError {
         } catch {
-            save = .failed("Couldn't load the default instructions.")
+            restoreError = "Couldn't load the default instructions."
             log.warn("restore-default.threw")
         }
     }
 
     func save() async {
-        guard isDirty else { return }
+        guard isDirty, !isApplying, !isRestoring else { return }
+        save = .saving
         log.info("save.start len=\(draft.count)")
-        for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutSoul(content: draft)) {
+        await applySoul(draft) { state in
             switch onEnum(of: state) {
             case .idle: break
             case .saving: save = .saving

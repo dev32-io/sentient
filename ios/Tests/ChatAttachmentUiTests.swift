@@ -66,6 +66,26 @@ private final class ComposerPasteChangeObserver: NSObject, UITextViewDelegate {
 
 @MainActor
 struct ChatAttachmentUiTests {
+    @Test func timelineAttachmentReservesPosterGeometryAndKeepsDocumentsCompact() throws {
+        func height(image: UIImage?, isImage: Bool) -> CGFloat {
+            let host = UIHostingController(rootView: MessageAttachmentContent(
+                displayName: "Disposable attachment", detail: "Image · 100 bytes",
+                isImage: isImage, iconName: isImage ? "photo" : "doc.text", preview: image
+            ).environment(\.dynamicTypeSize, .large))
+            return host.sizeThatFits(in: CGSize(width: 300, height: 1000)).height
+        }
+        let absent = height(image: nil, isImage: true)
+        for size in [CGSize(width: 20, height: 80), CGSize(width: 80, height: 20)] {
+            let image = UIGraphicsImageRenderer(size: size).image { context in
+                UIColor.orange.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+            }
+            #expect(abs(height(image: image, isImage: true) - absent) < 0.001)
+        }
+        #expect(absent >= 260 + DesignMetrics.minimumTarget)
+        #expect(height(image: nil, isImage: false) < 100)
+    }
+
     @Test func plainClipboardTextStaysNativeWhileNamedFilesEnterPasteImport() throws {
         let plain = NSItemProvider(object: NSString(string: "keep as text"))
         #expect(attachmentPasteProviders(from: [plain]).isEmpty)
@@ -330,7 +350,7 @@ struct ChatAttachmentUiTests {
 
         #expect(projection["pending-one"]?.attachments.map { $0.id } == ["local-one"])
         #expect(Set(projection["pending-one"]?.previews.map { $0.key } ?? []) == Set(["local-one"]))
-        #expect(projection["pending-one"]?.transfers.isEmpty == true)
+        #expect(projection["pending-one"]?.transfers["local-one"]?.phase == .queued)
         #expect(projection["pending-two"]?.attachments.map { $0.id } == ["local-two"])
         #expect(projection["pending-two"]?.previews.isEmpty == true)
         #expect(projection["pending-two"]?.transfers["local-two"]?.phase == .failed)
@@ -608,7 +628,8 @@ final class ComposerLayoutRegressionTests: XCTestCase {
                 effectiveRange: nil
             ) as? NSParagraphStyle
         )
-        XCTAssertEqual(paragraphStyle.lineSpacing, 2, accuracy: 0.01)
+        let font = try XCTUnwrap(textView.font)
+        XCTAssertEqual(paragraphStyle.lineSpacing + font.lineHeight, max(font.lineHeight, font.pointSize * 1.55), accuracy: 0.01)
 
         let externalLong = (1...18).map { "controlled line \($0) remains bounded" }.joined(separator: "\n")
         model.draft = externalLong
@@ -624,6 +645,12 @@ final class ComposerLayoutRegressionTests: XCTestCase {
                 $0.accessibilityIdentifier == "composer-actions-viewport"
             }
         )
+        // Growth is now animated. Observe the real layout reaching the existing
+        // growth boundary instead of asserting in the first transaction turn.
+        let grew = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            MainActor.assumeIsolated { editor.bounds.height > ComposerGeometry.compactEditorMinimumHeight + 20 }
+        }, object: nil)
+        await fulfillment(of: [grew], timeout: 2)
         let textFrame = textView.convert(textView.bounds, to: window)
         let editorFrame = editor.convert(editor.bounds, to: window)
         let actionsFrame = actions.convert(actions.bounds, to: window)
@@ -639,19 +666,14 @@ final class ComposerLayoutRegressionTests: XCTestCase {
         XCTAssertEqual(textView.text, model.draft)
         XCTAssertTrue(textView.isFirstResponder)
 
-        let newlineRange = NSRange(location: textView.text.utf16.count, length: 0)
-        let accepted = textView.delegate?.textView?(
-            textView,
-            shouldChangeTextIn: newlineRange,
-            replacementText: "\n"
-        )
-        XCTAssertEqual(accepted, false)
+        textView.selectedRange = NSRange(location: textView.text.utf16.count, length: 0)
+        textView.insertText("\n")
         await settle()
-        XCTAssertFalse(textView.isFirstResponder)
-        XCTAssertEqual(model.sent, [model.draft])
+        XCTAssertEqual(textView.text, "external short\n")
+        XCTAssertEqual(model.draft, "external short\n")
+        XCTAssertTrue(textView.isFirstResponder)
+        XCTAssertTrue(model.sent.isEmpty)
 
-        XCTAssertTrue(textView.becomeFirstResponder())
-        await settle()
         textView.setMarkedText("composing", selectedRange: NSRange(location: 9, length: 0))
         XCTAssertNotNil(textView.markedTextRange)
         let composingText = textView.text

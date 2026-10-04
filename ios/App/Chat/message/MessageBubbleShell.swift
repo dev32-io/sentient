@@ -2,7 +2,7 @@
 // MessageBubbleShell — the shared message row and bubble surface.
 //
 // Role-specific message views supply only content and (for outbox rows) a
-// footer. Alignment, avatar placement, metadata, width, material, shape, and
+// footer. Alignment, timestamp, metadata, width, material, shape, and
 // accessibility stay here so committed and pending user bubbles cannot drift
 // apart.
 // ---------------------------------------------------------------------------
@@ -27,18 +27,15 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
     let cutoffLabel: String?
     let index: Int
     let total: Int
-    let continuation: Bool
     let avatarMode: SentientIdentityState
     let accessibilityIdentifier: String?
-    let metadataMuted: Bool
+    let pending: Bool
     @ViewBuilder let content: () -> Content
     @ViewBuilder let footer: () -> Footer
 
     @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
-    @Environment(\.chatUserAvatarTint) private var userTint
-    @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.sentientIdentityMeasurement) private var measurement
-    @State private var identitySize = CGSize.zero
+    @Environment(\.sentientIdentityPlaybackEnabled) private var playbackEnabled
 
     init(
         role: MessageBubbleRole,
@@ -48,10 +45,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         cutoffLabel: String?,
         index: Int,
         total: Int,
-        continuation: Bool,
         avatarMode: SentientIdentityState,
         accessibilityIdentifier: String? = nil,
-        metadataMuted: Bool = false,
+        pending: Bool = false,
         @ViewBuilder content: @escaping () -> Content
     ) where Footer == EmptyView {
         self.role = role
@@ -61,10 +57,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         self.cutoffLabel = cutoffLabel
         self.index = index
         self.total = total
-        self.continuation = continuation
         self.avatarMode = avatarMode
         self.accessibilityIdentifier = accessibilityIdentifier
-        self.metadataMuted = metadataMuted
+        self.pending = pending
         self.content = content
         self.footer = { EmptyView() }
     }
@@ -77,10 +72,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         cutoffLabel: String?,
         index: Int,
         total: Int,
-        continuation: Bool,
         avatarMode: SentientIdentityState,
         accessibilityIdentifier: String? = nil,
-        metadataMuted: Bool = false,
+        pending: Bool = false,
         @ViewBuilder content: @escaping () -> Content,
         @ViewBuilder footer: @escaping () -> Footer
     ) {
@@ -91,10 +85,9 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         self.cutoffLabel = cutoffLabel
         self.index = index
         self.total = total
-        self.continuation = continuation
         self.avatarMode = avatarMode
         self.accessibilityIdentifier = accessibilityIdentifier
-        self.metadataMuted = metadataMuted
+        self.pending = pending
         self.content = content
         self.footer = footer
     }
@@ -119,6 +112,8 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         HStack(alignment: .top, spacing: 0) {
             if role.isUser { Spacer(minLength: BubbleLayout.edgeMin) }
             VStack(alignment: role.isUser ? .trailing : .leading, spacing: Space.xs) {
+                MessageMeta(timestamp: timestamp)
+                    .accessibilityHidden(true)
                 bubbleBody
                 footer()
             }
@@ -128,63 +123,25 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
     }
 
     private var bubbleBody: some View {
-        VStack(alignment: role.isUser ? .trailing : .leading, spacing: Space.sm) {
-            if !continuation { measuredIdentity }
-            content()
-                .padding(.top, continuation ? Space.md : 0)
-                .padding(.horizontal, Space.md)
-                .padding(.bottom, Space.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxWidth: bubbleMaxWidth, alignment: role.isUser ? .trailing : .leading)
-        // Content remains native and independently accessible. Only decorative
-        // face is delegated to asynchronously rendered Canvas.
-        .clipShape(bubbleShape)
-        .fixedSize(horizontal: false, vertical: true)
-        .background {
-            if !measurement {
-                BubbleCanvasChrome(
-                    shape: bubbleShape,
-                    style: bubbleChromeStyle,
-                    breathes: !role.isUser && avatarMode == .responding,
-                    bodyTop: continuation ? 0 : identitySize.height + Space.sm
-                )
+        content()
+            .padding(.vertical, Space.md)
+            .padding(.horizontal, Space.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: bubbleMaxWidth, alignment: role.isUser ? .trailing : .leading)
+            // Content remains native and independently accessible. Only decorative
+            // face is delegated to asynchronously rendered Canvas.
+            .clipShape(bubbleShape)
+            .fixedSize(horizontal: false, vertical: true)
+            .background {
+                if !measurement {
+                    BubbleCanvasChrome(
+                        shape: bubbleShape,
+                        style: bubbleChromeStyle,
+                        pending: pending,
+                        breathes: !role.isUser && avatarMode == .responding && playbackEnabled
+                    )
+                }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var measuredIdentity: some View {
-        if measurement {
-            identity
-        } else {
-            identity
-                .onGeometryChange(for: CGSize.self, of: { $0.size }) { identitySize = $0 }
-        }
-    }
-
-    private var identity: some View {
-        HStack(spacing: 6) {
-            if !role.isUser { identityAvatar }
-            MessageMeta(name: name, timestamp: timestamp, hidesTimestamp: false, muted: metadataMuted)
-            if role.isUser { identityAvatar }
-        }
-        .padding(.horizontal, Space.md)
-        .padding(.top, Space.md)
-        .frame(minHeight: BubbleLayout.identityHeight + Space.md)
-    }
-
-    @ViewBuilder
-    private var identityAvatar: some View {
-        if measurement {
-            Color.clear.frame(width: BubbleLayout.avatarSize, height: BubbleLayout.avatarSize)
-        } else if role.isUser {
-            UserAvatar(name: name, size: BubbleLayout.avatarSize, tint: userTint)
-                .accessibilityHidden(true)
-        } else {
-            SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
-                .accessibilityHidden(true)
-        }
     }
 
     private var bubbleChromeStyle: BubbleChromeStyle {
@@ -196,7 +153,7 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
 
     private var accessibilityChronology: String {
         let position = "Message \(index + 1) of \(max(total, index + 1)) from \(name)"
-        if isStreaming {
+        if isStreaming || avatarMode == .responding {
             return "\(position), responding"
         }
         if let timestamp {
@@ -207,79 +164,8 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
         return "\(position), pending"
     }
 
-    private var bubbleShape: SweptBubbleShape {
-        SweptBubbleShape(
-            identityWidth: continuation ? 0 : identitySize.width,
-            identityHeight: continuation ? 0 : identitySize.height,
-            sweepsFromTrailing: role.isUser != (layoutDirection == .rightToLeft)
-        )
-    }
-}
-
-struct SweptBubbleShape: Shape {
-    let identityWidth: CGFloat
-    let identityHeight: CGFloat
-    let sweepsFromTrailing: Bool
-
-    func path(in rect: CGRect) -> Path {
-        let radius = min(Radii.lg, rect.width / 2, rect.height / 2)
-        guard identityWidth > 0, identityHeight > 0,
-              identityWidth + 6 <= rect.width - 52 else {
-            return RoundedRectangle(cornerRadius: radius, style: .continuous).path(in: rect)
-        }
-        let cap = min(rect.width, identityWidth + 6)
-        let shoulderY = min(rect.maxY - radius, rect.minY + max(0, identityHeight - 10))
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + max(radius, cap - 12), y: rect.minY))
-        path.addCurve(
-            to: CGPoint(x: rect.minX + min(rect.width - radius, cap + 36), y: shoulderY),
-            control1: CGPoint(x: rect.minX + cap + 12, y: rect.minY),
-            control2: CGPoint(x: rect.minX + cap + 8, y: shoulderY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - radius, y: shoulderY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: shoulderY + radius),
-            control: CGPoint(x: rect.maxX, y: shoulderY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + radius, y: rect.minY),
-            control: CGPoint(x: rect.minX, y: rect.minY)
-        )
-        path.closeSubpath()
-        guard sweepsFromTrailing else { return path }
-        return path.applying(
-            CGAffineTransform(translationX: rect.minX + rect.maxX, y: 0)
-                .scaledBy(x: -1, y: 1)
-        )
-    }
-
-    func path(in rect: CGRect, inset requestedInset: CGFloat) -> Path {
-        guard rect.width > 0, rect.height > 0 else { return Path() }
-        let inset = min(max(0, requestedInset), max(0, (min(rect.width, rect.height) - 1) / 2))
-        guard inset > 0 else { return path(in: rect) }
-        let insetRect = rect.insetBy(dx: inset, dy: inset)
-        let scaleX = insetRect.width / rect.width
-        let scaleY = insetRect.height / rect.height
-        return path(in: rect).applying(CGAffineTransform(
-            a: scaleX,
-            b: 0,
-            c: 0,
-            d: scaleY,
-            tx: insetRect.minX - rect.minX * scaleX,
-            ty: insetRect.minY - rect.minY * scaleY
-        ))
+    private var bubbleShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
     }
 }
 
@@ -294,10 +180,10 @@ private enum BubbleChromeStyle: Equatable {
 /// and contained speaking sweep. Native content remains the layout authority,
 /// so streaming keeps its established inline measure and grows only vertically.
 private struct BubbleCanvasChrome: View {
-    let shape: SweptBubbleShape
+    let shape: RoundedRectangle
     let style: BubbleChromeStyle
+    let pending: Bool
     let breathes: Bool
-    let bodyTop: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -340,6 +226,10 @@ private struct BubbleCanvasChrome: View {
                     .offset(y: -overflow)
                     .frame(height: span, alignment: .top)
                     .clipped()
+                    // Animate bounded decorative tiles, never flatten the tall
+                    // document or fade accessible content/controls.
+                    .opacity(pending ? 0.64 : 1)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: pending)
                 }
             }
             .frame(width: width, height: height)
@@ -357,19 +247,7 @@ private struct BubbleCanvasChrome: View {
     }
 
     private func shadowOverflow() -> CGFloat {
-        let plate = DesignCanvasSurfaceRecipe.make(tier: .plate, increasedContrast: contrast == .increased)
-        var overflow = [plate.cast, plate.contact].map {
-            DesignCanvasEffects.overflow(
-                blur: $0.geometry.radius,
-                x: $0.geometry.x,
-                y: $0.geometry.y
-            )
-        }.max() ?? 0
-        if style == .activeAssistant {
-            let shadow = activeShadow()
-            overflow = max(overflow, DesignCanvasEffects.overflow(blur: shadow.blur, y: shadow.y))
-        }
-        return overflow
+        BubbleLayout.chromeOverflow(increasedContrast: contrast == .increased)
     }
 
     private func draw(
@@ -446,8 +324,9 @@ private struct BubbleCanvasChrome: View {
     }
 
     private func activeShadow() -> (opacity: Double, blur: CGFloat, y: CGFloat, inset: CGFloat) {
-        // Current web swept shell: steady ember cast, body-only moving wave.
-        (0.42, 20, 12, 16)
+        // Center the cast on the full contour, including its rounded top.
+        // An inset/downshifted source hides the glow along the upper perimeter.
+        BubbleLayout.activeShadow
     }
 
     private func drawShadow(
@@ -501,8 +380,8 @@ private struct BubbleCanvasChrome: View {
         let travel = CGFloat((1 - cos(phase * 2 * .pi)) / 2)
         let x = faceRect.minX + travel * width * 2.2 - width * 0.7
         var wave = context
+        // One shared clip covers the rounded face.
         wave.clip(to: facePath)
-        wave.clip(to: Path(CGRect(x: faceRect.minX, y: faceRect.minY + bodyTop, width: faceRect.width, height: max(0, faceRect.height - bodyTop))))
         wave.fill(
             Path(CGRect(x: x, y: faceRect.minY, width: width * 1.2, height: faceRect.height)),
             with: .linearGradient(
@@ -535,19 +414,34 @@ private struct BubbleCanvasChrome: View {
     }
 
     private func path(in rect: CGRect, inset: CGFloat = 0) -> Path {
-        shape.path(in: rect, inset: inset)
+        let inset = min(max(0, inset), max(0, (min(rect.width, rect.height) - 1) / 2))
+        return shape.inset(by: inset).path(in: rect)
     }
 }
 
 /// Shared chat geometry. Values continue to project the existing central
 /// design/KMP tokens; this type only names message-specific composition.
 enum BubbleLayout {
+    static let activeShadow: (opacity: Double, blur: CGFloat, y: CGFloat, inset: CGFloat) = (0.42, 20, 0, 0)
+
+    static func chromeOverflow(increasedContrast: Bool) -> CGFloat {
+        let plate = DesignCanvasSurfaceRecipe.make(tier: .plate, increasedContrast: increasedContrast)
+        return max(
+            [plate.cast, plate.contact].map {
+                DesignCanvasEffects.overflow(blur: $0.geometry.radius, x: $0.geometry.x, y: $0.geometry.y)
+            }.max() ?? 0,
+            DesignCanvasEffects.overflow(blur: activeShadow.blur, y: activeShadow.y)
+        )
+    }
+
+    // Hosting's render boundary can cull Canvas overflow even when UIView's
+    // clipsToBounds is false. Reserve decoration only, outside row geometry.
+    static let hostingOverflow = max(chromeOverflow(increasedContrast: false), chromeOverflow(increasedContrast: true))
+
     static let standardOffset: CGFloat = .zero
     static func rowGap(width: CGFloat) -> CGFloat { width < 600 ? Space.lg : Space.xl }
     static func rowMargin(width: CGFloat) -> CGFloat { width < 600 ? Space.md : Space.lg }
     static func continuationPullup(width: CGFloat) -> CGFloat { -rowMargin(width: width) }
-    static let avatarSize: CGFloat = 28
-    static let identityHeight: CGFloat = 34
     static let edgeMin: CGFloat = 12
     static let pulseDot: CGFloat = 6
     static let pulseGap: CGFloat = 4

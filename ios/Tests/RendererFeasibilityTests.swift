@@ -5,8 +5,47 @@ import SwiftUI
 
 @MainActor
 final class RendererFeasibilityTests: XCTestCase {
+    func testWideGestureFixturePreservesAnchorsAndNativeReachability() throws {
+        let fixture = R0Document.scrollFixture
+        XCTAssertEqual(fixture.before, R0Document.fixture.before)
+        XCTAssertEqual(fixture.rows.map { Array($0.prefix(2)) }, R0Document.fixture.rows.map { Array($0.prefix(2)) })
+        XCTAssertEqual(fixture.rows.map { $0.last }, R0Document.fixture.rows.map { $0.last })
+        for width in [CGFloat(390), 430] {
+            let view = MessageDocumentView(frame: CGRect(x: 0, y: 0, width: width, height: 1000))
+            view.traitOverrides.preferredContentSizeCategory = .large
+            view.updateTraitsIfNeeded()
+            view.update(source: fixture.before + "\n\n" + fixture.tableMarkdown + "\n\n" + fixture.after, literal: false)
+            let layout = try XCTUnwrap(view.state.layout)
+            let table = try XCTUnwrap(layout.tables.first)
+            let block = try XCTUnwrap(view.document.blocks.first { $0.kind == .table })
+            XCTAssertEqual(block.cells[0].count, 7)
+            XCTAssertGreaterThan(table.contentWidth - table.rect.width, 100, "Normal phone viewport must allow real held-drag travel")
+            let value = MessageTextRange(try XCTUnwrap(block.cells[0].last))
+            XCTAssertTrue(view.selectionRects(for: value).isEmpty, "Value starts outside native viewport")
+            let partial = (view.document.plain as NSString).range(of: "partial 👩🏽‍💻")
+            view.selectedTextRange = MessageTextRange(partial)
+            view.copy(nil)
+            XCTAssertEqual(UIPasteboard.general.string, "partial 👩🏽‍💻")
+            view.setTableOffset(.greatestFiniteMagnitude)
+            XCTAssertFalse(view.remainingRight)
+            XCTAssertTrue(view.remainingLeft)
+            XCTAssertFalse(view.selectionRects(for: value).isEmpty, "Native endpoint reaches far-edge Value")
+            let scroll = try XCTUnwrap(view.subviews.compactMap { $0 as? UIScrollView }.first)
+            XCTAssertEqual(scroll.contentOffset.x, view.tableOffset)
+            XCTAssertTrue(view.scrollTable(id: table.id, direction: .right))
+            XCTAssertLessThan(view.tableOffset, table.contentWidth - table.rect.width)
+            XCTAssertEqual((view.selectedTextRange as? MessageTextRange)?.value, partial)
+            view.copyTableMarkdown(id: table.id)
+            XCTAssertEqual(UIPasteboard.general.string, view.document.tableMarkdown(id: table.id))
+            let compact = MessageDocumentLayout(document: MessageDocument(source: R0Document.fixture.tableMarkdown), width: width, traits: view.traitCollection)
+            XCTAssertLessThanOrEqual(try XCTUnwrap(compact.tables.first).contentWidth, width + 0.01,
+                                     "Unchanged ordinary fixture should remain compact")
+        }
+    }
+
     func testUnicodeExportsAndRetainedLayoutState() throws {
-        let view = R0DocumentView(frame: CGRect(x: 0, y: 0, width: 360, height: 600))
+        // Compact sizing needs a genuinely narrow viewport to test overflow.
+        let view = R0DocumentView(frame: CGRect(x: 0, y: 0, width: 140, height: 600))
         view.layoutIfNeeded()
         let text = view.document.plain as NSString
         // Cell whitespace remains in that cell, not the longer neighboring row.
@@ -24,13 +63,13 @@ final class RendererFeasibilityTests: XCTestCase {
         view.copy(nil)
         XCTAssertEqual(UIPasteboard.general.string.map { Data($0.utf8) }, Data("fé 👩🏽‍💻 — select from here into any cell.\nName\tObservation\tValue\nAlpha café\tpartial 👩🏽‍💻".utf8))
         view.copyTableMarkdown()
-        XCTAssertEqual(UIPasteboard.general.string.map { Data($0.utf8) }, Data("| Name | Observation | Value |\n| --- | --- | --- |\n| Alpha café | partial 👩🏽‍💻 text e\u{301} | 42 \\| units |\n| Beta 東京 | Readable wide column with retained horizontal position | 7\\\\8 |".utf8))
+        XCTAssertEqual(UIPasteboard.general.string.map { Data($0.utf8) }, Data("|Name      |Observation                                           |Value      |\n|----------|------------------------------------------------------|-----------|\n|Alpha café|partial 👩🏽‍💻 text e\u{301}                                      |42 \\| units|\n|Beta 東京   |Readable wide column with retained horizontal position|7\\\\8       |".utf8))
         view.setTableOffset(80)
         XCTAssertTrue(view.remainingLeft)
         XCTAssertTrue(view.remainingRight)
         for mutate in [
             { view.append("追加 👨‍👩‍👧‍👦 e\u{301}") },
-            { view.frame.size.width = 320; view.layoutIfNeeded() },
+            { view.frame.size.width = 120; view.layoutIfNeeded() },
             { view.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge; view.rebuild() },
             { view.append("\n\n![Reserved image](file:///blocked)") }
         ] {
@@ -61,6 +100,8 @@ final class RendererFeasibilityTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
         let view = host.document
+        view.frame.size.width = 180
+        view.layoutIfNeeded()
         let before = try XCTUnwrap((view.accessibilityElements?.compactMap { $0 as? MessageReadingElement })?.first)
         XCTAssertEqual(before.accessibilityIdentifier, view.document.blocks.first!.id.uuidString)
         XCTAssertFalse(before.accessibilityFrame.isEmpty)
@@ -305,7 +346,7 @@ private final class R0DocumentView: MessageDocumentView {
         super.init(frame: frame)
         accessibilityIdentifier = "r0-document"
         imageCache = MarkdownImageCache(loader: delayedImageLoader)
-        let fixture = R0Document.fixture
+        let fixture = ProcessInfo.processInfo.environment["R0_WIDE_TABLE"] == "1" ? R0Document.scrollFixture : R0Document.fixture
         state = MessageDocumentState(source: fixture.before + "\n\n" + fixture.tableMarkdown + "\n\n" + fixture.after + "\n\n![Controlled photo](\(Self.imageURL.absoluteString))")
         rebuild()
     }

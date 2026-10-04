@@ -40,8 +40,9 @@ CREATE TABLE native_pending_send (
   session_id TEXT,
   text TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (account_id, gateway_id, pending_id),
-  UNIQUE (account_id, gateway_id, draft_id)
+  accepted_order INTEGER NOT NULL,
+  attempted INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (account_id, gateway_id, pending_id)
 );
 
 CREATE TABLE native_pending_attachment (
@@ -94,7 +95,7 @@ ORDER BY sort_order ASC, attachment_id ASC;
 pendingSendsForScope:
 SELECT * FROM native_pending_send
 WHERE account_id = ? AND gateway_id = ?
-ORDER BY created_at ASC, pending_id ASC;
+ORDER BY accepted_order ASC;
 
 pendingSendForId:
 SELECT * FROM native_pending_send
@@ -102,7 +103,8 @@ WHERE account_id = ? AND gateway_id = ? AND pending_id = ?;
 
 pendingSendForDraft:
 SELECT * FROM native_pending_send
-WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ?
+ORDER BY accepted_order ASC;
 
 pendingAttachments:
 SELECT * FROM native_pending_attachment
@@ -159,8 +161,8 @@ WHERE account_id = ? AND gateway_id = ? AND draft_id = ?;
 insertPendingSend:
 INSERT INTO native_pending_send(
   account_id, gateway_id, pending_id, mint_key, surface_id, draft_id,
-  draft_revision, session_id, text, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  draft_revision, session_id, text, created_at, accepted_order
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 insertPendingAttachment:
 INSERT INTO native_pending_attachment(
@@ -184,3 +186,14 @@ INSERT OR REPLACE INTO native_delete_intent(
 deleteDeleteIntent:
 DELETE FROM native_delete_intent
 WHERE account_id = ? AND gateway_id = ? AND session_id = ?;
+
+nextAcceptedOrder:
+SELECT COALESCE(MAX(accepted_order), 0) + 1 FROM native_pending_send;
+
+bindPendingSession:
+UPDATE native_pending_send SET session_id = ?
+WHERE account_id = ? AND gateway_id = ? AND draft_id = ? AND session_id IS NULL;
+
+markPendingAttempted:
+UPDATE native_pending_send SET attempted = 1
+WHERE account_id = ? AND gateway_id = ? AND pending_id = ?;

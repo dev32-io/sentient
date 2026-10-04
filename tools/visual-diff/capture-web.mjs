@@ -6,7 +6,7 @@ import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
-import { assertDisposableOutput, caseIdFromReference, fixtureIdFromReference, defaultActualPath, readPngSize } from "./reference-image.mjs";
+import { absolutePath, assertDisposableOutput, caseIdFromReference, fixtureIdFromReference, defaultActualPath, readPngSize } from "./reference-image.mjs";
 
 import { beginEvidence, finishEvidence, fontThemeIdentity } from "./evidence.mjs";
 
@@ -53,10 +53,10 @@ function parseArguments(argv) {
     if (argument === "--url") url = value;
   }
   if (!reference) throw new Error("--reference is required");
-  const referencePath = resolve(repositoryRoot, reference);
+  const referencePath = absolutePath(reference, repositoryRoot);
   return {
     referencePath,
-    outputPath: output ? resolve(repositoryRoot, output) : defaultActualPath(referencePath, "web"),
+    outputPath: output ? absolutePath(output, repositoryRoot) : defaultActualPath(referencePath, "web"),
     url,
   };
 }
@@ -116,8 +116,9 @@ async function stopServer(child) {
   if (!exited && child.exitCode === null) child.kill("SIGKILL");
 }
 
-async function localFontCss() {
-  const fontRoot = resolve(repositoryRoot, "ios/App/Resources/Fonts");
+export async function localFontCss() {
+  const nativeFontRoot = resolve(repositoryRoot, "ios/App/Resources/Fonts");
+  const referenceFontRoot = resolve(toolRoot, "fonts");
   const fonts = [
     ["DM Sans", 400, "DMSans-Regular.ttf"],
     ["DM Sans", 500, "DMSans-Medium.ttf"],
@@ -130,6 +131,7 @@ async function localFontCss() {
     ["JetBrains Mono", 500, "JetBrainsMono-Medium.ttf"],
   ];
   const rules = await Promise.all(fonts.map(async ([family, weight, file]) => {
+    const fontRoot = family === "Fraunces" ? referenceFontRoot : nativeFontRoot;
     const data = await readFile(resolve(fontRoot, file));
     return `@font-face{font-family:"${family}";font-style:normal;font-weight:${weight};font-display:block;src:url(data:font/ttf;base64,${data.toString("base64")}) format("truetype")}`;
   }));

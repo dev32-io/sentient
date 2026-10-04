@@ -3,7 +3,10 @@ import SwiftUI
 struct BackendSetupView: View {
     @StateObject var model: BackendSetupViewModel
     var onSaved: () -> Void
+    /// Native fixtures suppress only the permission primer; production stays on.
+    var primesLocalNetwork = true
 
+    @FocusState private var fieldFocused: Bool
     @State private var lanPrimer = LocalNetworkPrimer()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -20,12 +23,13 @@ struct BackendSetupView: View {
                     title: "Host or IP",
                     prompt: "gateway.example.com",
                     text: $model.host,
-                    error: model.error == "Enter a host or IP." ? model.error : nil,
+                    error: model.error?.hasPrefix("Enter a host or IP") == true ? model.error : nil,
                     accessibilityId: "backend-host"
                 )
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
+                .focused($fieldFocused)
 
                 DesignField(
                     title: "Port",
@@ -35,6 +39,7 @@ struct BackendSetupView: View {
                     accessibilityId: "backend-port"
                 )
                 .keyboardType(.numberPad)
+                .focused($fieldFocused)
 
                 DesignSegmentedPicker(
                     title: "Security",
@@ -47,6 +52,11 @@ struct BackendSetupView: View {
                 )
                 .accessibilityIdentifier("backend-security")
 
+                if model.security == .plainWs {
+                    AsyncNotice(kind: .warning, title: "Unencrypted connection",
+                                detail: "Plain ws sends your PIN, messages, and audio without encryption. Use only on a trusted local network.",
+                                accessibilityId: "backend-plain-warning")
+                }
                 if model.security == .tlsTrustSelfSigned {
                     AsyncNotice(
                         kind: .warning,
@@ -55,9 +65,10 @@ struct BackendSetupView: View {
                     )
                 }
             }
+            .disabled(model.isSaving)
 
             if let error = model.error {
-                AsyncNotice(kind: .error, title: "Couldn't connect", detail: error, retry: model.save)
+                AsyncNotice(kind: .error, title: "Couldn't connect", detail: error, retry: { fieldFocused = false; model.save() })
                     .accessibilityIdentifier("backend-error")
             } else if model.didSave {
                 AsyncNotice(kind: .success, title: "Backend saved")
@@ -67,12 +78,19 @@ struct BackendSetupView: View {
                 title: "Save & connect",
                 state: model.isSaving ? .loading : .normal,
                 accessibilityId: "backend-save",
-                action: model.save
+                action: { fieldFocused = false; model.save() }
             )
         }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { fieldFocused = false }
+            }
+        }
+        .scrollDismissesKeyboard(.interactively)
         .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: model.didSave)
         .onChange(of: model.didSave) { _, saved in if saved { onSaved() } }
-        .task { lanPrimer.start() }
+        .task { if primesLocalNetwork { lanPrimer.start() } }
         .onDisappear { lanPrimer.cancel() }
     }
 }

@@ -82,7 +82,11 @@ final class NotificationResumeController: ObservableObject {
         accountFence: String,
         activate: @escaping @MainActor (String) async -> NotificationSessionValidation,
         route: @escaping @MainActor (String) -> Void,
-        clear: @escaping @MainActor (String) async -> Bool = { _ in true }
+        prepareRoute: @escaping @MainActor () async -> Bool = { true },
+        clear: @escaping @MainActor (String) async -> Bool = { _ in true },
+        isCurrent: @escaping @MainActor () -> Bool = { true },
+        activationFinished: @escaping @MainActor () -> Void = {},
+        activationAbandoned: @escaping @MainActor () -> Void = {}
     ) {
         setAccountFence(accountFence)
         generation += 1
@@ -90,11 +94,22 @@ final class NotificationResumeController: ObservableObject {
         activationTask?.cancel()
         state = .pending(destination)
         activationTask = Task { [weak self] in
+            guard !Task.isCancelled, isCurrent() else { return }
             let result = await activate(destination.sessionId)
             guard !Task.isCancelled, let self,
-                  self.generation == operation, self.accountFence == accountFence else { return }
+                  self.generation == operation, self.accountFence == accountFence, isCurrent() else { return }
+            activationFinished()
             switch result {
             case .authorized:
+                let prepared = await prepareRoute()
+                guard !Task.isCancelled, self.generation == operation,
+                      self.accountFence == accountFence, isCurrent() else { return }
+                guard prepared else {
+                    activationAbandoned()
+                    self.activationTask = nil
+                    self.state = .retryableFailure(destination)
+                    return
+                }
                 self.state = .clearing(destination)
                 route(destination.sessionId)
                 let cleared = await clear(destination.sessionId)
@@ -102,9 +117,11 @@ final class NotificationResumeController: ObservableObject {
                 self.activationTask = nil
                 self.state = cleared ? .idle : .clearFailure(destination)
             case .unavailable:
+                activationAbandoned()
                 self.activationTask = nil
                 self.state = .unavailable(destination)
             case .retryableFailure:
+                activationAbandoned()
                 self.activationTask = nil
                 self.state = .retryableFailure(destination)
             }
@@ -127,6 +144,15 @@ final class NotificationResumeController: ObservableObject {
                   self.generation == operation, self.accountFence == accountFence else { return }
             self.activationTask = nil
             self.state = cleared ? .idle : .clearFailure(destination)
+        }
+    }
+
+    /// Explicit navigation supersedes only activation, not an already-opened
+    /// message's independent card-clear recovery.
+    func supersedeNavigation() {
+        switch state {
+        case .pending, .unavailable, .retryableFailure: cancel()
+        case .idle, .clearing, .clearFailure: break
         }
     }
 

@@ -988,10 +988,23 @@ struct DesignChip: View {
     }
 }
 
-private struct DesignCheckboxMark: View {
+struct DesignCheckboxMark: View {
+    // Fixed native checkmark silhouette, shared with read-only text decoration.
+    // A vector avoids SF Symbol catalog initialization on first task layout.
+    static let checkmarkLineWidth: CGFloat = 2
+    static func checkmarkPath(in rect: CGRect) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.31, y: rect.minY + rect.height * 0.51))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.45, y: rect.minY + rect.height * 0.67))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.70, y: rect.minY + rect.height * 0.30))
+        return path
+    }
+
     @Environment(\.designControlPressed) private var pressed
     @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    var rasterContrast: Bool? = nil
+    private var reduceMotion: Bool { rasterContrast != nil || systemReduceMotion }
 
     let isOn: Bool
     let isEnabled: Bool
@@ -1005,7 +1018,7 @@ private struct DesignCheckboxMark: View {
             isPressed: pressed,
             isFocused: focused,
             isHovered: hovered,
-            increasedContrast: contrast == .increased,
+            increasedContrast: rasterContrast ?? (contrast == .increased),
             reduceMotion: reduceMotion
         )
     }
@@ -1021,9 +1034,9 @@ private struct DesignCheckboxMark: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
 
-            Image(systemName: "checkmark")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(isEnabled ? DuskColors.bgSunk : DuskColors.ink4)
+            Path(Self.checkmarkPath(in: CGRect(x: 0, y: 0, width: DesignMetrics.checkboxSize, height: DesignMetrics.checkboxSize)))
+                .stroke(isEnabled ? DuskColors.bgSunk : DuskColors.ink4,
+                        style: StrokeStyle(lineWidth: Self.checkmarkLineWidth, lineCap: .round, lineJoin: .round))
                 .opacity(isOn ? 1 : 0)
                 .scaleEffect(isOn ? 1 : 0.7)
                 .accessibilityHidden(true)

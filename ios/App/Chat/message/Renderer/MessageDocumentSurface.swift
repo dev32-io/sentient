@@ -50,7 +50,7 @@ struct MessageDocumentSurface: UIViewRepresentable {
         return CGSize(width: width, height: layout.height)
     }
     static func dismantleUIView(_ view: MessageDocumentView, coordinator: ()) {
-        view.selectionEdge.stop()
+        view.prepareForUnmount()
         view.showsStreamingCaret = false
         if view.state.mountedView === view { view.state.mountedView = nil }
         view.onSelectionChange = nil

@@ -223,7 +223,7 @@ class SdkConnectors(
      * path as a normal switch.
      */
     fun refetchHistoryForSession(sessionId: String) {
-        val generation = history.bumpForRefetch()
+        val generation = history.bumpForRefetch(sessionId)
         loadHistoryForSession(sessionId, generation)
     }
 

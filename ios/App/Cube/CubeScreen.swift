@@ -347,16 +347,15 @@ struct CubeScreen: View {
             }.frame(maxWidth: .infinity)
             connectionNotice(model)
             DesignCard {
-                valueRow("Battery", value: !model.hardwareAvailable ? "Unavailable" : model.status?.batteryPercent.map { "\($0)%\(model.status?.charging == true ? " · charging" : "")" } ?? "Not reported", available: model.hardwareAvailable)
+                valueRow("Battery", value: !model.hardwareAvailable ? "Unavailable" : model.status?.batteryPercent.map { "\($0)%\(model.status?.charging == true ? " · charging" : "")" } ?? "Not reported")
                 DesignDivider()
                 linkRow("Wi-Fi", detail: wifiSummary(model), id: "cube-wifi") { onOpen(.wifi) }
                     .privacySensitive()
                     .disabled(model.busy || !model.hardwareAvailable)
-                    .opacity(model.hardwareAvailable ? 1 : 0.5)
                 DesignDivider()
                 valueRow("Bluetooth", value: model.hardwareAvailable ? "Connected" : "Not connected")
                 DesignDivider()
-                valueRow("Sentient", value: model.selectedRecord?.status == "disabled" ? "Disabled" : !model.hardwareAvailable ? "Unavailable" : model.status.map { $0.gatewayConnected ? "Connected at last check" : "Offline at last check" } ?? "Unavailable", available: model.hardwareAvailable)
+                valueRow("Sentient", value: model.selectedRecord?.status == "disabled" ? "Disabled" : !model.hardwareAvailable ? "Unavailable" : model.status.map { $0.gatewayConnected ? "Connected at last check" : "Offline at last check" } ?? "Unavailable")
                 DesignDivider()
                 linkRow("Device details", id: "cube-details") { onOpen(.details) }
             }
@@ -387,10 +386,27 @@ struct CubeScreen: View {
                 .designText(.body).foregroundStyle(DuskColors.ink2)
             DesignCard(bodyStyle: .padded) {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    Picker("Nearby Cube", selection: $locator) {
-                        Text("Choose Cube").tag("")
-                        ForEach(model.pairingLocators, id: \.self) { Text($0).tag($0) }
-                    }.tint(DuskColors.accent).accessibilityIdentifier("cube-manual-locator")
+                    DesignMenuButton(accessibilityLabel: "Nearby Cube", accessibilityId: "cube-manual-locator") {
+                        Picker("Nearby Cube", selection: $locator) {
+                            Text("Choose Cube").tag("")
+                            ForEach(model.pairingLocators, id: \.self) { Text($0).tag($0) }
+                        }.pickerStyle(.inline)
+                    } label: {
+                        // Native Picker face clips multiline values at accessibility sizes.
+                        // Let SwiftUI size the trigger; keep native Picker selection in the menu.
+                        HStack(spacing: Space.sm) {
+                            Text(locator.isEmpty ? "Choose Cube" : locator)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.up.chevron.down").accessibilityHidden(true)
+                        }
+                        .font(.body)
+                        .frame(minHeight: DesignMetrics.minimumTarget)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DuskColors.accent)
+                    .accessibilityValue(locator.isEmpty ? "Choose Cube" : locator)
                     DesignSecureField(title: "Pairing code", text: $pairingCode)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
                         .accessibilityIdentifier("cube-manual-code")
@@ -418,7 +434,6 @@ struct CubeScreen: View {
                     Text("Password goes directly to Cube, never to your profile.").designText(.supporting).foregroundStyle(DuskColors.ink2)
                 }
             }.disabled(model.busy || !model.hardwareAvailable)
-                .opacity(model.hardwareAvailable ? 1 : 0.5)
             DesignActionButton(title: "Send Wi-Fi settings", accessibilityId: "cube-wifi-send") {
                 let value = password
                 password = ""
@@ -451,9 +466,9 @@ struct CubeScreen: View {
                     }
                 }
                 DesignDivider()
-                valueRow("Firmware", value: model.hardwareAvailable ? model.status?.firmware ?? "Not reported" : "Unavailable", available: model.hardwareAvailable)
+                valueRow("Firmware", value: model.hardwareAvailable ? model.status?.firmware ?? "Not reported" : "Unavailable")
                 DesignDivider()
-                valueRow("Enrollment", value: model.hardwareAvailable ? model.status?.phase ?? "Not reported" : "Unavailable", available: model.hardwareAvailable)
+                valueRow("Enrollment", value: model.hardwareAvailable ? model.status?.phase ?? "Not reported" : "Unavailable")
                 DesignDivider()
                 valueRow("Account", value: model.selectedRecord?.status ?? "Not checked")
             }
@@ -525,11 +540,11 @@ struct CubeScreen: View {
         }
     }
 
-    private func valueRow(_ title: String, value: String, available: Bool = true) -> some View {
+    private func valueRow(_ title: String, value: String) -> some View {
         DesignSettingsRow(title: title) {
             Text(value).designText(.supporting).foregroundStyle(DuskColors.ink2)
                 .multilineTextAlignment(.trailing).textSelection(.enabled)
-        }.opacity(available ? 1 : 0.5)
+        }
     }
 
     private func linkRow(_ title: String, detail: String? = nil, id: String, action: @escaping () -> Void) -> some View {

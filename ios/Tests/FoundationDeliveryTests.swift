@@ -43,7 +43,8 @@ final class FoundationDeliveryTests: XCTestCase {
                     XCTAssertGreaterThan(natural, 0)
                     XCTAssertGreaterThanOrEqual(styled, natural)
                     if size == .large {
-                        XCTAssertEqual(styled / 2, role.baseSize * role.lineHeight, accuracy: 0.5)
+                        // Line spacing adds missing space; never compress the native face metrics.
+                        XCTAssertEqual(styled / 2, max(natural / 2, role.baseSize * role.lineHeight), accuracy: 0.5)
                         defaultLeading["\(role)"] = (styled - natural) / 2
                     } else if role == .body || role == .telemetry {
                         XCTAssertGreaterThan((styled - natural) / 2, try XCTUnwrap(defaultLeading["\(role)"]) * 1.8)

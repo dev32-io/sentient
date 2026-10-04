@@ -1,5 +1,5 @@
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
-import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
 
 const PNG_SIGNATURE = "89504e470d0a1a0a";
 
@@ -38,31 +38,74 @@ export function defaultActualPath(referencePath, platform) {
   return resolve("build", "visual-captures", platform, `${caseIdFromReference(referencePath)}.png`);
 }
 
-export async function assertDisposableOutput(referencePath, outputPath, platform) {
-  const reference = resolve(referencePath);
-  const output = resolve(outputPath);
-  const root = resolve("build", "visual-captures", platform);
-  if (reference === output) throw new Error("Implementation output must not overwrite the designer reference");
-
-  await mkdir(root, { recursive: true });
-  await mkdir(dirname(output), { recursive: true });
-  const rootReal = await realpath(root);
-  const parentReal = await realpath(dirname(output));
-  const fromRoot = relative(rootReal, parentReal);
-  if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`)) {
-    throw new Error(`Implementation output must stay under ${rootReal}`);
-  }
-  try {
-    if ((await lstat(output)).isSymbolicLink()) {
-      throw new Error("Implementation output must not be a symbolic link");
+// Resolve each component before consuming the next: resolve(raw) would erase
+// the filesystem meaning of a symlink followed by "..". Missing output tails
+// are allowed; dangling symlinks and other filesystem errors fail closed.
+export async function canonicalPath(path) {
+  let current = isAbsolute(path) ? sep : await realpath(process.cwd());
+  for (const part of path.split(sep).filter(Boolean)) {
+    const next = join(current, part);
+    try {
+      current = await realpath(next);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const entry = await lstat(next).catch(error => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      if (entry) throw new Error("Unresolvable output path");
+      current = next;
     }
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
   }
+  return current;
+}
+
+export function absolutePath(path, base = process.cwd()) {
+  return isAbsolute(path) ? path : `${base}${sep}${path}`;
+}
+
+export async function assertPathWithin(root, path) {
+  const physical = await canonicalPath(path);
+  // root is anchored at the canonical repository, not an alias-selected root.
+  const fromRoot = relative(root, physical);
+  if (await canonicalPath(root) !== root || fromRoot === "" || fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+    throw new Error(`Path must stay under ${root}`);
+  }
+  return physical;
+}
+
+export async function assertArtifactOutput(inputs, output, root, overwriteMessage) {
+  const physical = await canonicalPath(output);
+  const outputStat = await stat(physical).catch(error => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  for (const input of inputs) {
+    const inputPath = await canonicalPath(input);
+    const inputStat = await stat(inputPath).catch(error => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    if (physical === inputPath || (outputStat && inputStat && outputStat.dev === inputStat.dev && outputStat.ino === inputStat.ino)) {
+      throw new Error(overwriteMessage);
+    }
+  }
+  await assertPathWithin(root, output);
+  const entry = await lstat(output).catch(error => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  if (entry?.isSymbolicLink()) throw new Error("Output must not be a symbolic link");
+  if (outputStat && (!outputStat.isFile() || outputStat.nlink > 1)) throw new Error("Output must be an unaliased regular file");
+  return physical;
+}
+
+export async function assertDisposableOutput(referencePath, outputPath, platform, repoRoot = process.cwd()) {
+  const root = resolve(await realpath(repoRoot), "build", "visual-captures", platform);
+  const output = await assertArtifactOutput([absolutePath(referencePath, repoRoot)], absolutePath(outputPath, repoRoot), root,
+    "Implementation output must not overwrite a designer reference.");
+  await mkdir(dirname(output), { recursive: true });
+  return output;
 }
 
 export function defaultDiffPath(actualPath) {
   const extension = extname(actualPath);
   const stem = basename(actualPath, extension);
-  return join(dirname(actualPath), `${stem}.visual-diff.png`);
+  return `${dirname(actualPath)}${sep}${stem}.visual-diff.png`;
 }

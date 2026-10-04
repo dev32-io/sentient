@@ -4,8 +4,7 @@
 // toggle, and a char-capped mono editor with a live counter. SLOW save (PUT
 // memory → apply-with-restart) puts every dirty slot.
 //
-// The shared apply bar receives this screen's dirty/save actions; discard and
-// dirty-back still use the existing native confirmation and navigation seam.
+// Discard restores drafts in place; Back separately confirms dirty navigation.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -21,7 +20,6 @@ private let slotExplain: [MemoryViewModel.Slot: String] = [
 ]
 
 struct MemoryScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
 
     @State private var vm: MemoryViewModel
@@ -30,15 +28,18 @@ struct MemoryScreen: View {
     @State private var showDiscard = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: MemoryViewModel(settings: settings), onBack: onBack)
+    }
+
+    init(viewModel: MemoryViewModel, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _vm = State(initialValue: MemoryViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
         SettingsPageScaffold(
             title: "Memory", screenId: "settings-memory-screen",
-            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty && !vm.isApplying,
             backAccessibilityId: "settings-memory-back"
         ) {
             VStack(alignment: .leading, spacing: Space.md) {
@@ -48,39 +49,30 @@ struct MemoryScreen: View {
                     selection: Binding(get: { slot.rawValue }, set: selectSlot),
                     accessibilityId: "settings-memory-slot"
                 )
-                Text(slotExplain[slot] ?? "")
-                    .designText(.supporting)
-                    .foregroundStyle(DuskColors.ink2)
                 slotContent
             }
-            .padding(Space.md)
-            .designPlate()
         }
+        .disabled(vm.isApplying)
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
             discardAccessibilityId: "settings-memory-discard",
             applyAccessibilityId: "settings-memory-save",
-            onDiscard: attemptBack,
+            onDiscard: vm.discard,
             onApply: { Task { await vm.save() } }
         )
         .task(id: slot) { await vm.loadIfNeeded(slot) }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { onBack() }
+            Button("Discard", role: .destructive) {
+                guard !vm.isApplying else { return }
+                vm.discard()
+                onBack()
+            }
             Button("Keep editing", role: .cancel) {}
         }
     }
 
-    private var applyState: DesignApplyState {
-        switch vm.save {
-        case .idle: .idle
-        case .saving: .saving
-        case .restarting: .restarting
-        case .alreadyApplying: .alreadyApplying
-        case .applied: .applied
-        case .failed(let message): .failed(message)
-        }
-    }
+    private var applyState: DesignApplyState { vm.save }
 
     @ViewBuilder
     private var slotContent: some View {
@@ -96,49 +88,47 @@ struct MemoryScreen: View {
         }
     }
 
-    @ViewBuilder
     private func editor(_ state: MemoryViewModel.SlotState) -> some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                Text(viewMode == "edit" ? "Editing" : "Preview")
-                    .designText(.label)
-                    .foregroundStyle(DuskColors.ink2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                DesignActionButton(
-                    title: viewMode == "edit" ? "Preview" : "Edit",
-                    role: .quiet,
-                    accessibilityId: "settings-memory-view",
-                    fillsWidth: false,
-                    action: { viewMode = viewMode == "edit" ? "preview" : "edit" }
-                )
-            }
+        DesignSettingsEditor(
+            title: slot.label,
+            detail: slotExplain[slot] ?? "",
+            state: state.isDirty ? .unsaved : .saved
+        ) {
+            DesignSegmentedPicker(
+                title: "Document mode",
+                options: [(value: "edit", label: "Edit"), (value: "preview", label: "Preview")],
+                selection: $viewMode,
+                accessibilityId: "settings-memory-view",
+                isEnabled: !vm.isApplying
+            )
             if viewMode == "edit" {
                 DesignMultilineEditor(
-                    text: Binding(
-                        get: { state.draft },
-                        set: { vm.setDraft($0, for: slot) }
-                    ),
+                    title: slot.label,
+                    text: Binding(get: { vm.state(for: slot).draft }, set: { vm.setDraft($0, for: slot) }),
                     placeholder: "Nothing here yet. Add a note now or let the assistant build this over time.",
                     maxLength: state.charLimit > 0 ? state.charLimit : nil,
-                    accessibilityId: "settings-memory-editor"
+                    accessibilityId: "settings-memory-editor",
+                    isEnabled: !vm.isApplying,
+                    usesMonospacedText: true
                 )
+            } else if state.draft.isEmpty {
+                Text("Nothing to preview.").designText(.supporting).foregroundStyle(DuskColors.ink2)
             } else {
-                Text(state.draft.isEmpty ? "Nothing to preview." : state.draft)
-                    .designText(.body)
-                    .foregroundStyle(state.draft.isEmpty ? DuskColors.ink2 : DuskColors.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                // Draft text does not grant remote-image fetch authority.
+                MessageDocumentSurface(source: state.draft, imageCache: nil)
                     .accessibilityIdentifier("settings-memory-preview")
             }
         }
     }
 
     private func selectSlot(_ id: String) {
+        guard !vm.isApplying else { return }
         slot = (id == "user") ? .user : .memory
         viewMode = "edit"
     }
 
     private func attemptBack() {
+        guard !vm.isApplying else { return }
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
 }

@@ -2,9 +2,8 @@
 
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { validateEvidence } from "./evidence.mjs";
-import { caseIdFromReference, defaultActualPath } from "./reference-image.mjs";
+import { absolutePath, caseIdFromReference, defaultActualPath } from "./reference-image.mjs";
 
 import PLATFORM_PROFILES from "./profiles.json" with { type: "json" };
 
@@ -29,7 +28,7 @@ function parseArguments(argv) {
     throw new Error("--platform must be web, ios, or android");
   }
   if (!reference) throw new Error("--reference is required");
-  return { platform, referencePath: resolve(reference) };
+  return { platform, referencePath: absolutePath(reference) };
 }
 
 let activeChild;

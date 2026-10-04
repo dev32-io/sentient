@@ -12,10 +12,18 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         continueAfterFailure = false
         sequence = 0
         scenario = "\(name)-\(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)"
-        let request = try String(contentsOfFile: "/tmp/sentient-visual-diff-request", encoding: .utf8).split(separator: "\n")
-        output = URL(fileURLWithPath: String(request[1]))
+        if let path = ProcessInfo.processInfo.environment["R0_OUTPUT"] {
+            output = URL(fileURLWithPath: path)
+        } else {
+            let request = try String(contentsOfFile: "/tmp/sentient-visual-diff-request", encoding: .utf8).split(separator: "\n")
+            output = URL(fileURLWithPath: String(request[1]))
+        }
         let app = XCUIApplication()
         app.launchEnvironment["R0_SCENARIO"] = scenario
+        app.launchEnvironment["R0_OUTPUT"] = output.path
+        if ["table-menu", "horizontal", "mutation", "cancel", "remove"].contains(name) {
+            app.launchEnvironment["R0_WIDE_TABLE"] = "1"
+        }
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Before café 👩🏽‍💻 — select from here into any cell.")).firstMatch.waitForExistence(timeout: 5))
         return app
@@ -71,33 +79,64 @@ final class RendererFeasibilityGestureTests: XCTestCase {
         point(app, first.minX + max(2, first.height / 4), first.midY).press(forDuration: 1)
     }
 
-    func testCanonicalTableToolbarActivation() throws {
-        let app = try launch("toolbar")
-        let initial = try save(app, "canonical-toolbar")
-        func activate(_ state: [String: Any], _ name: String) throws {
-            let button = app.buttons["chat-copy-table"].firstMatch
-            XCTAssertTrue(button.waitForExistence(timeout: 3))
-            XCTAssertEqual(button.label, "Copy table as Markdown")
-            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
-            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
-            let tools = rect(state, "toolsRect")
-            XCTAssertGreaterThanOrEqual(button.frame.minX, tools.minX - 1)
-            XCTAssertLessThanOrEqual(button.frame.maxX, tools.maxX + 1)
-            XCTAssertGreaterThanOrEqual(button.frame.minY, tools.minY - 1)
-            XCTAssertLessThanOrEqual(button.frame.maxY, tools.maxY + 1)
-            XCTAssertTrue(button.isHittable)
-            button.tap()
-            try Data().write(to: output.appendingPathComponent("capture-owned-clipboard"), options: .withoutOverwriting)
-            let after = try save(app, name, expectedClipboard: state["firstTableMarkdown"] as? String)
-            XCTAssertEqual(after["selectionStart"] as? Int, state["selectionStart"] as? Int)
-            XCTAssertEqual(after["openedLinks"] as? Int, 0, "Toolbar activation must not activate adjacent document links")
-        }
-        try activate(initial, "canonical-toolbar-activated")
-        app.buttons["r0-width"].tap()
-        app.buttons["r0-type"].tap()
-        let large = try save(app, "canonical-toolbar-large")
-        XCTAssertGreaterThan(large["toolsHeight"] as! Double, initial["toolsHeight"] as! Double)
-        try activate(large, "canonical-toolbar-large-activated")
+    func testCellTextKeepsNativeMenuAndOutsideTapDismisses() throws {
+        let app = try launch("arbitration")
+        let initial = try save(app, "initial")
+        let table = rect(initial, "tableRect")
+        point(app, table.minX + 24, table.minY + 24).press(forDuration: 1)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy entire table'")).firstMatch.exists)
+        copy(app)
+        let text = try save(app, "cell-text", expectedClipboard: "Name")
+        XCTAssertGreaterThan(text["selectionLength"] as! Int, 0)
+        point(app, table.midX, table.maxY + 50).tap()
+        let dismissed = try save(app, "outside")
+        XCTAssertEqual(dismissed["selectionLength"] as? Int, 0)
+        assertStopped(dismissed)
+        let space = rect(initial, "cellSpace")
+        point(app, space.midX, space.midY).press(forDuration: 1)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy entire table'")).firstMatch.exists)
+        copy(app)
+        let spaced = try save(app, "interior-word-space")
+        XCTAssertGreaterThan(spaced["selectionLength"] as! Int, 0)
+    }
+
+    func testTableBackgroundMenuAndNativeInertia() throws {
+        let app = try launch("table-menu")
+        let initial = try save(app, "initial")
+        XCTAssertFalse(app.buttons["chat-copy-table"].exists)
+        let table = rect(initial, "tableRect")
+        point(app, table.minX + 3, table.minY + 3).press(forDuration: 1)
+        let menu = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy entire table'")).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "table-background-native-menu"; shot.lifetime = .keepAlways; add(shot)
+        menu.tap()
+        try Data().write(to: output.appendingPathComponent("capture-owned-clipboard"), options: .withoutOverwriting)
+        let copied = try save(app, "background-copy", expectedClipboard: initial["firstTableMarkdown"] as? String)
+        XCTAssertEqual(copied["selectionLength"] as? Int, 0)
+        point(app, table.midX + 25, table.minY + 30).press(forDuration: 0.01,
+            thenDragTo: point(app, table.midX - 25, table.minY + 30), withVelocity: .fast, thenHoldForDuration: 0)
+        let flicked = try save(app, "flick")
+        XCTAssertGreaterThan(flicked["tableOffset"] as! Double, 0)
+        XCTAssertGreaterThan(flicked["decelerationFrames"] as! Int, 0)
+        XCTAssertGreaterThan(flicked["decelerationTravel"] as! Double, 0, "Content must move after release, not merely report decelerating at its bound")
+        XCTAssertEqual(flicked["parentOffset"] as? Double, initial["parentOffset"] as? Double)
+        XCTAssertEqual(flicked["selectionLength"] as? Int, 0)
+    }
+
+    func testLongWideTableNativeCoastFrameProbe() throws {
+        let app = try launch("long-coast")
+        let initial = try save(app, "long-wide-initial")
+        let table = rect(initial, "tableRect")
+        point(app, table.maxX - 25, table.minY + 30).press(forDuration: 0.01,
+            thenDragTo: point(app, table.minX + 25, table.minY + 30), withVelocity: .fast, thenHoldForDuration: 0)
+        let after = try save(app, "long-wide-settled")
+        XCTAssertGreaterThan(after["decelerationFrames"] as! Int, 20)
+        XCTAssertGreaterThan(after["decelerationTravel"] as! Double, 50)
+        XCTAssertEqual(after["isCoasting"] as? Bool, false)
+        XCTAssertEqual(after["selectionLength"] as? Int, 0)
+        XCTAssertEqual(after["parentOffset"] as? Double, initial["parentOffset"] as? Double)
+        assertStopped(after)
     }
 
     func testHorizontalHoldAndReverse() throws {

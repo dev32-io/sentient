@@ -19,6 +19,22 @@ struct R0Document {
         after: "After table — selection continues here. Stream: "
     )
 
+    /// Native horizontal gestures need real wide data, not inflated short cells.
+    /// Keep Name/Observation and their Unicode anchors; Value stays at far edge.
+    static var scrollFixture: R0Document {
+        var result = fixture
+        let columns = [
+            ["Schedule", "Morning visit after breakfast", "Evening visit before dinner"],
+            ["Location", "Community garden near the library", "Neighborhood park beside the school"],
+            ["Preparation", "Bring water and comfortable walking shoes", "Pack snacks and a light rain jacket"],
+            ["Follow-up", "Confirm arrival with the organizer", "Share the next available meeting time"]
+        ]
+        for index in result.rows.indices {
+            result.rows[index].insert(contentsOf: columns.map { $0[index] }, at: result.rows[index].count - 1)
+        }
+        return result
+    }
+
     var plain: String { before + "\n" + rows.map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n" + after }
     var tableMarkdown: String {
         func row(_ cells: [String]) -> String {
@@ -83,4 +99,3 @@ func testImage(width: Int, height: Int) -> CGImage {
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     return context.makeImage()!
 }
-
