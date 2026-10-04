@@ -5,7 +5,7 @@
 // Hermes restart), so there is no "restarting…" copy.
 //
 // Chrome: the shared apply bar appears for the existing draft/save lifecycle;
-// its Discard action routes through the native confirmation. The leading back
+// its Discard action restores drafts in place. The leading back
 // button keeps the same dirty-navigation guard through the `onBack` seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
@@ -17,27 +17,29 @@ private let audioChannelOptions: [SegmentOption] = [
 ]
 
 struct AudioScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
 
     @State private var vm: AudioViewModel
     @State private var showDiscard = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: AudioViewModel(settings: settings), onBack: onBack)
+    }
+
+    init(viewModel: AudioViewModel, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _vm = State(initialValue: AudioViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
         SettingsPageScaffold(
             title: "Audio", screenId: "settings-audio-screen",
-            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty && !vm.isApplying,
             backAccessibilityId: "settings-audio-back"
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading audio settings")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load audio settings", detail: message) {
                     Task { await vm.load() }
@@ -46,30 +48,27 @@ struct AudioScreen: View {
                 outputCard
             }
         }
+        .disabled(vm.isApplying)
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
             discardAccessibilityId: "settings-audio-discard",
             applyAccessibilityId: "settings-audio-save",
-            onDiscard: attemptBack,
+            onDiscard: vm.discard,
             onApply: { Task { await vm.save() } }
         )
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { onBack() }
+            Button("Discard", role: .destructive) {
+                guard !vm.isApplying else { return }
+                vm.discard()
+                onBack()
+            }
             Button("Keep editing", role: .cancel) {}
         }
     }
 
-    private var applyState: DesignApplyState {
-        switch vm.save {
-        case .idle: .idle
-        case .saving, .restarting: .saving
-        case .alreadyApplying: .alreadyApplying
-        case .applied: .applied
-        case .failed(let message): .failed(message)
-        }
-    }
+    private var applyState: DesignApplyState { vm.save }
 
     private var outputCard: some View {
         AudioPreferenceBlock(
@@ -79,6 +78,7 @@ struct AudioScreen: View {
     }
 
     private func attemptBack() {
+        guard !vm.isApplying else { return }
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
 }
@@ -90,25 +90,17 @@ private struct AudioPreferenceBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            Text("Response behavior")
-                .designText(.supporting)
-                .foregroundStyle(DuskColors.ink2)
-                .accessibilityAddTraits(.isHeader)
-            DesignCard(bodyStyle: .padded) {
+            DesignCard(title: "Reply output", bodyStyle: .settingsGroup) {
                 DesignToggleRow(
                     title: "Speak responses",
                     detail: "When off, replies are silent — text still streams to chat.",
                     isOn: $ttsEnabled,
                     accessibilityId: "settings-audio-tts"
                 )
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Reply channel")
-                        .designText(.label)
-                        .fontWeight(.medium)
-                        .foregroundStyle(DuskColors.ink)
-                    Text("Voice allows spoken replies when Speak responses is on. Text only keeps replies silent.")
-                        .designText(.supporting)
-                        .foregroundStyle(DuskColors.ink2)
+                DesignSettingsRow(
+                    title: "Reply channel",
+                    detail: "Voice allows spoken replies when Speak responses is on. Text only keeps replies silent."
+                ) {
                     DesignSegmentedPicker(
                         title: "Reply channel",
                         options: audioChannelOptions.map { (value: $0.id, label: $0.label) },
@@ -116,8 +108,6 @@ private struct AudioPreferenceBlock: View {
                         accessibilityId: "settings-audio-channel"
                     )
                 }
-                .padding(Space.md)
-                .designWell()
             }
             Text("Changes take effect on the next reply.")
                 .designText(.supporting)

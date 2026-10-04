@@ -1,36 +1,5 @@
-// ---------------------------------------------------------------------------
-// ConversationHistoryConnector — session-scoped read-only mirror of the
-// gateway's ConversationHistory.
-//
-// Mirrors web-sdk's conversation-history-connector.ts post-Task-2.5 shape:
-//   capability = "conversation.history"  (status observer)
-//
-//   conversation.entry    → APPEND to the mirror, fire onEntry + onUpdate,
-//                           UNLESS awaitingHistory (straggler from prior
-//                           generation → DROP).
-//   session.switched      → increment generation; set awaitingHistory gate;
-//                           fire onHistoryNeeded(sessionId, generation) + onEvent.
-//   session.created       → refetch the newly minted history. Its first user entry
-//                           can commit before this window is attached to fan-out.
-//   replaceMirror(items)  → REPLACE the mirror with REST history, release the
-//                           gate, fire onSnapshot + onUpdate.
-//
-// The gateway no longer sends conversation.snapshot on session.switched
-// (Task 2.1). History is loaded via REST getMessages. The gate semantics are
-// identical: stragglers between session.switched and the REST response drop;
-// the gate clears on replaceMirror success (or on a deliberate clear-with-empty
-// on REST error so the connector never wedges).
-//
-// Stale-switch guard: a generation counter increments on every session.switched.
-// onHistoryNeeded fires AFTER the increment so the generation token it carries
-// is the POST-bump value — the same value replaceMirror must match. This
-// eliminates the ordering dependency between router.route and onSessionAnchored
-// that caused the generation mismatch bug (Task 2.6 fix).
-//
-// Threading: single-threaded; the orchestrator routes frames on one dispatcher
-// and calls replaceMirror from the SDK scope. The mutable mirror + gate are
-// owned here.
-// ---------------------------------------------------------------------------
+// Route-fenced REST mirror with a live tail retained during each history fetch.
+// Owned by the serialized SDK dispatcher, including REST completion callbacks.
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
@@ -63,6 +32,8 @@ class ConversationHistoryConnector(
     // True between session.switched and the REST history arriving via replaceMirror.
     private var awaitingHistory: Boolean = false
     private var awaitingMintHistory: Boolean = false
+    private var targetSessionId: String? = null
+    private var liveTail: List<ConversationFeedItem> = emptyList()
 
     /** Current ordered mirror of the feed. Safe to read synchronously. */
     fun items(): List<ConversationFeedItem> = mirror
@@ -77,11 +48,13 @@ class ConversationHistoryConnector(
     /**
      * Force a history refetch outside the session.switched path (Task 3.10 —
      * stream.resumed{recovered:false}). Bumps the generation + arms the gate so
-     * stragglers drop, then returns the post-bump generation the caller passes to
+     * current-target entries are buffered. Returns the post-bump generation for
      * the REST fetch + replaceMirror. Mirrors the session.switched bookkeeping
      * without the SdkEvent.SessionSwitched emission (no UI session change here).
      */
-    fun bumpForRefetch(): Int {
+    fun bumpForRefetch(sessionId: String? = targetSessionId): Int {
+        if (targetSessionId != sessionId) liveTail = emptyList()
+        targetSessionId = sessionId
         generation++
         awaitingHistory = true
         log.info("gate-set", mapOf("trigger" to "stream.resumed.refetch", "generation" to generation))
@@ -103,6 +76,8 @@ class ConversationHistoryConnector(
         generation++
         awaitingHistory = false
         awaitingMintHistory = true
+        targetSessionId = null
+        liveTail = emptyList()
         mirror = emptyList()
         log.info("clear-new-chat", mapOf("generation" to generation))
         onSnapshot?.invoke(mirror)
@@ -124,6 +99,9 @@ class ConversationHistoryConnector(
      * the chat empty.
      */
     fun clearForSwitch() {
+        generation++ // Invalidate REST immediately, before the next switch ACK.
+        targetSessionId = null
+        liveTail = emptyList()
         awaitingHistory = true
         awaitingMintHistory = false
         mirror = emptyList()
@@ -138,6 +116,12 @@ class ConversationHistoryConnector(
             // (pre-Task-2.1 or a reconnect that sends one) still hydrates the mirror.
             is ServerMessage.ConversationSnapshot -> onSnapshotFrame(msg)
             is ServerMessage.ConversationEntry -> onEntryFrame(msg)
+            is ServerMessage.SessionAttached -> {
+                // The SDK validates attachment against the latest route intent before
+                // broadcasting. Reconstruction can precede switch ACK / REST launch.
+                if (targetSessionId != msg.sessionId) liveTail = emptyList()
+                targetSessionId = msg.sessionId
+            }
             is ServerMessage.SessionSwitched -> onSessionSwitched(msg)
             is ServerMessage.SessionCreated -> onSessionCreated(msg)
             else -> Unit // not owned by this connector
@@ -162,7 +146,8 @@ class ConversationHistoryConnector(
             return
         }
         log.info("replaceMirror", mapOf("count" to items.size, "generation" to generation))
-        mirror = items.toList()
+        mirror = liveTail.fold(items.toList(), ::mergeEntry)
+        liveTail = emptyList()
         awaitingHistory = false
         onSnapshot?.invoke(mirror)
         onUpdate?.invoke(mirror)
@@ -172,17 +157,21 @@ class ConversationHistoryConnector(
 
     private fun onSnapshotFrame(msg: ServerMessage.ConversationSnapshot) {
         log.info("snapshot-legacy", mapOf("count" to msg.items.size))
-        mirror = msg.items.toList()
-        awaitingHistory = false
-        onSnapshot?.invoke(mirror)
-        onUpdate?.invoke(mirror)
+        replaceMirror(msg.items, generation)
+    }
+
+    private fun mergeEntry(items: List<ConversationFeedItem>, item: ConversationFeedItem): List<ConversationFeedItem> {
+        val index = if (item.entryId.isNotEmpty()) items.indexOfFirst { it.entryId == item.entryId } else -1
+        return if (index >= 0) items.toMutableList().also { it[index] = item } else items + item
     }
 
     private fun onEntryFrame(msg: ServerMessage.ConversationEntry) {
-        if (awaitingHistory) {
-            log.debug("entry-dropped", mapOf("reason" to "awaiting-history", "ts" to msg.item.ts))
-            return
-        }
+        val user = msg.item as? ConversationFeedItem.User
+        if (targetSessionId != null && user?.sessionId != null && user.sessionId != targetSessionId) return
+        // Before target attachment there is no reconstruction authority. During REST loading,
+        // require explicit session identity on user receipts; other feed items
+        // are already quarantined by SdkLifecycle's attachment fence.
+        if (awaitingHistory && (targetSessionId == null || (user != null && user.sessionId != targetSessionId))) return
         // Re-attach the gateway's frame turnId AND replyId onto an assistant entry.
         // turnId suppresses the committed twin while its live bubble reveals; replyId
         // is what groups several committed rows of one ReAct turn back into the single
@@ -197,25 +186,11 @@ class ConversationHistoryConnector(
             } else {
                 item
             }
-        // Dedup by stable entryId: a re-delivered entry (e.g. a committed entry
-        // replayed on resume) updates in place instead of double-appending.
-        // Empty entryId (UNKNOWN_ENTRY_ID) has no identity → never deduped.
-        val existingIdx =
-            if (enriched.entryId.isNotEmpty()) mirror.indexOfFirst { it.entryId == enriched.entryId } else -1
-        mirror =
-            if (existingIdx >= 0) mirror.toMutableList().also { it[existingIdx] = enriched }
-            else mirror + enriched
-        log.info(
-            "entry",
-            mapOf(
-                "entryId" to enriched.entryId,
-                "ts" to enriched.ts,
-                "turnId" to (msg.turnId ?: "-"),
-                "replyId" to (msg.replyId ?: "-"),
-                "deduped" to (existingIdx >= 0),
-                "size" to mirror.size,
-            ),
-        )
+        if (awaitingHistory) {
+            liveTail = mergeEntry(liveTail, enriched)
+            return
+        }
+        mirror = mergeEntry(mirror, enriched)
         onEntry?.invoke(enriched)
         onUpdate?.invoke(mirror)
     }
@@ -235,6 +210,8 @@ class ConversationHistoryConnector(
     }
 
     private fun requestHistory(sessionId: String, trigger: String) {
+        if (targetSessionId != sessionId) liveTail = emptyList()
+        targetSessionId = sessionId
         generation++
         log.info(
             "gate-set",

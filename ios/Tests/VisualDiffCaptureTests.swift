@@ -1,3 +1,4 @@
+import Darwin
 import ImageIO
 import MetalKit
 import SnapshotTesting
@@ -27,6 +28,64 @@ private let loadingStateActiveCaptureDuration: TimeInterval = 0.366
 /// script owns a fresh, serialized request file.
 @MainActor
 final class VisualDiffCaptureTests: XCTestCase {
+    private func capturePaths(reference: String, output: String, repository: String) -> (URL, URL, URL)? {
+        func normalized(_ path: String) -> URL? {
+            let name = path as NSString
+            // Resolve the existing parent before URL normalization: iOS leaves
+            // missing /private/tmp leaves unchanged, and URL resolution can
+            // collapse '..' before following a symlink. realpath preserves both.
+            guard let parent = realpath(name.deletingLastPathComponent, nil) else { return nil }
+            defer { free(parent) }
+            return URL(fileURLWithPath: String(cString: parent), isDirectory: true)
+                .standardizedFileURL.appendingPathComponent(name.lastPathComponent)
+                .resolvingSymlinksInPath().standardizedFileURL
+        }
+        guard let referenceURL = normalized(reference),
+              let outputURL = normalized(output),
+              let outputRoot = normalized(repository + "/build/visual-captures/ios") else { return nil }
+        guard referenceURL != outputURL,
+              outputURL.path.hasPrefix(outputRoot.path + "/") else { return nil }
+        return (referenceURL, outputURL, outputRoot)
+    }
+
+    func testCapturePathsInTemporaryWorktree() throws {
+        let manager = FileManager.default
+        let repository = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("visual-diff-paths-\(UUID().uuidString)", isDirectory: true)
+        let root = repository.appendingPathComponent("build/visual-captures/ios", isDirectory: true)
+        let reference = repository.appendingPathComponent("design/reference.png")
+        let parent = root.appendingPathComponent("foundation-components/static", isDirectory: true)
+        try manager.createDirectory(at: URL(fileURLWithPath: root.path + "-sibling"), withIntermediateDirectories: true)
+        try manager.createDirectory(at: parent, withIntermediateDirectories: true)
+        try manager.createDirectory(at: reference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("reference sentinel".utf8).write(to: reference)
+        defer { try? manager.removeItem(at: repository) }
+        let output = parent.appendingPathComponent("chip--selected--rest.png")
+        let physicalRepository = "/private" + repository.path
+        let physicalReference = "/private" + reference.path
+        let physicalOutput = "/private" + output.path
+        for repo in [repository.path, physicalRepository] {
+            let paths = try XCTUnwrap(capturePaths(reference: physicalReference, output: physicalOutput, repository: repo))
+            XCTAssertEqual(paths.0.path, reference.standardizedFileURL.path)
+            XCTAssertEqual(paths.1.deletingLastPathComponent().path, parent.standardizedFileURL.path)
+            XCTAssertFalse(manager.fileExists(atPath: paths.1.path))
+            XCTAssertNil(capturePaths(reference: physicalReference, output: reference.path, repository: repo))
+            XCTAssertNil(capturePaths(reference: reference.path, output: root.path + "/../escaped.png", repository: repo))
+            XCTAssertNil(capturePaths(reference: reference.path, output: root.path + "-sibling/escape.png", repository: repo))
+        }
+        let directoryLink = root.appendingPathComponent("escape", isDirectory: true)
+        try manager.createSymbolicLink(at: directoryLink, withDestinationURL: reference.deletingLastPathComponent())
+        XCTAssertNil(capturePaths(reference: reference.path, output: directoryLink.path + "/new.png", repository: physicalRepository))
+        XCTAssertNil(capturePaths(reference: reference.path, output: directoryLink.path + "/../escaped.png", repository: physicalRepository))
+        let fileLink = root.appendingPathComponent("reference-link.png")
+        try manager.createSymbolicLink(at: fileLink, withDestinationURL: reference)
+        XCTAssertNil(capturePaths(reference: reference.path, output: fileLink.path, repository: physicalRepository))
+        let rootReference = root.appendingPathComponent("reference.png")
+        try Data("inside sentinel".utf8).write(to: rootReference)
+        XCTAssertNil(capturePaths(reference: "/private" + rootReference.path, output: rootReference.path, repository: physicalRepository))
+        XCTAssertEqual(try Data(contentsOf: reference), Data("reference sentinel".utf8))
+    }
+
     func testCaptureRequestedReference() throws {
         let requestURL = URL(fileURLWithPath: "/tmp/sentient-visual-diff-request")
         guard FileManager.default.fileExists(atPath: requestURL.path) else {
@@ -50,18 +109,11 @@ final class VisualDiffCaptureTests: XCTestCase {
             return
         }
 
-        let referenceURL = URL(fileURLWithPath: request[0]).resolvingSymlinksInPath().standardizedFileURL
-        let outputURL = URL(fileURLWithPath: request[1]).resolvingSymlinksInPath().standardizedFileURL
-        let outputRoot = URL(fileURLWithPath: request[2])
-            .appendingPathComponent("build/visual-captures/ios", isDirectory: true)
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-        guard referenceURL != outputURL,
-              outputURL.path.hasPrefix(outputRoot.path + "/")
-        else {
+        guard let paths = capturePaths(reference: request[0], output: request[1], repository: request[2]) else {
             XCTFail("Implementation output must not overwrite a designer reference")
             return
         }
+        let (referenceURL, outputURL, outputRoot) = paths
         let pixelSize = try pngPixelSize(at: referenceURL)
         guard pixelSize.width.truncatingRemainder(dividingBy: 2) == 0,
               pixelSize.height.truncatingRemainder(dividingBy: 2) == 0
@@ -72,6 +124,7 @@ final class VisualDiffCaptureTests: XCTestCase {
 
         let logicalSize = CGSize(width: pixelSize.width / 2, height: pixelSize.height / 2)
         let caseID = visualDiffCaseID(for: referenceURL)
+        let frame = controlCaptureFrame(caseID: caseID, canvas: logicalSize)
         let identityCapture = VisualDiffFixtureRegistry.sentientIdentityCapture(for: caseID)
         let segmentedCaptureTime = VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID)
         let disclosureCaptureTime = VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID)
@@ -86,7 +139,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             fixtureView = try fixture(for: caseID)
         }
         let fixture = fixtureView
-            .frame(width: logicalSize.width, height: logicalSize.height)
+            .frame(width: frame.viewport.width, height: frame.viewport.height)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, Calendar(identifier: .gregorian))
             .environment(\.timeZone, TimeZone(secondsFromGMT: 0) ?? .current)
@@ -114,7 +167,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             controller.safeAreaRegions = []
         }
         let strategy = Snapshotting<UIViewController, UIImage>.image(
-            size: logicalSize,
+            size: frame.viewport,
             traits: traits
         )
         var timelineCaptureWindow: UIWindow?
@@ -308,7 +361,13 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
         wait(for: [rendered], timeout: 10)
 
-        guard let data = image?.pngData() else {
+        if frame.viewport != logicalSize, let captured = image {
+            let pixelClip = frame.clip.applying(CGAffineTransform(scaleX: captured.scale, y: captured.scale))
+            let cropped = try XCTUnwrap(captured.cgImage?.cropping(to: pixelClip))
+            image = UIImage(cgImage: cropped, scale: captured.scale, orientation: .up)
+        }
+
+        guard let data = image.flatMap(visualDiffPNGData) else {
             XCTFail("Visual diff capture did not produce a PNG for \(caseID)")
             return
         }
@@ -317,10 +376,138 @@ final class VisualDiffCaptureTests: XCTestCase {
             withIntermediateDirectories: true
         )
         try data.write(to: outputURL, options: .atomic)
+        let motionReference = referenceURL.path.contains("/recordings/")
+        let fixtureState = VisualDiffFixtureRegistry.inventory().first { $0["fixtureId"] == caseID }
+        let composerState = ComposerVisualFixtureCatalog.renderConfigurations[caseID]
+        let metadata: [String: Any] = [
+            "fixtureId": caseID,
+            "fixtureState": fixtureState ?? [:],
+            "origin": "production-component",
+            "runtime": ["os": ProcessInfo.processInfo.operatingSystemVersionString,
+                        "model": ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? UIDevice.current.model],
+            "viewport": ["width": frame.viewport.width, "height": frame.viewport.height, "scale": 2],
+            "clip": ["x": frame.clip.minX, "y": frame.clip.minY, "width": frame.clip.width, "height": frame.clip.height],
+            "configuration": ["locale": "en_US_POSIX", "timeZone": "GMT", "dynamicType": String(describing: composerState?.dynamicTypeSize ?? .large),
+                              "direction": String(describing: composerState?.layoutDirection ?? .leftToRight),
+                              "systemReduceMotion": String(UIAccessibility.isReduceMotionEnabled),
+                              "fixtureReduceMotion": String(composerState?.reduceMotion ?? identityCapture?.configuration.reducedMotion ?? loadingStateConfiguration?.reducedMotion ?? VisualDiffFixtureRegistry.pinRenderConfiguration(for: caseID)?.reducedMotion ?? false),
+                              "theme": "Dusk", "colorSpace": "sRGB-standard-range"],
+            // Wall-clock waits and constructed PIN/ApplyBar states are not trajectories.
+            "motion": ["kind": motionReference ? "state-checkpoint" : "static", "trajectoryEvidence": false,
+                       "deterministic": identityCapture != nil, "fixedViewport": true,
+                       "animationsDisabled": !isTimelineFixture && !isLoadingStateActiveFixture,
+                       "clockPolicy": identityCapture == nil ? "uncontrolled" : "explicit-rive-step",
+                       "requestedTimeMs": identityCapture.map { $0.configuration.timeMs as Any }
+                            ?? (motionReference ? timelineCaptureTime.map { Int($0 * 1000) as Any } : nil) ?? NSNull(),
+                       "measuredTimeMs": NSNull()] as [String: Any],
+            "measurements": ["overflow": NSNull(), "minimumTarget": NSNull(), "focus": NSNull()],
+        ]
+        try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys])
+            .write(to: URL(fileURLWithPath: outputURL.path + ".capture.json"), options: .atomic)
+        try JSONSerialization.data(withJSONObject: VisualDiffFixtureRegistry.inventory(), options: [.sortedKeys])
+            .write(to: outputRoot.appendingPathComponent("fixture-registry.json"), options: .atomic)
 
         guard let captured = image else { return }
         XCTAssertEqual(captured.size, logicalSize)
         XCTAssertEqual(captured.scale, 2)
+    }
+
+    private func controlCaptureFrame(caseID: String, canvas: CGSize) -> (viewport: CGSize, clip: CGRect) {
+        // Source-derived static framing from capture-web.mjs captureFrame.
+        // A selected chip's extra 1pt viewport padding plus 2pt crop follows
+        // its translated paint; this is NOT a fixed-viewport motion capture.
+        let chipStatic = caseID.hasPrefix("chip--selected--") || caseID.hasPrefix("chip--unselected--")
+        let compact = caseID.contains("--compact-")
+        let selected = caseID.hasPrefix("chip--selected--")
+        let shift: CGFloat = chipStatic
+            ? selected ? (caseID.hasSuffix("--pressed") ? 2 : 1)
+                : caseID.hasSuffix("--hover") ? -1 : caseID.hasSuffix("--pressed") ? 1 : 0
+            : 0
+        let padding = chipStatic && (!compact || selected) ? abs(shift) : 0
+        let width = caseID == "action-button--primary--rest" || (chipStatic && !compact)
+            ? max(canvas.width, 621) : canvas.width
+        return (
+            CGSize(width: width, height: canvas.height + padding * 2),
+            CGRect(x: ceil((width - canvas.width) / 2), y: padding == 0 ? 0 : padding + shift,
+                   width: canvas.width, height: canvas.height)
+        )
+    }
+
+    func testChipStaticCropFollowsSourceTranslationWithoutChangingMotionFrames() {
+        let canvas = CGSize(width: 119, height: 82)
+        let selected = controlCaptureFrame(caseID: "chip--selected--rest", canvas: canvas)
+        XCTAssertEqual(selected.viewport, CGSize(width: 621, height: 84))
+        XCTAssertEqual(selected.clip, CGRect(x: 251, y: 2, width: 119, height: 82))
+        let compact = controlCaptureFrame(caseID: "chip--selected--compact-rest", canvas: canvas)
+        XCTAssertEqual(compact.viewport, CGSize(width: 119, height: 84))
+        XCTAssertEqual(compact.clip, CGRect(x: 0, y: 2, width: 119, height: 82))
+        let unselected = controlCaptureFrame(caseID: "chip--unselected--rest", canvas: canvas)
+        XCTAssertEqual(unselected.viewport, CGSize(width: 621, height: 82))
+        XCTAssertEqual(unselected.clip, CGRect(x: 251, y: 0, width: 119, height: 82))
+        let motion = controlCaptureFrame(caseID: "chip--unselected-to-selected--frame-01--0ms", canvas: canvas)
+        XCTAssertEqual(motion.viewport, canvas)
+        XCTAssertEqual(motion.clip, CGRect(origin: .zero, size: canvas))
+    }
+
+    func testPrimaryRestCaptureUsesWebViewportAndCeilingCrop() {
+        let canvas = CGSize(width: 156, height: 88)
+        let frame = controlCaptureFrame(caseID: "action-button--primary--rest", canvas: canvas)
+        XCTAssertEqual(frame.viewport, CGSize(width: 621, height: 88))
+        XCTAssertEqual(frame.clip, CGRect(x: 233, y: 0, width: 156, height: 88))
+        XCTAssertEqual(frame.viewport.width / 2 - frame.clip.minX, 77.5)
+        XCTAssertEqual(
+            frame.clip.applying(CGAffineTransform(scaleX: 2, y: 2)),
+            CGRect(x: 466, y: 0, width: 312, height: 176)
+        )
+        for caseID in ["action-button--primary--compact-rest", "action-button--secondary--rest"] {
+            let unchanged = controlCaptureFrame(caseID: caseID, canvas: canvas)
+            XCTAssertEqual(unchanged.viewport, canvas)
+            XCTAssertEqual(unchanged.clip, CGRect(origin: .zero, size: canvas))
+        }
+    }
+
+    // Extended-range UIImage.pngData() on iOS 26.5 exports associated shadow
+    // RGB as straight alpha. Convert the in-memory image (not encoded PNG
+    // pixels) to standard sRGB first, preserving the fixture's size and scale.
+    private func visualDiffPNGData(_ image: UIImage) -> Data? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        format.preferredRange = .standard
+        return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+            image.draw(at: .zero)
+        }.pngData()
+    }
+
+    func testVisualDiffPNGPreservesTranslucentColorAndScale() throws {
+        for range in [UIGraphicsImageRendererFormat.Range.standard, .extended] {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 2
+            format.preferredRange = range
+            let source = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2), format: format).image { context in
+                UIColor(red: 242 / 255, green: 160 / 255, blue: 106 / 255, alpha: 0.4).setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+            }
+            let data = try XCTUnwrap(visualDiffPNGData(source))
+            let decoded = try XCTUnwrap(UIImage(data: data, scale: 2))
+            XCTAssertEqual(decoded.size, source.size)
+            XCTAssertEqual(decoded.scale, source.scale)
+            let cgImage = try XCTUnwrap(decoded.cgImage)
+            XCTAssertEqual(cgImage.bitsPerComponent, 8)
+            XCTAssertEqual(cgImage.colorSpace?.name, CGColorSpace.sRGB)
+            var pixel = [UInt8](repeating: 0, count: 4)
+            try pixel.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(
+                    data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                    space: try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB)),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ))
+                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+            // Decode must multiply straight PNG RGB exactly once.
+            for (actual, expected) in zip(pixel, [97, 64, 42, 102]) {
+                XCTAssertEqual(Double(actual), Double(expected), accuracy: 1)
+            }
+        }
     }
 
     func testComposerRegistryUsesAuthoritativeTaskStatesAndExplicitBlockers() throws {
@@ -1172,11 +1359,11 @@ final class VisualDiffCaptureTests: XCTestCase {
             "segmented-control--density--compact-hover",
         ])
         let expectedMotion = Set([
-            "frame-000--0000ms",
-            "frame-001--0055ms",
-            "frame-002--0110ms",
-            "frame-003--0165ms",
-            "frame-004--0220ms",
+            "segmented-control--comfortable-to-compact--frame-000--0000ms",
+            "segmented-control--comfortable-to-compact--frame-001--0055ms",
+            "segmented-control--comfortable-to-compact--frame-002--0110ms",
+            "segmented-control--comfortable-to-compact--frame-003--0165ms",
+            "segmented-control--comfortable-to-compact--frame-004--0220ms",
         ])
         let registrations = VisualDiffFixtureRegistry.registrations(for: "segmented-control")
         let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
@@ -1228,11 +1415,11 @@ final class VisualDiffCaptureTests: XCTestCase {
 
     func testSegmentedControlMotionFixturesPreserveSourceTimeline() {
         let expected: [(String, TimeInterval)] = [
-            ("frame-000--0000ms", 0),
-            ("frame-001--0055ms", 0.055),
-            ("frame-002--0110ms", 0.11),
-            ("frame-003--0165ms", 0.165),
-            ("frame-004--0220ms", 0.22),
+            ("segmented-control--comfortable-to-compact--frame-000--0000ms", 0),
+            ("segmented-control--comfortable-to-compact--frame-001--0055ms", 0.055),
+            ("segmented-control--comfortable-to-compact--frame-002--0110ms", 0.11),
+            ("segmented-control--comfortable-to-compact--frame-003--0165ms", 0.165),
+            ("segmented-control--comfortable-to-compact--frame-004--0220ms", 0.22),
         ]
 
         for (caseID, frameTime) in expected {
@@ -2049,18 +2236,30 @@ final class VisualDiffCaptureTests: XCTestCase {
     private func visualDiffCaseID(for referenceURL: URL) -> String {
         let frameID = referenceURL.deletingPathExtension().lastPathComponent
         let recordingID = referenceURL.deletingLastPathComponent().lastPathComponent
-        if recordingID == "disclosure--closed-to-open" {
-            return "disclosure--closed-to-open--\(frameID)"
+        if referenceURL.path.contains("/handoff/recordings/") {
+            let namespace = recordingID.replacingOccurrences(of: "sentient-avatar--", with: "sentient-identity--")
+            return "\(namespace)--\(frameID)"
         }
-        if recordingID == "pin-entry--complete-to-success" {
-            return "pin-entry--complete-to-success--\(frameID)"
+        return frameID
+    }
+
+    func testRecordingIdentityNeverFallsBackToUnrelatedFrame() {
+        let root = "/design/prototype/chat-composer/handoff/recordings/"
+        for recording in ["voice-control--auto-loop", "composer--idle-to-hold", "unknown--transition"] {
+            let id = visualDiffCaseID(for: URL(fileURLWithPath: root + recording + "/frame-000--0000ms.png"))
+            XCTAssertEqual(id, recording + "--frame-000--0000ms")
+            guard case .missingAuthority = VisualDiffFixtureRegistry.resolve(caseID: id) else {
+                return XCTFail("Unknown recording routed to another component")
+            }
         }
-        if recordingID == "apply-bar--dirty-to-done" {
-            return "apply-bar--dirty-to-done--\(frameID)"
+        guard case .missingAuthority = VisualDiffFixtureRegistry.resolve(caseID: "frame-000--0000ms") else {
+            return XCTFail("Naked frame must not resolve")
         }
-        guard recordingID.hasPrefix("sentient-avatar--") else { return frameID }
-        let variantID = String(recordingID.dropFirst("sentient-avatar--".count))
-        return "sentient-identity--\(variantID)--\(frameID)"
+        let segmented = URL(fileURLWithPath: "/design/prototype/foundation-components/handoff/recordings/segmented-control--comfortable-to-compact/frame-000--0000ms.png")
+        guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: visualDiffCaseID(for: segmented)) else {
+            return XCTFail("Explicit segmented recording must resolve")
+        }
+        XCTAssertEqual(fixture.componentID, "segmented-control")
     }
 
     private func fixture(for caseID: String) throws -> AnyView {

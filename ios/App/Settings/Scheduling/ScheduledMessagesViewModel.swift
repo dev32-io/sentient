@@ -118,6 +118,8 @@ final class ScheduledInboxState {
         }
     }
 
+    var hasPendingClears: Bool { currentClear != nil || !clearQueue.isEmpty }
+
     var clearRetryRequiresConfirmation: Bool { failedClear?.requiresConfirmation == true }
 
     func clear(_ card: ScheduledSessionCard) {
@@ -197,6 +199,7 @@ final class ScheduledMessagesViewModel {
     var cards: [ScheduledSessionCard] { inbox.cards }
     var cardsState: LoadState { inbox.cardsState }
     var clearFailure: ScheduledInboxClearFailure? { inbox.clearFailure }
+    var hasPendingClears: Bool { inbox.hasPendingClears }
     var clearRetryRequiresConfirmation: Bool { inbox.clearRetryRequiresConfirmation }
 
     private let useCases: ScheduleUseCases
@@ -417,11 +420,11 @@ struct ScheduleDraft {
     var timing: ScheduleTimingInput? {
         switch mode {
         case .once:
-            return ScheduleTimingInput.OnceAt(at: date.ISO8601Format(.iso8601(timeZone: .gmt)))
+            return ScheduleTimingInput.OnceAt(at: date.ISO8601Format())
         case .delay:
             return ScheduleTimingInput.OnceAfter(afterSeconds: Int32(delayMinutes * 60))
         case .recurring:
-            let formatter = DateFormatter(); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: timeZone)
+            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: timeZone)
             let mappedFrequency: ScheduleFrequency = switch frequency { case .daily: .daily; case .weekly: .weekly; case .monthly: .monthly }
             let weekdays: [ScheduleWeekday]? = frequency == .weekly ? [Self.weekdays[weekday.clamped(to: 0...6)]] : nil
             return ScheduleTimingInput.Recurring(

@@ -63,6 +63,13 @@ describe("iOS design boundary", () => {
     expect(findDuplicatePrimitiveDeclarations([
       { path: "ios/App/Settings/Components/RowToggle.swift", source: "struct RowToggle {}" },
     ]).join("\n")).toContain("RowToggle must delegate to DesignToggleRow");
+    const path = "ios/App/Settings/Components/SoulPageChrome.swift";
+    expect(findDuplicatePrimitiveDeclarations([
+      { path, source: "struct SoulLoadingRow { var body: some View { AsyncNotice(state: .loading(title: title, detail: nil)) } }" },
+    ])).toEqual([]);
+    expect(findDuplicatePrimitiveDeclarations([
+      { path, source: "struct SoulLoadingRow { var body: some View { DesignProgress() } }" },
+    ]).join("\n")).toContain("SoulLoadingRow must delegate to AsyncNotice");
   });
 
   test("rejects raw controls, hardcoded families, and page-local visual constants", () => {

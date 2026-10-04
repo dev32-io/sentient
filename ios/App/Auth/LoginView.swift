@@ -17,6 +17,7 @@ func loginPickerState(isLoading: Bool, userCount: Int, error: String?) -> LoginP
 struct LoginView: View {
     private let onOpenBackendSetup: () -> Void
     private let isRevealed: Bool
+    private let entryReason: LoginEntryReason?
     @StateObject private var model: AuthViewModel
     @State private var reloadRevision = 0
 
@@ -25,10 +26,12 @@ struct LoginView: View {
         onConnect: @escaping () -> Void = {},
         onInitialUsersResolved: @escaping () -> Void = {},
         onOpenBackendSetup: @escaping () -> Void = {},
-        isRevealed: Bool = true
+        isRevealed: Bool = true,
+        entryReason: LoginEntryReason? = nil
     ) {
         self.onOpenBackendSetup = onOpenBackendSetup
         self.isRevealed = isRevealed
+        self.entryReason = entryReason
         _model = StateObject(wrappedValue: AuthViewModel(
             connect: onConnect,
             onAuthenticatedUser: onAuthenticatedUser,
@@ -47,6 +50,7 @@ struct LoginView: View {
             success: model.pinSuccess,
             feedbackRevision: model.pinFeedbackRevision,
             isRevealed: isRevealed,
+            entryReason: entryReason,
             onSelect: model.select,
             onBack: model.back,
             onCancel: model.cancel,
@@ -72,6 +76,7 @@ struct LoginContent: View {
     let success: String?
     let feedbackRevision: Int
     var isRevealed = true
+    var entryReason: LoginEntryReason? = nil
     let onSelect: (AuthUserLite) -> Void
     let onBack: () -> Void
     let onCancel: () -> Void
@@ -82,6 +87,7 @@ struct LoginContent: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var query = ""
     @State private var showHelp = false
@@ -200,6 +206,16 @@ struct LoginContent: View {
     }
 
     @ViewBuilder private var stage: some View {
+        VStack(spacing: Space.md) {
+            if let entryReason {
+                AsyncNotice(kind: .warning, title: "Sign in again", detail: entryReason.explanation,
+                            accessibilityId: "login-session-expired")
+            }
+            pickerStage
+        }
+    }
+
+    @ViewBuilder private var pickerStage: some View {
         if let user = selectedUser {
             pinEntry(user)
         } else if dynamicTypeSize.isAccessibilitySize {
@@ -246,7 +262,7 @@ struct LoginContent: View {
                 Spacer(minLength: Space.sm)
                 Text(countText)
                     .designText(.caption)
-                    .foregroundStyle(DuskColors.ink3)
+                    .foregroundStyle(contrast == .increased ? DuskColors.ink2 : DuskColors.ink3)
             }
             if users.count > 6 {
                 DesignSearchField(
@@ -330,8 +346,15 @@ struct LoginContent: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(LoginProfileButtonStyle())
+        .overlay {
+            if contrast == .increased {
+                RoundedRectangle(cornerRadius: Radii.sm)
+                    .stroke(DuskColors.ink2, lineWidth: DesignMetrics.hairline)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .bottom) {
-            if !isLast { DuskColors.lineSoft.frame(height: DesignMetrics.hairline) }
+            if !isLast && contrast != .increased { DuskColors.lineSoft.frame(height: DesignMetrics.hairline) }
         }
         .accessibilityLabel("Continue as \(user.displayName)")
         .accessibilityIdentifier("login-avatar-\(user.userId)")

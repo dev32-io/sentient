@@ -15,8 +15,7 @@ cleanup() {
   DESIGN_REFRESH_ADMIN_USER_ID="$SCHEDULE_QA_ADMIN_USER_ID" \
   DESIGN_REFRESH_ADMIN_PIN="$SCHEDULE_QA_ADMIN_PIN" \
   DESIGN_REFRESH_ENVIRONMENT=local \
-    bun "$REPO/qa/design-refresh/fixture-control.ts" cleanup --target "$TARGET" --state "$STATE" >/dev/null || true
-  rm -f "$STATE"
+    bun "$REPO/qa/design-refresh/fixture-control.ts" cleanup --target "$TARGET" --state "$STATE" >/dev/null || echo "fixture cleanup incomplete; retry state retained at $STATE" >&2
 }
 trap cleanup EXIT
 

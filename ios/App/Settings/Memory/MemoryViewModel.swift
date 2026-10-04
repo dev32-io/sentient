@@ -38,24 +38,38 @@ final class MemoryViewModel {
         }
     }
 
-    enum Save: Equatable {
-        case idle
-        case saving
-        case restarting
-        case alreadyApplying
-        case applied
-        case failed(String)
-    }
+    typealias Save = DesignApplyState
 
     private(set) var memoryState = SlotState()
     private(set) var userState = SlotState()
     private(set) var save: Save = .idle
 
-    private let settings: SettingsComponent
+    private let loadMemory: (MemorySlot) async throws -> SentientResult<MemoryDoc>
+    private let applyMemory: (MemorySlot, String, (any ApplyState) async -> Void) async -> Void
     private let log = AppLog("settings", "memory-vm")
 
     init(settings: SettingsComponent) {
-        self.settings = settings
+        loadMemory = { try await settings.profileRepository.getMemory(slot: $0) }
+        applyMemory = { slot, content, receive in
+            for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutMemory(slot: slot, content: content)) {
+                await receive(state)
+            }
+        }
+    }
+
+    init(
+        loadMemory: @escaping (MemorySlot) async throws -> SentientResult<MemoryDoc>,
+        applyMemory: @escaping (MemorySlot, String, (any ApplyState) async -> Void) async -> Void
+    ) {
+        self.loadMemory = loadMemory
+        self.applyMemory = applyMemory
+    }
+
+    func discard() {
+        guard !isApplying else { return }
+        if let original = memoryState.original { memoryState.draft = original }
+        if let original = userState.original { userState.draft = original }
+        save = .idle
     }
 
     func state(for slot: Slot) -> SlotState {
@@ -64,10 +78,11 @@ final class MemoryViewModel {
 
     /// True when any slot has unsaved edits (the page-level dirty flag).
     var isDirty: Bool { memoryState.isDirty || userState.isDirty }
-    var isApplying: Bool { save == .saving || save == .restarting }
+    var isApplying: Bool { save.isBusy }
 
     /// Set the current draft for `slot` (the editor's onChange).
     func setDraft(_ text: String, for slot: Slot) {
+        guard !isApplying else { return }
         if slot == .memory { memoryState.draft = text } else { userState.draft = text }
     }
 
@@ -76,7 +91,7 @@ final class MemoryViewModel {
         if state(for: slot).loaded { return }
         log.info("load.slot slot=\(slot.rawValue)")
         do {
-            let result = try await settings.profileRepository.getMemory(slot: slot.sdk)
+            let result = try await loadMemory(slot.sdk)
             switch onEnum(of: result) {
             case .success(let s):
                 apply(s.data.content, charLimit: Int(s.data.charLimit), to: slot)
@@ -102,7 +117,8 @@ final class MemoryViewModel {
     /// Save every dirty slot, each its own FSM run; refetch truth on Ready.
     func save() async {
         let dirty = Slot.allCases.filter { state(for: $0).isDirty }
-        guard !dirty.isEmpty else { return }
+        guard !isApplying, !dirty.isEmpty else { return }
+        save = .saving
         log.info("save.start slots=\(dirty.map(\.rawValue).joined(separator: ","))")
         for slot in dirty where await putSlot(slot) == false { return }
         save = .applied
@@ -112,38 +128,42 @@ final class MemoryViewModel {
     /// Run one slot's PutMemory FSM. Returns false on a terminal failure/notice.
     private func putSlot(_ slot: Slot) async -> Bool {
         let content = state(for: slot).draft
-        let mutation = ProfileMutationPutMemory(slot: slot.sdk, content: content)
-        for await fsm in settings.applyProfileChange.invoke(mutation: mutation) {
+        var succeeded = false
+        await applyMemory(slot.sdk, content) { fsm in
             switch onEnum(of: fsm) {
             case .idle: break
             case .saving: save = .saving
             case .restarting: save = .restarting
             case .ready:
+                // The write succeeded. Discard must not claim to undo it even if
+                // refreshing server truth fails; other unsaved slots stay dirty.
+                if slot == .memory { memoryState.original = content }
+                else { userState.original = content }
                 if await reload(slot) == false {
                     save = .failed("Saved, but couldn't refresh \(slot.label) — check your changes before saving again.")
-                    return false
+                    return
                 }
+                succeeded = true
             case .alreadyApplying:
                 save = .alreadyApplying
                 log.warn("save.already-applying slot=\(slot.rawValue)")
-                return false
+                return
             case .failed(let f):
                 save = .failed(f.error.userMessage)
                 log.warn("save.failed slot=\(slot.rawValue)")
-                return false
+                return
             }
         }
-        return true
+        return succeeded
     }
 
     /// Refetch a slot's server truth into original + draft after a successful save.
     /// Returns false when the refetch itself failed — the save already succeeded
-    /// server-side, but a dropped refetch would leave `original` stale and the
-    /// slot would wrongly keep reporting dirty; the caller surfaces that instead
-    /// of silently continuing.
+    /// server-side; the acknowledged submitted baseline prevents local Discard
+    /// from presenting that issued write as undone. Stop before the next slot.
     private func reload(_ slot: Slot) async -> Bool {
         do {
-            let result = try await settings.profileRepository.getMemory(slot: slot.sdk)
+            let result = try await loadMemory(slot.sdk)
             switch onEnum(of: result) {
             case .success(let s):
                 apply(s.data.content, charLimit: Int(s.data.charLimit), to: slot)
@@ -152,10 +172,10 @@ final class MemoryViewModel {
                 log.warn("reload.slot.failed slot=\(slot.rawValue) kind=\(f.error.kind)")
                 return false
             case .loading:
-                return true
+                return false
             }
         } catch is CancellationError {
-            return true
+            return false
         } catch {
             log.warn("reload.slot.threw slot=\(slot.rawValue)")
             return false

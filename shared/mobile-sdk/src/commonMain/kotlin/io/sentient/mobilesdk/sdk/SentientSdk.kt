@@ -76,7 +76,7 @@ private const val DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS = 1_000L
 private const val DEFAULT_TRANSPORT_TEARDOWN_TIMEOUT_MS = 1_000L
 
 /** Durable navigation proof, independent of transport attachment. */
-data class AcknowledgedSessionRoute(val sessionId: String, val generation: Long)
+data class AcknowledgedSessionRoute(val sessionId: String, val generation: Long, val isDraft: Boolean = false)
 
 private enum class RoutePhase { ATTACHED, FENCED, PREPARING_DRAFT, DRAFT, MINTING, RECOVERING_MINT }
 
@@ -316,8 +316,18 @@ class SentientSdk(
         onUplinkBeginTerminal = { capture -> connectors.audioInput.beginTerminal(capture) },
         onUplinkTerminal = { capture, terminal -> connectors.audioInput.completeTerminal(capture, terminal) },
         onUplinkForceLocalTerminal = { generation -> connectors.audioInput.forceLocalTerminalCleanup(generation) },
+        onCaptureStartFailed = { capture ->
+            talkModeController.lifecycleCancel("capture-start-failed")
+            syncVoiceMode()
+            emitEvent(SdkEvent.CaptureStartFailed(capture.id, capture.generation, _outboundRouteGeneration.value))
+        },
         scope = voiceLifecycleScope,
     )
+
+    /** Recheck at consumption too: buffered notices must not cross a retry or route change. */
+    fun isCaptureStartFailureCurrent(event: SdkEvent.CaptureStartFailed): Boolean =
+        event.routeGeneration == _outboundRouteGeneration.value &&
+            voice.isCurrentCaptureGeneration(event.captureGeneration)
 
     /** Reactive engine readiness (Idle → Configuring → Ready / Error). UI spinner off
      *  this. Idle unless a real VoiceAudio is wired (text/test path). Engine readiness
@@ -364,10 +374,12 @@ class SentientSdk(
                     (state.phase == VoiceAudioState.Phase.Idle && previousPhase != null && previousPhase != VoiceAudioState.Phase.Idle)
                 previousPhase = state.phase
                 if (genuineLoss) {
-                    talkModeController.lifecycleCancel(
-                        if (state.phase == VoiceAudioState.Phase.Error) "audio-error" else "audio-teardown",
-                    )
-                    syncVoiceMode()
+                    voice.reconcileAudioLoss(state) {
+                        talkModeController.lifecycleCancel(
+                            if (state.phase == VoiceAudioState.Phase.Error) "audio-error" else "audio-teardown",
+                        )
+                        syncVoiceMode()
+                    }
                 }
             }
         }
@@ -518,6 +530,7 @@ class SentientSdk(
         log = createLogger("sdk", "lifecycle"),
         handshakeLog = createLogger("sdk", "handshake"),
         onProtocolError = { err -> emitEvent(SdkEvent.ProtocolError(err)) },
+        onCommandRejected = { emitEvent(SdkEvent.CommandRejected(it.command, it.reason, it.pendingId)) },
         faultHooks = if (config.devFaultsEnabled) faultHooks else null,
     )
 
@@ -1390,7 +1403,7 @@ class SentientSdk(
         }
     }
 
-    private fun onSessionAnchored(sessionId: String) {
+    private fun onSessionAnchored(sessionId: String, isDraft: Boolean = false) {
         if (sessionId.isEmpty()) {
             log.debug("session.anchor.ignored-empty")
             return
@@ -1402,7 +1415,7 @@ class SentientSdk(
         }
         _outboundSessionId.value = sessionId
         routePhase = RoutePhase.ATTACHED
-        acknowledgeRoute(sessionId)
+        acknowledgeRoute(sessionId, isDraft)
         val isNewSession = _currentSessionId.value != sessionId
         if (isNewSession) {
             log.info("session.anchor", mapOf("sessionId" to sessionId))
@@ -1410,9 +1423,9 @@ class SentientSdk(
         }
     }
 
-    private fun acknowledgeRoute(sessionId: String) {
+    private fun acknowledgeRoute(sessionId: String, isDraft: Boolean = false) {
         val generation = _outboundRouteGeneration.value ?: return
-        _acknowledgedRoute.value = AcknowledgedSessionRoute(sessionId, generation)
+        _acknowledgedRoute.value = AcknowledgedSessionRoute(sessionId, generation, isDraft)
     }
 
     /**
@@ -1654,7 +1667,7 @@ class SentientSdk(
         override fun hasInFlightActivation(): Boolean = inFlightActivation != null
         override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
         override fun onDraftAnchored(draftKey: String) {
-            onSessionAnchored(draftKey)
+            onSessionAnchored(draftKey, isDraft = true)
             routePhase = RoutePhase.DRAFT
             desiredSessionId = null
         }

@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -123,6 +124,13 @@ open class ChatComponent(
     /** Durable acknowledged identity, retained across transport loss. */
     val acknowledgedRoute get() = sdk.acknowledgedRoute
 
+    /** Existing session proven by an ACK for this route, never a session.draft outbound anchor.
+     * Retained across transport loss, but not across a newer unacknowledged route intent. */
+    val existingSessionId: String?
+        get() = acknowledgedRoute.value?.takeIf {
+            !it.isDraft && it.generation == outboundRouteGeneration.value
+        }?.sessionId
+
     /** VM-scoped automatic outbox drain, shared by Android and iOS. */
     fun observeOutbound(cache: OutboundCache): Flow<Unit> = sendMessage.observeReadiness(cache, connection.state)
 
@@ -143,6 +151,15 @@ open class ChatComponent(
 
     /** Native-facing aggregate mic signal; PCM remains inside the SDK uplink path. */
     val micLevels: StateFlow<MicLevelEnvelope> get() = sdk.micLevels
+
+    /** Typed local capture failure; discard stale buffered notices before native delivery. */
+    val captureStartFailures: Flow<SdkEvent.CaptureStartFailed>
+        get() = conversationRepository.liveEvents
+            .filterIsInstance<SdkEvent.CaptureStartFailed>()
+            .filter(::isCaptureStartFailureCurrent)
+
+    fun isCaptureStartFailureCurrent(event: SdkEvent.CaptureStartFailed): Boolean =
+        sdk.isCaptureStartFailureCurrent(event)
 
     /**
      * One-shot notice stream: emits [Unit] whenever the SDK fires [SdkEvent.ReopenFailed]
@@ -235,11 +252,29 @@ open class ChatComponent(
         return coordinator.beginSend(draftId, mintKey, sdk.surfaceId)
     }
 
+    fun canDrainPending(cache: OutboundCache): Boolean =
+        cache.routeGeneration != null && cache.routeGeneration == outboundRouteGeneration.value &&
+            outboundSessionId.value != null && connection.state.value.status == io.sentient.mobilesdk.transport.SdkStatus.READY
+
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun acceptDraftSend(draftId: String, expectedRevision: Long, mintKey: String, expectedGeneration: Long?): NativePendingSend {
+        if (expectedGeneration == null || outboundRouteGeneration.value != expectedGeneration) throw CancellationException("route changed")
+        return (drafts ?: throw NativeSendAnchorUnavailableException()).acceptSend(draftId, expectedRevision, mintKey, sdk.surfaceId)
+    }
+
     @Throws(AttachmentRequestException::class, CancellationException::class)
     suspend fun uploadPendingAttachments(
         pending: NativePendingSend,
         expectedRouteGeneration: Long?,
         onProgress: (String, Long, Long) -> Unit,
+    ): List<AttachmentRef> = uploadPendingAttachmentsWithState(pending, expectedRouteGeneration, onProgress) { _, _ -> }
+
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun uploadPendingAttachmentsWithState(
+        pending: NativePendingSend,
+        expectedRouteGeneration: Long?,
+        onProgress: (String, Long, Long) -> Unit,
+        onFileState: (String, Boolean) -> Unit,
     ): List<AttachmentRef> = try {
         val client = attachments ?: error("attachment transport unavailable")
         val body = attachmentBody ?: error("attachment file access unavailable")
@@ -248,6 +283,7 @@ open class ChatComponent(
             if (outboundRouteGeneration.value != expectedRouteGeneration ||
                 drafts?.snapshot?.value?.pendingSends?.none { it.pendingId == pending.pendingId } != false
             ) throw CancellationException("pending route changed")
+            onFileState(file.id, false)
             uploaded += client.upload(
                 sendAttemptId = pending.pendingId,
                 fileIdentity = file.id,
@@ -255,6 +291,7 @@ open class ChatComponent(
                 contentType = file.mediaType,
                 body = body(file.localPath),
             ) { sent, total -> onProgress(file.id, sent, total) }
+            onFileState(file.id, true)
         }
         if (outboundRouteGeneration.value != expectedRouteGeneration ||
             drafts?.snapshot?.value?.pendingSends?.none { it.pendingId == pending.pendingId } != false
@@ -273,11 +310,18 @@ open class ChatComponent(
      * gateway's admission fence: any ambiguous/already-committed attempt fails closed.
      */
     @Throws(AttachmentRequestException::class, CancellationException::class)
-    suspend fun cancelPendingSend(pending: NativePendingSend): NativeDraft = try {
+    suspend fun cancelPendingSend(pending: NativePendingSend): NativeDraft = cancelPendingSendInternal(pending, false)
+
+    @Throws(AttachmentRequestException::class, CancellationException::class)
+    suspend fun cancelPendingSendIntoEmptyEditor(pending: NativePendingSend): NativeDraft = cancelPendingSendInternal(pending, true)
+
+    private suspend fun cancelPendingSendInternal(pending: NativePendingSend, requireEmpty: Boolean): NativeDraft = try {
         require(pending.attachments.isNotEmpty())
+        val expectedGeneration = outboundRouteGeneration.value
         val client = attachments ?: error("attachment transport unavailable")
         val body = attachmentBody ?: error("attachment file access unavailable")
         for (file in pending.attachments) {
+            if (outboundRouteGeneration.value != expectedGeneration) throw CancellationException("route changed")
             val ref = client.upload(
                 sendAttemptId = pending.pendingId,
                 fileIdentity = file.id,
@@ -285,9 +329,12 @@ open class ChatComponent(
                 contentType = file.mediaType,
                 body = body(file.localPath),
             )
+            if (outboundRouteGeneration.value != expectedGeneration) throw CancellationException("route changed")
             client.delete(ref.attachmentId)
         }
-        checkNotNull((drafts ?: error("draft storage unavailable")).notCommitted(pending.pendingId))
+        if (outboundRouteGeneration.value != expectedGeneration) throw CancellationException("route changed")
+        val coordinator = drafts ?: error("draft storage unavailable")
+        checkNotNull(if (requireEmpty) coordinator.notCommittedIfEmpty(pending.pendingId) else coordinator.notCommitted(pending.pendingId))
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: AttachmentRequestException) {
@@ -351,8 +398,19 @@ open class ChatComponent(
         draftId: String? = null,
         activate: Boolean = true,
     ) {
+        chatRouteGeneration(sessionId, draftId, activate)?.let(cache::bindToRoute)
+    }
+
+    /** Retained native editor reclaiming its OWN route after an abandoned activation.
+     * Never bind it to the destination generation; claim a fresh original-route request.
+     * Caller must hold its host intent and stop destination projection before calling. */
+    fun restoreChatRoute(cache: OutboundCache, sessionId: String?, draftId: String?) {
+        chatRouteGeneration(sessionId, draftId, true)?.let(cache::rebindToRoute)
+    }
+
+    private fun chatRouteGeneration(sessionId: String?, draftId: String?, activate: Boolean): Long? {
         val pending = draftId?.let { id -> drafts?.snapshot?.value?.pendingSends?.firstOrNull { it.draftId == id } }
-        val generation = when {
+        return when {
             pending?.sessionId != null -> sdk.beginSessionRoute(pending.sessionId)
             pending != null -> sdk.restorePendingMintAnchor(pending.mintKey, pending.surfaceId)
             activate && sessionId == null -> sdk.beginFreshChatRoute()
@@ -361,7 +419,6 @@ open class ChatComponent(
                 acknowledgedRoute.value?.generation == outboundRouteGeneration.value -> acknowledgedRoute.value?.generation
             else -> null
         }
-        if (generation != null) cache.bindToRoute(generation)
     }
 
     // ── SDK UI-command passthroughs ───────────────────────────────────────────

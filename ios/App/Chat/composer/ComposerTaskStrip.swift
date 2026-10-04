@@ -31,6 +31,7 @@ func taskShelfOverflow(visibleRect: CGRect, contentWidth: CGFloat) -> TaskShelfO
 struct ComposerTaskStrip: View {
     let items: [TaskListItem]
 
+    @State private var retainedTaskId: String?
     @State private var expandedTaskId: String?
     @State private var overflow = TaskShelfOverflow(left: false, right: false)
     @ComposerReduceMotion private var reduceMotion
@@ -42,11 +43,13 @@ struct ComposerTaskStrip: View {
 
     var body: some View {
         if !items.isEmpty {
-            VStack(spacing: ComposerTaskShelfGeometry.sectionGap) {
+            VStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: ComposerTaskShelfGeometry.pillGap) {
                         ForEach(items, id: \.id) { item in
                             taskButton(item)
+                                .transition(.opacity.combined(with: .offset(y: 6)).combined(with: .scale(scale: 0.96))
+                                    .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.26)))
                         }
                     }
                 }
@@ -63,7 +66,14 @@ struct ComposerTaskStrip: View {
 
                 if let selectedTask {
                     taskDetail(selectedTask)
-                        .transition(.move(edge: .bottom))
+                        .padding(.top, ComposerTaskShelfGeometry.sectionGap)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: expandedTaskId == nil ? 0 : nil, alignment: .top)
+                        .contentShape(Rectangle())
+                        .clipped()
+                        .opacity(expandedTaskId == nil ? 0 : 1)
+                        .allowsHitTesting(expandedTaskId != nil)
+                        .accessibilityHidden(expandedTaskId == nil)
                 }
             }
             .padding(.horizontal, ComposerTaskShelfGeometry.horizontalPadding)
@@ -86,8 +96,8 @@ struct ComposerTaskStrip: View {
     }
 
     private var selectedTask: TaskListItem? {
-        guard let expandedTaskId else { return nil }
-        return items.first { $0.id == expandedTaskId }
+        guard let id = expandedTaskId ?? retainedTaskId else { return nil }
+        return items.first { $0.id == id }
     }
 
     private var overflowFades: some View {
@@ -97,13 +107,14 @@ struct ComposerTaskStrip: View {
     private func taskButton(_ item: TaskListItem) -> some View {
         let expanded = expandedTaskId == item.id
         return Button {
+            retainedTaskId = item.id
             expandedTaskId = taskShelfSelection(current: expandedTaskId, tapped: item.id)
         } label: {
             HStack(spacing: ComposerTaskShelfGeometry.pillContentGap) {
                 TaskStatusIndicator(status: item.status)
 
                 Text(formatToolName(rawName: item.toolName))
-                    .font(Typo.ui(TypeScale.sm, .regular))
+                    .font(Typo.ui(14, .regular))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: ComposerTaskShelfGeometry.maximumLabelWidth, alignment: .leading)
@@ -119,23 +130,33 @@ struct ComposerTaskStrip: View {
 
     private func taskDetail(_ item: TaskListItem) -> some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Task details")
+            Text("Arguments")
                 .font(Typo.ui(ComposerTaskShelfGeometry.detailTitleTypeSize, .medium))
-                .foregroundStyle(DuskColors.ink3)
-
-            Text(item.argsPreview.isEmpty ? "No argument summary" : item.argsPreview)
-                .font(Typo.mono(TypeScale.sm))
                 .foregroundStyle(DuskColors.ink2)
-                .lineLimit(4)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+
+            ViewThatFits(in: .vertical) {
+                arguments(item)
+                ScrollView { arguments(item) }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .accessibilityIdentifier("task-arguments-scroll-\(item.id)")
+            }
+            .frame(maxHeight: 180)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(ComposerTaskShelfGeometry.detailPadding)
         .background {
             TaskDetailCanvas()
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func arguments(_ item: TaskListItem) -> some View {
+        Text(item.argsPreview.isEmpty ? "No argument summary" : item.argsPreview)
+            .font(Typo.mono(TypeScale.sm))
+            .foregroundStyle(DuskColors.ink2)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
     }
 
     private func taskStatusLabel(_ status: String) -> String {
@@ -631,7 +652,7 @@ private struct TaskStatusIndicator: View {
     var body: some View {
         if isRunning && !reduceMotion {
             TimelineView(.animation(minimumInterval: 1 / 24)) { timeline in
-                indicator(phase: (sin(timeline.date.timeIntervalSinceReferenceDate * 4.5) + 1) / 2)
+                indicator(phase: (sin(timeline.date.timeIntervalSinceReferenceDate * 2 * .pi / 1.45) + 1) / 2)
             }
         } else {
             indicator(phase: 0)

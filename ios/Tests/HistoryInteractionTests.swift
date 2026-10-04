@@ -164,17 +164,20 @@ final class HistoryInteractionTests: XCTestCase {
                 throw CocoaError(.fileWriteOutOfSpace)
             }
         )
-        var state = RouteChangeState()
+        defer { viewModel.retireEditor() }
         var navigations = 0
-
-        XCTAssertTrue(state.begin())
-        if state.finish(saved: await viewModel.saveDraftBeforeNavigation()) { navigations += 1 }
+        let navigated = await completeSavedNavigation(
+            save: { await viewModel.saveDraftBeforeNavigation() },
+            isCurrent: { true },
+            navigate: { navigations += 1 }
+        )
 
         XCTAssertEqual(saveAttempts, 1)
         XCTAssertEqual(viewModel.draftSaveError, "Draft couldn't be saved. Keep this screen open and retry.")
         XCTAssertEqual(navigations, 0)
-        XCTAssertFalse(state.pending)
-        XCTAssertTrue(state.begin(), "failed save must allow retry")
+        XCTAssertFalse(navigated)
+        let retried = await completeSavedNavigation(save: { true }, isCurrent: { true }, navigate: { navigations += 1 })
+        XCTAssertTrue(retried, "failed save must allow retry")
     }
 
     @MainActor
@@ -234,14 +237,15 @@ final class HistoryInteractionTests: XCTestCase {
             }
         )
 
+        viewModel.updateDraft("offline message")
         viewModel.send("offline message")
         for _ in 0..<100 where viewModel.draftSaveError == nil {
             await Task.yield()
         }
 
         XCTAssertEqual(saves, 1)
-        XCTAssertEqual(viewModel.draftSaveError, "Message is saved locally but couldn't be sent yet.")
-        XCTAssertTrue(viewModel.draftText.isEmpty)
+        XCTAssertEqual(viewModel.draftSaveError, "Message couldn't be accepted yet. Draft retained; retry when connected.")
+        XCTAssertEqual(viewModel.draftText, "offline message")
         viewModel.updateDraft("after failed send")
         let savedAfterFailure = await viewModel.saveDraftBeforeNavigation()
         XCTAssertTrue(savedAfterFailure)

@@ -1,6 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useId, useRef } from "preact/hooks";
 import type { ChatMessage } from "../../types.ts";
+import { BubbleSelectionOwner, useMessageSelection } from "./message-selection.ts";
 import type { MessageVisualState } from "./message-state.ts";
 
 export interface MessageBubbleFrameProps {
@@ -213,6 +214,8 @@ export function MessageBubbleFrame({
   position,
   total,
 }: MessageBubbleFrameProps): JSX.Element {
+  const selectionRoot = useRef<HTMLDivElement>(null);
+  useMessageSelection(selectionRoot);
   const chronology =
     position !== undefined && total !== undefined
       ? `Message ${position} of ${total}`
@@ -249,7 +252,9 @@ export function MessageBubbleFrame({
               {surfaceEffect}
             </span>
           )}
-          <div class="message-bubble__text-inner">{content}</div>
+          <div class="message-bubble__text-inner" ref={selectionRoot}>
+            <BubbleSelectionOwner.Provider value={true}>{content}</BubbleSelectionOwner.Provider>
+          </div>
         </div>
       </div>
     </article>

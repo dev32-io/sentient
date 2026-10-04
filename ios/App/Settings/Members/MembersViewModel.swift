@@ -136,6 +136,7 @@ final class MembersViewModel {
     /// Add a member (name + PIN). Returns true on success (caller closes the sheet).
     /// The usecase templates the rest of the profile off the admin's own live profile.
     func addUser(displayName: String, pin: String) async -> Bool {
+        guard !isAdding else { return false }
         isAdding = true
         addError = nil
         defer { isAdding = false }
@@ -167,11 +168,13 @@ final class MembersViewModel {
     }
 
     func openAddSheet() {
+        guard !isAdding else { return }
         addError = nil
         isAddSheetOpen = true
     }
 
     func closeAddSheet() {
+        guard !isAdding else { return }
         addError = nil
     }
 

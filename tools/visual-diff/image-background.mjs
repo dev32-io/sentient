@@ -36,11 +36,17 @@ export async function measureVisibleAlphaUnion(referencePath, actualPath) {
   }
 
   let visiblePixelCount = 0;
+  let shapeDiffCount = 0;
+  let alphaAbsoluteDifference = 0;
   for (let offset = 3; offset < reference.data.length; offset += 4) {
     if (reference.data[offset] > 0 || actual.data[offset] > 0) visiblePixelCount += 1;
+    if ((reference.data[offset] > 0) !== (actual.data[offset] > 0)) shapeDiffCount += 1;
+    alphaAbsoluteDifference += Math.abs(reference.data[offset] - actual.data[offset]);
   }
   return {
     visiblePixelCount,
+    shapeDiffCount,
+    alphaAbsoluteDifference,
     canvasPixelCount: reference.width * reference.height,
   };
 }

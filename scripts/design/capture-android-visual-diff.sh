@@ -12,7 +12,8 @@ fi
 
 reference="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 case_id="$(basename "$reference" .png)"
-output="${2:-$repo_root/build/visual-captures/android/$case_id.png}"
+canonical_id="$(node --input-type=module -e 'import {caseIdFromReference} from "./tools/visual-diff/reference-image.mjs"; console.log(caseIdFromReference(process.argv[1]))' "$reference")"
+output="${2:-$repo_root/build/visual-captures/android/$canonical_id.png}"
 mkdir -p "$(dirname "$output")"
 output="$(cd "$(dirname "$output")" && pwd)/$(basename "$output")"
 
@@ -75,4 +76,4 @@ PY
 fi
 cp "$rendered" "$output"
 
-printf '{"platform":"android","caseId":"%s","actualPath":"%s"}\n' "$case_id" "$output"
+printf '{"platform":"android","caseId":"%s","actualPath":"%s"}\n' "$canonical_id" "$output"

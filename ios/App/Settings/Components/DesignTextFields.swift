@@ -551,7 +551,8 @@ struct DesignMultilineEditor: View {
             surfacedEditor
             if let maxLength {
                 Text("\(text.count) / \(maxLength)")
-                    .font(Typo.mono(TypeScale.xs))
+                    .designText(.supporting)
+                    .monospacedDigit()
                     .foregroundStyle(text.count >= maxLength ? DuskColors.stop : DuskColors.ink3)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .accessibilityLabel("\(text.count) of \(maxLength) characters")

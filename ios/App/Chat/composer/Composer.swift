@@ -53,6 +53,7 @@ struct Composer: View {
     let tasks: [TaskListItem]
     let ttsEnabled: Bool
     let talkMode: TalkMode
+    let captureFailureId: String?
     let micLevels: [Float]
     let voiceDisabled: Bool
     let canInterrupt: Bool
@@ -79,6 +80,7 @@ struct Composer: View {
     let onFocusGained: () -> Void
     private let initiallyExpandedTaskId: String?
 
+    @ComposerReduceMotion private var reduceMotion
     @State private var draft: String
     @State private var localHoldPresentationActive = false
     @State private var showingSourcePicker = false
@@ -98,6 +100,7 @@ struct Composer: View {
         tasks: [TaskListItem],
         ttsEnabled: Bool,
         talkMode: TalkMode,
+        captureFailureId: String? = nil,
         micLevels: [Float],
         voiceDisabled: Bool,
         canInterrupt: Bool,
@@ -127,6 +130,7 @@ struct Composer: View {
         self.tasks = tasks
         self.ttsEnabled = ttsEnabled
         self.talkMode = talkMode
+        self.captureFailureId = captureFailureId
         self.micLevels = micLevels
         self.voiceDisabled = voiceDisabled
         self.canInterrupt = canInterrupt
@@ -183,6 +187,7 @@ struct Composer: View {
                         .horizontal,
                         ComposerGeometry.taskShelfInset(horizontalSizeClass: horizontalSizeClass)
                     )
+                    .transition(.opacity.combined(with: .offset(y: 10)).combined(with: .scale(scale: 0.985, anchor: .bottom)))
                     .zIndex(0)
             }
 
@@ -190,6 +195,8 @@ struct Composer: View {
                 .zIndex(1)
         }
         .frame(maxWidth: ComposerGeometry.maximumWidth)
+        .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.18), value: draft)
+        .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.36), value: tasks.map(\.id))
         .padding(.horizontal, ComposerGeometry.dockHorizontalInset)
         .padding(.top, Space.sm)
         .padding(.bottom, Space.sm)
@@ -251,7 +258,8 @@ struct Composer: View {
         .sheet(item: $previewedAttachment) { attachment in
             ComposerAttachmentPreview(
                 attachment: attachment,
-                image: attachmentPreviews[attachment.id]
+                image: attachmentPreviews[attachment.id],
+                previewFailed: attachmentPreviewFailures.contains(attachment.id)
             )
         }
         .fullScreenCover(isPresented: $showingCameraPicker, onDismiss: finishAttachmentPickerDismissal) {
@@ -307,7 +315,6 @@ struct Composer: View {
                 horizontalInset: ComposerGeometry.editorHorizontalInset(
                     horizontalSizeClass: horizontalSizeClass
                 ),
-                onSubmit: sendDraft,
                 onPasteProviders: receivePastedProviders
             )
 
@@ -316,6 +323,7 @@ struct Composer: View {
                 held: isHolding,
                 ttsEnabled: ttsEnabled,
                 talkMode: talkMode,
+                captureFailureId: captureFailureId,
                 micLevels: micLevels,
                 voiceDisabled: voiceDisabled,
                 canInterrupt: canInterrupt,
@@ -350,10 +358,12 @@ struct Composer: View {
             if !isHolding { inputFocused = true }
         }
         .background {
+#if DEBUG
+            ComposerFrameProbe(identifier: "composer-face-viewport", accessible: true)
+#endif
             ComposerFaceBackground(
                 cornerRadius: ComposerGeometry.faceRadius(horizontalSizeClass: horizontalSizeClass),
-                isFocused: inputFocused,
-                isVoiceActive: talkMode != .idle
+                isFocused: inputFocused
             )
         }
     }
@@ -526,36 +536,35 @@ private struct ComposerAttachmentCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            ZStack(alignment: .topTrailing) {
+            HStack(spacing: Space.sm) {
                 previewControl
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(attachment.displayName)
+                        .font(Typo.ui(TypeScale.sm, .semibold))
+                        .foregroundStyle(DuskColors.ink)
+                        .lineLimit(2)
+                    Text("\(attachment.mediaType.split(separator: "/").last?.capitalized ?? "File") · \(ByteCountFormatter.string(fromByteCount: attachment.sizeBytes, countStyle: .file))")
+                        .font(Typo.ui(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink2)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 DesignCompactIconButton(
                     systemName: "xmark",
                     label: dismissLabel,
                     accessibilityId: "composer-attachment-dismiss-\(attachment.id)",
                     action: dismiss
                 )
-                .padding(Space.xs)
             }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.displayName)
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.ink)
-                    .lineLimit(2)
-                Text("\(attachment.mediaType.split(separator: "/").last?.uppercased() ?? "FILE") · \(ByteCountFormatter.string(fromByteCount: attachment.sizeBytes, countStyle: .file))")
-                    .font(Typo.ui(TypeScale.xs))
-                    .foregroundStyle(DuskColors.ink3)
-                    .lineLimit(1)
-            }
-
             transferStatus
         }
-        .padding(Space.sm)
+        .padding(.horizontal, Space.sm)
+        .padding(.vertical, Space.xs)
         .frame(width: width, alignment: .leading)
-        .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.22), in: RoundedRectangle(cornerRadius: 8))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DuskColors.line, lineWidth: DesignMetrics.hairline)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
         }
     }
 
@@ -564,7 +573,6 @@ private struct ComposerAttachmentCard: View {
         if attachment.isImage {
             Button(action: onPreview) { previewFace }
                 .buttonStyle(.plain)
-                .disabled(preview == nil)
                 .accessibilityLabel("Preview \(attachment.displayName)")
                 .accessibilityIdentifier("composer-attachment-preview-\(attachment.id)")
         } else {
@@ -584,11 +592,11 @@ private struct ComposerAttachmentCard: View {
                     .tint(DuskColors.accent)
             } else {
                 Image(systemName: attachment.isImage ? "photo" : "doc.fill")
-                    .font(.system(size: 34))
+                    .font(.system(size: 20))
                     .foregroundStyle(DuskColors.accent)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 104, maxHeight: 104)
+        .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
         .background(DuskColors.bgSunk)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
@@ -597,20 +605,24 @@ private struct ComposerAttachmentCard: View {
     @ViewBuilder
     private var transferStatus: some View {
         switch transfer?.phase {
+        case .queued:
+            Text("Waiting to upload")
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
         case .uploading:
             ProgressView(value: transfer?.progress ?? 0) {
                 Text("Uploading")
             }
-            .font(Typo.ui(TypeScale.xs))
+            .font(Typo.ui(TypeScale.sm))
             .tint(DuskColors.accent)
         case .failed:
             failedActions(label: "Upload failed", color: DuskColors.warn)
         case .cancelled:
-            failedActions(label: "Cancelled", color: DuskColors.ink3)
+            failedActions(label: "Cancelled", color: DuskColors.ink2)
         case .ready:
             Text("Uploaded")
-                .font(Typo.ui(TypeScale.xs))
-                .foregroundStyle(DuskColors.ink3)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
         case nil:
             EmptyView()
         }
@@ -619,14 +631,14 @@ private struct ComposerAttachmentCard: View {
     private func failedActions(label: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(label)
-                .font(Typo.ui(TypeScale.xs, .semibold))
+                .font(Typo.ui(TypeScale.sm, .semibold))
                 .foregroundStyle(color)
             HStack(spacing: Space.xs) {
                 DesignCompactButton(accessibilityLabel: "Edit \(attachment.displayName)", action: onEdit) {
-                    Text("Edit").font(Typo.ui(TypeScale.xs, .semibold))
+                    Text("Edit").font(Typo.ui(14, .semibold))
                 }
                 DesignCompactButton(accessibilityLabel: "Retry \(attachment.displayName)", action: onRetry) {
-                    Text("Retry").font(Typo.ui(TypeScale.xs, .semibold))
+                    Text("Retry").font(Typo.ui(14, .semibold))
                 }
             }
             .foregroundStyle(DuskColors.accent)
@@ -674,6 +686,7 @@ private struct ComposerAttachmentPreparationCard: View {
 private struct ComposerAttachmentPreview: View {
     let attachment: ComposerAttachment
     let image: UIImage?
+    let previewFailed: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -684,8 +697,16 @@ private struct ComposerAttachmentPreview: View {
                         .resizable()
                         .scaledToFit()
                         .padding(Space.lg)
+                } else if previewFailed {
+                    VStack(spacing: Space.sm) {
+                        Image(systemName: "photo")
+                        Text("Preview unavailable").designText(.body)
+                        Text(attachment.displayName).designText(.supporting)
+                    }
+                    .foregroundStyle(DuskColors.ink2)
+                    .padding(Space.lg)
                 } else {
-                    ProgressView()
+                    ProgressView("Loading preview")
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -708,6 +729,12 @@ private struct ComposerAttachmentPreview: View {
 
 final class ComposerTextView: UITextView, UITextPasteDelegate {
     var onPasteProviders: ([NSItemProvider]) -> Void = { _ in }
+    var onWindowChange: (() -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onWindowChange?()
+    }
 
     // Default mixed paste turns file URLs into text; keep only native clipboard text.
     func textPasteConfigurationSupporting(
@@ -768,7 +795,7 @@ private func applyComposerParagraphStyle(_ view: ComposerTextView) {
         paragraphStyle = configured
     } else {
         let fallback = NSMutableParagraphStyle()
-        fallback.lineSpacing = 2
+        fallback.lineSpacing = view.font.map { max(0, $0.pointSize * 1.55 - $0.lineHeight) } ?? 0
         fallback.lineBreakMode = .byWordWrapping
         paragraphStyle = fallback
     }
@@ -789,8 +816,8 @@ func configureComposerTextView(
     view.backgroundColor = .clear
     view.textColor = UIColor(DuskColors.ink)
     view.tintColor = UIColor(DuskColors.accent)
-    let baseFont = UIFont(name: DesignTypographyAdapter.uiFamily, size: TypeScale.base)
-        ?? UIFont.preferredFont(forTextStyle: .body)
+    let baseFont = UIFont(name: DesignTypographyAdapter.uiFamily, size: 16)
+        ?? UIFont.systemFont(ofSize: 16)
     let font = UIFontMetrics(forTextStyle: .body).scaledFont(for: baseFont)
     view.font = font
     view.adjustsFontForContentSizeCategory = true
@@ -798,13 +825,13 @@ func configureComposerTextView(
     view.textContainer.lineFragmentPadding = 0
     view.textContainer.maximumNumberOfLines = 0
     view.textContainer.lineBreakMode = .byWordWrapping
-    view.returnKeyType = .send
+    view.returnKeyType = .default
     view.isEditable = true
     view.isSelectable = true
     view.isScrollEnabled = true
     view.clipsToBounds = true
     let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = 2
+    paragraphStyle.lineSpacing = max(0, font.pointSize * 1.55 - font.lineHeight)
     paragraphStyle.lineBreakMode = .byWordWrapping
     view.typingAttributes = [
         .font: font,
@@ -819,11 +846,10 @@ func configureComposerTextView(
     view.onPasteProviders = onPasteProviders
 }
 
-private struct ComposerTextInput: UIViewRepresentable {
+struct ComposerTextInput: UIViewRepresentable {
     @Binding var text: String
     var isFocused: Binding<Bool>
     let minimumHeight: CGFloat
-    let onSubmit: () -> Void
     let onPasteProviders: ([NSItemProvider]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -831,6 +857,10 @@ private struct ComposerTextInput: UIViewRepresentable {
     func makeUIView(context: Context) -> ComposerTextView {
         let view = ComposerTextView()
         view.delegate = context.coordinator
+        view.onWindowChange = { [weak view, weak coordinator = context.coordinator] in
+            guard let view else { return }
+            coordinator?.reconcileFocus(in: view)
+        }
         configureComposerTextView(
             view,
             text: text,
@@ -875,18 +905,39 @@ private struct ComposerTextInput: UIViewRepresentable {
             let length = min(selectedRange.length, textLength - location)
             view.selectedRange = NSRange(location: location, length: length)
         }
-        if isFocused.wrappedValue, !view.isFirstResponder {
-            context.coordinator.withResponderFence { view.becomeFirstResponder() }
-        } else if !isFocused.wrappedValue, view.isFirstResponder {
-            context.coordinator.withResponderFence { view.resignFirstResponder() }
-        }
+        context.coordinator.reconcileFocus(in: view)
     }
 
+    static func dismantleUIView(_ view: ComposerTextView, coordinator: Coordinator) {
+        view.delegate = nil
+        view.onWindowChange = nil
+        view.onPasteProviders = { _ in }
+    }
+
+    @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: ComposerTextInput
         private var applyingResponderState = false
+        private var focusReconciliationPending = false
 
         init(_ parent: ComposerTextInput) { self.parent = parent }
+
+        func reconcileFocus(in view: ComposerTextView) {
+            // Responder transitions can reenter SwiftUI's graph through UIKit.
+            // Leave updateUIView first; coalesce work, never snapshot focus intent.
+            guard !focusReconciliationPending else { return }
+            focusReconciliationPending = true
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self else { return }
+                self.focusReconciliationPending = false
+                guard let view, view.delegate === self, view.window != nil else { return }
+                if self.parent.isFocused.wrappedValue, !view.isFirstResponder {
+                    self.withResponderFence { view.becomeFirstResponder() }
+                } else if !self.parent.isFocused.wrappedValue, view.isFirstResponder {
+                    self.withResponderFence { view.resignFirstResponder() }
+                }
+            }
+        }
 
         func withResponderFence(_ action: () -> Void) {
             applyingResponderState = true
@@ -896,8 +947,9 @@ private struct ComposerTextInput: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
-            DispatchQueue.main.async { [weak textView] in
-                guard let textView, textView.isFirstResponder else { return }
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView, textView.delegate === self,
+                      textView.isFirstResponder else { return }
                 textView.layoutIfNeeded()
                 self.scrollCaretIntoView(textView)
             }
@@ -939,16 +991,6 @@ private struct ComposerTextInput: UIViewRepresentable {
         func textViewDidEndEditing(_ textView: UITextView) {
             guard !applyingResponderState else { return }
             parent.isFocused.wrappedValue = false
-        }
-
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText text: String
-        ) -> Bool {
-            guard text == "\n", textView.markedTextRange == nil else { return true }
-            parent.onSubmit()
-            return false
         }
     }
 }
@@ -999,7 +1041,6 @@ private struct DraftEditor: View {
     let isReceded: Bool
     let minimumHeight: CGFloat
     let horizontalInset: CGFloat
-    let onSubmit: () -> Void
     let onPasteProviders: ([NSItemProvider]) -> Void
 
     @ComposerReduceMotion private var reduceMotion
@@ -1017,13 +1058,12 @@ private struct DraftEditor: View {
                 text: $text,
                 isFocused: isFocused,
                 minimumHeight: minimumHeight,
-                onSubmit: onSubmit,
                 onPasteProviders: onPasteProviders
             )
 
             if text.isEmpty {
                 Text(promptText)
-                    .font(Typo.ui(TypeScale.base))
+                    .font(Typo.ui(16))
                     .foregroundStyle(DuskColors.ink3)
                     .allowsHitTesting(false)
             }
@@ -1069,6 +1109,7 @@ private struct ComposerActions: View {
     let held: Bool
     let ttsEnabled: Bool
     let talkMode: TalkMode
+    let captureFailureId: String?
     let micLevels: [Float]
     let voiceDisabled: Bool
     let canInterrupt: Bool
@@ -1080,7 +1121,6 @@ private struct ComposerActions: View {
     let onInterrupt: () -> Void
 
     @ComposerReduceMotion private var reduceMotion
-    @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
@@ -1088,10 +1128,10 @@ private struct ComposerActions: View {
 
         ComposerActionLayout(
             spacing: ComposerGeometry.actionGap,
-            layoutDirection: layoutDirection
+            leadingReceded: held
         ) {
             HStack(spacing: ComposerGeometry.actionGap) {
-                if !held {
+                Group {
                     Button(action: onAttach) {
                         ComposerGlyphView(.attachment)
                             .frame(width: 19, height: 19)
@@ -1113,13 +1153,17 @@ private struct ComposerActions: View {
                     .accessibilityAddTraits(ttsEnabled ? .isSelected : [])
                     .accessibilityIdentifier("chat-tts-toggle")
                 }
+                .opacity(held ? 0 : 1)
+                .offset(y: held ? Space.xs : 0)
+                .scaleEffect(held ? 0.86 : 1, anchor: .bottom)
+                .allowsHitTesting(!held)
+                .accessibilityHidden(held)
             }
 
             ComposerTrailingActionLayout(
-                spacing: ComposerGeometry.trailingActionGap,
-                layoutDirection: layoutDirection
+                spacing: held ? 0 : ComposerGeometry.trailingActionGap
             ) {
-                if canInterrupt && !held {
+                if canInterrupt {
                     Button(action: onInterrupt) {
                         ComposerGlyphView(.stopResponse)
                             .frame(width: 19, height: 19)
@@ -1130,6 +1174,13 @@ private struct ComposerActions: View {
                     ))
                     .accessibilityLabel("Stop Sentient response")
                     .accessibilityIdentifier("chat-interrupt")
+                    .frame(width: held ? 0 : ComposerGeometry.smallControlSize)
+                    .opacity(held ? 0 : 1)
+                    .scaleEffect(held ? 0.82 : 1, anchor: .bottom)
+                    .offset(y: held ? Space.xs : 0)
+                    .clipped()
+                    .allowsHitTesting(!held)
+                    .accessibilityHidden(held)
                     .transition(.scale(scale: 0.82).combined(with: .opacity))
                 }
 
@@ -1149,11 +1200,12 @@ private struct ComposerActions: View {
                     .transition(.scale(scale: 0.88).combined(with: .opacity))
                 }
 
-                if actions.showsVoiceCapture {
+                if actions.showsVoiceCapture || captureFailureId != nil {
                     VoiceCaptureControl(
                         talkMode: talkMode,
                         levels: micLevels,
                         disabled: voiceDisabled,
+                        captureFailureId: captureFailureId,
                         onHoldPresentationChanged: onHoldPresentationChanged,
                         onIntent: onVoiceIntent
                     )
@@ -1166,7 +1218,7 @@ private struct ComposerActions: View {
             value: actions
         )
         .animation(
-            reduceMotion ? nil : .spring(duration: DesignV2.Motion.state, bounce: 0),
+            reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.36),
             value: held
         )
         .animation(
@@ -1182,11 +1234,13 @@ private struct ComposerActions: View {
 #if DEBUG
 private struct ComposerFrameProbe: UIViewRepresentable {
     let identifier: String
+    var accessible = false
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.accessibilityIdentifier = identifier
-        view.accessibilityElementsHidden = true
+        view.isAccessibilityElement = accessible
+        view.accessibilityElementsHidden = !accessible
         view.isUserInteractionEnabled = false
         return view
     }
@@ -1208,7 +1262,6 @@ private struct ComposerFrameProbe: UIViewRepresentable {
 /// text Send, and persistent Auto at Accessibility Dynamic Type.
 struct ComposerTrailingActionLayout: Layout {
     let spacing: CGFloat
-    let layoutDirection: LayoutDirection
 
     static func rows(
         availableWidth: CGFloat,
@@ -1241,8 +1294,8 @@ struct ComposerTrailingActionLayout: Layout {
         subviews: Subviews,
         cache: inout ()
     ) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
         let availableWidth = proposal.width ?? .greatestFiniteMagnitude
+        let sizes = measuredSizes(subviews, availableWidth: availableWidth)
         let rows = Self.rows(
             availableWidth: availableWidth,
             itemWidths: sizes.map(\.width),
@@ -1262,7 +1315,7 @@ struct ComposerTrailingActionLayout: Layout {
         subviews: Subviews,
         cache: inout ()
     ) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let sizes = measuredSizes(subviews, availableWidth: bounds.width)
         let rows = Self.rows(
             availableWidth: bounds.width,
             itemWidths: sizes.map(\.width),
@@ -1272,31 +1325,28 @@ struct ComposerTrailingActionLayout: Layout {
 
         for row in rows {
             let rowSize = rowSize(row, sizes: sizes)
-            if layoutDirection == .leftToRight {
-                var x = bounds.maxX - rowSize.width
-                for index in row {
-                    place(
-                        subviews[index],
-                        size: sizes[index],
-                        x: x,
-                        y: y + (rowSize.height - sizes[index].height) / 2
-                    )
-                    x += sizes[index].width + spacing
-                }
-            } else {
-                var x = bounds.minX + rowSize.width
-                for index in row {
-                    x -= sizes[index].width
-                    place(
-                        subviews[index],
-                        size: sizes[index],
-                        x: x,
-                        y: y + (rowSize.height - sizes[index].height) / 2
-                    )
-                    x -= spacing
-                }
+            // LayoutSubview placement is already mirrored by SwiftUI in RTL.
+            var x = bounds.maxX - rowSize.width
+            for index in row {
+                place(
+                    subviews[index],
+                    size: sizes[index],
+                    x: x,
+                    y: y + rowSize.height - sizes[index].height
+                )
+                x += sizes[index].width + spacing
             }
             y += rowSize.height + spacing
+        }
+    }
+
+    private func measuredSizes(_ subviews: Subviews, availableWidth: CGFloat) -> [CGSize] {
+        subviews.map { subview in
+            let width = min(subview.sizeThatFits(.unspecified).width, max(0, availableWidth))
+            // Ideal height can differ from wrapped height. Measure and place with
+            // the same bounded width and unconstrained height, including notices.
+            let size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            return CGSize(width: width, height: size.height)
         }
     }
 
@@ -1312,7 +1362,7 @@ struct ComposerTrailingActionLayout: Layout {
         subview.place(
             at: CGPoint(x: x, y: y),
             anchor: .topLeading,
-            proposal: ProposedViewSize(width: size.width, height: size.height)
+            proposal: ProposedViewSize(width: size.width, height: nil)
         )
     }
 }
@@ -1322,7 +1372,7 @@ struct ComposerTrailingActionLayout: Layout {
 /// shrinking controls or measuring against global screen bounds.
 struct ComposerActionLayout: Layout {
     let spacing: CGFloat
-    let layoutDirection: LayoutDirection
+    var leadingReceded = false
 
     static func shouldStack(
         availableWidth: CGFloat,
@@ -1339,7 +1389,7 @@ struct ComposerActionLayout: Layout {
         cache: inout ()
     ) -> CGSize {
         guard subviews.count == 2 else { return .zero }
-        let leading = subviews[0].sizeThatFits(.unspecified)
+        let leading = leadingReceded ? .zero : subviews[0].sizeThatFits(.unspecified)
         let naturalTrailing = subviews[1].sizeThatFits(.unspecified)
         let naturalWidth = leading.width + (leading.width > 0 ? spacing : 0) + naturalTrailing.width
         let width = proposal.width ?? naturalWidth
@@ -1368,7 +1418,8 @@ struct ComposerActionLayout: Layout {
         cache: inout ()
     ) {
         guard subviews.count == 2 else { return }
-        let leading = subviews[0].sizeThatFits(.unspecified)
+        let leadingSize = subviews[0].sizeThatFits(.unspecified)
+        let leading = leadingReceded ? .zero : leadingSize
         let naturalTrailing = subviews[1].sizeThatFits(.unspecified)
         let stacked = Self.shouldStack(
             availableWidth: bounds.width,
@@ -1386,38 +1437,30 @@ struct ComposerActionLayout: Layout {
         if stacked {
             place(
                 subviews[0],
-                size: leading,
-                x: logicalLeadingX(size: leading, in: bounds),
+                size: leadingSize,
+                x: bounds.minX,
                 y: bounds.minY
             )
             place(
                 subviews[1],
                 size: trailing,
-                x: logicalTrailingX(size: trailing, in: bounds),
+                x: bounds.maxX - trailing.width,
                 y: bounds.minY + leading.height + spacing
             )
         } else {
             place(
                 subviews[0],
-                size: leading,
-                x: logicalLeadingX(size: leading, in: bounds),
-                y: bounds.midY - leading.height / 2
+                size: leadingSize,
+                x: bounds.minX,
+                y: bounds.midY - leadingSize.height / 2
             )
             place(
                 subviews[1],
                 size: trailing,
-                x: logicalTrailingX(size: trailing, in: bounds),
-                y: bounds.midY - trailing.height / 2
+                x: bounds.maxX - trailing.width,
+                y: bounds.maxY - trailing.height
             )
         }
-    }
-
-    private func logicalLeadingX(size: CGSize, in bounds: CGRect) -> CGFloat {
-        layoutDirection == .leftToRight ? bounds.minX : bounds.maxX - size.width
-    }
-
-    private func logicalTrailingX(size: CGSize, in bounds: CGRect) -> CGFloat {
-        layoutDirection == .leftToRight ? bounds.maxX - size.width : bounds.minX
     }
 
     private func place(_ subview: LayoutSubview, size: CGSize, x: CGFloat, y: CGFloat) {
@@ -1541,11 +1584,8 @@ enum ComposerGeometry {
 private struct ComposerFaceBackground: View {
     let cornerRadius: CGFloat
     let isFocused: Bool
-    let isVoiceActive: Bool
 
     @Environment(\.colorSchemeContrast) private var contrast
-
-    private var emphasized: Bool { isFocused || isVoiceActive }
 
     var body: some View {
         GeometryReader { proxy in
@@ -1592,12 +1632,12 @@ private struct ComposerFaceBackground: View {
                     in: &context,
                     faceRect: faceRect,
                     cornerRadius: cornerRadius,
-                    color: DuskColors.accent.opacity(emphasized ? 0.64 : 0.48),
+                    color: DuskColors.accent.opacity(isFocused ? 0.64 : 0.48),
                     geometry: DesignDropShadowGeometry(
                         radius: ComposerGeometry.faceAccentShadow.radius,
                         x: ComposerGeometry.faceAccentShadow.x,
                         y: ComposerGeometry.faceAccentShadow.y,
-                        sourceInset: emphasized ? 20 : ComposerGeometry.faceAccentShadow.sourceInset
+                        sourceInset: isFocused ? 20 : ComposerGeometry.faceAccentShadow.sourceInset
                     )
                 )
                 ComposerCanvasDrawing.drawContact(
@@ -1677,7 +1717,7 @@ private struct ComposerFaceBackground: View {
                         inset: DesignMetrics.hairline / 2
                     ),
                     with: .color(
-                        emphasized
+                        isFocused
                             ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.46)
                             : (contrast == .increased ? DuskColors.ink3 : DuskColors.line)
                     ),
@@ -1687,7 +1727,7 @@ private struct ComposerFaceBackground: View {
                     in: &context,
                     faceRect: faceRect,
                     cornerRadius: cornerRadius,
-                    color: DuskColors.ink.opacity(0.16)
+                    color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLight)
                 )
             }
             .frame(
@@ -2010,7 +2050,7 @@ private struct ComposerControlCanvas: View {
                         cornerRadius: cornerRadius,
                         inset: DesignMetrics.hairline / 2
                     ),
-                    with: .color(increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft),
+                    with: .color(increasedContrast ? DuskColors.ink3 : .clear),
                     lineWidth: DesignMetrics.hairline
                 )
 
@@ -2028,7 +2068,7 @@ private struct ComposerControlCanvas: View {
                         in: &context,
                         faceRect: faceRect,
                         cornerRadius: cornerRadius,
-                        color: DuskColors.ink.opacity(0.17)
+                        color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLight)
                     )
                 }
 

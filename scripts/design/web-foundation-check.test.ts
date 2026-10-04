@@ -110,6 +110,10 @@ describe("Web foundation boundary", () => {
       { ...sources[0], source: ".message-list { gap: 1rem; }" },
       sources[1]!,
     ])).toContain("src/styles/components.css: active chat/dock selector .message-list must be owned by a component stylesheet");
+    expect(findChatStyleOwnershipViolations([
+      { ...sources[0], source: ".message-bubble__avatar-spacer { width: 1rem; }" },
+      sources[1]!,
+    ])).toContain("src/styles/components.css: active chat/dock selector .message-bubble__avatar-spacer must be owned by a component stylesheet");
   });
 
   test("scans complete source text so split declarations cannot bypass the boundary", () => {

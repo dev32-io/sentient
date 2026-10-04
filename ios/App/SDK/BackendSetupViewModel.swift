@@ -50,6 +50,7 @@ final class BackendSetupViewModel: ObservableObject {
     }
 
     func save() {
+        guard !isSaving else { return }
         if let validation = backendValidationError(host: host, port: port) {
             error = validation
             return

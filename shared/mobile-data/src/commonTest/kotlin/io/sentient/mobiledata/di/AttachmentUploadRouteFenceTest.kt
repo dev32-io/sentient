@@ -51,6 +51,34 @@ import kotlin.test.assertTrue
 
 class AttachmentUploadRouteFenceTest {
     @Test
+    fun successful_file_response_is_published_before_next_file_failure() = runBlocking {
+        var requests = 0
+        val events = mutableListOf<Pair<String, Boolean>>()
+        val http = AttachmentsHttpClient(HttpClient(MockEngine {
+            requests++
+            if (requests == 1) respond(
+                """{"attachmentId":"att_0123456789abcdef0123456789abcdef","displayName":"fixture.txt","contentType":"text/plain","mediaKind":"text","size":3}""",
+                HttpStatusCode.Created, headersOf(HttpHeaders.ContentType, "application/json"),
+            ) else {
+                assertEquals(listOf("one" to false, "one" to true, "two" to false), events)
+                respond("{}", HttpStatusCode.InternalServerError)
+            }
+        }), "wss://test/api/v1/ws", { "token" })
+        val pending = NativePendingSend("pending", "anchor", "device", "draft", 1, "session", "A", listOf(
+            NativeDraftAttachment("one", "fixture.txt", "text/plain", 3, "/one"),
+            NativeDraftAttachment("two", "fixture.txt", "text/plain", 3, "/two"),
+        ), 1)
+        val coordinator = NativeDraftCoordinator(PendingStore(pending)).also { it.restore() }
+        val component = component(http, coordinator)
+        assertFailsWith<AttachmentRequestException> {
+            component.uploadPendingAttachmentsWithState(pending, null, { _, _, _ -> }) { id, ready -> events += id to ready }
+        }
+        assertEquals(listOf("one" to false, "one" to true, "two" to false), events)
+        assertEquals(pending, coordinator.snapshot.value.pendingSends.single())
+        component.close()
+    }
+
+    @Test
     fun offline_anchor_wait_is_bounded_without_blocking_draft_restore() = runBlocking {
         val http = AttachmentsHttpClient(
             HttpClient(MockEngine { error("request must not start") }),
@@ -441,6 +469,9 @@ private class PendingStore(
     override suspend fun remove(draftId: String, expectedRevision: Long) = error("unused")
     override suspend fun previewAttachment(attachmentId: String, maxPixelSize: Int): ByteArray? =
         preview(attachmentId, maxPixelSize)
+    override suspend fun preserveRestoredDraft(draftId: String, expectedRevision: Long, nextText: String): NativeDraft = error("unused")
+    override suspend fun markAttempted(pendingId: String) = Unit
+    override suspend fun acceptSend(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String): NativePendingSend = error("unused")
     override suspend fun beginSend(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String): NativePendingSend = error("unused")
     override suspend fun reconcileSend(
         pendingId: String,

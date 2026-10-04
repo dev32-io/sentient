@@ -50,6 +50,11 @@ enum DrawerSettlingDecision {
     }
 }
 
+struct DrawerPresentedKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 struct SideDrawer<Content: View, Drawer: View>: View {
     @Binding var isOpen: Bool
     let onOpen: () -> Void
@@ -73,6 +78,12 @@ struct SideDrawer<Content: View, Drawer: View>: View {
     /// Live horizontal translation during a drag (pt). 0 when no drag is active.
     @State private var dragX: CGFloat = 0
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AccessibilityFocusState private var closeAccessibilityFocused: Bool
+    @FocusState private var closeKeyboardFocused: Bool
+    @State private var settleRevision = 0
+    @State private var settling = false
+
     private let log = AppLog("chat", "drawer")
 
     var body: some View {
@@ -92,11 +103,28 @@ struct SideDrawer<Content: View, Drawer: View>: View {
                 // the left-edge zone, so it never swallows taps on the column.
                 content()
                     .frame(width: geo.size.width, height: geo.size.height)
+                    .disabled(isOpen || settling || fraction > 0)
                     .gesture(edgeOpenDrag(drawerWidth: drawerWidth))
+                    .accessibilityHidden(isOpen || settling || fraction > 0)
 
                 dimScrim(fraction: fraction, drawerWidth: drawerWidth)
 
-                drawer()
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("History").designText(.title).accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        DesignIconButton(systemName: "xmark", label: "Close History",
+                                         accessibilityId: "history-close", action: close)
+                            .keyboardShortcut(.cancelAction)
+                            .accessibilityFocused($closeAccessibilityFocused)
+                            .focused($closeKeyboardFocused)
+                    }
+                    .padding(.horizontal, Space.md)
+                    .padding(.vertical, Space.sm)
+                    drawer()
+                }
+                    .background(DuskColors.bg)
+                    .disabled(!isOpen)
                     .frame(width: drawerWidth)
                     .frame(maxHeight: .infinity)
                     .offset(x: drawerX)
@@ -105,7 +133,22 @@ struct SideDrawer<Content: View, Drawer: View>: View {
                     // area so the drawer header clears the status bar. The drawer's own
                     // full-bleed background (set in ChatView) still covers the top strip.
                     .ignoresSafeArea(.container, edges: .bottom)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityAddTraits(isOpen || settling ? .isModal : [])
+                    .accessibilityAction(.escape, close)
+                    .accessibilityHidden(!isOpen && !settling)
             }
+        }
+        .preference(key: DrawerPresentedKey.self, value: isOpen || settling || dragX != 0)
+        .onDisappear {
+            settleRevision += 1
+            settling = false
+            dragX = 0
+            openFraction = isOpen ? 1 : 0
+        }
+        .onAppear { if isOpen { animateSettle(open: true) } }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced && settling { animateSettle(open: isOpen) }
         }
         // Keep SwiftUI's source of truth (`isOpen`) and the visual fraction in
         // sync for PROGRAMMATIC open/close (e.g. the title-bar button).
@@ -131,7 +174,7 @@ struct SideDrawer<Content: View, Drawer: View>: View {
         Color.black
             .opacity(Double(fraction) * DrawerMetrics.dimMaxAlpha)
             .ignoresSafeArea()
-            .allowsHitTesting(fraction > 0)
+            .allowsHitTesting(fraction > 0 || settling)
             .onTapGesture { close() }
             .gesture(closeDrag(drawerWidth: drawerWidth))
             .accessibilityHidden(true)
@@ -166,15 +209,15 @@ struct SideDrawer<Content: View, Drawer: View>: View {
             velocityX: velocityX
         )
         log.info("snap dx=\(Int(translationX)) vx=\(Int(velocityX)) frac=\(String(format: "%.2f", fraction)) → open=\(shouldOpen)")
-        animateSettle(open: shouldOpen)
         reconcileBinding(open: shouldOpen)
+        animateSettle(open: shouldOpen)
     }
 
     /// Drive the binding to a close via tap on the scrim.
     private func close() {
         log.info("scrim tap close")
-        animateSettle(open: false)
         reconcileBinding(open: false)
+        animateSettle(open: false)
     }
 
     /// Animate to the settled position. `dragX` is zeroed INSIDE the animation
@@ -188,18 +231,25 @@ struct SideDrawer<Content: View, Drawer: View>: View {
     /// mid-slide layout was the left-to-right paint churn on a fast first open.
     /// Closing has nothing to fetch.
     private func animateSettle(open: Bool) {
-        withAnimation(.snappy) {
+        settleRevision += 1
+        let revision = settleRevision
+        settling = true
+        withAnimation(reduceMotion ? nil : .snappy) {
             openFraction = open ? 1 : 0
             dragX = 0
         } completion: {
-            if open { onOpen() }
+            guard settleRevision == revision else { return }
+            settling = false
+            if open && isOpen {
+                closeAccessibilityFocused = true
+                closeKeyboardFocused = true
+                onOpen()
+            }
         }
     }
 
-    /// Reconcile `isOpen` with the settled visual state (state only — the fetch is
-    /// owned by `animateSettle`'s completion). Set BEFORE the binding so the
-    /// programmatic `onChange` path sees `openFraction` already at target and
-    /// no-ops instead of re-animating.
+    /// Binding and settle update in one synchronous turn. The programmatic
+    /// observer sees the final target fraction and does not animate twice.
     private func reconcileBinding(open: Bool) {
         if open {
             if !isOpen { isOpen = true }

@@ -4,14 +4,12 @@
 // canonical template into the draft, not saved until Save), and a SLOW save
 // (PUT soul → apply-with-restart) surfaced by the applying banner.
 //
-// The shared apply bar receives this screen's dirty/save actions; discard and
-// dirty-back still use the existing native confirmation and navigation seam.
+// Discard restores drafts in place; Back separately confirms dirty navigation.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct SystemPromptScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
 
     @State private var vm: SystemPromptViewModel
@@ -21,20 +19,23 @@ struct SystemPromptScreen: View {
     @State private var showAdvanced = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: SystemPromptViewModel(settings: settings), onBack: onBack)
+    }
+
+    init(viewModel: SystemPromptViewModel, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _vm = State(initialValue: SystemPromptViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
         SettingsPageScaffold(
             title: "System Prompt", screenId: "settings-system-prompt-screen",
-            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty && !vm.isApplying && !vm.isRestoring,
             backAccessibilityId: "settings-system-prompt-back"
         ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading system prompt")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load system instructions", detail: message) {
                     Task { await vm.load() }
@@ -43,17 +44,23 @@ struct SystemPromptScreen: View {
                 instructionWorkspace
             }
         }
+        .disabled(vm.isApplying || vm.isRestoring)
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
             discardAccessibilityId: "settings-system-prompt-discard",
             applyAccessibilityId: "settings-system-prompt-save",
-            onDiscard: attemptBack,
+            onDiscard: vm.discard,
             onApply: { Task { await vm.save() } }
         )
+        .disabled(vm.isRestoring)
         .task { await vm.load() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { onBack() }
+            Button("Discard", role: .destructive) {
+                guard !vm.isApplying, !vm.isRestoring else { return }
+                vm.discard()
+                onBack()
+            }
             Button("Keep editing", role: .cancel) {}
         }
         .confirmationDialog("Restore default instructions?", isPresented: $showRestore, titleVisibility: .visible) {
@@ -64,53 +71,44 @@ struct SystemPromptScreen: View {
         }
     }
 
-    private var applyState: DesignApplyState {
-        switch vm.save {
-        case .idle: .idle
-        case .saving: .saving
-        case .restarting: .restarting
-        case .alreadyApplying: .alreadyApplying
-        case .applied: .applied
-        case .failed(let message): .failed(message)
-        }
-    }
+    private var applyState: DesignApplyState { vm.save }
 
     private var instructionWorkspace: some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            VStack(alignment: .leading, spacing: Space.md) {
-                Text("Base instructions for the assistant. Markdown supported; Apply saves this draft and applies configuration.")
-                    .designText(.supporting)
-                    .foregroundStyle(DuskColors.ink2)
-                HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                    Text(viewMode == "edit" ? "Editing instructions" : "Preview")
-                        .designText(.label)
-                        .foregroundStyle(DuskColors.ink2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    DesignActionButton(
-                        title: viewMode == "edit" ? "Preview" : "Edit",
-                        role: .quiet,
-                        accessibilityId: "settings-system-prompt-view",
-                        fillsWidth: false,
-                        action: { viewMode = viewMode == "edit" ? "preview" : "edit" }
-                    )
+            if let restoreError = vm.restoreError {
+                AsyncNotice(kind: .error, title: "Couldn't load default instructions", detail: restoreError) {
+                    Task { await vm.restoreDefault() }
                 }
+            }
+            DesignSettingsEditor(
+                title: "System instructions",
+                detail: "Base instructions for the assistant. Markdown supported; Apply saves this draft and applies configuration.",
+                state: vm.isDirty ? .unsaved : .saved
+            ) {
+                DesignSegmentedPicker(
+                    title: "Document mode",
+                    options: [(value: "edit", label: "Edit"), (value: "preview", label: "Preview")],
+                    selection: $viewMode,
+                    accessibilityId: "settings-system-prompt-view",
+                    isEnabled: !vm.isApplying && !vm.isRestoring
+                )
                 if viewMode == "edit" {
                     DesignMultilineEditor(
+                        title: "System instructions",
                         text: $vm.draft,
                         placeholder: "The base personality and behavior contract…",
-                        accessibilityId: "settings-system-prompt-editor"
+                        accessibilityId: "settings-system-prompt-editor",
+                        isEnabled: !vm.isApplying && !vm.isRestoring,
+                        usesMonospacedText: true
                     )
+                } else if vm.draft.isEmpty {
+                    Text("Nothing to preview.").designText(.supporting).foregroundStyle(DuskColors.ink2)
                 } else {
-                    Text(vm.draft.isEmpty ? "Nothing to preview." : vm.draft)
-                        .designText(.body)
-                        .foregroundStyle(vm.draft.isEmpty ? DuskColors.ink2 : DuskColors.ink)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    // Draft text does not grant remote-image fetch authority.
+                    MessageDocumentSurface(source: vm.draft, imageCache: nil)
                         .accessibilityIdentifier("settings-system-prompt-preview")
                 }
             }
-            .padding(Space.md)
-            .designPlate()
 
             DesignDisclosureGroup(isExpanded: showAdvanced) {
                 DesignDisclosureButton(
@@ -130,8 +128,9 @@ struct SystemPromptScreen: View {
                         .foregroundStyle(DuskColors.ink2)
                     DesignActionButton(
                         title: "Restore default",
+                        loadingTitle: "Loading default…",
                         role: .destructive,
-                        state: vm.isRestoring ? .disabled : .normal,
+                        state: vm.isRestoring ? .loading : .normal,
                         accessibilityId: "settings-system-prompt-restore",
                         fillsWidth: false,
                         action: { showRestore = true }
@@ -143,6 +142,7 @@ struct SystemPromptScreen: View {
     }
 
     private func attemptBack() {
+        guard !vm.isApplying, !vm.isRestoring else { return }
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
 }

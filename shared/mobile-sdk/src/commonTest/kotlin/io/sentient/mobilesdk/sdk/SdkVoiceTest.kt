@@ -1,22 +1,30 @@
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.connectors.CaptureToken
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
+import io.sentient.mobilesdk.voice.io.VoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioPath
+import io.sentient.mobilesdk.voice.io.VoiceAudioState
+import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
+import io.sentient.mobilesdk.voice.talk.TalkMode
+import io.sentient.mobilesdk.voice.talk.TalkModeController
 import io.sentient.mobilesdk.voice.talk.TurnMode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 
 /**
  * The [SdkVoice] constructor takes both [scope] (the command-consumer coroutine's
@@ -42,7 +50,164 @@ import kotlin.test.assertFalse
  * mic + TTS reconfigs NEVER race. These tests hammer the lane with rapid
  * toggles and assert the idempotent collapse + audio.start/audio.end edge order.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class SdkVoiceTest {
+    @Test
+    fun configure_error_discards_once_for_both_terminal_orderings_and_allows_retry() = runTest {
+        for (terminalFirst in listOf(false, true)) {
+            for (release in listOf(false, true)) {
+                val controls = mutableListOf<ClientMessage>()
+                val failures = mutableListOf<CaptureToken>()
+                val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = { error("no PCM") })
+                val base = FakeVoiceAudio()
+                val state = MutableStateFlow(
+                    VoiceAudioState(
+                        Phase.Idle, false, false,
+                    ),
+                )
+                val finish = CompletableDeferred<Unit>()
+                var attempts = 0
+                val audio = object : VoiceAudio by base {
+                    override val state = state
+                    override suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int) {
+                        if (mic && ++attempts == 1) {
+                            state.value = VoiceAudioState(
+                                Phase.Error, true, false, "engine-start-failed",
+                            )
+                            finish.await()
+                        } else {
+                            base.configure(mic, playback, path, playbackRateHz)
+                            state.value = base.state.value
+                        }
+                    }
+                }
+                var id = 0
+                val voice = SdkVoice(
+                    voiceAudio = audio, audioConfig = AudioPipelineConfig(), audioInput = { connector },
+                    onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+                    onUplinkBeginTerminal = { connector.beginTerminal(it) },
+                    onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+                    onCaptureStartFailed = { failures += it },
+                    scope = backgroundScope, uplinkDispatcher = StandardTestDispatcher(testScheduler),
+                    createCaptureId = { "capture-${++id}" },
+                )
+                voice.requestStart(TurnMode.Manual)
+                runCurrent()
+                if (terminalFirst) {
+                    if (release) voice.requestStop() else voice.requestCancel()
+                }
+                finish.complete(Unit)
+                runCurrent()
+                if (!terminalFirst) voice.requestCancel()
+                runCurrent()
+                assertEquals(listOf(ClientMessage.AudioStart("capture-1", "manual"), ClientMessage.AudioCancel("capture-1")), controls)
+                assertEquals(listOf("capture-1"), failures.map { it.id })
+                assertFalse(connector.hasActiveCapture)
+                voice.requestStart(TurnMode.Manual)
+                runCurrent()
+                assertEquals(2, attempts)
+                assertFalse(voice.isCurrentCaptureGeneration(failures.single().generation))
+                voice.requestCancel()
+                runCurrent()
+                assertEquals(listOf(
+                    ClientMessage.AudioStart("capture-1", "manual"), ClientMessage.AudioCancel("capture-1"),
+                    ClientMessage.AudioStart("capture-2", "manual"), ClientMessage.AudioCancel("capture-2"),
+                ), controls)
+                voice.shutdownLane()
+            }
+        }
+    }
+
+    @Test
+    fun loss_reconciliation_discards_hold_once_and_does_not_revoke_successor() = runTest {
+        for (observerFirst in listOf(false, true)) {
+            val controls = mutableListOf<ClientMessage>()
+            val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = {})
+            val state = MutableStateFlow(VoiceAudioState(Phase.Idle, false, false))
+            val finish = CompletableDeferred<Unit>()
+            val audio = object : VoiceAudio by FakeVoiceAudio() {
+                override val state = state
+                override suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int) {
+                    state.value = VoiceAudioState(Phase.Error, mic, playback)
+                    finish.await()
+                }
+            }
+            lateinit var controller: TalkModeController
+            var notices = 0
+            var discards = 0
+            val voice = SdkVoice(
+                voiceAudio = audio, audioConfig = AudioPipelineConfig(), audioInput = { connector },
+                onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+                onUplinkBeginTerminal = { connector.beginTerminal(it) },
+                onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+                onCaptureStartFailed = { controller.lifecycleCancel("start-failed"); notices++ },
+                scope = backgroundScope, uplinkDispatcher = StandardTestDispatcher(testScheduler),
+            )
+            controller = TalkModeController(
+                startCapture = { voice.requestStart(it) }, endCapture = { error("must discard") },
+                cancelCapture = { voice.requestCancel() }, interrupt = { error("no interrupt") },
+                isCycleOrTtsActive = { false }, beginHoldDefer = {},
+                endHoldDefer = { error("must not flush") }, discardHoldDefer = { discards++ },
+            )
+            controller.holdStart()
+            runCurrent()
+            val oldError = state.value
+            if (observerFirst) voice.reconcileAudioLoss(oldError) { controller.lifecycleCancel("observer") }
+            finish.complete(Unit)
+            runCurrent()
+            assertEquals(TalkMode.Idle, controller.mode.value)
+            assertEquals(1, notices)
+            assertEquals(1, discards)
+            assertEquals(1, controls.filterIsInstance<ClientMessage.AudioCancel>().size)
+            controller.holdStart() // successor queued; current adapter snapshot is still old Error
+            voice.reconcileAudioLoss(oldError) { controller.lifecycleCancel("late-observer") }
+            assertEquals(TalkMode.Hold, controller.mode.value)
+            assertEquals(1, discards, "late Error must not discard successor's deferred audio")
+            state.value = VoiceAudioState(Phase.Ready, true, false)
+            state.value = oldError.copy() // equal failure values, distinct engine transition
+            voice.reconcileAudioLoss(state.value) { controller.lifecycleCancel("new-error") }
+            voice.reconcileAudioLoss(state.value) { controller.lifecycleCancel("duplicate-error") }
+            assertEquals(TalkMode.Idle, controller.mode.value)
+            assertEquals(2, discards, "new failure still discards exactly once")
+            voice.shutdownLane()
+        }
+    }
+
+    @Test
+    fun playback_and_invalidated_route_failures_do_not_emit_capture_notices() = runTest {
+        for (captureStart in listOf(false, true)) {
+            val connector = UserAudioInputConnector(send = {}, sendBinary = { error("no PCM") })
+            val finish = CompletableDeferred<Unit>()
+            val state = MutableStateFlow(VoiceAudioState(Phase.Idle, false, false))
+            val audio = object : VoiceAudio by FakeVoiceAudio() {
+                override val state = state
+                override suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int) {
+                    finish.await()
+                    state.value = VoiceAudioState(Phase.Error, mic, playback)
+                }
+            }
+            val voice = SdkVoice(
+                voiceAudio = audio, audioConfig = AudioPipelineConfig(), audioInput = { connector },
+                onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+                onUplinkBeginTerminal = { connector.beginTerminal(it) },
+                onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+                onUplinkForceLocalTerminal = { connector.forceLocalTerminalCleanup(it) },
+                onCaptureStartFailed = { error("not a current capture-start failure") },
+                scope = backgroundScope, uplinkDispatcher = StandardTestDispatcher(testScheduler),
+            )
+            if (captureStart) voice.requestStart(TurnMode.Manual) else voice.requestPlayback(true)
+            runCurrent()
+            if (captureStart) voice.invalidateCaptureForRoute()
+            finish.complete(Unit)
+            runCurrent()
+            assertFalse(connector.hasActiveCapture)
+            var observed = false
+            voice.reconcileAudioLoss(state.value) { observed = true }
+            assertEquals(!captureStart, observed, "stale route loss is fenced; playback loss still reconciles")
+            voice.shutdownLane()
+        }
+    }
+
     @Test
     fun route_replacement_invalidates_queued_capture_before_new_route_can_start() = runTest {
         val controls = mutableListOf<ClientMessage>()
@@ -232,7 +397,7 @@ class SdkVoiceTest {
         val frames = mutableListOf<ByteArray>()
         val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = { frames += it })
         val baseAudio = FakeVoiceAudio()
-        val hangingAudio = object : io.sentient.mobilesdk.voice.io.VoiceAudio by baseAudio {
+        val hangingAudio = object : VoiceAudio by baseAudio {
             override suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int) {
                 awaitCancellation()
             }

@@ -14,6 +14,8 @@ sealed class SdkEvent {
     /** [cutoff] is the gateway CutoffKind: "interrupt" | "barge-in". */
     data class TurnAborted(val turnId: String, val cutoff: String) : SdkEvent()
     data class SessionSwitched(val sessionId: String) : SdkEvent()
+    /** Exact command refusal; not proof that an earlier attempt never committed. */
+    data class CommandRejected(val command: String, val reason: String, val pendingId: String?) : SdkEvent()
     data class ProtocolError(val error: SentientError) : SdkEvent()
 
     /**
@@ -40,4 +42,11 @@ sealed class SdkEvent {
      * the no-loss [events] SharedFlow, never the conflating connection StateFlow.
      */
     data object ReopenFailed : SdkEvent()
+
+    /** Local typed capture-start failure. No adapter diagnostics or user content. */
+    data class CaptureStartFailed(
+        val captureId: String,
+        val captureGeneration: Long,
+        val routeGeneration: Long?,
+    ) : SdkEvent()
 }

@@ -341,76 +341,29 @@ struct SentPreviewCorrectionTests {
     }
 
     @Test func acknowledgingReceiptOnlyClearsItsPendingAttachmentState() async throws {
-        let session = previewSession()
-        defer { session.close() }
-        let drafts = try #require(session.component.drafts)
-        let source = FileManager.default.temporaryDirectory
-            .appendingPathComponent("receipt-owners-\(UUID().uuidString).png")
-        try previewPNG().write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
-
-        let draftA = try #require(try await drafts.saveText(
-            draftId: nil, sessionId: "history-session", text: "owner A"
-        ))
-        let importedA = try await drafts.importAttachment(
-            draftId: draftA.id,
-            sessionId: draftA.sessionId,
-            source: NativeDraftAttachmentImport(
-                sourceLocation: source.absoluteString,
-                displayName: "a.png",
-                mediaType: "image/png",
-                previewSourceLocation: nil
-            )
-        )
-        let pendingA = try await drafts.beginSend(
-            draftId: importedA.id, mintKey: "owner-a-mint", surfaceId: "owner-a-surface"
-        )
-        let draftB = try #require(try await drafts.saveText(
-            draftId: nil, sessionId: "other-session", text: "owner B"
-        ))
-        let importedB = try await drafts.importAttachment(
-            draftId: draftB.id,
-            sessionId: draftB.sessionId,
-            source: NativeDraftAttachmentImport(
-                sourceLocation: source.absoluteString,
-                displayName: "b.png",
-                mediaType: "image/png",
-                previewSourceLocation: nil
-            )
-        )
-        let pendingB = try await drafts.beginSend(
-            draftId: importedB.id, mintKey: "owner-b-mint", surfaceId: "owner-b-surface"
-        )
-        let acknowledgements = ReceiptAcknowledgements(outcomes: [.acknowledged])
-        let viewModel = ChatViewModel(
-            component: session.component,
-            sessionId: "history-session",
-            draftId: importedA.id,
-            activateOnInit: false,
-            observeChatOnInit: false,
-            acknowledgeReceipt: { pendingId, sessionId in
-                try await acknowledgements.acknowledge(pendingId: pendingId, sessionId: sessionId)
+        try await withNativeSendFixture { fixture in
+            let pendingA = try await acceptFixtureFile(fixture, text: "owner A")
+            let pendingB = try await acceptFixtureFile(fixture, text: "owner B")
+            let attachmentA = try #require(pendingA.attachments.first)
+            let attachmentB = try #require(pendingB.attachments.first)
+            let viewModel = ChatViewModel(component: fixture.component, sessionId: "history-session")
+            defer { viewModel.retireEditor() }
+            try await fixture.acknowledgeRoute(sessionId: "history-session")
+            try await sendEventually("A upload") { try await fixture.uploadedFileIds().count == 1 }
+            try await fixture.releaseUpload(index: 0, success: true)
+            try await sendEventually("A dispatched") { try await fixture.sentPendingIds() == [pendingA.pendingId] }
+            #expect(viewModel.pendingAttachmentPresentations[pendingB.pendingId]?.transfers[attachmentB.id]?.phase == .queued)
+            try await fixture.receipt(pendingId: pendingA.pendingId, sessionId: "history-session")
+            try await sendEventually("B upload after A receipt") { try await fixture.uploadedFileIds().count == 2 }
+            try await sendEventually("owner-specific cleanup") {
+                viewModel.pendingAttachments.map(\.id) == [attachmentB.id] &&
+                    viewModel.attachmentTransfers[attachmentB.id] != nil
             }
-        )
-        let attachmentA = try #require(pendingA.attachments.first)
-        let attachmentB = try #require(pendingB.attachments.first)
-
-        await eventually { viewModel.attachmentTransfers[attachmentA.id] != nil }
-        await eventually { viewModel.attachmentTransfers[attachmentA.id]?.phase == .failed }
-        viewModel.retryAttachmentUpload(attachmentB.id)
-        await eventually { viewModel.pendingAttachments.contains { $0.id == attachmentB.id } }
-        await eventually { viewModel.attachmentTransfers[attachmentB.id] != nil }
-
-        viewModel.applyChat(historyModel(
-            attachmentIds: ["owner-a-receipt"],
-            pendingId: pendingA.pendingId,
-            reconciledPendingIds: [pendingA.pendingId]
-        ))
-        await acknowledgements.waitForCount(1)
-        await eventually { viewModel.pendingAttachments.map { $0.id } == [attachmentB.id] }
-
-        #expect(viewModel.attachmentTransfers[attachmentB.id] != nil)
-        #expect(viewModel.attachmentTransfers[attachmentA.id] == nil)
+            #expect(viewModel.attachmentTransfers[attachmentB.id] != nil)
+            #expect(viewModel.attachmentTransfers[attachmentA.id] == nil)
+            #expect(fixture.drafts.snapshot.value.pendingSends.map(\.pendingId) == [pendingB.pendingId])
+            try await fixture.releaseUpload(index: 1, success: true)
+        }
     }
 
     @Test func failedReceiptAcknowledgmentIsRetryableAndSuccessfulRetryCleansOptimisticState() async throws {
@@ -560,88 +513,69 @@ struct SentPreviewCorrectionTests {
     }
 
     @Test func cancellingOneAttachmentSettlesSiblingUploadsForSameSend() async throws {
-        let session = previewSession()
-        defer { session.close() }
-        let (pending, first, second, sourceA, sourceB) = try await pendingWithTwoAttachments(session)
-        defer {
-            try? FileManager.default.removeItem(at: sourceA)
-            try? FileManager.default.removeItem(at: sourceB)
+        try await withNativeSendFixture { fixture in
+            let (pending, first, second, sourceA, sourceB) = try await pendingWithTwoAttachments(fixture.component)
+            defer {
+                try? FileManager.default.removeItem(at: sourceA)
+                try? FileManager.default.removeItem(at: sourceB)
+            }
+            let viewModel = ChatViewModel(component: fixture.component, sessionId: "history-session", draftId: pending.draftId)
+            defer { viewModel.retireEditor() }
+            try await fixture.acknowledgeRoute(sessionId: "history-session")
+            try await sendEventually("first upload started") {
+                try await fixture.uploadedFileIds().count == 1 && viewModel.attachmentTransfers[first.id]?.phase == .uploading
+            }
+            #expect(viewModel.attachmentTransfers[first.id]?.phase == .uploading)
+            #expect(viewModel.attachmentTransfers[second.id]?.phase == .queued)
+            viewModel.cancelAttachmentUpload(first.id)
+            try await fixture.releaseUpload(index: 0, success: true)
+            try await sendEventually("whole attempt cancelled") {
+                viewModel.attachmentTransfers[first.id]?.phase == .cancelled &&
+                    viewModel.attachmentTransfers[second.id]?.phase == .cancelled
+            }
+            #expect(viewModel.pendingAttachments.map(\.id) == [first.id, second.id])
+            #expect(try await fixture.uploadedFileIds() == [first.id])
+            #expect(try await fixture.sentPendingIds().isEmpty)
         }
-        let upload = SuspendedPendingUpload()
-        let viewModel = ChatViewModel(
-            component: session.component,
-            sessionId: "history-session",
-            draftId: pending.draftId,
-            activateOnInit: false,
-            observeChatOnInit: false,
-            uploadPendingAttachments: { _, _, _ in try await upload.run() }
-        )
-
-        await upload.waitForCall()
-        #expect(viewModel.attachmentTransfers[first.id]?.phase == .uploading)
-        #expect(viewModel.attachmentTransfers[second.id]?.phase == .uploading)
-
-        viewModel.cancelAttachmentUpload(first.id)
-        await upload.release()
-        await upload.waitForReturn()
-        await eventually {
-            viewModel.attachmentTransfers[first.id]?.phase == .cancelled &&
-                viewModel.attachmentTransfers[second.id]?.phase == .cancelled
-        }
-
-        #expect(viewModel.pendingAttachments.map(\.id) == [first.id, second.id])
     }
 
     @Test func deletedRouteClearsPendingUploadPresentationBeforeStaleTaskReturns() async throws {
-        let session = previewSession()
-        defer { session.close() }
-        let (pending, first, second, sourceA, sourceB) = try await pendingWithTwoAttachments(session)
-        defer {
-            try? FileManager.default.removeItem(at: sourceA)
-            try? FileManager.default.removeItem(at: sourceB)
+        try await withNativeSendFixture { fixture in
+            let (pending, first, second, sourceA, sourceB) = try await pendingWithTwoAttachments(fixture.component)
+            defer {
+                try? FileManager.default.removeItem(at: sourceA)
+                try? FileManager.default.removeItem(at: sourceB)
+            }
+            var uploadReturned = false
+            let viewModel = ChatViewModel(component: fixture.component, sessionId: "history-session", draftId: pending.draftId,
+                uploadPendingAttachments: { pending, generation, _ in
+                    // Observation only: invoke real shared upload, including its route fence.
+                    // Other tests exercise the default per-file state callback path.
+                    defer { uploadReturned = true }
+                    return try await fixture.component.uploadPendingAttachments(
+                        pending: pending, expectedRouteGeneration: generation, onProgress: { _, _, _ in })
+                })
+            defer { viewModel.retireEditor() }
+            try await fixture.acknowledgeRoute(sessionId: "history-session")
+            try await sendEventually("upload before deletion") { try await fixture.uploadedFileIds() == [first.id] }
+            #expect(viewModel.pendingAttachments.map(\.id) == [first.id, second.id])
+            #expect(!viewModel.attachmentTransfers.isEmpty)
+            viewModel.applySessionChange(SessionsChangeEvent.Deleted(sessionId: "history-session"))
+            #expect(viewModel.pendingAttachments.isEmpty)
+            #expect(viewModel.attachmentTransfers.isEmpty)
+            try await fixture.releaseUpload(index: 0, success: true)
+            try await sendEventually("stale shared upload returned") { uploadReturned }
+            await Task.yield()
+            #expect(viewModel.pendingAttachments.isEmpty)
+            #expect(viewModel.attachmentTransfers.isEmpty)
+            #expect(try await fixture.sentPendingIds().isEmpty)
         }
-        let upload = SuspendedPendingUpload()
-        let viewModel = ChatViewModel(
-            component: session.component,
-            sessionId: "history-session",
-            draftId: pending.draftId,
-            activateOnInit: false,
-            observeChatOnInit: false,
-            uploadPendingAttachments: { _, _, _ in try await upload.run() }
-        )
-
-        await upload.waitForCall()
-        #expect(viewModel.attachmentTransfers[first.id]?.phase == .uploading)
-        #expect(viewModel.attachmentTransfers[second.id]?.phase == .uploading)
-
-        viewModel.applySessionChange(SessionsChangeEvent.Deleted(sessionId: "history-session"))
-        #expect(viewModel.pendingAttachments.isEmpty)
-        #expect(viewModel.attachmentTransfers.isEmpty)
-
-        await upload.release()
-        await upload.waitForReturn()
-        await Task.yield()
-        #expect(viewModel.pendingAttachments.isEmpty)
-        #expect(viewModel.attachmentTransfers.isEmpty)
     }
 
     @Test func cancelledSendReleasesPinnedPreviewOwnership() async throws {
         let session = previewSession()
         defer { session.close() }
         let drafts = try #require(session.component.drafts)
-        let viewModel = ChatViewModel(
-            component: session.component,
-            sessionId: "history-session",
-            activateOnInit: false,
-            observeChatOnInit: false,
-            previewAttachment: { _ in self.previewPNG() },
-            cancelPendingSend: { pending in
-                guard let restored = try await drafts.notCommitted(pendingId: pending.pendingId) else {
-                    throw CocoaError(.fileNoSuchFile)
-                }
-                return restored
-            }
-        )
         let source = FileManager.default.temporaryDirectory
             .appendingPathComponent("cancel-preview-\(UUID().uuidString).png")
         try previewPNG().write(to: source)
@@ -660,8 +594,22 @@ struct SentPreviewCorrectionTests {
             )
         )
         let attachment = try #require(imported.attachments.first)
-        let pending = try await drafts.beginSend(
-            draftId: imported.id, mintKey: "cancel-mint", surfaceId: "cancel-surface"
+        let pending = try await drafts.acceptSend(
+            draftId: imported.id, expectedRevision: imported.revision,
+            mintKey: "cancel-mint", surfaceId: "cancel-surface"
+        )
+        let viewModel = ChatViewModel(
+            component: session.component,
+            sessionId: "history-session",
+            activateOnInit: false,
+            observeChatOnInit: false,
+            previewAttachment: { _ in self.previewPNG() },
+            cancelPendingSend: { pending in
+                guard let restored = try await drafts.notCommitted(pendingId: pending.pendingId) else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+                return restored
+            }
         )
         let image = await loadAndPin(
             viewModel, id: "cancel-preview", pendingId: pending.pendingId
@@ -780,9 +728,9 @@ struct SentPreviewCorrectionTests {
     }
 
     private func pendingWithTwoAttachments(
-        _ session: IosUserSession
+        _ component: ChatComponent
     ) async throws -> (NativePendingSend, NativeDraftAttachment, NativeDraftAttachment, URL, URL) {
-        let drafts = try #require(session.component.drafts)
+        let drafts = try #require(component.drafts)
         let sourceA = FileManager.default.temporaryDirectory
             .appendingPathComponent("pending-a-\(UUID().uuidString).txt")
         let sourceB = FileManager.default.temporaryDirectory
@@ -812,8 +760,8 @@ struct SentPreviewCorrectionTests {
                 previewSourceLocation: nil
             )
         )
-        let pending = try await drafts.beginSend(
-            draftId: importedB.id,
+        let pending = try await drafts.acceptSend(
+            draftId: importedB.id, expectedRevision: importedB.revision,
             mintKey: "pending-upload-mint",
             surfaceId: "pending-upload-surface"
         )
@@ -956,45 +904,6 @@ private actor SuspendedReceiptAcknowledgement {
     func waitForReturn() async {
         guard !returned else { return }
         await withCheckedContinuation { returnWaiter = $0 }
-    }
-}
-
-private actor SuspendedPendingUpload {
-    private var callWaiter: CheckedContinuation<Void, Never>?
-    private var releaseWaiter: CheckedContinuation<Void, Never>?
-    private var returnWaiter: CheckedContinuation<Void, Never>?
-    private var called = false
-    private var returned = false
-
-    func run() async throws -> [AttachmentRef] {
-        called = true
-        callWaiter?.resume()
-        callWaiter = nil
-        await withCheckedContinuation { releaseWaiter = $0 }
-        defer {
-            returned = true
-            returnWaiter?.resume()
-            returnWaiter = nil
-        }
-        try Task.checkCancellation()
-        return []
-    }
-
-    func waitForCall() async {
-        guard !called else { return }
-        await withCheckedContinuation { callWaiter = $0 }
-    }
-
-    func release() {
-        releaseWaiter?.resume()
-        releaseWaiter = nil
-    }
-
-    func waitForReturn() async {
-        guard returned else {
-            await withCheckedContinuation { returnWaiter = $0 }
-            return
-        }
     }
 }
 

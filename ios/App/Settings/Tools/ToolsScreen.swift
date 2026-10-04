@@ -9,13 +9,12 @@
 // The permission-resolution semantics live in ToolsViewModel (pinned to the
 // webui tools-pane); this view resolves them into stateless ToolsServerCard /
 // ToolPermissionRow inputs. The shared apply bar receives the existing dirty,
-// save, and native discard-confirmation actions.
+// save, and in-place discard actions. Back separately confirms dirty navigation.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct ToolsScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
 
     @State private var vm: ToolsViewModel
@@ -23,25 +22,35 @@ struct ToolsScreen: View {
     @State private var builtInsOpen = true
     @State private var permissionGuideOpen = false
     @State private var showDiscard = false
+    @State private var mutationTask: Task<Void, Never>?
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: ToolsViewModel(settings: settings), onBack: onBack)
+    }
+
+    init(viewModel: ToolsViewModel, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _vm = State(initialValue: ToolsViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
         SettingsPageScaffold(
             title: "Tools", screenId: "settings-tools-screen",
-            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty && !vm.isApplying,
             backAccessibilityId: "settings-tools-back"
         ) {
+            if vm.hasPendingApply && vm.phase == .ready && !vm.isDirty {
+                AsyncNotice(kind: .warning, title: "Profile saved; application unresolved",
+                            detail: "Retry applies the saved profile without saving it again.") {
+                    runMutation { await vm.retryApply() }
+                }
+            }
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading capabilities")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load capabilities", detail: message) {
-                    Task { await vm.load() }
+                    runMutation { await vm.load() }
                 }
             case .ready:
                 capabilityOverview
@@ -50,31 +59,28 @@ struct ToolsScreen: View {
                 builtInCard
             }
         }
+        .disabled(vm.isApplying)
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
             discardAccessibilityId: "settings-tools-discard",
             applyAccessibilityId: "settings-tools-save",
-            onDiscard: attemptBack,
-            onApply: { Task { await vm.save() } }
+            onDiscard: vm.discard,
+            onApply: { runMutation { await vm.save() } }
         )
         .task { await vm.load() }
+        .onDisappear { mutationTask?.cancel() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { onBack() }
+            Button("Discard", role: .destructive) {
+                guard !vm.isApplying else { return }
+                vm.discard()
+                onBack()
+            }
             Button("Keep editing", role: .cancel) {}
         }
     }
 
-    private var applyState: DesignApplyState {
-        switch vm.save {
-        case .idle: .idle
-        case .saving: .saving
-        case .restarting: .restarting
-        case .alreadyApplying: .alreadyApplying
-        case .applied: .applied
-        case .failed(let message): .failed(message)
-        }
-    }
+    private var applyState: DesignApplyState { vm.save }
 
     private var capabilityOverview: some View {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -141,7 +147,7 @@ struct ToolsScreen: View {
             ToolPermissionRowModel(
                 id: tool.name,
                 name: tool.name,
-                description: tool.description,
+                description: tool.description_,
                 permission: vm.toolPermission(id, tool),
                 settable: tool.settable
             )
@@ -181,7 +187,7 @@ struct ToolsScreen: View {
                                     id: tool.name, name: tool.name,
                                     description: tool.name == "delegateTask"
                                         ? "Delegated tasks run with broader per-user access, not Cube's tool limits. Turning this Off does not cancel work already started."
-                                        : tool.description,
+                                        : tool.description_,
                                     permission: vm.cubePermission(tool.name), settable: tool.settable, cubeOnly: true
                                 ),
                                 accessibilityId: "settings-tools-cube-\(tool.name)",
@@ -224,7 +230,7 @@ struct ToolsScreen: View {
                     ForEach(builtins, id: \.name) { tool in
                         DesignToggleRow(
                             title: capabilityName(tool.name),
-                            detail: builtInDetail(tool.description, toolset: tool.toolset),
+                            detail: builtInDetail(tool.description_, toolset: tool.toolset),
                             isOn: Binding(
                                 get: { vm.isToolsetOn(tool.toolset) },
                                 set: { _ in vm.toggleToolset(tool.toolset) }
@@ -264,7 +270,16 @@ struct ToolsScreen: View {
         if openServers.contains(id) { openServers.remove(id) } else { openServers.insert(id) }
     }
 
+    private func runMutation(_ operation: @escaping @MainActor () async -> Void) {
+        guard mutationTask == nil else { return }
+        mutationTask = Task {
+            await operation()
+            mutationTask = nil
+        }
+    }
+
     private func attemptBack() {
+        guard !vm.isApplying else { return }
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
 }

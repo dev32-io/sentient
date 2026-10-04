@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { lstat, mkdir, mkdtemp, realpath, rm, unlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { absolutePath, assertArtifactOutput, defaultDiffPath } from "./reference-image.mjs";
 import { compositePng, measureVisibleAlphaUnion, parseHexColor } from "./image-background.mjs";
 
 const DEFAULT_BACKGROUND = "#2B2621";
@@ -22,7 +23,7 @@ Options:
   -h, --help                    Show this help.
 
 Images are compared on the selected background with anti-aliasing ignored by
-default. Remaining color differences above the reviewed 0.56 tolerance are counted.
+default. Remaining color differences above the selected tolerance (default 0.56, unvalidated) are counted.
 The reported percentage uses the union of non-transparent input pixels
 as its denominator, so transparent canvas padding cannot dilute the result.
 The command writes one compact JSON report to stdout. Invocation, decode, and
@@ -35,12 +36,6 @@ function numericOption(name, raw, minimum, maximum) {
 		throw new Error(`${name} must be a number from ${minimum} to ${maximum}.`);
 	}
 	return value;
-}
-
-function defaultDiffPath(actualPath) {
-	const extension = extname(actualPath);
-	const stem = basename(actualPath, extension);
-	return join(dirname(actualPath), `${stem}.visual-diff.png`);
 }
 
 export function parseArguments(argv) {
@@ -76,16 +71,11 @@ export function parseArguments(argv) {
 	}
 
 	if (positional.length !== 2) throw new Error("Expected exactly two image paths: reference and actual.");
-	const referencePath = resolve(positional[0]);
-	const actualPath = resolve(positional[1]);
-	const resolvedDiffPath = resolve(diffPath ?? defaultDiffPath(actualPath));
-	const artifactRoot = resolve("build", "visual-captures");
-	const fromArtifactRoot = relative(artifactRoot, resolvedDiffPath);
+	const referencePath = absolutePath(positional[0]);
+	const actualPath = absolutePath(positional[1]);
+	const resolvedDiffPath = absolutePath(diffPath ?? defaultDiffPath(actualPath));
 	if (resolvedDiffPath === referencePath || resolvedDiffPath === actualPath) {
 		throw new Error("Diff output must not overwrite either input image.");
-	}
-	if (fromArtifactRoot === "" || fromArtifactRoot === ".." || fromArtifactRoot.startsWith(`..${sep}`)) {
-		throw new Error(`Diff output must stay under ${artifactRoot}.`);
 	}
 	return {
 		help: false,
@@ -127,20 +117,10 @@ export async function runVisualDiff(argv, dependencies = {}) {
 
 	let temporaryDirectory;
 	try {
-		const artifactRoot = resolve("build", "visual-captures");
-		await mkdir(artifactRoot, { recursive: true });
+		const artifactRoot = resolve(await realpath(process.cwd()), "build", "visual-captures");
+		input.diffPath = await assertArtifactOutput([input.referencePath, input.actualPath], input.diffPath, artifactRoot,
+			"Diff output must not overwrite either input image.");
 		await mkdir(dirname(input.diffPath), { recursive: true });
-		const artifactRootReal = await realpath(artifactRoot);
-		const diffParentReal = await realpath(dirname(input.diffPath));
-		const fromArtifactRoot = relative(artifactRootReal, diffParentReal);
-		if (fromArtifactRoot === ".." || fromArtifactRoot.startsWith(`..${sep}`)) {
-			throw new Error(`Diff output must stay under ${artifactRootReal}.`);
-		}
-		try {
-			if ((await lstat(input.diffPath)).isSymbolicLink()) throw new Error("Diff output must not be a symbolic link.");
-		} catch (error) {
-			if (error?.code !== "ENOENT") throw error;
-		}
 		await unlink(input.diffPath).catch(() => {});
 		const compare = dependencies.compare ?? (await import("odiff-bin")).compare;
 		const compositeImage = dependencies.compositeImage ?? compositePng;
@@ -171,6 +151,7 @@ export async function runVisualDiff(argv, dependencies = {}) {
 			antialiasingIgnored: input.antialiasing,
 			background: input.background,
 			percentageBasis: "visible-alpha-union",
+			mode: input.maxDiffPercentage === undefined ? "report-only" : "numeric-gate-not-parity",
 		};
 		if (result.match || result.reason === "pixel-diff") {
 			const measurement = await measureVisiblePixels(input.referencePath, input.actualPath);
@@ -178,7 +159,11 @@ export async function runVisualDiff(argv, dependencies = {}) {
 			report.diffCount = diffCount;
 			report.diffPercentage = measurement.visiblePixelCount === 0
 				? 0
-				: Number(((diffCount / measurement.visiblePixelCount) * 100).toFixed(2));
+				: 100 * diffCount / measurement.visiblePixelCount;
+			report.shapeDiffCount = measurement.shapeDiffCount;
+			report.shapeDiffPercentage = measurement.visiblePixelCount === 0 ? 0
+				: 100 * measurement.shapeDiffCount / measurement.visiblePixelCount;
+			report.alphaAbsoluteDifference = measurement.alphaAbsoluteDifference;
 			report.visiblePixelCount = measurement.visiblePixelCount;
 			report.canvasPixelCount = measurement.canvasPixelCount;
 			if (!result.match) report.canvasDiffPercentage = result.diffPercentage;
@@ -192,7 +177,10 @@ export async function runVisualDiff(argv, dependencies = {}) {
 
 		let exitCode = result.reason === "file-not-exists" ? 2 : 0;
 		if (input.maxDiffPercentage !== undefined) {
-			const withinLimit = result.match || (result.reason === "pixel-diff" && report.diffPercentage <= input.maxDiffPercentage);
+			const withinLimit = (result.match || result.reason === "pixel-diff")
+				&& report.visiblePixelCount > 0
+				&& 100 * report.diffCount <= input.maxDiffPercentage * report.visiblePixelCount
+				&& 100 * report.shapeDiffCount <= input.maxDiffPercentage * report.visiblePixelCount;
 			report.maxDiffPercentage = input.maxDiffPercentage;
 			report.withinLimit = withinLimit;
 			if (!withinLimit && exitCode === 0) exitCode = 1;

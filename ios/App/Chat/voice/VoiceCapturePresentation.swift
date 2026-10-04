@@ -13,6 +13,7 @@ struct VoiceCaptureSurface: View {
     let onActivate: () -> Void
     let onStartAccessibleHold: () -> Void
     let onTarget: (VoiceCaptureTarget) -> Void
+    var retainedLiveState: VoiceCaptureState? = nil
 
     @ComposerReduceMotion private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -20,7 +21,7 @@ struct VoiceCaptureSurface: View {
     @Environment(\.layoutDirection) private var layoutDirection
 
     private var presentation: VoiceCapturePresentationState {
-        VoiceCapturePresentationState(state: state, disabled: disabled)
+        VoiceCapturePresentationState(state: state, disabled: disabled, retainedLiveState: retainedLiveState)
     }
 
     private var idleSize: CGFloat {
@@ -61,22 +62,14 @@ struct VoiceCaptureSurface: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: Space.xs) {
             ZStack(alignment: .bottomTrailing) {
-                if presentation.showsTargetDeck {
-                    VoiceCaptureTargetDeck(
-                        selected: target,
-                        width: crownWidth,
-                        onSelect: onTarget
-                    )
-                    .offset(y: gestureHostGeometry.crownBottomAlignmentOffset)
-                    .zIndex(0)
-                    .transition(
-                        reduceMotion
-                            ? .identity
-                            : .opacity
-                                .combined(with: .move(edge: .bottom))
-                                .combined(with: .scale(scale: 0.88, anchor: .bottom))
-                    )
-                }
+                VoiceCaptureTargetDeck(
+                    selected: target,
+                    width: crownWidth,
+                    isOpen: presentation.showsTargetDeck,
+                    onSelect: onTarget
+                )
+                .offset(y: gestureHostGeometry.crownBottomAlignmentOffset)
+                .zIndex(0)
 
                 VoiceCapturePrimaryButton(
                     presentation: presentation,
@@ -120,10 +113,6 @@ struct VoiceCaptureSurface: View {
                 VoiceCaptureFailureNotice(message: presentation.failureMessage)
             }
         }
-        .animation(
-            reduceMotion ? nil : .spring(duration: DesignV2.Motion.state, bounce: 0),
-            value: state
-        )
         .accessibilityElement(children: .contain)
         .accessibilityValue(announcement)
     }
@@ -140,41 +129,42 @@ private struct VoiceCapturePrimaryButton: View {
     let onTarget: (VoiceCaptureTarget) -> Void
 
     var body: some View {
-        ZStack {
-            PttBigWave(
-                levels: levels,
-                tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
-                isActive: presentation.showsWaveform
-            )
-            .frame(height: VoiceCaptureLayout.waveformHeight)
-            .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)
-            .padding(.trailing, VoiceCaptureLayout.glyphWellWidth)
-            .opacity(presentation.showsWaveform ? 1 : 0)
-            .scaleEffect(
-                x: presentation.showsWaveform ? 1 : 0.25,
-                y: 1,
-                anchor: .trailing
-            )
-            .accessibilityHidden(true)
+        Button(action: onActivate) {
+            ZStack {
+                PttBigWave(
+                    levels: levels,
+                    tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
+                    isActive: presentation.showsWaveform
+                )
+                .frame(height: VoiceCaptureLayout.waveformHeight)
+                .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)
+                .padding(.trailing, VoiceCaptureLayout.glyphWellWidth)
+                .opacity(presentation.showsWaveform ? 1 : 0)
+                .scaleEffect(
+                    x: presentation.showsWaveform ? 1 : 0.25,
+                    y: 1,
+                    anchor: .trailing
+                )
+                .accessibilityHidden(true)
 
-            captureGlyph
-                .frame(maxWidth: .infinity, alignment: presentation.isExpanded ? .trailing : .center)
-                .padding(.trailing, presentation.isExpanded ? VoiceCaptureLayout.glyphTrailingInset : 0)
+                captureGlyph
+                    .frame(maxWidth: .infinity, alignment: presentation.isExpanded ? .trailing : .center)
+                    .padding(.trailing, presentation.isExpanded ? VoiceCaptureLayout.glyphTrailingInset : 0)
+            }
+            .frame(width: width, height: height)
+            .modifier(VoicePodSurfaceModifier(
+                presentation: presentation,
+                width: width,
+                height: height,
+                physicallyPressed: physicallyPressed
+            ))
+            .contentShape(Rectangle())
         }
-        .frame(width: width, height: height)
-        .modifier(VoicePodSurfaceModifier(
-            presentation: presentation,
-            width: width,
-            height: height,
-            physicallyPressed: physicallyPressed
-        ))
+        .buttonStyle(.plain)
         .disabled(presentation.isDisabled)
-        .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.primaryLabel)
         .accessibilityHint(presentation.primaryHint)
-        .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(presentation.isAuto ? .isSelected : [])
-        .accessibilityAction { onActivate() }
         .voiceCaptureAccessibilityActions(
             presentation: presentation,
             onStartHold: onStartAccessibleHold,
@@ -222,6 +212,7 @@ private struct VoiceCapturePrimaryButton: View {
 private struct VoiceCaptureTargetDeck: View {
     let selected: VoiceCaptureTarget
     let width: CGFloat
+    let isOpen: Bool
     let onSelect: (VoiceCaptureTarget) -> Void
 
     @ComposerReduceMotion private var reduceMotion
@@ -238,6 +229,14 @@ private struct VoiceCaptureTargetDeck: View {
                 ForEach(choices, id: \.self) { choice in
                     targetButton(choice)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .opacity(isOpen ? 1 : 0)
+                        .scaleEffect(y: isOpen ? 1 : 0.72, anchor: .bottom)
+                        .offset(y: isOpen ? 0 : 16)
+                        .animation(
+                            reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.35)
+                                .delay(Double(choices.firstIndex(of: choice) ?? 0) * 0.034),
+                            value: isOpen
+                        )
                 }
             }
 
@@ -254,12 +253,21 @@ private struct VoiceCaptureTargetDeck: View {
             .accessibilityHidden(true)
         }
         .frame(width: width, height: VoiceCaptureLayout.crownHeight(dynamicTypeSize))
+        .opacity(isOpen ? 1 : 0)
+        .scaleEffect(x: isOpen ? 1 : 0.88, anchor: .bottom)
+        .rotation3DEffect(.degrees(isOpen ? 0 : -74), axis: (x: 1, y: 0, z: 0),
+                          anchor: .bottom, perspective: VoiceCaptureLayout.crownHeight(dynamicTypeSize) / 420)
+        .offset(y: isOpen ? 0 : 17)
+        .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.39), value: isOpen)
+        .allowsHitTesting(isOpen)
         .animation(
-            reduceMotion ? nil : .spring(duration: DesignV2.Motion.feedback, bounce: 0),
+            reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.21),
             value: selected
         )
+        .disabled(!isOpen)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Voice capture actions")
+        .accessibilityHidden(!isOpen)
     }
 
     private func targetButton(_ choice: VoiceCaptureTarget) -> some View {
@@ -279,7 +287,7 @@ private struct VoiceCaptureTargetDeck: View {
                     }
                 }
             }
-            .font(Typo.ui(TypeScale.sm, .regular))
+            .font(Typo.ui(14, .semibold))
             .lineLimit(1)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.bottom, 7)
@@ -295,7 +303,7 @@ private struct VoiceCaptureTargetDeck: View {
         ComposerGlyphView(
             choice == .auto ? .auto : choice == .cancel ? .cancel : .send
         )
-        .frame(width: 15, height: 15)
+        .frame(width: 18, height: 18)
     }
 
     private func targetLabel(_ choice: VoiceCaptureTarget) -> String {
@@ -328,7 +336,7 @@ private struct VoiceCaptureFailureNotice: View {
     var body: some View {
         Text(message)
             .font(Typo.ui(TypeScale.sm, .medium))
-            .foregroundStyle(DuskColors.stop)
+            .foregroundStyle(DuskColors.ink2)
             .multilineTextAlignment(.trailing)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: VoiceCaptureLayout.failureNoticeWidth, alignment: .trailing)
@@ -592,51 +600,16 @@ private enum VoiceCanvasDrawing {
         in context: inout GraphicsContext,
         faceRect: CGRect
     ) {
-        context.fill(path, with: .linearGradient(
-            Gradient(colors: [
-                base.overlaying(
-                    muted ? DuskColors.ink4 : DuskColors.ink,
-                    opacity: muted
-                        ? DesignMaterialAdapter.slateMutedBaseLight
-                        : DesignMaterialAdapter.slateBaseLight
-                ),
-                base,
-            ]),
-            startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
-            endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
-        ))
-
-        let center = base.overlaying(
-            DuskColors.bgSunk,
-            opacity: muted
-                ? DesignMaterialAdapter.slateMutedCenterSunk
-                : DesignMaterialAdapter.slateCenterSunk
-        )
-        let stops: [Gradient.Stop]
-        if muted {
-            stops = [
-                .init(color: center, location: 0),
-                .init(color: center.opacity(0), location: DesignMaterialAdapter.slateMutedFadeStop),
-            ]
-        } else {
-            let ring = base.overlaying(
-                DuskColors.bgSunk,
-                opacity: DesignMaterialAdapter.slateRingSunk
-            )
-            stops = [
-                .init(color: center, location: 0),
-                .init(color: ring, location: DesignMaterialAdapter.slateCenterStop),
-                .init(color: ring.opacity(0), location: DesignMaterialAdapter.slateFadeStop),
-            ]
-        }
+        context.fill(path, with: .color(base))
         ellipticalRadial(
             clippingTo: path,
-            center: CGPoint(
-                x: DesignMaterialAdapter.slateRadialCenterX,
-                y: DesignMaterialAdapter.slateRadialCenterY
-            ),
-            radiusScale: DesignMaterialAdapter.slateRadialScale,
-            stops: stops,
+            center: CGPoint(x: 0.5, y: 0.52),
+            radiusScale: CGSize(width: 0.82, height: 1.05),
+            stops: [
+                .init(color: base.overlaying(DuskColors.bgSunk, opacity: muted ? 0.16 : 0.22), location: 0),
+                .init(color: base.overlaying(DuskColors.bgSunk, opacity: 0.10), location: 0.5),
+                .init(color: base, location: 1),
+            ],
             in: &context,
             faceRect: faceRect
         )
@@ -835,7 +808,7 @@ private struct VoicePodCanvas: View, Animatable {
         }
     }
 
-    private var isEnabled: Bool { enabled && !presentation.isDisabled }
+    private var isEnabled: Bool { (enabled || presentation.isTransitioning) && !presentation.disabled && presentation.state != .disabled }
 
     var body: some View {
         GeometryReader { proxy in
@@ -931,13 +904,13 @@ private struct VoicePodCanvas: View, Animatable {
                 )
                 VoiceCanvasDrawing.border(
                     shape: shape,
-                    color: increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft,
+                    color: increasedContrast ? DuskColors.ink3 : .clear,
                     in: &context,
                     faceRect: faceRect
                 )
                 VoiceCanvasDrawing.topEdge(
                     shape: shape,
-                    color: DuskColors.ink.opacity(0.17 * Double(1 - pressAmount)),
+                    color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLight * Double(1 - pressAmount)),
                     in: &context,
                     faceRect: faceRect
                 )
@@ -1139,7 +1112,7 @@ private struct VoiceTargetFacetCanvas: View, Animatable {
                 )
                 VoiceCanvasDrawing.border(
                     shape: shape,
-                    color: increasedContrast ? DuskColors.ink3 : DuskColors.lineSoft,
+                    color: increasedContrast ? DuskColors.ink3 : .clear,
                     in: &context,
                     faceRect: faceRect
                 )
@@ -1212,7 +1185,7 @@ private struct VoiceAutoOrbit<S: InsettableShape>: View {
             orbit(phase: 0)
         } else {
             TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
-                orbit(phase: (sin(timeline.date.timeIntervalSinceReferenceDate * 4.05) + 1) / 2)
+                orbit(phase: (1 - cos(timeline.date.timeIntervalSinceReferenceDate * 2 * .pi / 1.55)) / 2)
             }
         }
     }
@@ -1222,11 +1195,11 @@ private struct VoiceAutoOrbit<S: InsettableShape>: View {
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
             context.stroke(
                 shape.path(in: rect),
-                with: .color(DuskColors.sage.opacity(0.48 + phase * 0.24)),
+                with: .color(DuskColors.sage.opacity(0.52 * (0.72 - phase * 0.38))),
                 lineWidth: 1
             )
         }
-        .scaleEffect(reduceMotion ? 1 : 1 + phase * 0.055)
+        .scaleEffect(reduceMotion ? 1 : 1 + phase * 0.08)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -1239,7 +1212,7 @@ private extension View {
         onStartHold: @escaping () -> Void,
         onTarget: @escaping (VoiceCaptureTarget) -> Void
     ) -> some View {
-        if presentation.isHolding {
+        if presentation.showsTargetDeck {
             self
                 .accessibilityAction(named: "Send voice message") { onTarget(.send) }
                 .accessibilityAction(named: "Cancel voice message") { onTarget(.cancel) }

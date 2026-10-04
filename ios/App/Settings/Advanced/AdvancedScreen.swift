@@ -5,8 +5,7 @@
 // (PUT profile → apply-with-restart) — the applying banner shows while the
 // assistant restarts.
 //
-// The shared apply bar receives this screen's dirty/save actions; discard and
-// dirty-back still use the existing native confirmation and navigation seam.
+// Discard restores drafts in place; Back separately confirms dirty navigation.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -22,16 +21,19 @@ private let maxTokensRange: ClosedRange<Double> = 128...8192
 private let maxTokensStep: Double = 128
 
 struct AdvancedScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
 
     @State private var vm: AdvancedViewModel
     @State private var showDiscard = false
+    @State private var mutationTask: Task<Void, Never>?
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: AdvancedViewModel(settings: settings), onBack: onBack)
+    }
+
+    init(viewModel: AdvancedViewModel, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _vm = State(initialValue: AdvancedViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     private var reasoningOptions: [SelectOption] {
@@ -43,83 +45,76 @@ struct AdvancedScreen: View {
     var body: some View {
         SettingsPageScaffold(
             title: "Advanced", screenId: "settings-advanced-screen",
-            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty && !vm.isApplying,
             backAccessibilityId: "settings-advanced-back"
         ) {
+            if vm.hasPendingApply && vm.phase == .ready && !vm.isDirty {
+                AsyncNotice(kind: .warning, title: "Profile saved; application unresolved",
+                            detail: "Retry applies the saved profile without saving it again.") {
+                    runMutation { await vm.retryApply() }
+                }
+            }
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading advanced settings")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load advanced settings", detail: message) {
-                    Task { await vm.load() }
+                    runMutation { await vm.load() }
                 }
             case .ready:
                 tuningSections
                 promptCard
             }
         }
+        .disabled(vm.isApplying)
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
             discardAccessibilityId: "settings-advanced-discard",
             applyAccessibilityId: "settings-advanced-save",
-            onDiscard: attemptBack,
-            onApply: { Task { await vm.save() } }
+            onDiscard: vm.discard,
+            onApply: { runMutation { await vm.save() } }
         )
         .task { await vm.load() }
+        .onDisappear { mutationTask?.cancel() }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { onBack() }
+            Button("Discard", role: .destructive) {
+                guard !vm.isApplying else { return }
+                vm.discard()
+                onBack()
+            }
             Button("Keep editing", role: .cancel) {}
         }
     }
 
-    private var applyState: DesignApplyState {
-        switch vm.save {
-        case .idle: .idle
-        case .saving: .saving
-        case .restarting: .restarting
-        case .alreadyApplying: .alreadyApplying
-        case .applied: .applied
-        case .failed(let message): .failed(message)
-        }
-    }
+    private var applyState: DesignApplyState { vm.save }
 
-    @ViewBuilder
     private var tuningSections: some View {
-        DesignCard(title: "Reasoning effort", bodyStyle: .padded) {
+        DesignCard(title: "Context", bodyStyle: .settingsGroup) {
             DesignSettingsSelectRow(
-                title: "Effort level",
+                title: "Reasoning",
+                detail: "Higher effort can improve difficult answers, but may take longer and cost more.",
                 options: reasoningOptions.map { (value: $0.id, label: $0.label) },
                 selection: Binding(get: { vm.reasoningEffort }, set: { vm.reasoningEffort = $0 }),
                 accessibilityId: "settings-advanced-reasoning"
             )
-            if reasoningLabels[vm.reasoningEffort] == nil {
-                // The shared menu trigger is single-line; never hide an unknown value there.
-                Text(vm.reasoningEffort)
-                    .designText(.supporting)
-                    .foregroundStyle(DuskColors.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            DesignSettingsSliderRow(
+                title: "Compression threshold",
+                detail: "Summarize context when usage reaches this fraction of the model's window.",
+                value: Binding(get: { vm.threshold }, set: { vm.threshold = $0 }),
+                range: compressionRange, step: compressionStep,
+                format: { String(format: "%.2f", $0) },
+                accessibilityId: "settings-advanced-compression"
+            )
+            DesignSettingsSliderRow(
+                title: "Max tokens",
+                detail: "Saved with your profile. Chat response limits are managed separately by the gateway.",
+                value: Binding(get: { vm.maxTokens }, set: { vm.maxTokens = $0 }),
+                range: maxTokensRange, step: maxTokensStep,
+                format: { "\(Int32($0.rounded()).formatted()) tokens" },
+                accessibilityId: "settings-advanced-max-tokens"
+            )
         }
-        AdvancedRangeSection(
-            title: "Compression threshold",
-            valueLabel: "Threshold",
-            value: Binding(get: { vm.threshold }, set: { vm.threshold = $0 }),
-            range: compressionRange,
-            step: compressionStep,
-            format: { String(format: "%.2f", $0) },
-            accessibilityId: "settings-advanced-compression"
-        )
-        AdvancedRangeSection(
-            title: "Profile limits",
-            detail: "Saved with your profile. Chat response limits are managed separately by the gateway.",
-            valueLabel: "Max tokens",
-            value: Binding(get: { vm.maxTokens }, set: { vm.maxTokens = $0 }),
-            range: maxTokensRange,
-            step: maxTokensStep,
-            format: { "\(Int32($0.rounded()).formatted()) tokens" },
-            accessibilityId: "settings-advanced-max-tokens"
-        )
     }
 
     private var promptCard: some View {
@@ -142,72 +137,16 @@ struct AdvancedScreen: View {
         .padding(.top, Space.sm)
     }
 
+    private func runMutation(_ operation: @escaping @MainActor () async -> Void) {
+        guard mutationTask == nil else { return }
+        mutationTask = Task {
+            await operation()
+            mutationTask = nil
+        }
+    }
+
     private func attemptBack() {
+        guard !vm.isApplying else { return }
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
-}
-
-/// A value-first tuning section. The native slider receives the entire available width.
-private struct AdvancedRangeSection: View {
-    let title: String
-    var detail: String? = nil
-    let valueLabel: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let step: Double
-    let format: (Double) -> String
-    let accessibilityId: String
-
-    var body: some View {
-        DesignCard(title: title, detail: detail, bodyStyle: .padded) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(valueLabel)
-                    .designText(.supporting)
-                    .foregroundStyle(DuskColors.ink2)
-                Text(format(value))
-                    .designText(.large)
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                    .foregroundStyle(DuskColors.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityHidden(true)
-            }
-            DesignSliderControlBody(
-                value: $value,
-                range: range,
-                step: step,
-                accessibilityLabel: "\(title), \(valueLabel)",
-                accessibilityValue: format(value),
-                accessibilityId: accessibilityId
-            )
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Space.md) {
-                    Text(format(range.lowerBound))
-                    Spacer(minLength: Space.sm)
-                    Text(format(range.upperBound))
-                }
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    Text("Minimum: \(format(range.lowerBound))")
-                    Text("Maximum: \(format(range.upperBound))")
-                }
-            }
-            .designText(.supporting)
-            .foregroundStyle(DuskColors.ink2)
-            .accessibilityHidden(true)
-        }
-    }
-}
-
-#Preview("range") {
-    NavigationStack {
-        SettingsPageScaffold(title: "Advanced", screenId: "settings-advanced-screen") {
-            AdvancedRangeSection(
-                title: "Compression threshold", valueLabel: "Threshold",
-                value: .constant(0.3), range: compressionRange, step: compressionStep,
-                format: { String(format: "%.2f", $0) },
-                accessibilityId: "settings-advanced-compression"
-            )
-        }
-    }
-    .preferredColorScheme(.dark)
 }

@@ -3,13 +3,12 @@ import SwiftUI
 /// Compatibility copy used by the settings save flows.
 let soulAlreadyApplyingText = "Another change is applying — try again in a moment."
 
-/// Legacy loading row; the progress primitive owns the indicator semantics.
+/// Compatibility loading row using the named, Reduce-Motion-aware state.
 struct SoulLoadingRow: View {
+    var title = "Loading settings"
+
     var body: some View {
-        DesignProgress()
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Space.xl)
-            .accessibilityIdentifier("settings-loading")
+        AsyncNotice(kind: .loading, title: title, accessibilityId: "settings-loading")
     }
 }
 

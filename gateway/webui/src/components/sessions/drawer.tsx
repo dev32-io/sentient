@@ -38,6 +38,7 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
   const cancelledFocusRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const deleteReturnFocusRef = useRef<HTMLElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const canonicalRows = sessions.items.value;
   const previousSessionsRef = useRef({ sessions, ids: new Set(canonicalRows.map((row) => row.sessionId)) });
@@ -218,7 +219,10 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
               pending={pending}
               onSwitch={(id, event) => void changeSession(() => sessions.switchTo(id), event.currentTarget as HTMLElement)}
               onOpenDraft={(id, event) => void changeSession(() => sessions.openDraft(id), event.currentTarget as HTMLElement)}
-              onAskDelete={(id, title) => setDeleting({ id, title })}
+              onAskDelete={(id, title) => {
+                deleteReturnFocusRef.current = null;
+                setDeleting({ id, title });
+              }}
               onAskRename={(id, title) => setRenaming({ id, title })}
             />
           )}
@@ -242,7 +246,10 @@ export function Drawer({ open, onClose, onBeforeSessionChange, onSessionSelected
       {deleting && (
         <ConfirmDeleteDialog
           title={deleting.title}
+          returnFocusRef={deleteReturnFocusRef}
           onConfirm={() => {
+            // Deletion may remove the row after the dialog closes, too.
+            deleteReturnFocusRef.current = closeRef.current;
             void sessions.delete(deleting.id);
           }}
           onClose={() => setDeleting(null)}

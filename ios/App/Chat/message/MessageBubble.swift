@@ -1,39 +1,39 @@
 // MessageBubble — the committed/live message content composite.
 //
 // MessageBubble owns role-specific content only. MessageBubbleShell owns the
-// shared row geometry, avatar, material, metadata, grouping, and accessibility
+// shared row geometry, material, timestamp, grouping, and accessibility
 // contract used by both committed and pending user bubbles.
 //
 // Layout and behavior remain the established chat contract:
-//  - assistant content uses the Sentient mark on the leading edge and paper;
-//  - user content uses the user avatar on the trailing edge and sage-mixed paper;
+//  - assistant content uses leading alignment and paper;
+//  - user content uses trailing alignment and sage-mixed paper;
 //  - streaming assistant content shows the thinking pulse until revealed text
 //    arrives, then renders the data-layer substring directly;
 //  - committed content remains GFM Markdown with the Dusk theme and cutoff
 //    markers.
 import Foundation
 import SwiftUI
-import MarkdownUI
 import MobileData
 
 struct MessageBubble: View {
     let message: ChatMessage
     let index: Int
     var total: Int = 1
-    var continuation = false
-    /// Avatar animation mode — only the live streaming assistant bubble animates;
-    /// committed bubbles pass `.idle`, mirroring the Android avatarMode.
+    /// Ongoing reply activity owns chrome, not a per-message avatar.
     var avatarMode: SentientIdentityState = .idle
-    /// Display name shown in the meta row above the bubble.
+    /// Speaker retained in semantic chronology, not a visual name row.
     var userName: String = "You"
     var attachmentPreviews: [String: UIImage] = [:]
     var attachmentPreviewFailures: Set<String> = []
     var onPreviewAttachment: (String) -> Void = { _ in }
     var imageCache: MarkdownImageCache?
+    var rendererState: MessageDocumentState?
+    var selectionViewportInWindow: (() -> CGRect)?
+    var requestSelectionScroll: ((CGFloat) -> CGFloat)?
+    var onSelectionBegin: (() -> Void)?
     var onRenderedHeightStateChange: ((Bool) -> Void)?
 
     @Environment(\.sentientIdentityMeasurement) private var measurement
-    @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
 
     private var isUser: Bool { message.role == "user" }
 
@@ -46,7 +46,6 @@ struct MessageBubble: View {
             cutoffLabel: messageCutoffLabel(for: message.cutoffKind),
             index: index,
             total: total,
-            continuation: continuation,
             avatarMode: avatarMode,
             accessibilityIdentifier: isUser ? "message-bubble-\(index)" : "assistant-bubble"
         ) {
@@ -63,56 +62,54 @@ struct MessageBubble: View {
         // stable owner).
         if message.streaming && message.content.isEmpty {
             PulseDots()
-        } else if message.streaming {
-            StreamingText(content: message.content)
         } else {
-            committedText
-        }
-    }
-
-    private var committedText: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
-            if !message.content.isEmpty {
-                if measurement {
-                    nativeMarkdown
-                } else {
-                    SelectableMarkdownSurface(
-                        markdown: message.content,
-                        width: max(1, bubbleMaxWidth - Space.md * 2),
+            VStack(alignment: .leading, spacing: Space.xs) {
+                if !message.content.isEmpty {
+                    MessageDocumentSurface(
+                        source: message.content,
+                        streaming: message.streaming,
+                        state: rendererState,
                         imageCache: imageCache,
-                        onHeightChange: nil,
-                        onLoadStateChange: onRenderedHeightStateChange
-                    ) {
-                        nativeMarkdown
-                    }
+                        measurement: measurement,
+                        selectionViewportInWindow: selectionViewportInWindow,
+                        requestSelectionScroll: requestSelectionScroll,
+                        onSelectionBegin: onSelectionBegin,
+                        onReady: onRenderedHeightStateChange
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                ForEach(message.attachments, id: \.attachmentId) { attachment in
+                    MessageAttachmentCard(
+                        attachment: attachment,
+                        preview: attachmentPreviews[attachment.attachmentId],
+                        previewFailed: attachmentPreviewFailures.contains(attachment.attachmentId),
+                        onPreview: { onPreviewAttachment(attachment.attachmentId) }
+                    )
+                }
+                if let label = messageCutoffLabel(for: message.cutoffKind) {
+                    MessageCutoffMarker(label: label, index: index)
                 }
             }
-            ForEach(message.attachments, id: \.attachmentId) { attachment in
-                MessageAttachmentCard(
-                    attachment: attachment,
-                    preview: attachmentPreviews[attachment.attachmentId],
-                    previewFailed: attachmentPreviewFailures.contains(attachment.attachmentId),
-                    onPreview: { onPreviewAttachment(attachment.attachmentId) }
-                )
-            }
-            if messageCutoffLabel(for: message.cutoffKind) != nil {
-                interruptedMarker
-            }
         }
     }
+}
 
-    private var nativeMarkdown: some View {
-        Markdown(message.content)
-            .markdownTheme(.dusk)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
+struct MessageCutoffMarker: View {
+    let label: String
+    let index: Int
 
-    private var interruptedMarker: some View {
-        Label(messageCutoffLabel(for: message.cutoffKind) ?? "", systemImage: "stop.circle")
-            .font(Typo.ui(TypeScale.sm))
-            .foregroundStyle(DuskColors.ink3)
-            .accessibilityIdentifier("message-cutoff-\(index)")
+    var body: some View {
+        HStack(spacing: Space.sm) {
+            Circle().fill(DuskColors.clay).frame(width: 7, height: 7).accessibilityHidden(true)
+            Text(label)
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .padding(.horizontal, Space.sm)
+        .padding(.vertical, Space.xs)
+        .designWell(cornerRadius: Radii.pill)
+        .padding(.top, Space.md)
+        .accessibilityIdentifier("message-cutoff-\(index)")
     }
 }
 
@@ -306,45 +303,13 @@ private struct MessageAttachmentCard: View {
 
     var body: some View {
         Button(action: onPreview) {
-            VStack(alignment: .leading, spacing: Space.sm) {
-                if let preview {
-                    Image(uiImage: preview)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 260)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: iconName)
-                        .font(.system(size: 30))
-                        .foregroundStyle(DuskColors.accent)
-                        .frame(maxWidth: .infinity, minHeight: 92, maxHeight: 92)
-                        .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .accessibilityHidden(true)
-                }
-                HStack(alignment: .top, spacing: Space.sm) {
-                    Image(systemName: iconName)
-                        .foregroundStyle(DuskColors.accent)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(attachment.displayName)
-                            .font(Typo.ui(TypeScale.sm, .semibold))
-                            .foregroundStyle(DuskColors.ink)
-                            .lineLimit(2)
-                        Text("\(attachment.mediaKind.uppercased()) · \(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))")
-                            .font(Typo.ui(TypeScale.xs))
-                            .foregroundStyle(DuskColors.ink3)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(Typo.ui(TypeScale.xs, .semibold))
-                        .foregroundStyle(DuskColors.ink3)
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(Space.sm)
-            .background(DuskColors.bg.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            MessageAttachmentContent(
+                displayName: attachment.displayName,
+                detail: "\(attachment.mediaKind.capitalized) · \(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))",
+                isImage: attachment.mediaKind == "image",
+                iconName: iconName,
+                preview: preview
+            )
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)

@@ -25,7 +25,7 @@ struct PttBigWave: View {
 
     private var staticBars: some View {
         bars { index in
-            PttWaveMetrics.sampledLevelScale(levels, bar: index)
+            PttWaveMetrics.restScale(bar: index)
         }
     }
 
@@ -68,10 +68,7 @@ enum PttWaveMetrics {
     static let barCount = 11
     static let laneHeight: CGFloat = 30
     static let barWidth: CGFloat = 3
-    static let cycleDuration: Double = 1.0
-    static let delayBucket = 11
-    static let delayStep: Double = 0.055
-    static let minScale: Double = 0.24
+    static let cycleDuration: Double = 1.52
     static let levelFloor: Double = 0.35
     static let levelRange: Double = 0.65
 
@@ -86,23 +83,27 @@ enum PttWaveMetrics {
         return Double(min(max(value, 0), 1))
     }
 
-    static func contourHeight(at index: Int) -> CGFloat {
-        laneHeight * (0.42 + 0.48 * abs(sin(Double(index) * 0.78 + 0.35)))
+    static func contourHeight(at index: Int) -> CGFloat { 18 }
+
+    static func restScale(bar: Int) -> Double {
+        let child = bar + 1
+        if child.isMultiple(of: 5) { return 0.88 }
+        if child.isMultiple(of: 3) { return 0.52 }
+        if child.isMultiple(of: 2) { return 0.72 }
+        return 0.34
     }
 
     static func pulseScale(at time: Double, bar index: Int) -> Double {
-        let delay = Double(index % delayBucket) * delayStep
-        let remainder = (time - delay).truncatingRemainder(dividingBy: cycleDuration)
-        let phase = remainder >= 0
-            ? remainder / cycleDuration
-            : (remainder + cycleDuration) / cycleDuration
-        return minScale + (1 - minScale) * (0.5 - 0.5 * cos(phase * 2 * .pi))
+        let child = index + 1
+        let advance = child.isMultiple(of: 5) ? 0.59
+            : child.isMultiple(of: 3) ? 0.43 : child.isMultiple(of: 2) ? 0.21 : 0
+        return 0.5 - 0.5 * cos((time + advance) / cycleDuration * 2 * .pi)
     }
 
     static func animatedScale(_ levels: [Float], at index: Int, time: Double) -> Double {
         let levelScale = levelScale(levels, at: index)
         let pulse = pulseScale(at: time, bar: index)
-        return minScale + (levelScale - minScale) * pulse
+        return restScale(bar: index) + (levelScale - restScale(bar: index)) * pulse
     }
 
     static func sampledLevelScale(_ levels: [Float], bar: Int) -> Double {
@@ -112,7 +113,7 @@ enum PttWaveMetrics {
     static func sampledAnimatedScale(_ levels: [Float], bar: Int, time: Double) -> Double {
         let levelScale = sampledLevelScale(levels, bar: bar)
         let pulse = pulseScale(at: time, bar: bar)
-        return minScale + (levelScale - minScale) * pulse
+        return restScale(bar: bar) + (levelScale - restScale(bar: bar)) * pulse
     }
 
     static func sourceIndex(for bar: Int, sourceCount: Int) -> Int {

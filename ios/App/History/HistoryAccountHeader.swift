@@ -46,8 +46,8 @@ struct HistoryAccountHeader: View {
                 .foregroundStyle(DuskColors.ink)
             if !household.isEmpty {
                 Text(household)
-                    .font(Typo.ui(12))
-                    .foregroundStyle(DuskColors.ink3)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
             }
         }
     }

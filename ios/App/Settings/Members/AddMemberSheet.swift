@@ -17,6 +17,8 @@ struct AddMemberSheet: View {
 
     @State private var name = ""
     @State private var pin = ""
+    @State private var submitting = false
+    private var busy: Bool { adding || submitting }
     @Environment(\.dismiss) private var dismiss
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -34,7 +36,8 @@ struct AddMemberSheet: View {
                         prompt: "Their name",
                         text: $name,
                         error: name.isEmpty ? nil : validation == "Enter a display name." ? validation : nil,
-                        accessibilityId: "settings-members-add-name"
+                        accessibilityId: "settings-members-add-name",
+                        isEnabled: !busy
                     )
                     DesignMaskedField(
                         title: "PIN",
@@ -42,7 +45,8 @@ struct AddMemberSheet: View {
                         text: sanitizedPin,
                         error: pin.isEmpty ? nil : validation == "Enter a four-digit PIN." ? validation : nil,
                         accessibilityId: "settings-members-add-pin",
-                        keyboard: .numberPad
+                        keyboard: .numberPad,
+                        isEnabled: !busy
                     )
                     if let error {
                         AsyncNotice(kind: .error, title: "Couldn't add member", detail: error)
@@ -57,19 +61,26 @@ struct AddMemberSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { if !busy { dismiss() } }
+                        .disabled(busy)
                         .accessibilityIdentifier("settings-members-add-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        Task { if await onSubmit(trimmedName, pin) { dismiss() } }
+                        guard !busy else { return }
+                        submitting = true
+                        Task {
+                            defer { submitting = false }
+                            if await onSubmit(trimmedName, pin) { dismiss() }
+                        }
                     }
-                    .disabled(validation != nil || adding)
+                    .disabled(validation != nil || busy)
                     .accessibilityIdentifier("settings-members-add-submit")
                 }
             }
             .duskTheme()
         }
+        .interactiveDismissDisabled(busy)
     }
 
     private var sanitizedPin: Binding<String> {

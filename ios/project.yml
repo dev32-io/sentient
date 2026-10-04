@@ -30,14 +30,11 @@ targets:
         # This spec owns the app version; xcodegen regenerates Info.plist.
         # App releases use their own track, separate from mobile-sdk/data source
         # versions. An iOS-only release does not bump the deprecated Android app.
-        CFBundleShortVersionString: 1.8.0
-        CFBundleVersion: "15"
+        CFBundleShortVersionString: 1.8.1
+        CFBundleVersion: "16"
         # Register bundled custom fonts so UIKit can load them by family name.
         # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
         UIAppFonts:
-          - Fraunces-Regular.ttf
-          - Fraunces-Medium.ttf
-          - Fraunces-SemiBold.ttf
           - DMSans-Regular.ttf
           - DMSans-Medium.ttf
           - DMSans-SemiBold.ttf

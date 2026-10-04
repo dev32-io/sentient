@@ -22,12 +22,12 @@ struct ScheduledMessagesScreen: View {
             DesignActionButton(title: "Schedule a message", accessibilityId: "schedule-add", action: beginNew)
             scheduleContent
         }
-        .sheet(isPresented: Binding(get: { editing != nil || presentingNew }, set: { if !$0 { editing = nil; presentingNew = false } })) {
+        .sheet(isPresented: Binding(get: { editing != nil || presentingNew }, set: { if !$0 && !vm.isMutating { editing = nil; presentingNew = false } })) {
             ScheduleEditor(
                 draft: $draft,
                 isSaving: vm.isMutating,
                 saveError: vm.mutationError,
-                onCancel: { editing = nil; presentingNew = false }
+                onCancel: { guard !vm.isMutating else { return }; editing = nil; presentingNew = false }
             ) {
                 let saved: Bool
                 if let editing { saved = await vm.update(editing, draft: draft) }
@@ -69,7 +69,7 @@ private extension ScheduledMessagesScreen {
     func beginNew() { presentingNew = true; editing = nil; draft = ScheduleDraft() }
 }
 
-private struct ScheduleSummaryCard: View {
+struct ScheduleSummaryCard: View {
     let schedule: Schedule
     let disabled: Bool
     let onEdit: () -> Void
@@ -77,7 +77,7 @@ private struct ScheduleSummaryCard: View {
     let onDelete: () -> Void
 
     var body: some View {
-        DesignCard(title: schedule.message, detail: schedule.nextRunAt.map { "Next: \($0)" } ?? "No next run", bodyStyle: .padded) {
+        DesignCard(title: schedule.message, detail: ScheduleDisplay.summary(schedule), bodyStyle: .padded) {
             DesignSettingsRow(title: "Status") { DesignStatusBadge(title: schedule.enabled ? "Active" : "Paused", tint: schedule.enabled ? DuskColors.sage : DuskColors.ink3) }
             DesignActionButton(title: "Edit", role: .secondary, state: disabled ? .disabled : .normal, action: onEdit)
             DesignActionButton(title: schedule.enabled ? "Pause" : "Resume", role: .quiet, state: disabled ? .disabled : .normal, action: onToggle)
@@ -87,7 +87,7 @@ private struct ScheduleSummaryCard: View {
     }
 }
 
-private struct ScheduleEditor: View {
+struct ScheduleEditor: View {
     @Binding var draft: ScheduleDraft
     let isSaving: Bool
     let saveError: String?
@@ -95,11 +95,14 @@ private struct ScheduleEditor: View {
     let onSave: () async -> Void
     @State private var delay = "30"
     @State private var day = "1"
-    @State private var absolute = ""
     @State private var recurringTime = "09:00"
+    @State private var submitting = false
     @State private var fieldErrors = ScheduleEditorFieldErrors()
     @FocusState private var messageFocused: Bool
     @FocusState private var numericFieldFocused: Bool
+    @FocusState private var zoneFocused: Bool
+
+    private var busy: Bool { isSaving || submitting }
 
     var body: some View {
         NavigationStack {
@@ -107,30 +110,38 @@ private struct ScheduleEditor: View {
                 if let saveError {
                     AsyncNotice(kind: .error, title: "Schedule not saved", detail: saveError)
                 }
-                DesignMultilineEditor(
-                    title: "Message",
-                    text: $draft.message,
-                    error: draft.validationMessage,
-                    accessibilityId: "schedule-message",
-                    focused: $messageFocused
-                )
-                DesignSegmentedPicker(title: "Timing", options: ScheduleDraftMode.allCases.map { ($0, $0.rawValue) }, selection: $draft.mode)
-                timingFields
-                DesignField(title: "Time zone", text: $draft.timeZone, error: fieldErrors.timeZone, accessibilityId: "schedule-time-zone")
+                Group {
+                    DesignMultilineEditor(
+                        title: "Message",
+                        text: $draft.message,
+                        error: draft.validationMessage,
+                        accessibilityId: "schedule-message",
+                        focused: $messageFocused
+                    )
+                    DesignSegmentedPicker(title: "Timing", options: ScheduleDraftMode.allCases.map { ($0, $0.rawValue) }, selection: $draft.mode)
+                    timingFields
+                    DesignField(title: "Time zone", text: $draft.timeZone, error: fieldErrors.timeZone, accessibilityId: "schedule-time-zone", focused: $zoneFocused)
+                }
+                .disabled(busy)
                 DesignActionButton(
-                    title: isSaving ? "Saving…" : "Save",
-                    state: isSaving ? .loading : .normal,
+                    title: busy ? "Saving…" : "Save",
+                    state: busy ? .loading : .normal,
                     accessibilityId: "schedule-save"
                 ) {
                     messageFocused = false
                     numericFieldFocused = false
+                    zoneFocused = false
                     guard applyFields() else { return }
-                    Task { await onSave() }
+                    submitting = true
+                    Task {
+                        await onSave()
+                        submitting = false
+                    }
                 }
                 DesignActionButton(
                     title: "Cancel",
                     role: .quiet,
-                    state: isSaving ? .disabled : .normal,
+                    state: busy ? .disabled : .normal,
                     accessibilityId: "schedule-cancel",
                     action: onCancel
                 )
@@ -141,15 +152,24 @@ private struct ScheduleEditor: View {
                     Button("Done") {
                         messageFocused = false
                         numericFieldFocused = false
+                        zoneFocused = false
                     }
                     .accessibilityIdentifier("schedule-keyboard-done")
                 }
             }
         }
+        .interactiveDismissDisabled(busy)
+        .accessibilityAction(.escape) { if !busy { onCancel() } }
+        .onChange(of: draft.timeZone) { _, _ in
+            if draft.mode == .recurring { _ = applyFields() }
+        }
+        .onChange(of: draft.mode) { _, mode in
+            // Reconcile the native picker with retained wall-clock intent after zone edits in other modes.
+            if mode == .recurring { _ = applyFields() }
+        }
         .onAppear {
             delay = String(draft.delayMinutes); day = String(draft.dayOfMonth)
-            absolute = draft.date.ISO8601Format(.iso8601(timeZone: .current))
-            let formatter = DateFormatter(); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: draft.timeZone)
+            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: draft.timeZone)
             recurringTime = formatter.string(from: draft.localTime)
         }
     }
@@ -157,7 +177,10 @@ private struct ScheduleEditor: View {
     @ViewBuilder private var timingFields: some View {
         switch draft.mode {
         case .once:
-            DesignField(title: "Run at", prompt: "2026-08-01T15:30:00-07:00", text: $absolute, error: fieldErrors.absolute, accessibilityId: "schedule-once-at")
+            DesignDatePicker(title: "Run at", selection: $draft.date,
+                             displayedComponents: [.date, .hourAndMinute],
+                             timeZone: TimeZone(identifier: draft.timeZone) ?? .current,
+                             error: fieldErrors.absolute, accessibilityId: "schedule-once-at")
         case .delay:
             DesignField(
                 title: "Minutes from now",
@@ -168,7 +191,14 @@ private struct ScheduleEditor: View {
             .keyboardType(.numberPad)
         case .recurring:
             DesignSelect(title: "Frequency", options: ScheduleDraftFrequency.allCases.map { ($0, $0.rawValue) }, selection: $draft.frequency)
-            DesignField(title: "Local time", prompt: "09:00", text: $recurringTime, error: fieldErrors.recurringTime, accessibilityId: "schedule-local-time")
+            DesignDatePicker(title: "Local time", selection: $draft.localTime,
+                             displayedComponents: [.hourAndMinute],
+                             timeZone: TimeZone(identifier: draft.timeZone) ?? .current,
+                             error: fieldErrors.recurringTime, accessibilityId: "schedule-local-time")
+                .onChange(of: draft.localTime) { _, value in
+                    guard let zone = TimeZone(identifier: draft.timeZone) else { return }
+                    recurringTime = ScheduleDisplay.localTime(value, zone: zone)
+                }
             DesignSelect(title: "Weekday", options: weekdayOptions, selection: $draft.weekday, isEnabled: draft.frequency == .weekly)
             DesignField(
                 title: "Day of month",
@@ -183,7 +213,7 @@ private struct ScheduleEditor: View {
 
     private func applyFields() -> Bool {
         fieldErrors = ScheduleEditorFields(
-            absolute: absolute,
+            absolute: draft.date.ISO8601Format(),
             delay: delay,
             recurringTime: recurringTime,
             dayOfMonth: day,
@@ -193,8 +223,9 @@ private struct ScheduleEditor: View {
     }
 
     private var weekdayOptions: [(Int, String)] {
-        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            .enumerated().map { ($0.offset, $0.element) }
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        return (0..<7).map { ($0, formatter.weekdaySymbols[($0 + 1) % 7]) }
     }
 }
 
@@ -206,7 +237,7 @@ extension ScheduleDraft {
         case .recurring(let timing):
             mode = .recurring; timeZone = timing.timeZone
             frequency = switch timing.frequency { case .daily: .daily; case .weekly: .weekly; case .monthly: .monthly }
-            let formatter = DateFormatter(); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: timing.timeZone)
+            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "HH:mm"; formatter.timeZone = TimeZone(identifier: timing.timeZone)
             localTime = formatter.date(from: timing.localTime) ?? localTime
             dayOfMonth = Int(timing.dayOfMonth?.intValue ?? 1)
             if let first = timing.weekdays?.first,

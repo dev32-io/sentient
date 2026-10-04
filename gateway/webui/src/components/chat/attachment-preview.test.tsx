@@ -18,8 +18,66 @@ const textRef: AttachmentRef = {
 };
 
 afterEach(() => {
+  document.getSelection()?.removeAllRanges();
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe.each(["body", "attachment-only", "empty-stream"])("%s attachment selection", (mode) => {
+  it("keeps selection and plain Copy without mounting preview, but permits intentional pointer/keyboard activation", async () => {
+    const { container } = render(
+      <ChatView
+        messages={[{
+          id: "selection-fixture", role: "user", text: mode === "body" ? "Synthetic body" : "",
+          timestamp: 0, isStreaming: mode === "empty-stream", attachments: [{ kind: "remote", ref: textRef }],
+        }]}
+        transcript="" currentTurnId={null} activeCycleState="idle"
+        currentUser={{ displayName: "Synthetic", avatarTint: "sage" }}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Preview notes.txt" });
+    const filename = trigger.querySelector(".message-attachment__name")?.firstChild;
+    const metadata = trigger.querySelector(".message-attachment__meta")?.firstChild;
+    const selection = document.getSelection();
+    if (!(filename instanceof Text) || !(metadata instanceof Text) || !selection) throw new Error("Missing attachment text");
+    const chat = container.querySelector(".chat-view");
+    for (const [anchor, anchorOffset, focus, focusOffset, expected] of [
+      [filename, 0, filename, 5, "notes"],
+      [filename, 5, filename, 0, "notes"],
+      [filename, 0, metadata, 4, "notes.txtTEXT"],
+      [metadata, 4, filename, 0, "notes.txtTEXT"],
+    ] as const) {
+      selection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
+      fireEvent.mouseDown(trigger, { clientX: 1, clientY: 1 });
+      fireEvent.click(trigger, { detail: 1, clientX: 20, clientY: 1 });
+      await act(async () => {});
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(chat?.hasAttribute("inert")).toBe(false);
+      expect(selection.anchorNode).toBe(anchor);
+      expect(selection.anchorOffset).toBe(anchorOffset);
+      expect(selection.focusNode).toBe(focus);
+      expect(selection.focusOffset).toBe(focusOffset);
+      const setData = vi.fn();
+      const copy = new Event("copy", { cancelable: true });
+      Object.defineProperty(copy, "clipboardData", { value: { setData } });
+      fireEvent(document, copy);
+      expect(copy.defaultPrevented).toBe(true);
+      expect(setData.mock.calls).toEqual([["text/plain", expected]]);
+    }
+    // Keyboard activation is a detail=0 native click, even with selected text.
+    trigger.focus();
+    fireEvent.click(trigger, { detail: 0 });
+    await screen.findByRole("dialog", { name: "notes.txt" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+    expect(chat?.hasAttribute("inert")).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Deliberate single click may retain old selected text inside a native button.
+    selection.setBaseAndExtent(filename, 0, filename, 5);
+    fireEvent.mouseDown(trigger, { clientX: 1, clientY: 1 });
+    fireEvent.click(trigger, { detail: 1, clientX: 1, clientY: 1 });
+    await screen.findByRole("dialog", { name: "notes.txt" });
+  });
 });
 
 describe("authenticated attachment previews", () => {

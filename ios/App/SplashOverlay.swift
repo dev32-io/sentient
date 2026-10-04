@@ -50,9 +50,7 @@ final class StartupReadinessCoordinator: ObservableObject {
 
     private func revealIfReady() {
         guard minimumElapsed, rootResolved else { return }
-        withAnimation(.easeOut(duration: SplashLayout.fadeOut)) {
-            isCovering = false
-        }
+        isCovering = false
     }
 
     deinit { minimumTask?.cancel() }

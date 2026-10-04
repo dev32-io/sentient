@@ -22,14 +22,14 @@ struct HistoryRow: View {
         Button(action: onSwitch) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(row.title)
-                    .font(.system(size: TypeScale.base, weight: isSelected ? .semibold : .regular))
+                    .font(Typo.ui(TypeScale.base, isSelected ? .semibold : .regular))
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text(secondaryLine)
-                    .font(.system(size: TypeScale.xs))
-                    .foregroundStyle(DuskColors.ink3)
-                    .lineLimit(1)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Space.md)

@@ -329,6 +329,8 @@ class IosUserSession(
     fun close() {
         if (closed) return
         closed = true
+        // Cancel attachment I/O before queued database/calendar disposal can suspend.
+        attachmentsHttpClient.close()
         // Invalidate the generation before capturing the active runtime. The
         // initializer's publish step uses this same gate, so a paused local
         // runtime can only be rejected and self-disposed.

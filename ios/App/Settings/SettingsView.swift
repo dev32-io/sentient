@@ -125,7 +125,7 @@ struct SettingsSheet: View {
 /// Stateless content for the root Settings list: grouped rows + logout + footer.
 /// Takes derived state + closures only (no VM) so previews render every access
 /// state with fake data.
-private struct SettingsRootView: View {
+struct SettingsRootView: View {
     let access: SettingsRootViewModel.AccessState
     let updateStatus: UpdateStatus
     let versionText: String

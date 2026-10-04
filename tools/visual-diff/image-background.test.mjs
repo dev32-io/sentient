@@ -45,6 +45,8 @@ test("measures the union of visible pixels without transparent canvas padding", 
   ]);
   assert.deepEqual(await measureVisibleAlphaUnion(referencePath, actualPath), {
     visiblePixelCount: 2,
+    shapeDiffCount: 1,
+    alphaAbsoluteDifference: 128,
     canvasPixelCount: 3,
   });
 });

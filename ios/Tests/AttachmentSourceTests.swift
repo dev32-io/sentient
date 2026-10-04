@@ -875,6 +875,42 @@ struct AttachmentSourceTests {
         #expect(AttachmentPhotoImport.maximumSourceBytes == 512 * 1_024 * 1_024)
     }
 
+    @Test func retiredEditorReleasesAcceptedQueuedTemporaryImportWithoutPublishing() async throws {
+        let session = createUserSession(
+            gatewayWsUrl: "wss://localhost:18889/api/v1/ws",
+            allowSelfSignedDevHost: true,
+            authenticatedUserId: "retired-import-\(UUID().uuidString)",
+            capabilities: [], devFaultsEnabled: false, onLoggedOut: {}
+        )
+        defer { session.close() }
+        let started = AsyncGate()
+        let release = AsyncGate()
+        let first = try temporaryTextFile()
+        let queued = try temporaryTextFile()
+        let borrowed = try temporaryTextFile()
+        defer { try? FileManager.default.removeItem(at: borrowed) }
+        let drafts = try #require(session.component.drafts)
+        let vm = ChatViewModel(component: session.component, sessionId: "session-one", activateOnInit: false,
+            importDraftAttachment: { draftId, sessionId, source in
+                await started.open()
+                await release.wait()
+                return try await drafts.importAttachment(draftId: draftId, sessionId: sessionId, source: source)
+            })
+        vm.importAttachments([.temporary(first)])
+        await started.wait()
+        vm.importAttachments([.temporary(queued), .file(borrowed)])
+        vm.retireEditor()
+        vm.retireEditor()
+        vm.updateDraft("stale")
+        await release.open()
+        #expect(await vm.saveDraftBeforeNavigation() == false)
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+        #expect(!FileManager.default.fileExists(atPath: queued.path))
+        #expect(FileManager.default.fileExists(atPath: borrowed.path))
+        #expect(vm.draftText != "stale")
+        #expect(vm.draftAttachments.isEmpty)
+    }
+
     @Test func flushAndNavigationWaitForViewModelImportAndPreserveLatestDraftIdentity() async throws {
         let session = createUserSession(
             gatewayWsUrl: "wss://localhost:18889/api/v1/ws",

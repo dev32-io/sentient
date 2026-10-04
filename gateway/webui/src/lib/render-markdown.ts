@@ -94,21 +94,56 @@ const ALLOWED_TAGS = [
   "ul",
   "del",
   "span",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+  "img",
 ];
 
 // "start" is needed so a rescued bare marker merged into a real ordered list
 // (see rescueBareListMarker) keeps its correct numbering instead of the
 // <ol> silently renumbering from 1 once DOMPurify strips the attribute.
-const ALLOWED_ATTR = ["href", "title", "target", "rel", "start"];
+const ALLOWED_ATTR = ["href", "title", "target", "rel", "start", "src", "alt"];
+
+/** Sources are exact attachment preview paths mapped to caller-owned blob URLs.
+ * No Markdown URL grants permission to fetch an image (including same-origin URLs).
+ */
+export type MarkdownImages = ReadonlyMap<string, string>;
 
 /**
  * Parse assistant markdown text and return sanitized HTML.
  * Runs on every streaming render; keep it cheap and synchronous.
  */
-export function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string, images?: MarkdownImages): string {
   const rawHtml = marked.parse(text) as string;
-  return DOMPurify.sanitize(rawHtml, {
+  const fragment = DOMPurify.sanitize(rawHtml, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
+    RETURN_DOM_FRAGMENT: true,
   });
+  for (const image of fragment.querySelectorAll("img")) {
+    const preview = images?.get(image.getAttribute("src") ?? "");
+    // ChatView already authenticates, caches and revokes these local object URLs.
+    // Do not fetch raw URLs, data/SVG payloads or arbitrary blob URLs from Markdown.
+    if (!preview?.startsWith("blob:")) {
+      image.replaceWith(fragment.ownerDocument.createTextNode(image.alt));
+      continue;
+    }
+    image.src = preview;
+    image.alt ||= "Image preview";
+    image.width = 640;
+    image.height = 360;
+    image.setAttribute("loading", "lazy");
+    image.setAttribute("decoding", "async");
+    image.setAttribute("referrerpolicy", "no-referrer");
+  }
+  for (const header of fragment.querySelectorAll("th")) header.setAttribute("scope", "col");
+  const container = fragment.ownerDocument.createElement("div");
+  container.append(fragment);
+  return container.innerHTML;
 }

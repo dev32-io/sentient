@@ -65,57 +65,41 @@ struct UpdateFooter: View {
     @ViewBuilder
     private var footerButton: some View {
         if isChecking {
-            morphButton(checkingLabel, tint: DuskColors.ink2, filled: false, spinner: true, action: {})
+            morphButton(checkingLabel, role: .quiet, spinner: true, action: {})
         } else if justConfirmedUpToDate {
-            morphButton(upToDateLabel, tint: DuskColors.accent, filled: false, spinner: false, action: {})
+            morphButton(upToDateLabel, role: .quiet, spinner: false, action: {})
         } else {
             switch onEnum(of: status) {
             case .available(let a):
                 morphButton(
                     "\(updatePrefix)\(a.versionName)",
-                    tint: DuskColors.accent,
-                    filled: true,
+                    role: .action,
                     spinner: false,
                     action: onInstall
                 )
             case .checkFailed:
-                morphButton(retryLabel, tint: DuskColors.stop, filled: false, spinner: false, action: triggerCheck)
+                morphButton(retryLabel, role: .quiet, spinner: false, action: triggerCheck)
             case .upToDate:
-                morphButton(checkLabel, tint: DuskColors.ink2, filled: false, spinner: false, action: triggerCheck)
+                morphButton(checkLabel, role: .quiet, spinner: false, action: triggerCheck)
             }
         }
     }
 
     private func morphButton(
         _ title: String,
-        tint: Color,
-        filled: Bool,
+        role: DesignButtonRole,
         spinner: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: Space.xs) {
-                if spinner {
-                    ProgressView().tint(tint)
-                }
-                Text(title)
-                    .font(Typo.ui(TypeScale.base, .semibold))
-                    .foregroundStyle(filled ? DuskColors.bg : tint)
-            }
-            .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
-            .padding(.horizontal, Space.md)
-            .background(filled ? tint : Color.clear, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay {
-                if !filled {
-                    RoundedRectangle(cornerRadius: Radii.md).stroke(tint.opacity(0.6), lineWidth: 1)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(spinner)
-        .accessibilityLabel(title)
+        DesignActionButton(
+            title: title,
+            loadingTitle: title,
+            role: role,
+            state: spinner ? .loading : .normal,
+            accessibilityId: "\(accessibilityId)-action",
+            action: action
+        )
         .accessibilityValue(spinner ? "In progress" : title)
-        .accessibilityIdentifier("\(accessibilityId)-action")
     }
 
     private func triggerCheck() {

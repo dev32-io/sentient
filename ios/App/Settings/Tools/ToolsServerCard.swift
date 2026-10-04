@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // ToolsServerCard — one product capability group, using the catalog's exact id.
-// A single disclosure contains the bulk master and all per-tool permissions.
+// The master stays visible; disclosure contains per-tool permissions only.
 // Counts describe the displayed permission snapshot, not execution authority.
 // The screen supplies shared-helper readbacks; this leaf only dispatches intent.
 // ---------------------------------------------------------------------------
@@ -19,8 +19,10 @@ struct ToolsServerCard: View {
 
     var body: some View {
         DesignCard {
+            header
+            serverToggle
             DesignDisclosureGroup(isExpanded: isOpen) {
-                header
+                EmptyView()
             } content: {
                 expandedBody
             }
@@ -79,8 +81,6 @@ struct ToolsServerCard: View {
 
     @ViewBuilder
     private var expandedBody: some View {
-        DesignDivider()
-        serverToggle
         DesignDivider()
         if toolRows.isEmpty {
             placeholder("No tools declared for this server.")

@@ -24,7 +24,7 @@
 //   1. chat-side ErrorBanner from ChatUiState
 //   2. connection banner from ConnectionState (lost / reconnecting)
 //
-// accessibilityIdentifier `chat-screen` lives on the title leaf in ChatTitleBar;
+// accessibilityIdentifier `chat-screen` lives on the avatar leaf in ChatTitleBar;
 // it is NOT applied to the SideDrawer container (that would flatten the a11y tree).
 //
 // Keep-screen-on (S8): UIApplication.shared.isIdleTimerDisabled is APP-GLOBAL (not
@@ -36,21 +36,6 @@
 import SwiftUI
 import UIKit
 import MobileData
-
-struct RouteChangeState: Equatable {
-    private(set) var pending = false
-
-    mutating func begin() -> Bool {
-        guard !pending else { return false }
-        pending = true
-        return true
-    }
-
-    mutating func finish(saved: Bool) -> Bool {
-        if !saved { pending = false }
-        return saved
-    }
-}
 
 func shouldNavigateAfterDiscard(succeeded: Bool, draftId: String, activeDraftId: String?) -> Bool {
     succeeded && draftId == activeDraftId
@@ -77,6 +62,10 @@ struct ChatView: View {
     let activeSessionId: String?
     let activeDraftId: String?
 
+    /// Reserve intent at the tap, not after an awaited draft save.
+    let beginNavigation: () -> HostRouteLifetime.Intent?
+    let isNavigationCurrent: (HostRouteLifetime.Intent) -> Bool
+
     /// History select → host flips route identity (rebuilds the VM).
     let onSelectSession: (String) -> Void
     let onSelectDraft: (String, String?) -> Void
@@ -98,10 +87,28 @@ struct ChatView: View {
     @State private var cubeLoading = false
     @State private var cubeError = false
     @State private var drawerOpen = false
-    @State private var panelNowMs: Int64 = 0
+    @State private var drawerPresented = false
+    @State private var panelNowMs = Int64(Date().timeIntervalSince1970 * 1_000)
     @State private var messageMeasurementLoading = false
     @State private var composerHeight: CGFloat = 0
-    @State private var routeChange = RouteChangeState()
+    @State private var composerFrame: CGRect?
+    @State private var titleBarFrame: CGRect?
+    @State private var transcriptFrame: CGRect?
+
+    private var titleBarHeight: CGFloat { titleBarFrame?.height ?? 0 }
+    private var transcriptOverlays: TranscriptOverlayGeometry? {
+        guard let titleBarFrame, let transcriptFrame,
+              cubeViewer != nil || composerFrame != nil else { return nil }
+        return TranscriptOverlayGeometry(
+            viewport: transcriptFrame, header: titleBarFrame,
+            composer: cubeViewer == nil ? composerFrame : nil
+        )
+    }
+    private var transcriptTopOcclusion: CGFloat? { transcriptOverlays?.topClearance }
+    private var transcriptBottomOcclusion: CGFloat {
+        cubeViewer == nil ? (transcriptOverlays?.bottomClearance ?? composerHeight) : 0
+    }
+    @State private var navigationTask: Task<Void, Never>?
 
     // ── Keep-screen-on (S8) ─────────────────────────────────────────────────────
 
@@ -134,6 +141,8 @@ struct ChatView: View {
         userName: String,
         activeSessionId: String?,
         activeDraftId: String?,
+        beginNavigation: @escaping () -> HostRouteLifetime.Intent?,
+        isNavigationCurrent: @escaping (HostRouteLifetime.Intent) -> Bool,
         onSelectSession: @escaping (String) -> Void,
         onSelectDraft: @escaping (String, String?) -> Void,
         onNewChat: @escaping () -> Void,
@@ -146,6 +155,8 @@ struct ChatView: View {
         self.userName = userName
         self.activeSessionId = activeSessionId
         self.activeDraftId = activeDraftId
+        self.beginNavigation = beginNavigation
+        self.isNavigationCurrent = isNavigationCurrent
         self.onSelectSession = onSelectSession
         self.onSelectDraft = onSelectDraft
         self.onNewChat = onNewChat
@@ -191,7 +202,7 @@ struct ChatView: View {
     /// `tasklist.state` frame), rendered as-is with nothing derived here.
     private var tasks: [TaskListItem] { vm.state.model.tasks }
 
-    private var pending: [PendingMessage] { vm.state.model.pending }
+    private var pending: [PendingMessage] { vm.pendingMessages }
 
     // ── Root body ─────────────────────────────────────────────────────────────────
 
@@ -212,24 +223,22 @@ struct ChatView: View {
             historySidePanel
                 .background(DuskColors.bg.ignoresSafeArea())
         }
-        .connectionState(
-            banner: cubeViewer == nil ? connectionBanner : nil,
-            onReconnect: { vm.reconnect() }
-        )
+        .onPreferenceChange(DrawerPresentedKey.self) { drawerPresented = $0 }
         .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
             Task { await historyModel.renameSession(id, title: title) }
         }
         .panelDeletePrompt($panelDeleting) { action in
+            guard let intent = beginNavigation() else { return }
             Task {
                 switch action {
                 case .deleteConversation(let sessionId):
-                    if await historyModel.deleteSession(sessionId) {
+                    if await historyModel.deleteSession(sessionId), isNavigationCurrent(intent) {
                         if cubeViewer?.sessionId == sessionId { cubeViewer = nil; cubeMessages = [] }
                         if sessionId == activeSessionId { onNewChat() }
                     }
                 case .discardDraft(let draftId):
                     let succeeded = await historyModel.discardDraft(draftId)
-                    if shouldNavigateAfterDiscard(succeeded: succeeded, draftId: draftId, activeDraftId: activeDraftId) {
+                    if isNavigationCurrent(intent), shouldNavigateAfterDiscard(succeeded: succeeded, draftId: draftId, activeDraftId: activeDraftId) {
                         onNewChat()
                     }
                 }
@@ -373,71 +382,117 @@ struct ChatView: View {
         messages: [ChatMessage],
         assistantActivity: AssistantActivityState
     ) -> some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                titleBar
-                MessageList(
-                    messages: messages,
-                    assistantActivity: cubeViewer == nil ? assistantActivity : AssistantActivityState(phase: .idle, turnId: nil, replyId: nil),
-                    userName: userName,
-                    pending: cubeViewer == nil ? pending : [],
-                    pendingAttachments: vm.pendingAttachments,
-                    pendingAttachmentPreviews: vm.draftAttachmentPreviews,
-                    pendingAttachmentTransfers: vm.attachmentTransfers,
-                    pendingAttachmentPresentations: vm.pendingAttachmentPresentations,
-                    onRetryAttachmentUpload: { vm.retryAttachmentUpload($0) },
-                    attachmentPreviews: vm.attachmentPreviews,
-                    attachmentPreviewFailures: vm.attachmentPreviewFailures,
-                    onPreviewAttachment: { openAttachmentPreview($0) },
-                    onVisibleAttachmentPreviewIdsChange: { vm.setVisibleAttachmentPreviewIds($0) },
-                    onRetry: { if cubeViewer == nil { vm.retry($0) } },
-                    historyLoading: historyLoading,
-                    bottomOcclusion: cubeViewer == nil ? composerHeight : 0,
-                    initialExistingHistory: cubeViewer != nil || activeSessionId != nil,
-                    onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    if historyLoading || messageMeasurementLoading {
-                        HistoryLoadingOverlay()
-                    } else if cubeViewer == nil && messages.isEmpty && pending.isEmpty, chatLoadingState != .none {
-                        ChatLoadingView(state: chatLoadingState)
-                    }
-                }
-                if cubeViewer != nil && cubeError {
-                    ContentErrorBanner(text: "Cube history unavailable. Refresh and try again.", canRetry: false, onRetry: nil)
-                }
-                if cubeViewer == nil, let banner = vm.state.banner {
-                    ContentErrorBanner(
-                        text: banner.text,
-                        canRetry: banner.canRetry,
-                        onRetry: banner.canRetry ? { vm.reconnect() } : nil
-                    )
-                }
-                if cubeViewer == nil, let draftError = vm.draftSaveError {
-                    ContentErrorBanner(text: draftError, canRetry: false, onRetry: nil)
-                }
-                if cubeViewer == nil, !vm.receiptAcknowledgmentFailures.isEmpty {
-                    ContentErrorBanner(
-                        text: "Message sent, but local draft cleanup failed.",
-                        canRetry: true,
-                        onRetry: { vm.retryReceiptAcknowledgments() }
-                    )
-                    .accessibilityIdentifier("receipt-cleanup-retry-banner")
-                }
-                if cubeViewer == nil, let notice = vm.state.reopenFailedNotice {
-                    ReopenFailedNoticeBanner(
-                        noticeText: notice,
-                        onDismiss: { vm.dismissReopenFailedNotice() }
-                    )
+        let isEmpty = messages.isEmpty && (cubeViewer != nil || pending.isEmpty)
+        return ChatTranscriptColumn(
+            reservesNotices: hasChatNotices && titleBarFrame != nil,
+            titleBarHeight: titleBarHeight,
+            composerHeight: cubeViewer == nil ? composerHeight : 0
+        ) { containerInsets in
+            MessageList(
+                messages: messages,
+                assistantActivity: cubeViewer == nil ? assistantActivity : AssistantActivityState(phase: .idle, turnId: nil, replyId: nil),
+                userName: userName,
+                pending: cubeViewer == nil ? pending : [],
+                pendingAttachments: vm.pendingAttachments,
+                pendingAttachmentPreviews: vm.draftAttachmentPreviews,
+                pendingAttachmentTransfers: vm.attachmentTransfers,
+                pendingAttachmentPresentations: vm.pendingAttachmentPresentations,
+                onRetryAttachmentUpload: { vm.retryAttachmentUpload($0) },
+                onEditPendingAttachment: { pendingId, fileId in vm.editPendingAttachment(fileId, pendingId: pendingId) },
+                onCancelPendingAttachment: { pendingId, fileId in vm.cancelAttachmentUpload(fileId, pendingId: pendingId) },
+                attachmentPreviews: vm.attachmentPreviews,
+                attachmentPreviewFailures: vm.attachmentPreviewFailures,
+                onPreviewAttachment: { openAttachmentPreview($0) },
+                onVisibleAttachmentPreviewIdsChange: { vm.setVisibleAttachmentPreviewIds($0) },
+                onRetry: { if cubeViewer == nil { vm.retry($0) } },
+                historyLoading: historyLoading,
+                bottomOcclusion: transcriptBottomOcclusion,
+                topOcclusion: transcriptTopOcclusion,
+                initialExistingHistory: cubeViewer != nil || activeSessionId != nil,
+                onMeasurementLoadingChange: { messageMeasurementLoading = $0 }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { transcriptFrame = $0 }
+            // Host owns mutually exclusive empty/loading presentation.
+            // Keep collection mounted; hide only its redundant empty leaf.
+            .opacity(isEmpty ? 0 : 1)
+            .accessibilityHidden(isEmpty)
+            .overlay(alignment: .topLeading) {
+                if let transcriptOverlays, !isEmpty {
+                    TranscriptFades(geometry: transcriptOverlays)
                 }
             }
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-
+            .overlay {
+                Group {
+                    if historyLoading || messageMeasurementLoading {
+                        HistoryLoadingOverlay()
+                    } else if isEmpty && cubeViewer == nil && chatLoadingState != .none {
+                        ChatLoadingView(state: chatLoadingState)
+                    } else if isEmpty {
+                        Text("Start a conversation…")
+                            .font(Typo.display(TypeScale.lg, .regular))
+                            .foregroundStyle(DuskColors.ink2)
+                            .accessibilityIdentifier("chat-empty")
+                    }
+                }
+                .padding(.top, transcriptTopOcclusion ?? 0)
+                .padding(.bottom, chatTranscriptPlaceholderBottomInset(
+                    viewport: transcriptFrame, composer: cubeViewer == nil ? composerFrame : nil,
+                    safeAreaBottom: containerInsets.bottom
+                ))
+                .allowsHitTesting(false)
+            }
+        } notices: {
+            chatNotices
+        } titleBar: {
+            titleBar
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { titleBarFrame = $0 }
+        } composer: {
             if cubeViewer == nil { composerDock }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .duskTheme()
+    }
+
+    private var hasChatNotices: Bool {
+        if cubeViewer != nil { return cubeError }
+        return connectionBanner != nil || vm.state.banner != nil || vm.draftSaveError != nil || vm.preparingSend ||
+            !vm.receiptAcknowledgmentFailures.isEmpty || vm.state.reopenFailedNotice != nil
+    }
+
+    @ViewBuilder private var chatNotices: some View {
+        VStack(spacing: Space.sm) {
+            if cubeViewer == nil, let connectionBanner {
+                ConnectionBanner(state: connectionBanner, onReconnect: { vm.reconnect() })
+                    .padding(.horizontal, Space.lg)
+            }
+            if cubeViewer != nil && cubeError {
+                ContentErrorBanner(text: "Cube history unavailable. Refresh and try again.", canRetry: false, onRetry: nil)
+            }
+            if cubeViewer == nil, let banner = vm.state.banner {
+                ContentErrorBanner(
+                    text: banner.text,
+                    canRetry: banner.canRetry,
+                    onRetry: banner.canRetry ? { vm.reconnect() } : nil
+                )
+            }
+            if cubeViewer == nil, let draftError = vm.preparingSend ? "Preparing message…" : vm.draftSaveError {
+                ContentErrorBanner(text: draftError, canRetry: false, onRetry: nil)
+            }
+            if cubeViewer == nil, !vm.receiptAcknowledgmentFailures.isEmpty {
+                ContentErrorBanner(
+                    text: "Message sent, but local draft cleanup failed.",
+                    canRetry: true,
+                    onRetry: { vm.retryReceiptAcknowledgments() }
+                )
+                .accessibilityIdentifier("receipt-cleanup-retry-banner")
+            }
+            if cubeViewer == nil, let notice = vm.state.reopenFailedNotice {
+                ReopenFailedNoticeBanner(
+                    noticeText: notice,
+                    onDismiss: { vm.dismissReopenFailedNotice() }
+                )
+            }
+        }
+        .padding(.vertical, Space.sm)
     }
 
     private var composerDock: some View {
@@ -445,11 +500,12 @@ struct ChatView: View {
             tasks: tasks,
             ttsEnabled: connection.prefs.ttsEnabled,
             talkMode: vm.talkMode,
+            captureFailureId: vm.captureFailureId,
             micLevels: vm.micLevels,
-            voiceDisabled: connection.status != .ready,
-            canInterrupt: canInterrupt,
+            voiceDisabled: connection.status != .ready || vm.routeActivationSuspended,
+            canInterrupt: canInterrupt && !vm.routeActivationSuspended,
             draftText: vm.draftText,
-            attachments: (vm.draftAttachments + vm.pendingAttachments).map(ComposerAttachment.init),
+            attachments: vm.draftAttachments.map(ComposerAttachment.init),
             pendingAttachmentImportCount: vm.pendingAttachmentImportCount,
             attachmentTransfers: vm.attachmentTransfers,
             attachmentPreviews: vm.draftAttachmentPreviews,
@@ -473,17 +529,10 @@ struct ChatView: View {
             onInterrupt: { vm.interrupt() },
             onFocusGained: { vm.onComposerFocus() }
         )
-        .background(alignment: .top) {
-            LinearGradient(
-                colors: [.clear, DuskColors.bg.opacity(0.94), DuskColors.bg],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: composerHeight + 48)
-            .offset(y: -48)
-            .allowsHitTesting(false)
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) {
+            composerFrame = $0
+            composerHeight = $0.height
         }
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
     }
 
     // ── History side panel ────────────────────────────────────────────────────────
@@ -499,6 +548,7 @@ struct ChatView: View {
             onSelect: { row in
                 drawerOpen = false
                 if historyEntryOpensReadOnlyViewer(row), let sessionId = row.sessionId {
+                    guard beginNavigation() != nil else { return }
                     cubeViewer = row
                     cubeMessages = []
                     cubeLoading = true
@@ -559,15 +609,20 @@ struct ChatView: View {
         ChatTitleBar(
             onOpenPanel: { drawerOpen = true },
             onOpenInbox: onOpenInbox,
-            onNewChat: { cubeViewer = nil; navigateAfterSaving(onNewChat) }
+            onNewChat: { cubeViewer = nil; navigateAfterSaving(onNewChat) },
+            historyIsOpen: drawerPresented
         )
     }
 
     private func navigateAfterSaving(_ navigate: @escaping () -> Void) {
-        guard routeChange.begin() else { return }
-        Task {
-            guard routeChange.finish(saved: await vm.saveDraftBeforeNavigation()) else { return }
-            navigate()
+        guard let intent = beginNavigation() else { return }
+        navigationTask?.cancel()
+        navigationTask = Task {
+            _ = await completeSavedNavigation(
+                save: { await vm.saveAndRetireEditor { isNavigationCurrent(intent) } },
+                isCurrent: { isNavigationCurrent(intent) },
+                navigate: navigate
+            )
         }
     }
 }
@@ -626,38 +681,59 @@ private struct HistoryLoadingOverlay: View {
 // is non-nil. Mirrors Android ContentErrorBanner.
 // ---------------------------------------------------------------------------
 
-private struct ContentErrorBanner: View {
+struct ContentErrorBanner: View {
     let text: String
     let canRetry: Bool
     let onRetry: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: TypeScale.sm))
-                .foregroundStyle(DuskColors.warn)
-            Text(text)
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if canRetry, let onRetry {
-                Button(action: onRetry) {
-                    Text("Retry")
-                        .font(Typo.ui(TypeScale.sm, .semibold))
-                        .foregroundStyle(DuskColors.bg)
-                        .padding(.horizontal, Space.sm)
-                        .padding(.vertical, Space.xs)
-                        .background(DuskColors.ink, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("banner-chat-retry")
-            }
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.sm)
-        .background {
-            DuskColors.warnSoft
-        }
-        .accessibilityIdentifier("banner-chat")
+        AsyncNotice(kind: .error, title: text, retry: canRetry ? onRetry : nil,
+                    accessibilityId: "banner-chat", actionAccessibilityId: "banner-chat-retry")
+            .padding(.horizontal, Space.lg)
+            .padding(.bottom, Space.sm)
     }
+}
+
+/// Chat-local composition shared with native viewport regression hosts. Controls
+/// retain the safe/keyboard-aware proposal; only the transcript may extend it.
+struct ChatTranscriptColumn<Transcript: View, Notices: View, TitleBar: View, Dock: View>: View {
+    let reservesNotices: Bool
+    let titleBarHeight: CGFloat
+    let composerHeight: CGFloat
+    @ViewBuilder let transcript: (EdgeInsets) -> Transcript
+    @ViewBuilder let notices: () -> Notices
+    @ViewBuilder let titleBar: () -> TitleBar
+    @ViewBuilder let composer: () -> Dock
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    if reservesNotices {
+                        Color.clear.frame(height: titleBarHeight).allowsHitTesting(false)
+                        ShellNoticeRegion(availableHeight: max(0, geometry.size.height - titleBarHeight - composerHeight)) {
+                            notices()
+                        }
+                    }
+                    transcript(geometry.safeAreaInsets)
+                        // One exemption keeps the native viewport stable through keyboard
+                        // transitions; split container/keyboard modifiers drop the home inset.
+                        // Notices and controls retain their original safe-area proposal.
+                        .ignoresSafeArea(.all, edges: .vertical)
+                }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                composer()
+            }
+            .overlay(alignment: .top) { titleBar() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .duskTheme()
+        }
+    }
+}
+
+/// Placeholder overlays do not receive UIScrollView's automatic/keyboard insets.
+/// Their readable bottom is the physical dock edge, or safe bottom in cube history.
+func chatTranscriptPlaceholderBottomInset(viewport: CGRect?, composer: CGRect?, safeAreaBottom: CGFloat) -> CGFloat {
+    guard let viewport, let composer else { return safeAreaBottom }
+    return min(viewport.height, max(0, viewport.maxY - composer.minY + TranscriptOverlayGeometry.spill))
 }

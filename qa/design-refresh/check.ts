@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
+import { assertPathWithin } from "../../tools/visual-diff/reference-image.mjs";
+import { validateEvidence } from "../../tools/visual-diff/evidence.mjs";
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 import { e2eMatrixSchema, inventorySchema, visualEvidenceDocumentSchema, visualManifestSchema, type Inventory, type VisualManifest } from "./contracts.ts";
 
@@ -250,11 +252,18 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
     const row = inventory.rows.find((candidate) => candidate.id === entry.inventoryId);
     if (!row) throw new Error(`${entry.evidenceId}: unknown inventory row`);
     const coverage = new Set<string>();
+    const measuredConfigurations = new Map<string, { overflow: number; minimumTarget: number | null; focusableCount: number }>();
+    // Preflight every image, observation and provenance path before reading any
+    // document: a sidecar can reference a later entry in evidencePaths.
     for (const path of entry.evidencePaths) {
-      if (!EVIDENCE_ROOTS.some((root) => path.startsWith(root))) throw new Error(`${entry.evidenceId}: evidence path is outside a design-refresh evidence root`);
+      const root = EVIDENCE_ROOTS.find((root) => path.startsWith(root));
+      if (!root) throw new Error(`${entry.evidenceId}: evidence path is outside a design-refresh evidence root`);
+      await assertPathWithin(resolve(await realpath(repoRoot), root), `${repoRoot}/${path}`);
+      if (!(await regularFile(repoRoot, path))) throw new Error(`${entry.evidenceId}: evidence must be a sanitized regular file: ${path}`);
+    }
+    for (const path of entry.evidencePaths) {
       const extension = extname(path).toLowerCase();
       if (!EVIDENCE_EXTENSIONS.has(extension)) throw new Error(`${entry.evidenceId}: prohibited evidence file type ${extension || "<none>"}`);
-      if (!(await regularFile(repoRoot, path))) throw new Error(`${entry.evidenceId}: evidence must be a sanitized regular file: ${path}`);
       const content = TEXT_EVIDENCE_EXTENSIONS.has(extension) ? await readFile(resolve(repoRoot, path), "utf8") : "";
       if (UNSAFE_EVIDENCE.some((pattern) => pattern.test(`${path}\n${content}`))) throw new Error(`${entry.evidenceId}: unsanitized evidence content`);
       if (extension !== ".json") continue;
@@ -268,10 +277,25 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
         if (!RENDER_CAPTURE_EXTENSIONS.has(extname(capture.path).toLowerCase())) throw new Error(`${entry.evidenceId}: sidecar does not reference a render capture`);
         const observation = parsed.data.observations.find((item) => item.inventoryId === entry.inventoryId && item.configuration === capture.configuration);
         if (!observation) throw new Error(`${entry.evidenceId}: sidecar capture lacks an inventory/configuration observation`);
+        if (entry.status === "reviewed") {
+          if (!capture.provenancePath || !entry.evidencePaths.includes(capture.provenancePath)) throw new Error(`${entry.evidenceId}: missing capture provenance`);
+          const provenance = await validateEvidence(repoRoot, await json(resolve(repoRoot, capture.provenancePath)), {
+            actual: capture.path, platform: row.platform, inventoryId: row.id, implementationPath: row.implementationPath,
+          });
+          if (provenance.configuration.id !== capture.configuration) throw new Error(`${entry.evidenceId}: capture configuration identity mismatch`);
+          if (observation.overflow === null || observation.focusableCount === null) throw new Error(`${entry.evidenceId}: unknown measurements cannot close review`);
+          if (!provenance.measurements || provenance.measurements.overflow !== observation.overflow
+            || provenance.measurements.minimumTarget !== observation.minimumTarget
+            || provenance.measurements.focus !== observation.focusableCount) throw new Error(`${entry.evidenceId}: observations disagree with capture measurements`);
+          if (observation.overflow !== 0 || (observation.minimumTarget !== null && observation.minimumTarget < 44)) throw new Error(`${entry.evidenceId}: failed layout/target observation`);
+          if (measuredConfigurations.has(capture.configuration)) throw new Error(`${entry.evidenceId}: duplicate capture configuration`);
+          measuredConfigurations.set(capture.configuration, { overflow: observation.overflow, minimumTarget: observation.minimumTarget, focusableCount: observation.focusableCount });
+        }
         coverage.add(capture.configuration);
       }
     }
     if (entry.status !== "reviewed") continue;
+    if (Object.values(entry.measurements).some(measure => measure.applicable === "unknown" || (measure.applicable === true && measure.result !== "pass"))) throw new Error(`${entry.evidenceId}: failed/unknown measurements cannot close review`);
     if (/\b(?:pending structured review|placeholder|not reviewed)\b/i.test(entry.reviewerNotes)) throw new Error(`${entry.evidenceId}: reviewed entry retains placeholder reviewer notes`);
     for (const measurement of Object.values(entry.measurements)) {
       if (!measurement.applicable && /\b(?:pending implementation review|pending structured review|placeholder|not reviewed)\b/i.test(measurement.reason)) {
@@ -280,6 +304,18 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
     }
     const missingConfigurations = entry.configurations.filter((configuration) => !coverage.has(configuration));
     if (missingConfigurations.length) throw new Error(`${entry.evidenceId}: render evidence does not cover configurations: ${missingConfigurations.join(", ")}`);
+    const observations = entry.configurations.map(configuration => measuredConfigurations.get(configuration)!);
+    const targets = observations.flatMap(observation => observation.minimumTarget === null ? [] : [observation.minimumTarget]);
+    const summary = {
+      overflow: Math.max(...observations.map(observation => observation.overflow)),
+      minimumTarget: targets.length ? Math.min(...targets) : null,
+      focus: Math.min(...observations.map(observation => observation.focusableCount)),
+    };
+    for (const name of ["overflow", "minimumTarget", "focus"] as const) {
+      const measure = entry.measurements[name];
+      if (measure.applicable === true && (measure.value !== summary[name] || (name === "focus" && measure.value === 0))) throw new Error(`${entry.evidenceId}: failed or inconsistent ${name} measurement`);
+      if (measure.applicable === false && ((name === "minimumTarget" && summary[name] !== null) || (name === "focus" && summary[name] !== 0))) throw new Error(`${entry.evidenceId}: conflicting ${name} applicability`);
+    }
   }
   return manifest;
 }

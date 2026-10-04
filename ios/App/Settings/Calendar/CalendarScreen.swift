@@ -331,7 +331,7 @@ private struct CalendarRouteLoading: View {
                 onBack: onBack,
                 onAdd: {}
             )
-            SoulLoadingRow()
+            SoulLoadingRow(title: "Loading calendar")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(DuskColors.bg)

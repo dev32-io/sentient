@@ -12,13 +12,15 @@ struct PersonalityCreateSheet: View {
     let error: String?
     let onCreate: (String, String) async -> Void
 
+    @State private var submitting = false
+    private var busy: Bool { isBusy || submitting }
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var body_ = ""
     @FocusState private var nameFocused: Bool
 
     private var canCreate: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isBusy
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !busy
     }
 
     var body: some View {
@@ -37,7 +39,9 @@ struct PersonalityCreateSheet: View {
                         title: "Instructions",
                         text: $body_,
                         placeholder: "How this personality should behave…",
-                        accessibilityId: "settings-personalities-new-body"
+                        accessibilityId: "settings-personalities-new-body",
+                        isEnabled: !busy,
+                        usesMonospacedText: true
                     )
                 }
                 .padding(Space.lg)
@@ -49,17 +53,26 @@ struct PersonalityCreateSheet: View {
             .accessibilityIdentifier("settings-personalities-create-sheet")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { if !busy { dismiss() } }
+                        .disabled(busy)
                         .accessibilityIdentifier("settings-personalities-new-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { Task { await onCreate(name, body_) } }
-                        .disabled(!canCreate)
+                    Button("Create") {
+                        guard canCreate else { return }
+                        submitting = true
+                        Task {
+                            defer { submitting = false }
+                            await onCreate(name, body_)
+                        }
+                    }
+                            .disabled(!canCreate)
                         .accessibilityIdentifier("settings-personalities-new-submit")
                 }
             }
             .duskTheme()
         }
+        .interactiveDismissDisabled(busy)
     }
 
     private var field: some View {
@@ -68,6 +81,7 @@ struct PersonalityCreateSheet: View {
             prompt: "e.g. Focused",
             text: $name,
             accessibilityId: "settings-personalities-new-name",
+            isEnabled: !busy,
             focused: $nameFocused
         )
         .textInputAutocapitalization(.words)

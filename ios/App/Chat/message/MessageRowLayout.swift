@@ -1,4 +1,3 @@
-import MarkdownUI
 import MobileData
 import SwiftUI
 import UIKit
@@ -39,13 +38,19 @@ struct MessageRowLayout: View {
     let onRetry: (String) -> Void
     var onPreviewAttachment: (String) -> Void = { _ in }
     var onRetryAttachmentUpload: (String) -> Void = { _ in }
+    var onEditPendingAttachment: (String, String) -> Void = { _, _ in }
+    var onCancelPendingAttachment: (String, String) -> Void = { _, _ in }
     var heightRevision = ""
+    var rendererState: MessageDocumentState?
+    var selectionViewportInWindow: (() -> CGRect)?
+    var requestSelectionScroll: ((CGFloat) -> CGFloat)?
+    var onSelectionBegin: (() -> Void)?
     var onGeometryChange: ((MessageRowGeometry) -> Void)?
     // Render readiness is scoped to current content revision; queued old reports stay estimated.
     @State private var renderedHeightRevision: String?
 
     private var bubbleMaxWidth: CGFloat {
-        let margins = Space.lg * 2 + BubbleLayout.edgeMin
+        let margins = BubbleLayout.rowMargin(width: paneWidth) * 2 + BubbleLayout.edgeMin
         return min(Space.msgMax, max(0, paneWidth - margins))
     }
 
@@ -54,11 +59,7 @@ struct MessageRowLayout: View {
             .environment(\.bubbleMaxWidth, bubbleMaxWidth)
             .environment(\.sentientIdentityPlaybackEnabled, avatarPlaybackEnabled)
             .environment(\.sentientIdentityMeasurement, measurement)
-            .markdownImageProvider(CachedMarkdownImageProvider(
-                cache: imageCache,
-                loadsUnresolved: !measurement
-            ))
-            .padding(.horizontal, Space.lg)
+            .padding(.horizontal, BubbleLayout.rowMargin(width: paneWidth))
             .frame(width: paneWidth, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .background {
@@ -112,42 +113,75 @@ struct MessageRowLayout: View {
             }
     }
 
+    private var outgoing: (pending: PendingMessage?, committed: ChatMessage?, index: Int, continuation: Bool)? {
+        switch row {
+        case let .pending(message, index): return (message, nil, index, false)
+        case let .message(message, index, continuation) where message.role == "user":
+            return (nil, message, index, continuation)
+        default: return nil
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
-        switch row {
-        case let .divider(label, _):
-            DayDivider(label: label)
-        case let .message(message, index, continuation):
-            MessageBubble(
-                message: message,
-                index: index,
-                total: messageCount,
-                continuation: continuation,
-                avatarMode: avatarMode,
-                userName: userName,
-                attachmentPreviews: attachmentPreviews,
-                attachmentPreviewFailures: attachmentPreviewFailures,
-                onPreviewAttachment: onPreviewAttachment,
-                imageCache: imageCache,
-                onRenderedHeightStateChange: measurement ? nil : { [heightRevision] ready in
-                    renderedHeightRevision = ready ? heightRevision : nil
-                }
-            )
-            .padding(.top, continuation ? BubbleLayout.continuationPullup : BubbleLayout.standardOffset)
-        case let .pending(message, index):
+        if let outgoing {
             PendingBubble(
-                msg: message,
+                msg: outgoing.pending,
+                committedMessage: outgoing.committed,
                 userName: userName,
                 attachments: pendingAttachments,
-                attachmentPreviews: pendingAttachmentPreviews,
+                attachmentPreviews: outgoing.committed == nil ? pendingAttachmentPreviews : attachmentPreviews,
+                attachmentPreviewFailures: attachmentPreviewFailures,
                 attachmentTransfers: pendingAttachmentTransfers,
                 onPreviewAttachment: onPreviewAttachment,
                 onRetryAttachment: onRetryAttachmentUpload,
-                onRetry: { onRetry(message.id) },
+                onEditAttachment: { fileId in
+                    if let message = outgoing.pending { onEditPendingAttachment(message.id, fileId) }
+                },
+                onCancelAttachment: { fileId in
+                    if let message = outgoing.pending { onCancelPendingAttachment(message.id, fileId) }
+                },
+                onRetry: { if let message = outgoing.pending { onRetry(message.id) } },
+                onRenderedHeightStateChange: measurement ? nil : { [heightRevision] ready in
+                    renderedHeightRevision = ready ? heightRevision : nil
+                },
                 measurement: measurement,
-                index: index,
+                rendererState: rendererState,
+                imageCache: imageCache,
+                selectionViewportInWindow: selectionViewportInWindow,
+                requestSelectionScroll: requestSelectionScroll,
+                onSelectionBegin: onSelectionBegin,
+                index: outgoing.index,
                 total: messageCount
             )
+            .padding(.top, outgoing.continuation ? BubbleLayout.continuationPullup(width: paneWidth) : BubbleLayout.standardOffset)
+        } else {
+            switch row {
+            case let .divider(label, _):
+                DayDivider(label: label)
+            case let .message(message, index, continuation):
+                MessageBubble(
+                    message: message,
+                    index: index,
+                    total: messageCount,
+                    avatarMode: avatarMode,
+                    userName: userName,
+                    attachmentPreviews: attachmentPreviews,
+                    attachmentPreviewFailures: attachmentPreviewFailures,
+                    onPreviewAttachment: onPreviewAttachment,
+                    imageCache: imageCache,
+                    rendererState: rendererState,
+                    selectionViewportInWindow: selectionViewportInWindow,
+                    requestSelectionScroll: requestSelectionScroll,
+                    onSelectionBegin: onSelectionBegin,
+                    onRenderedHeightStateChange: measurement ? nil : { [heightRevision] ready in
+                        renderedHeightRevision = ready ? heightRevision : nil
+                    }
+                )
+                .padding(.top, continuation ? BubbleLayout.continuationPullup(width: paneWidth) : BubbleLayout.standardOffset)
+            case .pending:
+                EmptyView() // All outgoing rows use the stable subtree above.
+            }
         }
     }
 }
@@ -224,7 +258,10 @@ struct MessageLayoutRow {
             measurementRevision = [
                 "pending", message.text, String(describing: message.status), pendingAttachmentRevision,
             ].joined(separator: "|")
-            revision = [measurementRevision, message.id, String(describing: message.sentAtMs), String(index)]
+            let progressRevision = pendingAttachments.map {
+                "\($0.id):\(pendingAttachmentTransfers[$0.id]?.progress ?? 0)"
+            }.joined(separator: ",")
+            revision = [measurementRevision, progressRevision, message.id, String(describing: message.sentAtMs), String(index)]
                 .joined(separator: "|")
             accessibilityIdentifier = "chat-user-row-\(message.id)"
         }

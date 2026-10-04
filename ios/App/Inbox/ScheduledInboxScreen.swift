@@ -90,6 +90,26 @@ struct ScheduledInboxSwipeState: Equatable {
     }
 }
 
+struct ScheduledInboxEmptyState: View {
+    let presentation: ScheduledInboxEmptyPresentation
+    var body: some View {
+        switch presentation {
+        case .none: EmptyView()
+        case .loading:
+            AsyncNotice(kind: .loading, title: "Loading messages", accessibilityId: "scheduled-inbox-loading")
+        case .clearing:
+            AsyncNotice(kind: .loading, title: "Clearing messages", accessibilityId: "scheduled-inbox-clearing")
+        case .allClear:
+            Text("All clear.")
+                .designText(.title)
+                .foregroundStyle(DuskColors.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Space.xxxl)
+                .accessibilityIdentifier("scheduled-inbox-all-clear")
+        }
+    }
+}
+
 struct ScheduledInboxScreen: View {
     @State private var vm: ScheduledMessagesViewModel
     @State private var clearAllIntent = ScheduledInboxClearAllIntent()
@@ -199,13 +219,7 @@ struct ScheduledInboxScreen: View {
     @ViewBuilder
     private var cards: some View {
         if vm.cards.isEmpty {
-            if case .ready = vm.cardsState {
-                Text("All clear.")
-                    .designText(.title)
-                    .foregroundStyle(DuskColors.ink)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, Space.xxxl)
-            }
+            ScheduledInboxEmptyState(presentation: emptyPresentation)
         } else {
             ForEach(vm.cards, id: \.occurrenceId) { card in
                 ScheduledInboxSwipeRow(
@@ -219,7 +233,7 @@ struct ScheduledInboxScreen: View {
                     onClear: { vm.clear(card) },
                     onOpen: { onSelectSession(card.sessionId) }
                 )
-                .transition(.asymmetric(
+                .transition(reduceMotion ? .identity : .asymmetric(
                     insertion: .move(edge: .top).combined(with: .opacity),
                     removal: .move(edge: .leading).combined(with: .opacity)
                 ))
@@ -233,6 +247,13 @@ struct ScheduledInboxScreen: View {
         } else {
             vm.retryClear()
         }
+    }
+
+    private var emptyPresentation: ScheduledInboxEmptyPresentation {
+        let loading: Bool = if case .loading = vm.cardsState { true } else { false }
+        let ready: Bool = if case .ready = vm.cardsState { true } else { false }
+        return scheduledInboxEmptyPresentation(cardCount: vm.cards.count, loading: loading, ready: ready,
+                                              pendingClear: vm.hasPendingClears, clearFailed: vm.clearFailure != nil)
     }
 
     private var cardIDs: [String] { vm.cards.map(\.occurrenceId) }

@@ -3,10 +3,8 @@
 // personality disclosure list (body preview + Activate + Delete-with-confirm) and a Create
 // sheet (name + instructions; the name is immutable after create). Every action
 // is imperative — its own apply-with-restart FSM run, surfaced by the banner —
-// so there is no page-level Save. No dirty draft on the list, so the page keeps
-// the system back button (native interactive edge-swipe pop); `onBack` stays a
-// host-contract param (mirrors AccountScreen) but the pushed page never renders
-// a custom back.
+// so there is no page-level Save. Back and native edge-swipe are guarded only
+// while a noncancelable operation is running.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -27,10 +25,13 @@ struct PersonalitiesScreen: View {
     }
 
     var body: some View {
-        SettingsPageScaffold(title: "Personalities", screenId: "settings-personalities-screen") {
+        SettingsPageScaffold(
+            title: "Personalities", screenId: "settings-personalities-screen",
+            onBack: { if !vm.isBusy { onBack() } }, allowsInteractiveBack: !vm.isBusy
+        ) {
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: "Loading personalities")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load personalities", detail: message) {
                     Task { await vm.load() }
@@ -51,6 +52,7 @@ struct PersonalitiesScreen: View {
                 createButton
             }
         }
+        .disabled(vm.isBusy)
         .task { await vm.load() }
         .sheet(isPresented: $showCreate) {
             PersonalityCreateSheet(isBusy: vm.isBusy, error: vm.operationError) { name, body in

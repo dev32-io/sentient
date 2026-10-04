@@ -42,21 +42,9 @@ class ObserveChatUseCase(
 ) {
     private val log = createLogger("data", "observe-chat")
 
-    /**
-     * Cold-reconcile: a COLD REST history snapshot (an existing-conversation switch
-     * reload, or a `recovered:false` in-place refetch) carries NO pendingId, so the
-     * normal reconcile-by-pendingId can't drop the optimistic copy — the authoritative
-     * "hello" lands committed with pendingId=null while the optimistic "hello" stays in
-     * the cache, painting a DUPLICATE bubble. On a cold replace every still-present
-     * optimistic entry is either now in the authoritative history or was already swept
-     * to FAILED by the unacked-timeout, so we drop them all. Pure + idempotent: a no-op
-     * when the cache is already empty.
-     */
-    fun onColdHistoryReplace(cache: OutboundCache) {
-        val before = cache.pending.value.size
-        cache.dropPending()
-        if (before > 0) log.info("cold-history-replace.drop-pending", mapOf("dropped" to before))
-    }
+    /** Switch ACK is not a receipt. Existing collectors may call this before REST returns. */
+    @Suppress("UNUSED_PARAMETER")
+    fun onColdHistoryReplace(cache: OutboundCache) = Unit
 
     /**
      * Cold-replace signal: an EXISTING-conversation switch (`SessionSwitched` with a
@@ -84,11 +72,7 @@ class ObserveChatUseCase(
             conversation.echoedPendingIds,
         ) { committed, rs, presentation, loading, echoedPendingIds ->
             val (pendingMsgs, tasks, activity) = presentation
-            // Reconcile against the LIVE echo's echoedPendingIds, not committed.pendingId:
-            // cold REST snapshots carry pendingId=null (there is no DB), so
-            // committed.mapNotNull { it.pendingId } would be empty and the optimistic
-            // bubble would never drop. echoedPendingIds is sourced from the SDK's in-memory
-            // timeline before any null-strip (see ConversationRepository.echoedPendingIds).
+            // Live and REST committed user receipts carry the same pending identity.
             val visiblePending = pendingMsgs.filter { it.id !in echoedPendingIds }
             // Hide ONLY the committed row this live bubble is painting, matched on the
             // reply and nothing else.

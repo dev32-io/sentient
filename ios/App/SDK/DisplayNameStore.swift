@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// DisplayNameStore — persists the logged-in user's display name in UserDefaults.
+// DisplayNameStore — persists nonsecret authenticated name/tint presentation.
 //
 // AuthUserLite (and AuthViewModel) are login-scoped and torn down after a successful
 // login, so the selected user's display name is persisted here at login time and
@@ -15,6 +15,7 @@ import Foundation
 struct DisplayNameStore {
     private let defaults: UserDefaults
     private let kDisplayName = "auth.displayName"
+    private let kAvatarTint = "auth.avatarTint"
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
@@ -30,7 +31,15 @@ struct DisplayNameStore {
         defaults.set(name, forKey: kDisplayName)
     }
 
+    /// Presentation metadata from the authenticated AuthUser, never identity.
+    var avatarTint: String { defaults.string(forKey: kAvatarTint) ?? "" }
+
+    func saveAvatarTint(_ value: String) {
+        defaults.set(value, forKey: kAvatarTint)
+    }
+
     func clear() {
         defaults.removeObject(forKey: kDisplayName)
+        defaults.removeObject(forKey: kAvatarTint)
     }
 }

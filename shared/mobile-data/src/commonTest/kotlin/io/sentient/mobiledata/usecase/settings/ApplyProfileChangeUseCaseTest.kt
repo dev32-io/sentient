@@ -7,12 +7,14 @@
 package io.sentient.mobiledata.usecase.settings
 
 import io.sentient.mobiledata.data.settings.FakeProfileRepository
+import io.sentient.mobiledata.data.settings.FakeVoicesRepository
 import io.sentient.mobiledata.data.settings.sampleProfile
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.settings.ApplyResult
 import io.sentient.mobilesdk.settings.MemorySlot
+import io.sentient.mobilesdk.settings.ProfileMemory
 import io.sentient.mobilesdk.settings.toPutBody
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -72,6 +74,25 @@ class ApplyProfileChangeUseCaseTest {
         assertEquals(1, repo.putProfileCalls)
         assertEquals(0, repo.applyCalls, "audio fast path must NOT call apply")
         assertEquals(listOf("text"), patches.map { it.channel }, "live patch carries the changed channel")
+    }
+
+    @Test
+    fun `audio and voice writes preserve memory and memory changes are not audio-only`() = runTest {
+        for (enabled in listOf(false, true)) {
+            val previous = sampleProfile(ttsEnabled = false).copy(memory = ProfileMemory(enabled, enabled))
+            val next = previous.copy(audio = previous.audio.copy(ttsEnabled = true))
+            val repo = FakeProfileRepository().apply { getProfileResult = SentientResult.Success(previous) }
+            val states = useCase(repo).invoke(ProfileMutation.PutProfile(previous, next.toPutBody())).toList()
+            assertEquals(listOf(ApplyState.Saving, ApplyState.Ready(0L)), states)
+            assertEquals(next.toPutBody(), repo.lastPutProfile)
+            assertEquals(previous.memory, repo.lastPutProfile?.memory)
+            assertEquals(0, repo.applyCalls)
+            assertTrue(!isAudioOnlyProfileDiff(previous, next.toPutBody().copy(memory = ProfileMemory(!enabled, enabled))))
+
+            VoicesUseCases(FakeVoicesRepository(), repo).pickActive("other-voice")
+            assertEquals(previous.toPutBody().copy(voice = previous.voice.copy(id = "other-voice")), repo.lastPutProfile)
+            assertEquals(2, repo.putProfileCalls)
+        }
     }
 
     @Test

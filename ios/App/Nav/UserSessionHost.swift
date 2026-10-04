@@ -74,11 +74,16 @@ struct UserSessionHost: View {
     /// Shared OTA-update state (owned by UpdateGate above). Forwarded to Settings
     /// and re-checked on real foregrounds, riding the same scenePhase resume signal.
     private let updateModel: UpdateModel
+    private let optionalUpdateBanner: UpdateBanner?
+    @State private var drawerPresented = false
 
+    private let appConfig: AppConfig
+    private let userTint: DesignUserAvatarTint
     let userName: String
     private let accountFence: String
 
     @State private var chatRoute = ChatRouteSelection()
+    @State private var routeLifetime = HostRouteLifetime()
     @State private var draftsRestored = false
     @State private var path: [Route] = []
     /// Identity/data passed to the child editor; the Fish results route remains
@@ -92,7 +97,10 @@ struct UserSessionHost: View {
     @State private var authenticationEnding = false
     private let sceneLog = AppLog("nav", "scene")
 
-    init(appConfig: AppConfig, updateModel: UpdateModel) {
+    init(appConfig: AppConfig, updateModel: UpdateModel, optionalUpdateBanner: UpdateBanner? = nil) {
+        self.optionalUpdateBanner = optionalUpdateBanner
+        self.appConfig = appConfig
+        userTint = DesignUserAvatarTint(serverValue: appConfig.avatarTint)
         userName = appConfig.displayName
         let fence = "\(appConfig.gatewayWsUrl)|\(appConfig.authenticatedUserId ?? "")"
         accountFence = fence
@@ -106,7 +114,7 @@ struct UserSessionHost: View {
             // fail-closed guard for an impossible stale view transition.
             authenticatedUserId: appConfig.authenticatedUserId ?? "",
             // UserSession owns push preparation, session teardown, then auth clearing.
-            onLoggedOut: { appConfig.logout() }
+            onLoggedOut: { appConfig.logout(reason: appConfig.loginReason) }
         )
         _userSession = StateObject(wrappedValue: session)
         let inboxViewModel = ScheduledMessagesViewModel(useCases: session.settings.schedules)
@@ -115,58 +123,121 @@ struct UserSessionHost: View {
             accountFence: fence,
             refresh: { [weak inboxViewModel] in await inboxViewModel?.reloadCards() }
         ))
-        // Cold start mirrors Android's CURRENT behavior: enter at chat(nil) → a new
-        // conversation. (A resume-vs-new refinement is a separate follow-up.)
+        // Default draft restoration competes only until the first explicit intent.
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
-            Group {
-                if draftsRestored {
-                    ChatView(
-                        makeVM: {
-                            ChatViewModel(
-                                component: userSession.component,
-                                sessionId: chatRoute.sessionId,
-                                draftId: chatRoute.draftId,
-                                activateOnInit: !chatRoute.acknowledged,
-                                onDraftRouteChanged: { originalId, restoredId, sessionId in
-                                    chatRoute.reconcileDraft(
-                                        from: originalId,
-                                        to: restoredId,
-                                        sessionId: sessionId
+        GeometryReader { geometry in
+            NavigationStack(path: Binding(
+                get: { path },
+                set: { newPath in
+                    guard newPath != path, beginNavigation(from: chatRoute.viewIdentity) != nil else { return }
+                    path = newPath
+                }
+            )) {
+                Group {
+                    if draftsRestored {
+                        let producingRoute = chatRoute
+                        let producingIntent = routeLifetime.currentIntent
+                        ChatView(
+                            makeVM: {
+                                // A body/factory captured before a newer intent must
+                                // not claim SDK authority, even for a pending draft.
+                                let mayBind = acceptsProducer(producingRoute) && routeLifetime.accepts(producingIntent)
+                                let vm = ChatViewModel(
+                                    component: userSession.component,
+                                    sessionId: mayBind ? producingRoute.sessionId : nil,
+                                    draftId: mayBind ? producingRoute.draftId : nil,
+                                    activateOnInit: mayBind && !producingRoute.acknowledged,
+                                    onDraftRouteChanged: { originalId, restoredId, sessionId in
+                                        guard !authenticationEnding,
+                                              routeLifetime.acceptsProducer(producingRoute.viewIdentity, current: chatRoute.viewIdentity) else { return }
+                                        if originalId != restoredId, chatRoute.draftId == originalId {
+                                            routeLifetime.retireEditor()
+                                        }
+                                        chatRoute.reconcileDraft(
+                                            from: originalId,
+                                            to: restoredId,
+                                            sessionId: sessionId
+                                        )
+                                    }
+                                )
+                                if mayBind {
+                                    routeLifetime.installEditor(
+                                        saveAndRetire: { [weak vm] isCurrent in
+                                            guard let vm else { return true }
+                                            return await vm.saveAndRetireEditor(isCurrent: isCurrent)
+                                        },
+                                        suspendRoute: { [weak vm] in vm?.suspendRouteForActivation() },
+                                        restoreRoute: { [weak vm] in vm?.restoreRouteAfterActivation() },
+                                        retire: { [weak vm] in vm?.retireEditor() }
                                     )
+                                } else {
+                                    vm.retireEditor()
                                 }
-                            )
-                        },
-                        makeHistoryVM: { userSession.makeHistoryVM() },
-                        userName: userName,
-                        activeSessionId: chatRoute.sessionId,
-                        activeDraftId: chatRoute.draftId,
-                        onSelectSession: { id in
-                            chatRoute.select(id)
-                            path.removeAll()
-                        },
-                        onSelectDraft: { draftId, sessionId in
-                            chatRoute.selectDraft(draftId, sessionId: sessionId)
-                            path.removeAll()
-                        },
-                        onNewChat: {
-                            chatRoute.selectNewDraft()
-                            path.removeAll()
-                        },
-                        onOpenSettings: { path = [.settings] },
-                        onOpenInbox: openInbox,
-                        onLogout: logout
-                    )
-                    .id(chatRoute.viewIdentity)
-                } else {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(DuskColors.bg)
+                                return vm
+                            },
+                            makeHistoryVM: { userSession.makeHistoryVM() },
+                            userName: userName,
+                            activeSessionId: chatRoute.sessionId,
+                            activeDraftId: chatRoute.draftId,
+                            beginNavigation: { beginNavigation(from: producingRoute.viewIdentity) },
+                            isNavigationCurrent: { routeLifetime.accepts($0) && !authenticationEnding },
+                            onSelectSession: { id in
+                                guard acceptsProducer(producingRoute) else { return }
+                                routeLifetime.retireEditor()
+                                chatRoute.select(id)
+                                path.removeAll()
+                            },
+                            onSelectDraft: { draftId, sessionId in
+                                guard acceptsProducer(producingRoute) else { return }
+                                routeLifetime.retireEditor()
+                                chatRoute.selectDraft(draftId, sessionId: sessionId)
+                                path.removeAll()
+                            },
+                            onNewChat: {
+                                guard acceptsProducer(producingRoute) else { return }
+                                routeLifetime.retireEditor()
+                                chatRoute.selectNewDraft()
+                                path.removeAll()
+                            },
+                            onOpenSettings: {
+                                guard beginNavigation(from: producingRoute.viewIdentity) != nil else { return }
+                                path = [.settings]
+                            },
+                            onOpenInbox: {
+                                guard acceptsProducer(producingRoute) else { return }
+                                openInbox()
+                            },
+                            onLogout: {
+                                guard acceptsProducer(producingRoute) else { return }
+                                logout()
+                            }
+                        )
+                        .environment(\.chatUserAvatarTint, userTint)
+                        .id(chatRoute.viewIdentity)
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(DuskColors.bg)
+                    }
+                }
+                .navigationDestination(for: Route.self) { route in destination(for: route) }
+            }
+            // Recovery first, optional update second. Both reserve content space;
+            // no header offsets or competing floating overlays. Drawer is modal.
+            .onPreferenceChange(DrawerPresentedKey.self) { drawerPresented = $0 }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !drawerPresented && !authenticationEnding && (hasNotificationNotice || optionalUpdateBanner != nil) {
+                    ShellNoticeRegion(availableHeight: geometry.size.height) {
+                        VStack(spacing: Space.sm) {
+                            notificationResumeNotice.padding(.horizontal, Space.lg)
+                            optionalUpdateBanner
+                        }
+                        .padding(.vertical, Space.sm)
+                    }
                 }
             }
-            .navigationDestination(for: Route.self) { route in destination(for: route) }
         }
         .onChange(of: path) { old, new in
             userSession.cube?.navigationChanged(from: old.last?.cubePage, to: new.last?.cubePage)
@@ -175,61 +246,62 @@ struct UserSessionHost: View {
             get: { userSession.cubeCleanupError != nil },
             set: { if !$0 { userSession.cubeCleanupError = nil } }
         )) {
-            Button("Retry logout") { userSession.explicitLogout() }
-            Button("Cancel", role: .cancel) { authenticationEnding = false }
+            Button("Retry logout") { logout(preservingLoginReason: true) }
+            Button("Cancel", role: .cancel) { recoverFromLogoutFailure() }
         } message: { Text(userSession.cubeCleanupError ?? "Unlock iPhone and retry.") }
         .onReceive(userSession.$cubeCleanupError) { error in
-            if error != nil { authenticationEnding = false }
+            if error != nil { recoverFromLogoutFailure() }
         }
         .allowsHitTesting(!authenticationEnding)
         .accessibilityHidden(authenticationEnding)
-        .overlay(alignment: .top) {
-            notificationResumeNotice
-                .padding(.horizontal, Space.lg)
-                .padding(.top, Space.md)
-        }
         .overlay {
             if authenticationEnding {
-                ProgressView("Signing in again…")
+                ProgressView(appConfig.loginReason == .expired ? "Session expired. Returning to sign in…" : "Logging out…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DuskColors.bg.ignoresSafeArea())
             }
         }
         .onReceive(notificationNavigation.$destination) { destination in
-            guard destination != nil, !authenticationEnding else { return }
+            guard destination != nil, !authenticationEnding, routeLifetime.active else { return }
+            // Reserve before scheduling: a suspended default restore must not mount
+            // a route-binding VM while notification activation is waiting for ACK.
+            guard let intent = routeLifetime.begin() else { return }
+            notificationResume.supersedeNavigation()
             Task { @MainActor in
-                guard !authenticationEnding,
-                      let destination = notificationNavigation.take(accountFence: accountFence) else { return }
-                resumeNotificationDestination(destination)
+                guard routeLifetime.accepts(intent), !authenticationEnding else { return }
+                consumeNotification()
+                // A target bound to another account may already have been dropped
+                // by onAppear; it must not strand startup behind a spinner.
+                if routeLifetime.accepts(intent), !routeLifetime.hasEditor { draftsRestored = true }
             }
         }
         .onReceive(nativePush.$foregroundInboxInvalidation) { invalidation in
-            guard let invalidation, !authenticationEnding else { return }
+            guard let invalidation, !authenticationEnding, routeLifetime.active else { return }
             inboxRefresh.request(accountFence: invalidation.accountFence)
         }
         .onAppear {
-            guard !authenticationEnding else { return }
-            if let destination = notificationNavigation.take(accountFence: accountFence) {
-                resumeNotificationDestination(destination)
-            }
+            consumeNotification()
         }
         .task {
             await restoreLastDraft()
         }
         .task {
             for await state in userSession.component.connection.state {
+                guard routeLifetime.active, !Task.isCancelled else { return }
                 guard state.authExpired else { continue }
                 authenticationExpired()
                 return
             }
         }
         .onDisappear {
+            routeLifetime.retire()
             userSession.cube?.pause()
             notificationResume.cancel()
             inboxRefresh.cancel()
             scheduledInboxViewModel.cancel()
         }
         .onChange(of: scenePhase) { _, phase in
+            guard routeLifetime.active else { return }
             switch phase {
             case .background:
                 hasBackgrounded = true
@@ -256,20 +328,57 @@ struct UserSessionHost: View {
         }
     }
 
+    private func acceptsProducer(_ route: ChatRouteSelection) -> Bool {
+        !authenticationEnding && routeLifetime.acceptsProducer(route.viewIdentity, current: chatRoute.viewIdentity)
+    }
+
+    private func beginNavigation(from route: Int) -> HostRouteLifetime.Intent? {
+        guard !authenticationEnding, routeLifetime.acceptsProducer(route, current: chatRoute.viewIdentity),
+              let intent = routeLifetime.begin() else { return nil }
+        notificationResume.supersedeNavigation()
+        notificationNavigation.clear()
+        return intent
+    }
+
+    private func consumeNotification() {
+        guard routeLifetime.active, !authenticationEnding,
+              let destination = notificationNavigation.take(accountFence: accountFence) else { return }
+        resumeNotificationDestination(destination)
+    }
+
     private func restoreLastDraft() async {
-        defer { draftsRestored = true }
-        guard let drafts = userSession.component.drafts,
-              let snapshot = try? await drafts.restore() else { return }
-        if let pending = snapshot.pendingSends.max(by: { $0.createdAt < $1.createdAt }) {
-            chatRoute.selectDraft(pending.draftId, sessionId: pending.sessionId)
-        } else if let latest = snapshot.drafts.max(by: { $0.updatedAt < $1.updatedAt }) {
-            chatRoute.selectDraft(latest.id, sessionId: latest.sessionId)
+        consumeNotification()
+        guard !draftsRestored else { return }
+        await routeLifetime.restoreDefault(
+            load: { try? await userSession.component.drafts?.restore() },
+            apply: { snapshot in
+                if let pending = snapshot?.pendingSends.max(by: { $0.createdAt < $1.createdAt }) {
+                    chatRoute.selectDraft(pending.draftId, sessionId: pending.sessionId)
+                } else if let latest = snapshot?.drafts.max(by: { $0.updatedAt < $1.updatedAt }) {
+                    chatRoute.selectDraft(latest.id, sessionId: latest.sessionId)
+                }
+                draftsRestored = true
+            }
+        )
+    }
+
+    private func recoverFromLogoutFailure() {
+        guard authenticationEnding, routeLifetime.active else { return }
+        authenticationEnding = false
+        draftsRestored = true
+        if let draftId = chatRoute.draftId {
+            chatRoute.selectDraft(draftId, sessionId: chatRoute.sessionId)
+        } else {
+            chatRoute.select(chatRoute.sessionId)
         }
     }
 
-    private func logout() {
-        guard !authenticationEnding else { return }
+    private func logout(preservingLoginReason: Bool = false) {
+        guard !authenticationEnding, routeLifetime.active else { return }
+        appConfig.prepareLogin(reason: preservingLoginReason ? appConfig.loginReason : nil)
         authenticationEnding = true
+        _ = routeLifetime.begin()
+        routeLifetime.retireEditor()
         notificationResume.cancel()
         inboxRefresh.cancel()
         scheduledInboxViewModel.cancel()
@@ -279,8 +388,11 @@ struct UserSessionHost: View {
     }
 
     private func authenticationExpired() {
-        guard !authenticationEnding else { return }
+        guard !authenticationEnding, routeLifetime.active else { return }
+        appConfig.prepareLogin(reason: .expired)
         authenticationEnding = true
+        _ = routeLifetime.begin()
+        routeLifetime.retireEditor()
         let destination = notificationResume.state.destination
         notificationResume.cancel()
         inboxRefresh.cancel()
@@ -291,7 +403,7 @@ struct UserSessionHost: View {
     }
 
     private func openInbox() {
-        guard !authenticationEnding else { return }
+        guard beginNavigation(from: chatRoute.viewIdentity) != nil else { return }
         inboxRefresh.request(accountFence: accountFence)
         path = [.scheduledInbox]
     }
@@ -302,6 +414,7 @@ struct UserSessionHost: View {
     // host: the wiring (settings scope + push/pop closures) is already threaded in.
 
     private func openCubePage(_ page: CubePage) {
+        guard beginNavigation(from: chatRoute.viewIdentity) != nil else { return }
         if page == .hub {
             // Setup is a flow, not a second parent of the owned-device hub.
             while path.last?.cubePage != nil, path.last != .cube { path.removeLast() }
@@ -310,22 +423,46 @@ struct UserSessionHost: View {
     }
 
     /// Pop one level off the stack (category page → settings root, or sub → parent).
-    private func popRoute() { if !path.isEmpty { path.removeLast() } }
+    private func popRoute() {
+        guard !path.isEmpty, beginNavigation(from: chatRoute.viewIdentity) != nil else { return }
+        path.removeLast()
+    }
+
+    private func pushRoute(_ route: Route) {
+        guard beginNavigation(from: chatRoute.viewIdentity) != nil else { return }
+        path.append(route)
+    }
 
     private func routeToAcknowledgedSession(_ sessionId: String) {
-        guard !authenticationEnding else { return }
+        guard !authenticationEnding, routeLifetime.active else { return }
+        routeLifetime.retireEditor()
         chatRoute.select(sessionId, acknowledged: true)
+        draftsRestored = true
         path.removeAll()
     }
 
     private func resumeNotificationDestination(_ destination: NotificationDestination) {
-        guard !authenticationEnding else { return }
+        guard !authenticationEnding, let intent = routeLifetime.begin() else { return }
+        if !routeLifetime.hasEditor { draftsRestored = false }
+        routeLifetime.suspendEditorRoute(intent)
         notificationResume.resume(
             destination,
             accountFence: accountFence,
             activate: { await userSession.activateSession($0) },
-            route: routeToAcknowledgedSession,
-            clear: clearScheduledCard
+            route: { sessionId in
+                guard routeLifetime.accepts(intent), !authenticationEnding else { return }
+                routeToAcknowledgedSession(sessionId)
+            },
+            prepareRoute: { await routeLifetime.prepareReplacement(intent) },
+            clear: clearScheduledCard,
+            isCurrent: { routeLifetime.accepts(intent) && !authenticationEnding },
+            activationFinished: {
+                guard routeLifetime.accepts(intent), !authenticationEnding else { return }
+                // Failed startup activation leaves usable fresh chat + existing retry
+                // notice. Never run the stale default draft restore afterward.
+                draftsRestored = true
+            },
+            activationAbandoned: { routeLifetime.restoreEditorRoute(intent) }
         )
     }
 
@@ -337,6 +474,13 @@ struct UserSessionHost: View {
             }
         } catch {
             return false
+        }
+    }
+
+    private var hasNotificationNotice: Bool {
+        switch notificationResume.state {
+        case .idle, .pending, .clearing: false
+        case .unavailable, .retryableFailure, .clearFailure: true
         }
     }
 
@@ -369,6 +513,7 @@ struct UserSessionHost: View {
                 title: "Message opened",
                 detail: "It couldn't be cleared from Messages. Try clearing it again.",
                 retry: {
+                    guard routeLifetime.active, !authenticationEnding else { return }
                     notificationResume.retryClear(destination, accountFence: accountFence, clear: clearScheduledCard)
                 },
                 accessibilityId: "notification-session-clear-retry",
@@ -389,8 +534,8 @@ struct UserSessionHost: View {
             SettingsSheet(
                 settings: settings,
                 updateModel: updateModel,
-                onLogout: logout,
-                onOpen: { path.append($0) }
+                onLogout: { logout() },
+                onOpen: pushRoute
             )
         case .settingsMemory:
             MemoryScreen(settings: settings, onBack: popRoute)
@@ -403,7 +548,7 @@ struct UserSessionHost: View {
         case .settingsPersonalities:
             PersonalitiesScreen(settings: settings, onBack: popRoute)
         case .settingsVoice:
-            VoiceScreen(settings: settings, onOpen: { path.append($0) }, onBack: popRoute)
+            VoiceScreen(settings: settings, onOpen: pushRoute, onBack: popRoute)
         case .settingsVoiceAdd:
             VoiceAddScreen(settings: settings, onBack: popRoute)
         case .settingsVoiceFish:
@@ -411,6 +556,7 @@ struct UserSessionHost: View {
                 settings: settings,
                 onBack: popRoute,
                 onOpenEditor: { entry in
+                    guard beginNavigation(from: chatRoute.viewIdentity) != nil else { return }
                     fishEditorEntry = entry
                     path.append(.settingsVoiceFishEditor(entry.id))
                 }

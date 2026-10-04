@@ -28,4 +28,5 @@ fun createAttachmentsHttpClient(
     gatewayWsUrl = gatewayWsUrl,
     token = token,
     timeoutMs = ATTACHMENT_REQUEST_TIMEOUT_MS,
+    isOwnerActive = isOwnerActive,
 )

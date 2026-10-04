@@ -2,6 +2,7 @@ import type { JSX } from "preact";
 import type { ChatAttachment, ChatMessage } from "../../types.ts";
 import { AttachmentCards, type AttachmentAsset } from "./attachment-cards.tsx";
 import { MessageContent } from "./message-content.tsx";
+import { messageImages } from "./rich-markdown.tsx";
 import { MessageBubbleFrame } from "./message-frame.tsx";
 import { MessageContinuationIdentity, UserMessageIdentity, type CurrentUser } from "./message-identity.tsx";
 
@@ -27,7 +28,7 @@ export function UserMessageBubble({ message, currentUser, continuation, position
       content={
         <>
           {message.attachments?.length ? <AttachmentCards attachments={message.attachments} assets={attachmentAssets} onPreview={onAttachmentPreview} /> : null}
-          <MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} />
+          <MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} images={messageImages(message.attachments, attachmentAssets)} />
         </>
       }
     />

@@ -10,13 +10,33 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /** Thin stateful facade over the authenticated account's durable draft store. */
+@OptIn(ExperimentalAtomicApi::class)
 class NativeDraftCoordinator(
     private val store: NativeDraftStore,
     private val driver: SqlDriver? = null,
 ) {
     private val operations = Mutex()
+    private val retiredEditors = AtomicReference<Set<String>>(emptySet())
+
+    /** Synchronous retirement fences queued writes before a successor editor is installed. */
+    fun retireEditor(editorId: String) {
+        do {
+            val current = retiredEditors.load()
+            if (editorId in current) return
+        } while (!retiredEditors.compareAndSet(current, current + editorId))
+    }
+
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun saveEditorText(editorId: String, draftId: String?, sessionId: String?, text: String): NativeDraft? =
+        operations.withLock {
+            if (editorId in retiredEditors.load()) return@withLock null
+            saveTextLocked(draftId, sessionId, text)
+        }
+
     /** Explicit lifecycle actions fence late UI saves during this authenticated lifetime. */
     private val discardedDraftIds = mutableSetOf<String>()
     private val detachedSessionIds = mutableSetOf<String>()
@@ -29,29 +49,31 @@ class NativeDraftCoordinator(
     suspend fun restore(): NativeDraftSnapshot = operations.withLock { refresh() }
 
     suspend fun saveText(draftId: String?, sessionId: String?, text: String): NativeDraft? =
-        operations.withLock {
-            if (draftId != null && draftId in discardedDraftIds) return@withLock null
-            val current = currentDraft(draftId, sessionId)
-            if (text.isBlank() && current != null && current.attachments.isEmpty() &&
-                _snapshot.value.pendingSends.none { it.draftId == current.id }
-            ) {
-                store.remove(current.id, current.revision)
-                refresh()
-                return@withLock null
-            }
-            if (text.isBlank() && current == null) return@withLock null
-            val saved = store.save(
-                NativeDraftWrite(
-                    id = current?.id ?: draftId,
-                    sessionId = current?.sessionId ?: sessionId?.takeUnless { it in detachedSessionIds },
-                    text = text,
-                    attachments = current?.attachments ?: emptyList(),
-                ),
-                current?.revision,
-            )
+        operations.withLock { saveTextLocked(draftId, sessionId, text) }
+
+    private suspend fun saveTextLocked(draftId: String?, sessionId: String?, text: String): NativeDraft? {
+        if (draftId != null && draftId in discardedDraftIds) return null
+        val current = currentDraft(draftId, sessionId)
+        if (text.isBlank() && current != null && current.attachments.isEmpty() &&
+            _snapshot.value.pendingSends.none { it.draftId == current.id }
+        ) {
+            store.remove(current.id, current.revision)
             refresh()
-            saved
+            return null
         }
+        if (text.isBlank() && current == null) return null
+        val saved = store.save(
+            NativeDraftWrite(
+                id = current?.id ?: draftId,
+                sessionId = current?.sessionId ?: sessionId?.takeUnless { it in detachedSessionIds },
+                text = text,
+                attachments = current?.attachments ?: emptyList(),
+            ),
+            current?.revision,
+        )
+        refresh()
+        return saved
+    }
 
     @Throws(
         NativeDraftDiscardedException::class,
@@ -64,7 +86,11 @@ class NativeDraftCoordinator(
         draftId: String?,
         sessionId: String?,
         source: NativeDraftAttachmentImport,
-    ): NativeDraft = operations.withLock {
+    ): NativeDraft = operations.withLock { importAttachmentLocked(draftId, sessionId, source) }
+
+    private suspend fun importAttachmentLocked(
+        draftId: String?, sessionId: String?, source: NativeDraftAttachmentImport,
+    ): NativeDraft {
         if (draftId != null && draftId in discardedDraftIds) {
             throw NativeDraftDiscardedException(draftId)
         }
@@ -72,7 +98,19 @@ class NativeDraftCoordinator(
             NativeDraftWrite(id = draftId, sessionId = sessionId, text = "", attachments = emptyList()),
             null,
         )
-        store.importAttachment(current.id, current.revision, source).also { refresh() }
+        return store.importAttachment(current.id, current.revision, source).also { refresh() }
+    }
+
+    /** Check editor authority inside the mutex, before resolving the current revision. */
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun importEditorAttachment(
+        editorId: String,
+        draftId: String?,
+        sessionId: String?,
+        source: NativeDraftAttachmentImport,
+    ): NativeDraft = operations.withLock {
+        if (editorId in retiredEditors.load()) throw CancellationException("Editor retired")
+        importAttachmentLocked(draftId, sessionId, source)
     }
 
     suspend fun removeAttachment(draftId: String, attachmentId: String): NativeDraft = operations.withLock {
@@ -102,6 +140,20 @@ class NativeDraftCoordinator(
             pending
         }
 
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun markAttempted(pendingId: String) = operations.withLock {
+        store.markAttempted(pendingId)
+        refresh()
+        Unit
+    }
+
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun acceptSend(draftId: String, expectedRevision: Long, mintKey: String, surfaceId: String): NativePendingSend =
+        operations.withLock {
+            if (draftId in discardedDraftIds) throw NativeDraftDiscardedException(draftId)
+            store.acceptSend(draftId, expectedRevision, mintKey, surfaceId).also { refresh() }
+        }
+
     suspend fun clearSubmittedDraft(draftId: String): NativeDraft = operations.withLock {
         val current = currentDraft(draftId, null) ?: throw IllegalArgumentException("draft not found")
         store.save(
@@ -120,11 +172,28 @@ class NativeDraftCoordinator(
             if (!result.found) return@withLock result.also { refresh() }
             val snapshot = refresh()
             snapshot.drafts.firstOrNull {
-                it.id == result.draftId && it.text.isBlank() && it.attachments.isEmpty()
+                it.id == result.draftId && it.text.isBlank() && it.attachments.isEmpty() &&
+                    snapshot.pendingSends.none { pending -> pending.draftId == it.id }
             }?.let { store.remove(it.id, it.revision) }
             refresh()
             result
         }
+
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun notCommittedIfEmpty(pendingId: String): NativeDraft? = operations.withLock {
+        val pending = refresh().pendingSends.firstOrNull { it.pendingId == pendingId } ?: return@withLock null
+        val editor = currentDraft(pending.draftId, null)
+        if (editor != null && (editor.text.isNotBlank() || editor.attachments.isNotEmpty())) {
+            throw NativeDraftConflictException(editor)
+        }
+        store.reconcileSend(pendingId, NativeSendReconciliation.NOT_COMMITTED).restoredDraft.also { refresh() }
+    }
+
+    @Throws(Exception::class, CancellationException::class)
+    suspend fun preserveRestoredDraft(editorId: String, draftId: String, expectedRevision: Long, nextText: String): NativeDraft? = operations.withLock {
+        if (editorId in retiredEditors.load()) return@withLock null
+        store.preserveRestoredDraft(draftId, expectedRevision, nextText).also { refresh() }
+    }
 
     suspend fun notCommitted(pendingId: String): NativeDraft? = operations.withLock {
         val restored = store.reconcileSend(pendingId, NativeSendReconciliation.NOT_COMMITTED).restoredDraft

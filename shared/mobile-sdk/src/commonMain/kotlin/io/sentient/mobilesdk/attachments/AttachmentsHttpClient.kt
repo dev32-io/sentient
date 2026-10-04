@@ -40,8 +40,11 @@ class AttachmentsHttpClient(
     gatewayWsUrl: String,
     private val token: () -> String,
     private val timeoutMs: Long = 15 * 60_000L,
+    private val isOwnerActive: () -> Boolean = { true },
 ) {
     private val baseUrl = deriveBaseUrl(gatewayWsUrl)
+    @kotlin.concurrent.Volatile
+    private var closed = false
 
     suspend fun upload(
         sendAttemptId: String,
@@ -58,7 +61,7 @@ class AttachmentsHttpClient(
             "contentType" to contentType,
         ).joinToString("&") { (key, value) -> "$key=${value.encodeURLQueryComponent()}" }
         val response = httpClient.post("$baseUrl/attachments?$query") {
-            header(HttpHeaders.Authorization, "Bearer ${token()}")
+            header(HttpHeaders.Authorization, "Bearer ${ownerToken()}")
             header(HttpHeaders.ContentType, contentType)
             setBody(object : OutgoingContent.WriteChannelContent() {
                 override val contentType: ContentType? = ContentType.parse(contentType)
@@ -113,20 +116,29 @@ class AttachmentsHttpClient(
 
     suspend fun delete(attachmentId: String) = bounded(minOf(timeoutMs, SMALL_REQUEST_TIMEOUT_MS)) {
         val response = httpClient.delete(itemUrl(attachmentId)) {
-            header(HttpHeaders.Authorization, "Bearer ${token()}")
+            header(HttpHeaders.Authorization, "Bearer ${ownerToken()}")
         }
         if (!response.status.isSuccess()) throw responseError(response.status.value, response.bodyAsText())
     }
 
     fun close() {
+        closed = true
         httpClient.coroutineContext.cancel()
         httpClient.close()
+    }
+
+    private fun ownerToken(): String {
+        if (closed || !isOwnerActive()) throw CancellationException("attachment owner retired")
+        val value = token()
+        // Retirement may race credential resolution. Never dispatch its result then.
+        if (closed || !isOwnerActive()) throw CancellationException("attachment owner retired")
+        return value
     }
 
     private fun itemUrl(id: String) = "$baseUrl/attachments/${id.encodeURLQueryComponent()}"
 
     private suspend fun authenticatedGet(url: String) = httpClient.get(url) {
-        header(HttpHeaders.Authorization, "Bearer ${token()}")
+        header(HttpHeaders.Authorization, "Bearer ${ownerToken()}")
     }.also { response ->
         if (!response.status.isSuccess()) throw responseError(response.status.value, response.bodyAsText())
     }

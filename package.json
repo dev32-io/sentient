@@ -22,6 +22,7 @@
     "design:foundation:check": "bun test scripts/design/design-foundation-v2.test.ts && bun scripts/design/design-foundation-v2.ts check && bun scripts/design/web-foundation-check.ts && bun scripts/design/ios-design-boundary.ts",
     "visual:setup": "npm --prefix tools/visual-diff ci && npm --prefix tools/visual-diff run browsers:install",
     "visual:test": "npm --prefix tools/visual-diff test",
+    "test:web-tooling": "bun test scripts/design qa/design-refresh && bun run visual:test",
     "visual:diff": "node tools/visual-diff/visual-diff.mjs",
     "visual:compare": "node tools/visual-diff/compare.mjs",
     "visual:web:capture": "node tools/visual-diff/capture-web.mjs",
@@ -34,7 +35,7 @@
     "lint": "bunx biome check .",
     "lint:fix": "bunx biome check --write .",
     "typecheck": "bun run --filter '*' typecheck",
-    "ci": "bun run lint && bun run typecheck && bun run test:unit"
+    "ci": "bun run lint && bun run typecheck && bun run test:unit && bun run test:web-tooling"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

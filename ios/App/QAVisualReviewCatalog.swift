@@ -34,49 +34,22 @@ struct QAVisualReviewCatalog: View {
         }
         .padding(Space.md)
         .background(DuskColors.bg.ignoresSafeArea())
-        .transaction { transaction in
-            if config == "ios-reduced-motion" { transaction.disablesAnimations = true }
-        }
         .accessibilityIdentifier("qa-visual-review-page-\(page)")
     }
 }
 
 private struct QAVisualReviewSpecimen: View {
     let row: QAVisualReviewRow
-    @State private var text = "Fixture value"
-
-    private var kind: DesignNoticeKind {
-        let value = row.state.lowercased()
-        if value.range(of: "loading|saving|applying|submitting|installing|checking|running|thinking|transitioning", options: .regularExpression) != nil { return .loading }
-        if value.range(of: "empty|no sessions|no match", options: .regularExpression) != nil { return .empty }
-        if value.range(of: "error|failed|denied|conflict|unavailable|offline|stale", options: .regularExpression) != nil { return .error }
-        if value.range(of: "success|saved|applied|sent", options: .regularExpression) != nil { return .success }
-        return .warning
-    }
-
+    // Inventory labels are not fixtures. Keep missing production dispatch
+    // visible; foundation catalog below remains a separate exploratory tool.
     var body: some View {
-        HStack(alignment: .center, spacing: Space.md) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(row.id).font(Typo.mono(TypeScale.xs)).foregroundStyle(DuskColors.accent)
-                    .lineLimit(2)
-                Text(row.state).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2)
-                    .lineLimit(2)
-            }
-            .frame(maxWidth: 150, alignment: .leading)
-            if kind == .loading || kind == .empty || kind == .error {
-                AsyncNotice(kind: kind, title: "Synthetic \(kind == .error ? "error" : kind == .empty ? "empty" : "loading") state", detail: row.state, retry: kind == .error ? {} : nil)
-            } else {
-                VStack(spacing: Space.xs) {
-                    DesignField(title: "Synthetic field", text: $text, accessibilityId: "qa-field-\(row.id)")
-                    DesignActionButton(title: "Review action", state: row.state.lowercased().contains("disabled") ? .disabled : .normal, accessibilityId: "qa-action-\(row.id)", action: {})
-                }
-            }
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(row.id).font(Typo.mono(TypeScale.xs))
+            Text(row.state).font(Typo.ui(TypeScale.sm))
+            Text("Missing production fixture — not visual evidence")
+                .font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2)
         }
-        .padding(Space.sm)
-        .frame(maxWidth: .infinity, minHeight: 118, alignment: .leading)
-        .designPlate()
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("qa-row-\(row.id)")
+        .accessibilityIdentifier("qa-missing-fixture-\(row.id)")
     }
 }
 
@@ -373,9 +346,9 @@ struct QAFoundationCatalog: View {
                 }
             }
 
-            QACatalogSpecimen("Typography", contract: "Fraunces · DM Sans · JetBrains Mono") {
+            QACatalogSpecimen("Typography", contract: "DM Sans · JetBrains Mono") {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Display / Fraunces 22").font(Typo.display(TypeScale.xl, .medium))
+                    Text("Display / DM Sans 22").font(Typo.display(TypeScale.xl, .medium))
                     Text("Body / DM Sans 15").font(Typo.ui(TypeScale.base))
                     Text("Supporting / DM Sans 12.5").font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2)
                     Text("Telemetry / JetBrains Mono 11").font(Typo.mono(TypeScale.xs)).foregroundStyle(DuskColors.accent)

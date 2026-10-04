@@ -24,14 +24,7 @@ final class AudioViewModel {
 
     /// Save FSM projection. Audio is fast so `.restarting` never occurs, but the
     /// case is kept so the projection matches the shared ApplyState alphabet.
-    enum Save: Equatable {
-        case idle
-        case saving
-        case restarting
-        case alreadyApplying
-        case applied
-        case failed(String)
-    }
+    typealias Save = DesignApplyState
 
     private(set) var phase: Phase = .loading
     private(set) var save: Save = .idle
@@ -41,27 +34,49 @@ final class AudioViewModel {
     var channel = ProfileEnums.shared.audioChannels.first ?? "voice"
 
     private var original: ProfileV1?
-    private let settings: SettingsComponent
+    private let loadProfile: () async throws -> SentientResult<ProfileV1>
+    private let applyProfile: (ProfileMutationPutProfile, (any ApplyState) async -> Void) async -> Void
     private let log = AppLog("settings", "audio-vm")
 
     init(settings: SettingsComponent) {
-        self.settings = settings
+        loadProfile = { try await settings.profileRepository.getProfile() }
+        applyProfile = { mutation, receive in
+            for await state in settings.applyProfileChange.invoke(mutation: mutation) {
+                await receive(state)
+            }
+        }
+    }
+
+    init(
+        loadProfile: @escaping () async throws -> SentientResult<ProfileV1>,
+        applyProfile: @escaping (ProfileMutationPutProfile, (any ApplyState) async -> Void) async -> Void
+    ) {
+        self.loadProfile = loadProfile
+        self.applyProfile = applyProfile
     }
 
     /// True once the draft differs from the loaded profile's audio section.
     var isDirty: Bool {
-        guard let o = original else { return false }
+        guard phase == .ready, let o = original else { return false }
         return ttsEnabled != o.audio.ttsEnabled || channel != o.audio.channel
     }
 
     /// True while a save is in flight (Save is disabled, a banner shows).
-    var isApplying: Bool { save == .saving || save == .restarting }
+    var isApplying: Bool { save.isBusy }
+
+    /// Restore the loaded audio draft without issuing a write.
+    func discard() {
+        guard phase == .ready, !isApplying else { return }
+        guard let original else { return }
+        apply(original)
+        save = .idle
+    }
 
     /// Load the profile and seed original + draft. Folds the envelope exhaustively.
     func load() async {
         log.info("load")
         do {
-            let result = try await settings.profileRepository.getProfile()
+            let result = try await loadProfile()
             switch onEnum(of: result) {
             case .success(let s):
                 apply(s.data)
@@ -83,10 +98,11 @@ final class AudioViewModel {
 
     /// Fast save: PUT profile → live audio patch (no restart) → refetch truth.
     func save() async {
-        guard let o = original, isDirty else { return }
+        guard let o = original, isDirty, !isApplying else { return }
+        save = .saving
         log.info("save.start tts=\(ttsEnabled) channel=\(channel)")
         let mutation = ProfileMutationPutProfile(previous: o, next: nextProfile(from: o).toPutBody())
-        for await state in settings.applyProfileChange.invoke(mutation: mutation) {
+        await applyProfile(mutation) { state in
             switch onEnum(of: state) {
             case .idle: break
             case .saving: save = .saving
@@ -122,7 +138,8 @@ final class AudioViewModel {
             tools: o.tools,
             compression: o.compression,
             advanced: o.advanced,
-            auxiliaryModels: o.auxiliaryModels
+            auxiliaryModels: o.auxiliaryModels,
+            memory: o.memory
         )
     }
 }

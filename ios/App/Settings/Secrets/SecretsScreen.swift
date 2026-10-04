@@ -2,10 +2,16 @@ import SwiftUI
 import MobileData
 
 struct SecretsScreen: View {
+    private let onBack: () -> Void
     @State private var vm: SecretsViewModel
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
-        _vm = State(initialValue: SecretsViewModel(admin: settings.admin, applyProfileChange: settings.applyProfileChange))
+        self.init(viewModel: SecretsViewModel(admin: settings.admin, applyProfileChange: settings.applyProfileChange), onBack: onBack)
+    }
+
+    init(viewModel: SecretsViewModel, onBack: @escaping () -> Void) {
+        self.onBack = onBack
+        _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
@@ -15,7 +21,7 @@ struct SecretsScreen: View {
             isNotAdmin: vm.isNotAdmin,
             mutationError: vm.mutationError,
             editing: vm.editing,
-            isSaving: vm.isSavingKey,
+            isSaving: vm.isBusy,
             apply: vm.apply,
             onRetryLoad: { Task { await vm.load() } },
             onSetActive: { provider in Task { await vm.setActive(provider) } },
@@ -25,7 +31,8 @@ struct SecretsScreen: View {
             onSaveKey: { provider, value in Task { await vm.saveKey(provider, value: value) } },
             onSaveBaseUrl: { url in Task { await vm.saveBaseUrl(url) } },
             onApplyNow: { Task { await vm.applyNow() } },
-            onDismissNotice: vm.dismissNotice
+            onDismissNotice: vm.dismissNotice,
+            onBack: onBack
         )
         .task { await vm.load() }
     }
@@ -48,14 +55,19 @@ private struct SecretsBody: View {
     let onSaveBaseUrl: (String) -> Void
     let onApplyNow: () -> Void
     let onDismissNotice: () -> Void
+    var onBack: (() -> Void)? = nil
 
     var body: some View {
-        SettingsPageScaffold(title: "Secrets", screenId: "settings-secrets-screen") {
+        SettingsPageScaffold(
+            title: "Secrets", screenId: "settings-secrets-screen",
+            onBack: { if !isSaving { onBack?() } }, allowsInteractiveBack: !isSaving
+        ) {
             if let mutationError {
                 AsyncNotice(kind: .error, title: "Secret change failed", detail: mutationError)
             }
             content
         }
+        .disabled(isSaving)
     }
 
     @ViewBuilder private var content: some View {
@@ -96,7 +108,7 @@ private struct SecretsBody: View {
                 )
             }
             if apply != .hidden {
-                RestartNotice(phase: apply, onApply: onApplyNow, onDismiss: onDismissNotice)
+                RestartNotice(phase: apply, isBusy: isSaving, onApply: onApplyNow, onDismiss: onDismissNotice)
             }
         } else if isError {
             AsyncNotice(kind: .error, title: "Couldn't load provider keys", detail: "Check your connection and try again.", retry: onRetryLoad)
@@ -151,6 +163,7 @@ private struct SecretsBody: View {
 
 private struct RestartNotice: View {
     let phase: SecretsViewModel.ApplyPhase
+    let isBusy: Bool
     let onApply: () -> Void
     let onDismiss: () -> Void
 
@@ -161,11 +174,13 @@ private struct RestartNotice: View {
                 HStack(spacing: Space.sm) {
                     DesignActionButton(
                         title: phase.isFailed ? "Retry apply" : "Apply now",
+                        state: isBusy ? .disabled : .normal,
                         accessibilityId: "settings-secrets-apply",
                         action: onApply
                     )
                     DesignTextButton(
                         title: "Dismiss",
+                        state: isBusy ? .disabled : .normal,
                         accessibilityId: "settings-secrets-notice-dismiss",
                         action: onDismiss
                     )

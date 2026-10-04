@@ -33,6 +33,7 @@ import MobileData
 @MainActor
 struct RootView: View {
     @EnvironmentObject private var appConfig: AppConfig
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showSetupOverride = false
     @State private var loginRevealed = false
     @StateObject private var startup: StartupReadinessCoordinator
@@ -50,16 +51,18 @@ struct RootView: View {
     var body: some View {
         ZStack {
             if !appConfig.isConfigured || showSetupOverride {
-                BackendSetupView(
-                    model: BackendSetupViewModel(
-                        existing: BackendConfigStore().load(),
-                        reconfigure: {
-                            push.navigation.clear()
-                            appConfig.reconfigure($0)
-                        }
-                    ),
-                    onSaved: { showSetupOverride = false }
-                )
+                NavigationStack {
+                    BackendSetupView(
+                        model: BackendSetupViewModel(
+                            existing: BackendConfigStore().load(),
+                            reconfigure: {
+                                push.navigation.clear()
+                                appConfig.reconfigure($0)
+                            }
+                        ),
+                        onSaved: { showSetupOverride = false }
+                    )
+                }
             } else if appConfig.startupAuthentication.permitsDraftShell {
                 UpdateGate(appConfig: appConfig)
                     .transition(.opacity)
@@ -90,14 +93,15 @@ struct RootView: View {
                     onAuthenticatedUser: { userId in
                         // PIN feedback has already completed. Start the shell now;
                         // the opacity handoff adds no extra pre-login hold.
-                        withAnimation(.easeInOut(duration: DesignV2.Motion.state)) {
+                        withAnimation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion)) {
                             appConfig.didLogin(authenticatedUserId: userId)
                         }
                     },
                     onConnect: {},
                     onInitialUsersResolved: { startup.rootDidResolve() },
                     onOpenBackendSetup: { showSetupOverride = true },
-                    isRevealed: loginRevealed
+                    isRevealed: loginRevealed,
+                    entryReason: appConfig.loginReason
                 )
                 .allowsHitTesting(!appConfig.hasToken)
                 .transition(.opacity)
@@ -110,6 +114,7 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: SplashLayout.fadeOut), value: startup.isCovering)
         .task(id: appConfig.configGeneration) {
             startup.begin()
             log.info("startup.begin generation=\(appConfig.configGeneration)")
@@ -130,10 +135,13 @@ struct RootView: View {
             guard !startup.isCovering else { return }
             do {
                 // Don't spend the landing animation underneath the splash fade.
-                try await Task.sleep(for: .seconds(SplashLayout.fadeOut))
+                if !reduceMotion { try await Task.sleep(for: .seconds(SplashLayout.fadeOut)) }
                 try Task.checkCancellation()
                 loginRevealed = true
             } catch { /* The next startup generation owns its own reveal. */ }
+        }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced && !startup.isCovering { loginRevealed = true }
         }
         .onChange(of: startup.isCovering) { _, covering in
             if !covering { log.info("startup.reveal") }

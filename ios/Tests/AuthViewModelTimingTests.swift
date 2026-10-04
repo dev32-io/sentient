@@ -28,6 +28,7 @@ struct AuthViewModelTimingTests {
         try await eventually { f.connections == 1 }
         #expect(f.tokens.saved == ["test-token"])
         #expect(f.names.load() == "Server name")
+        #expect(f.names.avatarTint == "sage", "Tint must come from authenticated response, not picker")
         #expect(f.identities == ["server-id"])
         #expect(!f.model.isSubmitting)
         // Commit goes straight to the auth callback: no third success/welcome hold.
@@ -180,7 +181,7 @@ private final class Fixture {
     )
     var success: AuthResult<AuthResponse> {
         AuthResultSuccess(value: AuthResponse(token: "test-token", user: AuthUser(
-            userId: "server-id", displayName: "Server name", role: "adult", isAdmin: false, avatarTint: "blue"
+            userId: "server-id", displayName: "Server name", role: "adult", isAdmin: false, avatarTint: "sage"
         )))
     }
     init() {
@@ -194,6 +195,7 @@ private final class Fixture {
     func expectUncommitted() {
         #expect(tokens.saved.isEmpty)
         #expect(names.load() == nil)
+        #expect(names.avatarTint.isEmpty)
         #expect(identities.isEmpty)
         #expect(connections == 0)
     }

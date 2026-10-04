@@ -9,11 +9,14 @@ struct VoiceCaptureControl: View {
     let talkMode: TalkMode
     let levels: [Float]
     let disabled: Bool
+    let captureFailureId: String?
     var permission: VoiceCapturePermission = .live
     let onHoldPresentationChanged: (Bool) -> Void
     let onIntent: (VoiceCaptureIntent) -> Void
 
     @State private var state: VoiceCaptureState = .idle
+    @ComposerReduceMotion private var reduceMotion
+    @State private var retainedLiveState: VoiceCaptureState?
     @State private var target: VoiceCaptureTarget = .send
     @State private var startedAt: Date?
     @State private var gestureActive = false
@@ -30,6 +33,7 @@ struct VoiceCaptureControl: View {
         talkMode: TalkMode,
         levels: [Float],
         disabled: Bool,
+        captureFailureId: String? = nil,
         permission: VoiceCapturePermission = .live,
         onHoldPresentationChanged: @escaping (Bool) -> Void,
         onIntent: @escaping (VoiceCaptureIntent) -> Void
@@ -37,6 +41,7 @@ struct VoiceCaptureControl: View {
         self.talkMode = talkMode
         self.levels = levels
         self.disabled = disabled
+        self.captureFailureId = captureFailureId
         self.permission = permission
         self.onHoldPresentationChanged = onHoldPresentationChanged
         self.onIntent = onIntent
@@ -55,9 +60,20 @@ struct VoiceCaptureControl: View {
             captureGesture: captureGesture,
             onActivate: activateForAccessibility,
             onStartAccessibleHold: beginAccessibleHold,
-            onTarget: completeHold
+            onTarget: completeHold,
+            retainedLiveState: retainedLiveState
         )
-        .onAppear { synchronize() }
+        .onAppear {
+            synchronize()
+            if captureFailureId != nil { presentCaptureFailure() }
+        }
+        .onChange(of: captureFailureId) { _, failure in
+            if failure != nil {
+                presentCaptureFailure()
+            } else if state == .failed {
+                synchronize()
+            }
+        }
         .onChange(of: talkMode) { _, _ in synchronize() }
         .onChange(of: disabled) { _, now in
             if now { lifecycleCancel() }
@@ -72,6 +88,10 @@ struct VoiceCaptureControl: View {
     private var captureGesture: VoiceCaptureGesture {
         VoiceCaptureGesture(
             onBegin: { sample in
+#if C_COMPOSER_FIXTURE
+                ComposerGestureProbe.shared.attempt += 1
+                ComposerGestureProbe.shared.record("begin", state: state, active: gestureActive)
+#endif
                 guard !disabled else { return }
                 physicalPressState.begin()
                 gestureProgress.begin(at: sample.locationInWindow)
@@ -83,11 +103,17 @@ struct VoiceCaptureControl: View {
                 }
             },
             onChange: { sample in
+#if C_COMPOSER_FIXTURE
+                ComposerGestureProbe.shared.record("change", state: state, active: gestureActive)
+#endif
                 guard gestureActive else { return }
                 gestureProgress.update(at: sample.locationInWindow)
                 if state == .hold { selectTarget(at: sample) }
             },
             onTerminate: { termination, sample in
+#if C_COMPOSER_FIXTURE
+                ComposerGestureProbe.shared.record("\(termination)", state: state, active: gestureActive)
+#endif
                 physicalPressState.end()
                 guard gestureActive else { return }
                 gestureProgress.update(at: sample.locationInWindow)
@@ -227,13 +253,28 @@ struct VoiceCaptureControl: View {
     }
 
     private func synchronize() {
-        setPresentationState(VoiceCaptureReducer.authority(talkMode, disabled: disabled))
-        captureNeedsCancellation = talkMode != .idle && !disabled
-        if state == .idle || state == .disabled {
+        let authority = VoiceCaptureReducer.authority(talkMode, disabled: disabled)
+        setPresentationState(authority != .disabled && captureFailureId != nil ? .failed : authority)
+        captureNeedsCancellation = captureFailureId == nil && talkMode != .idle && !disabled
+        if state == .idle || state == .disabled || state == .failed {
             gestureActive = false
             gestureProgress.reset()
             physicalPressState.end()
         }
+    }
+
+    private func presentCaptureFailure() {
+        // Presentation only: shared authority already discarded the failed capture.
+        captureNeedsCancellation = false
+        gestureActive = false
+        gestureProgress.reset()
+        physicalPressState.end()
+        setPresentationState(disabled ? .disabled : .failed)
+        announce(VoiceCapturePresentationState(state: .failed, disabled: disabled).failureMessage)
+#if C_COMPOSER_FIXTURE
+        ComposerGestureProbe.shared.record("failure-applied", state: state, active: gestureActive)
+        ComposerGestureProbe.shared.onFailureApplied?()
+#endif
     }
 
     private func lifecycleCancel() {
@@ -252,8 +293,17 @@ struct VoiceCaptureControl: View {
     }
 
     private func setPresentationState(_ next: VoiceCaptureState) {
-        state = next
-        onHoldPresentationChanged(next == .hold && !disabled)
+        // Animate the state write, not only the leaf: ancestor Layout placement
+        // and the pod's dimensions must share one transaction and anchor.
+        withAnimation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.36)) {
+            if next == .hold || next == .auto { retainedLiveState = next }
+            else if next != .transitioning { retainedLiveState = nil }
+            state = next
+            let presentation = VoiceCapturePresentationState(
+                state: next, disabled: disabled, retainedLiveState: retainedLiveState
+            )
+            onHoldPresentationChanged(presentation.isHolding)
+        }
     }
 
     private func announce(_ text: String) {

@@ -6,6 +6,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
@@ -13,6 +14,8 @@ import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -126,6 +129,49 @@ class ProfileHttpClientTest {
         assertIs<AuthResult.Success<ProfileV1>>(result)
         assertNull(result.value.tools.permissions, "absent permissions must decode as null (never set), not throw")
         assertNull(result.value.tools.toolsets)
+        assertEquals(ProfileMemory(spark = true, dreaming = true), result.value.memory)
+    }
+
+    @Test
+    fun profileEdits_preserveEveryUneditedWireFieldIncludingMemory() = runTest {
+        val edits: List<Pair<String, (ProfileV1) -> ProfileV1>> = listOf(
+            "audio" to { it.copy(audio = it.audio.copy(ttsEnabled = false)) },
+            "model" to { it.copy(model = it.model.copy(id = "other-model")) },
+            "advanced" to { it.copy(advanced = it.advanced.copy(maxTokens = 2048)) },
+            "voice" to { it.copy(voice = it.voice.copy(id = "other-voice")) },
+            "tools" to { it.copy(tools = it.tools.copy(toolsets = listOf("memory"))) },
+        )
+        for (spark in listOf(false, true)) for (dreaming in listOf(false, true)) {
+            val original = JsonObject(Json.parseToJsonElement(PROFILE_JSON).jsonObject + mapOf(
+                "memory" to Json.parseToJsonElement("""{"spark":$spark,"dreaming":$dreaming}"""),
+                "auxiliaryModels" to Json.parseToJsonElement("""{
+                    "title":{"provider":"custom","id":"title"},
+                    "dreamer":{"provider":"custom","id":"dreamer"},
+                    "attachmentVision":{"provider":"custom","id":"vision"}
+                }"""),
+            ))
+            for ((changedField, edit) in edits) {
+                var sent: JsonObject? = null
+                val engine = MockEngine { req ->
+                    if (req.method == HttpMethod.Put) {
+                        val body = req.body.toByteArray().decodeToString()
+                        sent = Json.parseToJsonElement(body).jsonObject
+                        respond(body, HttpStatusCode.OK, JSON_HEADERS)
+                    } else {
+                        respond(original.toString(), HttpStatusCode.OK, JSON_HEADERS)
+                    }
+                }
+                val client = profileClient(engine)
+                val loaded = assertIs<AuthResult.Success<ProfileV1>>(client.getMe()).value
+                val saved = client.updateMe(edit(loaded).toPutBody())
+                assertIs<AuthResult.Success<ProfileV1>>(saved)
+                val wire = requireNotNull(sent)
+                assertEquals(original.filterKeys { it != changedField }, wire.filterKeys { it != changedField },
+                    "$changedField edit must preserve unrelated fields ($spark/$dreaming)")
+                assertTrue(original[changedField] != wire[changedField], "edit must reach the wire")
+                assertEquals(edit(loaded), saved.value, "saved full profile must round-trip")
+            }
+        }
     }
 
     @Test

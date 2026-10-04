@@ -1,9 +1,68 @@
 import XCTest
 import MobileData
 import UIKit
+import SwiftUI
+import SnapshotTesting
 @testable import SentientApp
 
 final class DesignFoundationV2Tests: XCTestCase {
+    @MainActor
+    func testRaisedCanvasUsesPaddingBoxGradientsAtNativeSizes() throws {
+        let view = ZStack(alignment: .topLeading) {
+            Color.clear
+            DesignCanvasKernel(shape: .roundedRectangle(cornerRadius: 7), role: .action, state: .rest)
+                .frame(width: 107.5, height: 40).offset(x: 20, y: 20)
+            DesignCanvasKernel(shape: .roundedRectangle(cornerRadius: 7), role: .action, state: .rest)
+                .frame(width: 44, height: 44).offset(x: 20, y: 100)
+            DesignCanvasKernel(shape: .capsule, role: .quiet, state: .disabled)
+                .frame(width: 100, height: 30).offset(x: 20, y: 180)
+        }.frame(width: 200, height: 240)
+        let controller = UIHostingController(rootView: view)
+        controller.view.backgroundColor = .clear
+        let traits = UITraitCollection { $0.displayScale = 2 }
+        let strategy = Snapshotting<UIViewController, UIImage>.image(size: CGSize(width: 200, height: 240), traits: traits)
+        let rendered = expectation(description: "Raised Canvas rendering")
+        var result: UIImage?
+        strategy.snapshot(controller).run { result = $0; rendered.fulfill() }
+        wait(for: [rendered], timeout: 10)
+        let image = try XCTUnwrap(result)
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
+        try pixels.withUnsafeMutableBytes { bytes in
+            let context = try XCTUnwrap(CGContext(
+                data: bytes.baseAddress, width: cgImage.width, height: cgImage.height,
+                bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        }
+        // Independent CSS Color 4 Oklab evaluation at pixel centers (2x).
+        // Position box is W-2 by H-2, ellipse 82%/105% at 50%/52%; source-over
+        // remains sRGB. One byte allows native raster/8-bit rounding, not tuning.
+        // Cover wide and square three-stop faces plus the muted capsule fade.
+        let samples: [(Int, Int, [Double])] = [
+            (60, 48, [233.3542, 156.4327, 105.6973]),
+            (147, 81, [196.4395, 131.9286, 89.5417]),
+            (65, 100, [223.4033, 148.7633, 99.6455]),
+            (48, 244, [222.2295, 148.2219, 99.5131]),
+            (60, 208, [224.4495, 150.1331, 101.1825]),
+            (115, 265, [221.7211, 147.6984, 98.9928]),
+            (64, 390, [54.8903, 48.4810, 42.8534]),
+            (140, 390, [52.4125, 46.1969, 40.8078]),
+        ]
+        XCTAssertEqual(cgImage.width, 400)
+        XCTAssertEqual(cgImage.height, 480)
+        for (x, y, expected) in samples {
+            let offset = (y * cgImage.width + x) * 4
+            XCTAssertEqual(pixels[offset + 3], 255)
+            for channel in 0..<3 {
+                XCTAssertEqual(Double(pixels[offset + channel]), expected[channel], accuracy: 1,
+                               "Raised face at (\(x), \(y)), channel \(channel)")
+            }
+        }
+    }
+
     func testKMPContractIdentityAndLockedProjection() {
         XCTAssertEqual(DesignV2.version, "2.0.0")
         XCTAssertEqual(DesignV2.contractSha256, "12c9be6961247345caa3330a6f1b1224d07560be7255f1aa9bdbd9e8ecb01d2a")
@@ -113,19 +172,20 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertTrue(projections.allSatisfy { $0.contractRecipe == $0.role.contractRecipe })
     }
 
-    func testTypographyAdapterUsesGeneratedFamilyRoles() {
+    func testTypographyAdapterUsesUIFaceForNativeDisplayRoles() {
         func firstFamily(_ fallbackList: String) -> String {
             fallbackList.split(separator: ",", maxSplits: 1).first.map {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines)
             } ?? fallbackList
         }
 
-        XCTAssertEqual(DesignTypographyAdapter.displayFamily, firstFamily(MobileData.Fonts_.shared.display))
+        XCTAssertEqual(DesignTypographyAdapter.displayFamily, firstFamily(MobileData.Fonts_.shared.ui))
         XCTAssertEqual(DesignTypographyAdapter.uiFamily, firstFamily(MobileData.Fonts_.shared.ui))
         XCTAssertEqual(DesignTypographyAdapter.uiMediumFace, "DMSans-Medium")
         XCTAssertNotNil(UIFont(name: DesignTypographyAdapter.uiMediumFace, size: DesignMetrics.controlLabelSize))
         XCTAssertEqual(DesignTypographyAdapter.monoFamily, firstFamily(MobileData.Fonts_.shared.mono))
-        XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.displayFamily)
+        XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.uiFamily)
+        XCTAssertEqual(DesignTextRole.display.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.caption.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.body.family, DesignTypographyAdapter.uiFamily)

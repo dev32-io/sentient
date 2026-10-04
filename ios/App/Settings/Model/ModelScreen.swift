@@ -8,8 +8,7 @@
 // this pass — the JsonPrimitive `.content` SKIE bridge is unverified and price is
 // not on the parity E2E path; id + context + caps carry the single-select intent.
 //
-// The shared apply bar receives this screen's dirty/save actions; discard and
-// dirty-back still use the existing native confirmation and navigation seam.
+// Discard restores drafts in place; Back separately confirms dirty navigation.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -21,7 +20,6 @@ private let providerLabels: [String: String] = [
 ]
 
 struct ModelScreen: View {
-    let settings: SettingsComponent
     let onBack: () -> Void
     let auxiliaryOnly: Bool
 
@@ -29,12 +27,17 @@ struct ModelScreen: View {
 
     @State private var vm: ModelViewModel
     @State private var showDiscard = false
+    @State private var mutationTask: Task<Void, Never>?
+    @State private var choosingRunner: ModelViewModel.AuxiliaryRunner?
 
     init(settings: SettingsComponent, auxiliaryOnly: Bool = false, onBack: @escaping () -> Void) {
-        self.settings = settings
+        self.init(viewModel: ModelViewModel(settings: settings), auxiliaryOnly: auxiliaryOnly, onBack: onBack)
+    }
+
+    init(viewModel: ModelViewModel, auxiliaryOnly: Bool = false, onBack: @escaping () -> Void) {
         self.auxiliaryOnly = auxiliaryOnly
         self.onBack = onBack
-        _vm = State(initialValue: ModelViewModel(settings: settings))
+        _vm = State(initialValue: viewModel)
     }
 
     private var providerSegments: [SegmentOption] {
@@ -49,53 +52,69 @@ struct ModelScreen: View {
     var body: some View {
         SettingsPageScaffold(
             title: auxiliaryOnly ? "Auxiliary runners" : "Model", screenId: "\(accessibilityPrefix)-screen",
-            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty,
+            onBack: attemptBack, allowsInteractiveBack: !vm.isDirty && !vm.isApplying,
             backAccessibilityId: "\(accessibilityPrefix)-back"
         ) {
+            if vm.hasPendingApply && vm.phase == .ready && !vm.isDirty {
+                AsyncNotice(kind: .warning, title: "Profile saved; application unresolved",
+                            detail: "Retry applies the saved profile without saving it again.") {
+                    runMutation { await vm.retryApply() }
+                }
+            }
             switch vm.phase {
             case .loading:
-                SoulLoadingRow()
+                SoulLoadingRow(title: auxiliaryOnly ? "Loading auxiliary runners" : "Loading models")
             case .failed(let message):
                 AsyncNotice(kind: .error, title: "Couldn't load models", detail: message) {
-                    Task { await vm.load() }
+                    runMutation { await vm.load() }
                 }
             case .ready:
                 if auxiliaryOnly {
                     auxiliaryRunners
                 } else {
                     selectedModel
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        browseControls
-                        modelList
-                    }
+                    modelBrowser(for: nil)
                 }
             }
         }
+        .disabled(vm.isApplying)
         .designApplyBarDock(
             isDirty: vm.isDirty,
             state: applyState,
             discardAccessibilityId: "\(accessibilityPrefix)-discard",
             applyAccessibilityId: "\(accessibilityPrefix)-save",
-            onDiscard: attemptBack,
-            onApply: { Task { await vm.save() } }
+            onDiscard: vm.discard,
+            onApply: { runMutation { await vm.save() } }
         )
         .task { await vm.load() }
+        .onDisappear { mutationTask?.cancel() }
+        .sheet(isPresented: Binding(get: { choosingRunner != nil }, set: { if !$0 { choosingRunner = nil } })) {
+            if let runner = choosingRunner {
+                NavigationStack {
+                    ScrollView { modelBrowser(for: runner).padding(Space.lg) }
+                        .background(DuskColors.bg)
+                        .navigationTitle("Choose \(runner.title) model")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { choosingRunner = nil }
+                            }
+                        }
+                        .duskTheme()
+                }
+            }
+        }
         .confirmationDialog("Discard changes?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { onBack() }
+            Button("Discard", role: .destructive) {
+                guard !vm.isApplying else { return }
+                vm.discard()
+                onBack()
+            }
             Button("Keep editing", role: .cancel) {}
         }
     }
 
-    private var applyState: DesignApplyState {
-        switch vm.save {
-        case .idle: .idle
-        case .saving: .saving
-        case .restarting: .restarting
-        case .alreadyApplying: .alreadyApplying
-        case .applied: .applied
-        case .failed(let message): .failed(message)
-        }
-    }
+    private var applyState: DesignApplyState { vm.save }
 
     private var selectedModel: some View {
         let entry = vm.models.first { $0.id == vm.draftModelId && $0.provider == vm.draftProvider }
@@ -145,41 +164,36 @@ struct ModelScreen: View {
 
     private func auxiliaryRow(_ runner: ModelViewModel.AuxiliaryRunner) -> some View {
         let selection = vm.auxiliarySelection(for: runner)
-        let options = vm.auxiliaryOptions(for: runner)
-        return DesignCard(bodyStyle: .padded) {
-            HStack(alignment: .center, spacing: Space.md) {
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    Text(runner.title)
-                        .designText(.label)
-                        .fontWeight(.medium)
-                        .foregroundStyle(DuskColors.ink)
-                    Text(selection?.id ?? runner.defaultLabel)
-                        .designText(.supporting)
-                        .foregroundStyle(DuskColors.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: Space.sm)
-                Menu {
-                    Button(runner.defaultLabel) { vm.selectAuxiliary(nil, for: runner) }
-                    if !options.isEmpty { Divider() }
-                    ForEach(options, id: \.id) { entry in
-                        Button {
-                            vm.selectAuxiliary(entry, for: runner)
-                        } label: {
-                            if selection?.id == entry.id && selection?.provider == entry.provider {
-                                Label(entry.id, systemImage: "checkmark")
-                            } else {
-                                Text(entry.id)
-                            }
-                        }
+        return DesignCard(bodyStyle: .settingsGroup) {
+            DesignSettingsRow(title: runner.title, detail: selection?.id ?? runner.defaultLabel) {
+                CenteredFlowLayout(spacing: Space.sm, alignment: .trailing) {
+                    DesignActionButton(
+                        title: "Choose", role: .quiet,
+                        state: vm.isApplying ? .disabled : .normal,
+                        accessibilityId: "settings-model-auxiliary-\(runner.accessibilityKey)",
+                        fillsWidth: false
+                    ) {
+                        guard !vm.isApplying else { return }
+                        vm.browseProvider = vm.draftProvider
+                        vm.query = ""
+                        choosingRunner = runner
                     }
-                } label: {
-                    Label("Choose", systemImage: "chevron.up.chevron.down")
-                        .designText(.supporting)
+                    DesignActionButton(
+                        title: "Reset", role: .quiet,
+                        state: selection != nil && !vm.isApplying ? .normal : .disabled,
+                        accessibilityId: "settings-model-auxiliary-\(runner.accessibilityKey)-reset",
+                        fillsWidth: false,
+                        action: { vm.selectAuxiliary(nil, for: runner) }
+                    )
                 }
-                .accessibilityLabel("Choose model for \(runner.title)")
-                .accessibilityIdentifier("settings-model-auxiliary-\(runner.accessibilityKey)")
             }
+        }
+    }
+
+    private func modelBrowser(for runner: ModelViewModel.AuxiliaryRunner?) -> some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            browseControls
+            modelList(for: runner)
         }
     }
 
@@ -190,7 +204,7 @@ struct ModelScreen: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(DuskColors.ink)
                 .accessibilityAddTraits(.isHeader)
-            if providerSegments.count > 1 {
+            if choosingRunner == nil && providerSegments.count > 1 {
                 DesignSegmentedPicker(
                     title: "Model provider",
                     options: providerSegments.map { (value: $0.id, label: $0.label) },
@@ -205,7 +219,7 @@ struct ModelScreen: View {
             )
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-            Text("\(vm.filtered.count) results · \(providerLabels[vm.browseProvider] ?? vm.browseProvider)")
+            Text("\(browseModels(for: choosingRunner).count) results · \(providerLabels[vm.browseProvider] ?? vm.browseProvider)")
                 .designText(.supporting)
                 .foregroundStyle(DuskColors.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -213,8 +227,8 @@ struct ModelScreen: View {
     }
 
     @ViewBuilder
-    private var modelList: some View {
-        let list = vm.filtered
+    private func modelList(for runner: ModelViewModel.AuxiliaryRunner?) -> some View {
+        let list = browseModels(for: runner)
         if list.isEmpty {
             Text("No models match. Try another model ID or provider.")
                 .designText(.supporting)
@@ -226,15 +240,40 @@ struct ModelScreen: View {
                 ForEach(list, id: \.id) { entry in
                     ModelCard(
                         entry: entry,
-                        isSelected: entry.id == vm.draftModelId && entry.provider == vm.draftProvider,
-                        onTap: { vm.select(entry) }
+                        isSelected: runner.map { vm.auxiliarySelection(for: $0) == AuxiliaryModelSelection(provider: entry.provider, id: entry.id) }
+                            ?? (entry.id == vm.draftModelId && entry.provider == vm.draftProvider),
+                        onTap: {
+                            guard !vm.isApplying else { return }
+                            if let runner {
+                                vm.selectAuxiliary(entry, for: runner)
+                                choosingRunner = nil
+                            } else {
+                                vm.select(entry)
+                            }
+                        }
                     )
                 }
             }
         }
     }
 
+    private func browseModels(for runner: ModelViewModel.AuxiliaryRunner?) -> [ModelEntry] {
+        guard let runner else { return vm.filtered }
+        return vm.auxiliaryOptions(for: runner).filter {
+            vm.query.isEmpty || $0.id.localizedCaseInsensitiveContains(vm.query)
+        }
+    }
+
+    private func runMutation(_ operation: @escaping @MainActor () async -> Void) {
+        guard mutationTask == nil else { return }
+        mutationTask = Task {
+            await operation()
+            mutationTask = nil
+        }
+    }
+
     private func attemptBack() {
+        guard !vm.isApplying else { return }
         if vm.isDirty { showDiscard = true } else { onBack() }
     }
 }

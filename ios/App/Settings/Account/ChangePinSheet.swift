@@ -17,6 +17,8 @@ struct ChangePinSheet: View {
 
     @State private var current = ""
     @State private var newPin = ""
+    @State private var submitting = false
+    private var busy: Bool { saving || submitting }
     @Environment(\.dismiss) private var dismiss
 
     private var validation: String? { pinChangeValidationError(current: current, newPin: newPin) }
@@ -36,7 +38,8 @@ struct ChangePinSheet: View {
                         text: sanitized($current),
                         accessibilityId: "settings-account-pin-current",
                         keyboard: .numberPad,
-                        autoFocus: true
+                        autoFocus: true,
+                        isEnabled: !busy
                     )
                     DesignMaskedField(
                         title: "New PIN",
@@ -44,7 +47,8 @@ struct ChangePinSheet: View {
                         text: sanitized($newPin),
                         error: current.count == accountPinLength ? validation : nil,
                         accessibilityId: "settings-account-pin-new",
-                        keyboard: .numberPad
+                        keyboard: .numberPad,
+                        isEnabled: !busy
                     )
                     if let error {
                         AsyncNotice(kind: .error, title: "Couldn't change PIN", detail: error)
@@ -59,19 +63,26 @@ struct ChangePinSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { if !busy { dismiss() } }
+                        .disabled(busy)
                         .accessibilityIdentifier("settings-account-pin-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Update") {
-                        Task { if await onSubmit(current, newPin) { dismiss() } }
+                        guard !busy else { return }
+                        submitting = true
+                        Task {
+                            defer { submitting = false }
+                            if await onSubmit(current, newPin) { dismiss() }
+                        }
                     }
-                    .disabled(validation != nil || saving)
+                    .disabled(validation != nil || busy)
                     .accessibilityIdentifier("settings-account-pin-submit")
                 }
             }
             .duskTheme()
         }
+        .interactiveDismissDisabled(busy)
     }
 
     private func sanitized(_ binding: Binding<String>) -> Binding<String> {

@@ -17,7 +17,7 @@ struct UpdateBanner: View {
                     .foregroundStyle(DuskColors.ink)
                 Text("Version \(versionName)")
                     .designText(.supporting)
-                    .foregroundStyle(DuskColors.ink3)
+                    .foregroundStyle(DuskColors.ink2)
             }
             Spacer(minLength: Space.sm)
             DesignActionButton(
@@ -26,13 +26,8 @@ struct UpdateBanner: View {
                 fillsWidth: false,
                 action: onUpdate
             )
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss update")
-            .accessibilityIdentifier("update-banner-dismiss")
+            DesignIconButton(systemName: "xmark", label: "Dismiss update",
+                             accessibilityId: "update-banner-dismiss", action: onDismiss)
         }
         .padding(Space.md)
         .designFloat()

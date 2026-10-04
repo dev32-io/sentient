@@ -210,7 +210,7 @@ struct DesignButtonStyle: ButtonStyle {
                 DesignCanvasKernel.transitionAnimation(for: projection.state.isPressed ? .press : .pressRelease, reduceMotion: reduceMotion),
                 value: projection.state.isPressed
             )
-            .frame(minHeight: geometry.semanticHeight)
+            .frame(minWidth: DesignMetrics.minimumTarget, minHeight: geometry.semanticHeight)
             .contentShape(Rectangle())
     }
 }

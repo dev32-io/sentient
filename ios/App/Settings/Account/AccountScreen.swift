@@ -2,9 +2,11 @@ import SwiftUI
 import MobileData
 
 struct AccountScreen: View {
+    private let onBack: () -> Void
     @State private var vm: AccountViewModel
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
+        self.onBack = onBack
         _vm = State(initialValue: AccountViewModel(account: settings.account))
     }
 
@@ -23,7 +25,8 @@ struct AccountScreen: View {
             onSaveName: { await vm.saveName() },
             onOpenPin: { vm.openPinSheet() },
             onClosePin: { vm.closePinSheet() },
-            onChangePin: { current, new in await vm.changePin(current: current, new: new) }
+            onChangePin: { current, new in await vm.changePin(current: current, new: new) },
+            onBack: onBack
         )
         .task { await vm.load() }
     }
@@ -43,9 +46,14 @@ private struct AccountBody: View {
     let onOpenPin: () -> Void
     let onClosePin: () -> Void
     let onChangePin: (String, String) async -> Bool
+    var onBack: (() -> Void)? = nil
 
     var body: some View {
-        SettingsPageScaffold(title: "Account", screenId: "settings-account-screen") {
+        SettingsPageScaffold(
+            title: "Account", screenId: "settings-account-screen",
+            onBack: { if nameSave != .saving && !pinSaving { onBack?() } },
+            allowsInteractiveBack: nameSave != .saving && !pinSaving
+        ) {
             loadNotice
             if loadState == .ready {
                 HStack(alignment: .top, spacing: Space.md) {
@@ -67,9 +75,9 @@ private struct AccountBody: View {
                         prompt: "Your name",
                         text: $name,
                         error: saveError,
-                        accessibilityId: "settings-account-name"
+                        accessibilityId: "settings-account-name",
+                        isEnabled: nameSave != .saving
                     )
-                    .disabled(nameSave == .saving)
                     saveFeedback
                 }
 
@@ -82,6 +90,7 @@ private struct AccountBody: View {
                 }
             }
         }
+        .disabled(nameSave == .saving)
         .sheet(isPresented: $pinSheetOpen, onDismiss: onClosePin) {
             ChangePinSheet(saving: pinSaving, error: pinError, onSubmit: onChangePin)
                 .presentationDetents([.medium, .large])

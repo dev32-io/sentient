@@ -15,6 +15,8 @@ struct MessageList: View {
     var pendingAttachmentTransfers: [String: AttachmentTransferState] = [:]
     var pendingAttachmentPresentations: [String: PendingAttachmentPresentation] = [:]
     var onRetryAttachmentUpload: (String) -> Void = { _ in }
+    var onEditPendingAttachment: (String, String) -> Void = { _, _ in }
+    var onCancelPendingAttachment: (String, String) -> Void = { _, _ in }
     var attachmentPreviews: [String: UIImage] = [:]
     var attachmentPreviewFailures: Set<String> = []
     // Retained as row revision inputs for existing collection callers; export UI
@@ -27,6 +29,9 @@ struct MessageList: View {
     var historyLoading = false
     /// Height covered by floating composer/task group while collection remains full-height.
     var bottomOcclusion: CGFloat = 0
+    /// Total clearance from drawable top; nil means overlay measurement is pending.
+    /// Zero keeps standalone lists ready without an overlay.
+    var topOcclusion: CGFloat? = 0
     /// `true` for a routed existing session, `false` for a new conversation.
     /// `nil` preserves legacy direct-call inference for previews and fixtures.
     var initialExistingHistory: Bool? = nil
@@ -36,6 +41,7 @@ struct MessageList: View {
 
     @Environment(\.sentientIdentityPlaybackEnabled) private var playbackEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.chatUserAvatarTint) private var userTint
     @Environment(\.locale) private var locale
     @Environment(\.layoutDirection) private var layoutDirection
 
@@ -48,10 +54,12 @@ struct MessageList: View {
                 rows: layoutRows(for: chronology),
                 messageCount: chronology.messageCount,
                 userName: userName,
+                userTint: userTint,
                 historyLoading: historyLoading,
                 initialExistingHistory: initialExistingHistory,
                 playbackEnabled: playbackEnabled,
                 bottomOcclusion: bottomOcclusion,
+                topOcclusion: topOcclusion,
                 environmentRevision: "\(dynamicTypeSize)|\(locale.identifier)|\(layoutDirection)",
                 attachmentPreviews: attachmentPreviews,
                 attachmentPreviewFailures: attachmentPreviewFailures,
@@ -62,6 +70,8 @@ struct MessageList: View {
                 onRetry: onRetry,
                 onPreviewAttachment: onPreviewAttachment,
                 onRetryAttachmentUpload: onRetryAttachmentUpload,
+                onEditPendingAttachment: onEditPendingAttachment,
+                onCancelPendingAttachment: onCancelPendingAttachment,
                 onVisibleAttachmentPreviewIdsChange: onVisibleAttachmentPreviewIdsChange,
                 onMeasurementLoadingChange: onMeasurementLoadingChange
             )

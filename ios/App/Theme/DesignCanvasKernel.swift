@@ -304,14 +304,15 @@ struct DesignCanvasSurfaceRecipe {
     let tier: DesignCanvasSurfaceTier
     let increasedContrast: Bool
     let shadowProjection: DesignMaterialNativeProjection
-    let face: Color
+    var face: Color
     let insideBorder: Color
     let insideBorderLineWidth: CGFloat
     let topLight: Color
-    let topLightOpacity: Double
-    let contact: DesignCanvasShadowRecipe
-    let cast: DesignCanvasShadowRecipe
+    var topLightOpacity: Double
+    var contact: DesignCanvasShadowRecipe
+    var cast: DesignCanvasShadowRecipe
     let emberCast: DesignCanvasShadowRecipe?
+    var pressedInnerOcclusionOpacity: Double = 0
 
     static func make(
         tier: DesignCanvasSurfaceTier,
@@ -367,6 +368,33 @@ struct DesignCanvasSurfaceRecipe {
                 : nil
         )
     }
+    /// Reviewed media-card face tension, without promoting the card to a float.
+    static func mediaCard(state: DesignCanvasControlState, increasedContrast: Bool) -> Self {
+        var recipe = make(tier: .plate, increasedContrast: increasedContrast)
+        let hovered = state.isHovered && !state.isDisabled
+        let pressed = state.isPressed && !state.isDisabled
+        recipe.face = DuskColors.paper.overlaying(hovered ? DuskColors.bgSunk : DuskColors.bgElev,
+                                                  opacity: hovered ? 0.18 : 0.12)
+        if hovered {
+            recipe.topLightOpacity = 0.04
+            recipe.contact = DesignCanvasShadowRecipe(color: DuskColors.bgSunk, opacity: 1,
+                geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1))
+            recipe.cast = DesignCanvasShadowRecipe(color: .black, opacity: 0.94,
+                geometry: DesignDropShadowGeometry(radius: 28, y: 18, sourceInset: 23))
+        }
+        if pressed {
+            recipe.topLightOpacity = 0
+            recipe.contact = DesignCanvasShadowRecipe(
+                color: DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10), opacity: 1,
+                geometry: DesignDropShadowGeometry(radius: 0, y: 1, sourceInset: 1))
+            recipe.cast = DesignCanvasShadowRecipe(color: .black,
+                opacity: DesignMaterialAdapter.slatePressedBlack,
+                geometry: DesignMaterialShadowGeometry.slatePressed)
+            recipe.pressedInnerOcclusionOpacity = DesignMaterialAdapter.slatePressedInsetOpacity
+        }
+        return recipe
+    }
+
 }
 
 /// Pure receiving-surface projection. It contains no content, responder, or
@@ -886,6 +914,11 @@ enum DesignCanvasGeometry {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
+    /// CSS outline-offset measures to the inner edge, not the stroke center.
+    static func outsideFocusInset(lineWidth: CGFloat) -> CGFloat {
+        DesignMetrics.focusBorderInset - lineWidth / 2
+    }
+
     static func insideStrokePathInset(lineWidth: CGFloat = DesignMetrics.hairline) -> CGFloat {
         lineWidth / 2
     }
@@ -937,12 +970,13 @@ struct DesignCanvasSurfaceKernel: View {
     let shape: DesignCanvasShape
     let tier: DesignCanvasSurfaceTier
     var increasedContrast = false
+    var recipeOverride: DesignCanvasSurfaceRecipe? = nil
 
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         GeometryReader { proxy in
-            let recipe = DesignCanvasSurfaceRecipe.make(
+            let recipe = recipeOverride ?? DesignCanvasSurfaceRecipe.make(
                 tier: tier,
                 increasedContrast: increasedContrast
             )
@@ -961,6 +995,14 @@ struct DesignCanvasSurfaceKernel: View {
                 let facePath = shape.path(in: faceRect)
                 for pass in DesignCanvasSurfacePass.ordered {
                     draw(pass, in: &context, faceRect: faceRect, facePath: facePath, recipe: recipe)
+                }
+                if recipe.pressedInnerOcclusionOpacity > 0 {
+                    DesignCanvasEffects.insetShadow(
+                        in: &context, facePath: facePath, sourcePath: facePath,
+                        color: DuskColors.bgSunk.opacity(recipe.pressedInnerOcclusionOpacity),
+                        blur: DesignMaterialAdapter.slatePressedInsetBlur,
+                        y: DesignMaterialAdapter.slatePressedInsetY
+                    )
                 }
             }
             .frame(width: fieldSize.width, height: fieldSize.height)
@@ -1154,11 +1196,14 @@ struct DesignCanvasKernel: View, Animatable {
         case .contact:
             drawShadow(recipe.contact, in: &context, faceRect: faceRect)
         case .linearFace:
-            context.fill(facePath, with: .linearGradient(
-                Gradient(colors: [recipe.linearTop, recipe.linearBottom]),
-                startPoint: CGPoint(x: faceRect.midX, y: faceRect.minY),
-                endPoint: CGPoint(x: faceRect.midX, y: faceRect.maxY)
-            ))
+            // CSS positions backgrounds in the padding box but paints through
+            // the border box. ShapeStyle preserves perceptual spatial mixing.
+            let paddingRect = faceRect.insetBy(dx: DesignMetrics.hairline, dy: DesignMetrics.hairline)
+            context.fill(facePath, with: .style(.linearGradient(
+                Gradient(colors: [recipe.linearTop, recipe.linearBottom]).colorSpace(.perceptual),
+                startPoint: .top,
+                endPoint: .bottom
+            ).in(paddingRect)))
         case .radialConcavity:
             drawRadial(in: &context, faceRect: faceRect, facePath: facePath, recipe: recipe)
         case .insideBorder:
@@ -1187,7 +1232,7 @@ struct DesignCanvasKernel: View, Animatable {
         case .focusRing:
             if recipe.focusOpacity > 0 {
                 context.stroke(
-                    shape.path(in: faceRect, inset: DesignMetrics.focusBorderInset),
+                    shape.path(in: faceRect, inset: DesignCanvasGeometry.outsideFocusInset(lineWidth: recipe.focusLineWidth)),
                     with: .color(recipe.focusRing.opacity(recipe.focusOpacity)),
                     lineWidth: recipe.focusLineWidth
                 )
@@ -1219,13 +1264,14 @@ struct DesignCanvasKernel: View, Animatable {
     ) {
         var radial = context
         radial.clip(to: facePath)
+        let paddingRect = faceRect.insetBy(dx: DesignMetrics.hairline, dy: DesignMetrics.hairline)
         let center = CGPoint(
-            x: faceRect.minX + faceRect.width * DesignMaterialAdapter.slateRadialCenterX,
-            y: faceRect.minY + faceRect.height * DesignMaterialAdapter.slateRadialCenterY
+            x: paddingRect.minX + paddingRect.width * DesignMaterialAdapter.slateRadialCenterX,
+            y: paddingRect.minY + paddingRect.height * DesignMaterialAdapter.slateRadialCenterY
         )
         let radius = CGSize(
-            width: faceRect.width * DesignMaterialAdapter.slateRadialScale.width,
-            height: faceRect.height * DesignMaterialAdapter.slateRadialScale.height
+            width: paddingRect.width * DesignMaterialAdapter.slateRadialScale.width,
+            height: paddingRect.height * DesignMaterialAdapter.slateRadialScale.height
         )
         guard radius.width > 0, radius.height > 0 else { return }
 
@@ -1249,12 +1295,12 @@ struct DesignCanvasKernel: View, Animatable {
         radial.scaleBy(x: radius.width, y: radius.height)
         radial.fill(
             Path(CGRect(x: -1, y: -1, width: 2, height: 2)),
-            with: .radialGradient(
-                Gradient(stops: stops),
-                center: .zero,
+            with: .style(.radialGradient(
+                Gradient(stops: stops).colorSpace(.perceptual),
+                center: .center,
                 startRadius: DesignMaterialAdapter.slateRadialStartRadiusFraction,
                 endRadius: DesignMaterialAdapter.slateRadialEndRadiusFraction
-            )
+            ).in(CGRect(x: -1, y: -1, width: 2, height: 2)))
         )
     }
 
@@ -1749,14 +1795,14 @@ struct DesignCanvasToggleGeometry: Equatable {
             max(0, min(bounds.width, bounds.height))
         )
         let knobX = bounds.minX
-            + DesignMaterialAdapter.toggleKnobInset
+            + DesignMetrics.hairline + DesignMaterialAdapter.toggleKnobInset
             + DesignMetrics.toggleTravel * resolved
         return DesignCanvasToggleGeometry(
             resolvedOnAmount: resolved,
             trackRect: bounds,
             knobRect: CGRect(
                 x: knobX,
-                y: bounds.minY + DesignMaterialAdapter.toggleKnobInset,
+                y: bounds.minY + DesignMetrics.hairline + DesignMaterialAdapter.toggleKnobInset,
                 width: knobSize,
                 height: knobSize
             )
@@ -2953,7 +2999,7 @@ struct DesignCanvasSmallControlKernel: View, Animatable {
             case .focusRing:
                 guard recipe.focusOpacity > 0 else { continue }
                 context.stroke(
-                    shape.path(in: faceRect, inset: DesignMetrics.focusBorderInset),
+                    shape.path(in: faceRect, inset: DesignCanvasGeometry.outsideFocusInset(lineWidth: recipe.focusLineWidth)),
                     with: .color(recipe.focusRing.opacity(recipe.focusOpacity)),
                     lineWidth: recipe.focusLineWidth
                 )

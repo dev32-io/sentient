@@ -30,6 +30,11 @@ import MobileData
 /// Neutral display-name fallback before login persists a real name.
 private let defaultDisplayName = "You"
 
+enum LoginEntryReason: Equatable {
+    case expired
+    var explanation: String { "Your session expired. Enter your PIN to continue." }
+}
+
 enum StartupAuthenticationState: Equatable {
     case login
     case validating
@@ -63,6 +68,9 @@ final class AppConfig: ObservableObject {
     /// True when token, display name, and authenticated userId are persisted.
     /// Cold startup requires server validation or explicit typed-network offline state.
     @Published var cubeCleanupWarning: String?
+    /// Existing auth publications drive the route handoff. Setting this context
+    /// must not rebuild the authenticated session before teardown.
+    private(set) var loginReason: LoginEntryReason?
     @Published private(set) var hasToken: Bool
     @Published private(set) var startupAuthentication: StartupAuthenticationState = .login
 
@@ -150,6 +158,7 @@ final class AppConfig: ObservableObject {
         authGeneration &+= 1
         hasToken = false
         startupAuthentication = .login
+        loginReason = nil
         configGeneration += 1
         log.info("reconfigure done generation=\(configGeneration)")
     }
@@ -166,6 +175,7 @@ final class AppConfig: ObservableObject {
             displayNameStore.load() != nil &&
             identityStore.load() != nil
         startupAuthentication = hasToken ? .authenticated : .login
+        if hasToken { loginReason = nil }
         log.info("didLogin hasToken=\(hasToken)")
     }
 
@@ -217,6 +227,7 @@ final class AppConfig: ObservableObject {
             }
             tokenStore.save(token: response.token)
             displayNameStore.save(response.user.displayName)
+            displayNameStore.saveAvatarTint(response.user.avatarTint)
             identityStore.save(response.user.userId)
             authGeneration &+= 1
             startupAuthentication = .authenticated
@@ -224,7 +235,7 @@ final class AppConfig: ObservableObject {
             switch onEnum(of: failure.error) {
             case .invalidCredentials:
                 beforeInvalidation("\(backend)|\(userId)")
-                logout()
+                logout(reason: .expired)
             case .network:
                 startupAuthentication = .localOffline
             case .server, .unknown:
@@ -243,8 +254,12 @@ final class AppConfig: ObservableObject {
     /// not safe to construct.
     var authenticatedUserId: String? { identityStore.load() }
 
+    /// Nonsecret route context only; does not change authentication authority.
+    func prepareLogin(reason: LoginEntryReason?) { loginReason = reason }
+
     /// Clear token and display name (nav to login is event-driven in RootView).
-    func logout() {
+    func logout(reason: LoginEntryReason? = nil) {
+        loginReason = reason
         clearCubeCredentials()
         log.info("logout")
         authGeneration &+= 1
@@ -266,6 +281,9 @@ final class AppConfig: ObservableObject {
     }
 
     // ── Display name ──────────────────────────────────────────────────────────
+
+    /// Existing authenticated AuthUser metadata; not part of security authority.
+    var avatarTint: String { displayNameStore.avatarTint }
 
     /// The logged-in user's display name for chat / history headers.
     var displayName: String { displayNameStore.load() ?? defaultDisplayName }

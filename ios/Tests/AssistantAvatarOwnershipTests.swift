@@ -45,85 +45,6 @@ struct AssistantAvatarOwnershipTests {
         ) == nil)
     }
 
-    @MainActor @Test func activeAvatarPausesAboveViewportAndResumesWhenScrolledBack() async throws {
-        let longReply = Array(repeating: "Long active reply keeps its bubble body in the viewport.", count: 80)
-            .joined(separator: "\n\n")
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 393, height: 733)
-        let host = UIHostingController(rootView: ScrollView {
-            MessageBubbleShell(
-                role: .assistant, name: "Sentient", timestamp: 1_700_000_000_000,
-                isStreaming: false, cutoffLabel: nil, index: 0, total: 1,
-                continuation: false, avatarMode: .responding
-            ) {
-                Text(longReply)
-            }
-            .padding()
-        }
-        .environment(\.scenePhase, .active))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-
-        func descendants(_ view: UIView) -> [UIView] {
-            [view] + view.subviews.flatMap(descendants)
-        }
-        func verify(_ condition: () -> Bool, _ failure: String) async throws {
-            var stableFrames = 0
-            for _ in 0..<60 {
-                host.view.setNeedsLayout()
-                host.view.layoutIfNeeded()
-                try await DisplayFrameWaiter.next()
-                if condition() {
-                    stableFrames += 1
-                    if stableFrames == 3 { return }
-                } else {
-                    stableFrames = 0
-                }
-            }
-            Issue.record(Comment(rawValue: failure))
-        }
-
-        try await verify({
-            let views = descendants(host.view)
-            guard let scroll = views.compactMap({ $0 as? UIScrollView }).first else { return false }
-            return views.contains { $0 is RiveView } && scroll.contentSize.height > scroll.bounds.height * 2
-        }, "Long active bubble did not mount with scrollable content")
-
-        let scroll = try #require(descendants(host.view).compactMap { $0 as? UIScrollView }.first)
-        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
-        try await verify({
-            let views = descendants(host.view)
-            guard let rive = views.compactMap({ $0 as? RiveView }).first,
-                  let player = rive.playerDelegate as? RiveViewModel
-            else { return false }
-            return rive.convert(rive.bounds, to: scroll).intersects(
-                CGRect(origin: scroll.contentOffset, size: scroll.bounds.size)
-            ) && player.isPlaying
-        }, "Active avatar did not play at top of its visible bubble")
-
-        let rive = try #require(descendants(host.view).compactMap { $0 as? RiveView }.first)
-        let avatarFrame = rive.convert(rive.bounds, to: scroll)
-        let maximumOffset = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
-        let offscreenOffset = min(maximumOffset, avatarFrame.maxY + 60)
-        #expect(offscreenOffset < maximumOffset)
-        scroll.setContentOffset(CGPoint(x: 0, y: offscreenOffset), animated: false)
-        try await verify({
-            guard let player = rive.playerDelegate as? RiveViewModel else { return false }
-            let visibleBounds = CGRect(origin: scroll.contentOffset, size: scroll.bounds.size)
-            return avatarFrame.maxY < visibleBounds.minY && !player.isPlaying
-        }, "Active avatar did not pause above viewport while its long bubble remained visible")
-
-        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
-        try await verify({
-            guard let player = rive.playerDelegate as? RiveViewModel else { return false }
-            return rive.convert(rive.bounds, to: scroll).intersects(
-                CGRect(origin: scroll.contentOffset, size: scroll.bounds.size)
-            ) && player.isPlaying
-        }, "Active avatar did not resume after scrolling back into view")
-    }
-
     @MainActor @Test func reducedMotionEntersAuthoredStaticStatesBeforePlaybackStops() throws {
         for (state, expectedAuthoredState) in [
             (SentientIdentityState.thinking, "reduced_thinking"),
@@ -146,7 +67,7 @@ struct AssistantAvatarOwnershipTests {
         }
     }
 
-    @MainActor @Test func nativeChatHasNoIdleRuntimeAndOnlyOneEligibleActiveAvatar() async throws {
+    @MainActor @Test func nativeChatHasNoMessageAvatarRuntimeOrActivityDrivenGeometry() async throws {
         let messages = [message(turn: "old", reply: "old-reply"), message(turn: "current", reply: "current-reply")]
         let idle = activity(.idle)
         let responding = activity(.responding, turn: "current", reply: "current-reply")
@@ -166,8 +87,19 @@ struct AssistantAvatarOwnershipTests {
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
 
+        func descendants(_ view: UIView) -> [UIView] {
+            [view] + view.subviews.flatMap(descendants)
+        }
         func riveViews(_ view: UIView) -> [RiveView] {
-            (view as? RiveView).map { [$0] } ?? view.subviews.flatMap(riveViews)
+            descendants(view).compactMap { $0 as? RiveView }
+        }
+        func lastRowHeight() throws -> CGFloat {
+            let collection = try #require(descendants(host.view).compactMap { $0 as? MessageUICollectionView }.first)
+            let layout = try #require(collection.collectionViewLayout as? ExactMessageLayout)
+            let cell = try #require(collection.cellForItem(at: IndexPath(item: 2, section: 0)))
+            let height = try #require(layout.rowHeights.last)
+            #expect(abs(cell.bounds.height - height) <= 1)
+            return height
         }
         func verify(_ count: Int, playing: Bool = false) async throws {
             var stableFrames = 0
@@ -176,7 +108,10 @@ struct AssistantAvatarOwnershipTests {
                 host.view.layoutIfNeeded()
                 try await DisplayFrameWaiter.next()
                 let views = riveViews(host.view)
-                if views.count == count && views.allSatisfy({
+                let collection = descendants(host.view).compactMap { $0 as? MessageUICollectionView }.first
+                let rowsMounted = collection?.numberOfItems(inSection: 0) == 3
+                    && collection?.cellForItem(at: IndexPath(item: 2, section: 0)) != nil
+                if rowsMounted && views.count == count && views.allSatisfy({
                     ($0.playerDelegate as? RiveViewModel)?.isPlaying == playing
                 }) {
                     stableFrames += 1
@@ -185,22 +120,28 @@ struct AssistantAvatarOwnershipTests {
                     stableFrames = 0
                 }
             }
-            Issue.record("Native chat did not reach expected avatar count/playback state")
+            let views = riveViews(host.view)
+            let playback = views.map { ($0.playerDelegate as? RiveViewModel)?.isPlaying == true }
+            Issue.record("Native chat avatar mismatch: expected count=\(count), playing=\(playing); actual count=\(views.count), playback=\(playback)")
         }
 
         try await verify(0)
-        // Consecutive assistant replies group metadata, but must not hide the
-        // one ongoing avatar merely because it is a continuation row.
+        let groupedHeight = try lastRowHeight()
+        // Activity owns chrome/semantics, never inserts a message avatar or cap.
         host.rootView = content(responding, false)
-        try await verify(1, playing: true)
+        try await verify(0)
+        let activeHeight = try lastRowHeight()
+        #expect(abs(activeHeight - groupedHeight) <= 1, "Activity must not change grouped row geometry")
         host.rootView = content(responding, true)
-        try await verify(1, playing: false)
+        try await verify(0)
+        #expect(abs(try lastRowHeight() - activeHeight) <= 1, "Playback eligibility must not change row geometry")
         host.rootView = content(responding, false)
-        try await verify(1, playing: true)
+        try await verify(0)
         host.rootView = content(activity(.responding, turn: "old", reply: "old-reply"), false)
         try await verify(0)
         host.rootView = content(idle, false)
         try await verify(0)
+        #expect(abs(try lastRowHeight() - groupedHeight) <= 1, "Idle must restore measured continuation geometry")
     }
 
     private func activity(

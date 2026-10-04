@@ -438,8 +438,9 @@ enum DesignMaterialShadowGeometry {
 }
 
 enum DesignTypographyAdapter {
-    static let displayFamily = nativeFamily(MobileData.Fonts_.shared.display)
     static let uiFamily = nativeFamily(MobileData.Fonts_.shared.ui)
+    // iOS display roles reuse the UI face; shared/web/Android tokens stay unchanged.
+    static let displayFamily = uiFamily
     static let uiMediumFace = bundledFace(family: uiFamily, weight: "Medium")
     static let monoFamily = nativeFamily(MobileData.Fonts_.shared.mono)
 

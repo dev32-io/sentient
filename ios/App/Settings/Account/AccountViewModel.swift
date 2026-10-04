@@ -90,7 +90,7 @@ final class AccountViewModel {
     /// Save the display name (imperative PUT; usecase rolls the token on success).
     func saveName() async {
         let name = normalizedDisplayName(draftName)
-        guard !name.isEmpty, name != savedName else { return }
+        guard nameSave != .saving, !name.isEmpty, name != savedName else { return }
         nameSave = .saving
         do {
             let result = try await account.updateDisplayName(displayName: name)
@@ -117,6 +117,7 @@ final class AccountViewModel {
     /// Change PIN. Returns true only on success (caller closes the sheet). A wrong
     /// current PIN sets `pinError` inline and returns false — NO token drop.
     func changePin(current: String, new: String) async -> Bool {
+        guard !pinSaving else { return false }
         pinSaving = true
         pinError = nil
         defer { pinSaving = false }
@@ -142,11 +143,13 @@ final class AccountViewModel {
     }
 
     func openPinSheet() {
+        guard !pinSaving else { return }
         pinError = nil
         isPinSheetOpen = true
     }
 
     func closePinSheet() {
+        guard !pinSaving else { return }
         pinError = nil
     }
 
