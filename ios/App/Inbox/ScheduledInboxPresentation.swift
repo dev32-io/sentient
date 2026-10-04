@@ -10,4 +10,3 @@ func scheduledInboxEmptyPresentation(
     if loading { return .loading }
     return ready && !clearFailed ? .allClear : .none
 }
-
